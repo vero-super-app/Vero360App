@@ -86,4 +86,8 @@ flutter:
     - assets/veroai.png
     - assets/google.png
     - assets/apple.webp
+    - assets/brands/spotify.png
+    - assets/brands/apple_music.png
+    - assets/brands/netflix.png
+    - assets/brands/chatgpt.png
 

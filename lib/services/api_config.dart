@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 
 class ApiConfig {
   /// 🔒 Single source of truth (NO trailing slash)
-  static const String prod =   'https://vero-backend-1.onrender.com';     ///'http://10.0.2.2:3000';
+  static const String prod =   'https://unimatherapyapplication.com/vero/';     ///'http://10.0.2.2:3000';
   static String get prodBase => prod;
 
   static const String _prefsKey = 'api_base';

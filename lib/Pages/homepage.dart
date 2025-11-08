@@ -96,7 +96,7 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
     ),
   ];
   
-final cartService = CartService('https://vero-backend.onrender.com', apiPrefix: 'api');
+final cartService = CartService('https://unimatherapyapplication.com/vero/', apiPrefix: 'api');
 
   @override
   void initState() {

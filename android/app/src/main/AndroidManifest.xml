@@ -21,7 +21,7 @@
 
 
     <application
-        android:label="@string/vero360_app"
+        android:label="Vero360"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 

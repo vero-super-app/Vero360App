@@ -1,3 +1,4 @@
+// lib/Pages/checkout_page.dart
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -8,13 +9,11 @@ import 'package:vero360_app/Pages/address.dart';
 import 'package:vero360_app/models/marketplace.model.dart';
 import 'package:vero360_app/services/paychangu_service.dart';
 import 'package:vero360_app/toasthelper.dart';
-import 'package:vero360_app/Pages/payment_webview.dart'; // PaymentWebView(checkoutUrl: ...)
+import 'package:vero360_app/Pages/payment_webview.dart';
 
 // ⬇️ Address imports
 import 'package:vero360_app/models/address_model.dart';
 import 'package:vero360_app/services/address_service.dart';
-
-
 
 enum PaymentMethod { mobile, card, cod }
 
@@ -27,6 +26,10 @@ class CheckoutPage extends StatefulWidget {
 }
 
 class _CheckoutPageState extends State<CheckoutPage> {
+  // ► Brand (UI only)
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandSoft   = Color(0xFFFFE8CC);
+
   // ► Mobile money provider constants
   static const String _kAirtel = 'AirtelMoney';
   static const String _kMpamba = 'Mpamba';
@@ -63,6 +66,46 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _noteCtrl.dispose();
     super.dispose();
   }
+
+  // ── Small UI helpers (no logic changes) ─────────────────────────────────
+  InputDecoration _inputDecoration({String? label, String? hint, Widget? prefixIcon, String? helper, String? error}) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      helperText: helper,
+      errorText: error,
+      filled: true,
+      fillColor: Colors.white,
+      prefixIcon: prefixIcon,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      enabledBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: Colors.black, width: 1), // black before active
+        borderRadius: BorderRadius.circular(12),
+      ),
+      focusedBorder: const OutlineInputBorder(
+        borderSide: BorderSide(color: _brandOrange, width: 2),          // orange on focus
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+      ),
+    );
+  }
+
+  ButtonStyle _filledBtnStyle() => FilledButton.styleFrom(
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        textStyle: const TextStyle(fontWeight: FontWeight.w700),
+      );
+
+  OutlinedButtonThemeData get _outlinedTheme => OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Colors.black87,
+          side: const BorderSide(color: Colors.black, width: 1),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          textStyle: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+      );
 
   // ── Provider helpers ─────────────────────────────────────────────────────
   String get _providerLabel => _provider == _kAirtel ? 'Airtel Money' : 'TNM Mpamba';
@@ -115,7 +158,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       final list = await _addrSvc.getMyAddresses();
       Address? def = list.firstWhere(
         (a) => a.isDefault,
-        orElse: () => list.isNotEmpty ? list.first : null as Address,
+        orElse: () => list.isNotEmpty ? list.first : null as Address, // (kept as-is; UI-only pass)
       );
       setState(() {
         _loggedIn = true;
@@ -148,9 +191,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delivery address required'),
-        content: const Text(
-          'You need to set a default address before checkout.',
-        ),
+        content: const Text('You need to set a default address before checkout.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Set address')),
@@ -311,158 +352,194 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
-
     final canPay = !_submitting && _loggedIn && _defaultAddr != null;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Checkout')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-        children: [
-          // ── Item summary ──────────────────────────────────────────────────
-          Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            elevation: 0.5,
-            child: Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.network(
-                    item.image,
-                    width: 90, height: 90, fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      width: 90, height: 90, color: Colors.grey.shade300,
-                      child: const Icon(Icons.image_not_supported),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(item.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                    const SizedBox(height: 6),
-                    Text('MWK ${item.price}',
-                        style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 8),
-                    Row(children: [
-                      _qtyBtn(Icons.remove, () { if (_qty > 1) setState(() => _qty--); }),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        child: Text('$_qty', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      ),
-                      _qtyBtn(Icons.add, () { setState(() => _qty++); }),
-                    ]),
-                  ]),
-                ),
-              ]),
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          // ── Delivery Address (required) ───────────────────────────────────
-          _DeliveryAddressCard(
-            loading: _loadingAddr,
-            loggedIn: _loggedIn,
-            address: _defaultAddr,
-            onManage: () async {
-              await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
-              await _initAuthAndAddress();
-            },
-          ),
-
-          const SizedBox(height: 12),
-
-          // ── Payment method selector with inline Mobile Money fields ───────
-          Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            elevation: 0.5,
-            child: Column(
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    RadioListTile<PaymentMethod>(
-                      value: PaymentMethod.mobile,
-                      groupValue: _method,
-                      onChanged: (v) => setState(() => _method = v!),
-                      title: const Text('Mobile Money'),
-                      secondary: const Icon(Icons.phone_iphone_rounded),
-                    ),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 220),
-                      switchInCurve: Curves.easeOut,
-                      switchOutCurve: Curves.easeIn,
-                      child: _method == PaymentMethod.mobile
-                          ? Padding(
-                              key: const ValueKey('mobile-fields'),
-                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                              child: _mobileFields(),
-                            )
-                          : const SizedBox.shrink(key: ValueKey('mobile-empty')),
-                    ),
-                  ],
-                ),
-                const Divider(height: 1),
-                RadioListTile<PaymentMethod>(
-                  value: PaymentMethod.card,
-                  groupValue: _method,
-                  onChanged: (v) => setState(() => _method = v!),
-                  title: const Text('Card'),
-                  secondary: const Icon(Icons.credit_card_rounded),
-                ),
-                const Divider(height: 1),
-                RadioListTile<PaymentMethod>(
-                  value: PaymentMethod.cod,
-                  groupValue: _method,
-                  onChanged: (v) => setState(() => _method = v!),
-                  title: const Text('Cash on Delivery'),
-                  secondary: const Icon(Icons.delivery_dining_rounded),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          // ── Summary ───────────────────────────────────────────────────────
-          Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            elevation: 0.5,
-            child: Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Column(children: [
-                _rowLine('Subtotal', 'MWK ${_subtotal.toStringAsFixed(0)}'),
-                const SizedBox(height: 6),
-                _rowLine('Delivery', 'MWK ${_delivery.toStringAsFixed(0)}'),
-                const Divider(height: 18),
-                _rowLine('Total', 'MWK ${_total.toStringAsFixed(0)}', bold: true),
-              ]),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // ── Action button ─────────────────────────────────────────────────
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: canPay ? _onPayPressed : null,
-              icon: _submitting
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.lock),
-              label: Text(_submitting ? 'Processing…' : _methodLabel(_method)),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    return Theme(
+      data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Checkout'),
+          backgroundColor: _brandOrange,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          children: [
+            // ── Mini banner for trust cue ───────────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: _brandSoft,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _brandOrange.withOpacity(0.35)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.lock, size: 18),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('Secure checkout — review your address and payment details.')),
+                ],
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+
+            // ── Item summary ────────────────────────────────────────────────
+            Card(
+              elevation: 6,
+              shadowColor: Colors.black12,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              clipBehavior: Clip.antiAlias,
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(
+                      item.image,
+                      width: 96, height: 96, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        width: 96, height: 96, color: Colors.grey.shade300,
+                        child: const Icon(Icons.image_not_supported),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(item.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _brandSoft,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: _brandOrange),
+                        ),
+                        child: Text('MWK ${item.price.toStringAsFixed(0)}',
+                            style: const TextStyle(fontWeight: FontWeight.w700)),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(children: [
+                        _qtyBtn(Icons.remove, () { if (_qty > 1) setState(() => _qty--); }),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text('$_qty', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                        ),
+                        _qtyBtn(Icons.add, () { setState(() => _qty++); }),
+                      ]),
+                    ]),
+                  ),
+                ]),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // ── Delivery Address (required) ─────────────────────────────────
+            _DeliveryAddressCard(
+              loading: _loadingAddr,
+              loggedIn: _loggedIn,
+              address: _defaultAddr,
+              onManage: () async {
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
+                await _initAuthAndAddress();
+              },
+            ),
+
+            const SizedBox(height: 12),
+
+            // ── Payment method selector with inline Mobile Money fields ─────
+            Card(
+              elevation: 6,
+              shadowColor: Colors.black12,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      RadioListTile<PaymentMethod>(
+                        value: PaymentMethod.mobile,
+                        groupValue: _method,
+                        onChanged: (v) => setState(() => _method = v!),
+                        title: const Text('Mobile Money'),
+                        secondary: const Icon(Icons.phone_iphone_rounded),
+                      ),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 220),
+                        switchInCurve: Curves.easeOut,
+                        switchOutCurve: Curves.easeIn,
+                        child: _method == PaymentMethod.mobile
+                            ? Padding(
+                                key: const ValueKey('mobile-fields'),
+                                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                                child: _mobileFields(),
+                              )
+                            : const SizedBox.shrink(key: ValueKey('mobile-empty')),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 1),
+                  RadioListTile<PaymentMethod>(
+                    value: PaymentMethod.card,
+                    groupValue: _method,
+                    onChanged: (v) => setState(() => _method = v!),
+                    title: const Text('Card'),
+                    secondary: const Icon(Icons.credit_card_rounded),
+                  ),
+                  const Divider(height: 1),
+                  RadioListTile<PaymentMethod>(
+                    value: PaymentMethod.cod,
+                    groupValue: _method,
+                    onChanged: (v) => setState(() => _method = v!),
+                    title: const Text('Cash on Delivery'),
+                    secondary: const Icon(Icons.delivery_dining_rounded),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // ── Summary ─────────────────────────────────────────────────────
+            Card(
+              elevation: 6,
+              shadowColor: Colors.black12,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              clipBehavior: Clip.antiAlias,
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(children: [
+                  _rowLine('Subtotal', 'MWK ${_subtotal.toStringAsFixed(0)}'),
+                  const SizedBox(height: 6),
+                  _rowLine('Delivery', 'MWK ${_delivery.toStringAsFixed(0)}'),
+                  const Divider(height: 18),
+                  _rowLine('Total', 'MWK ${_total.toStringAsFixed(0)}', bold: true),
+                ]),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // ── Action button ───────────────────────────────────────────────
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: _filledBtnStyle(),
+                onPressed: canPay ? _onPayPressed : null,
+                icon: _submitting
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.lock),
+                label: Text(_submitting ? 'Processing…' : _methodLabel(_method)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -475,10 +552,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         DropdownButtonFormField<String>(
           value: _provider,
           icon: const Icon(Icons.arrow_drop_down),
-          decoration: const InputDecoration(
-            labelText: 'Provider',
-            border: OutlineInputBorder(),
-          ),
+          decoration: _inputDecoration(label: 'Provider'),
           items: const [
             DropdownMenuItem(value: _kAirtel, child: Text('Airtel Money')),
             DropdownMenuItem(value: _kMpamba, child: Text('TNM Mpamba')),
@@ -502,13 +576,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
           onChanged: (_) {
             if (_phoneError != null) setState(() => _phoneError = null);
           },
-          decoration: InputDecoration(
-            labelText: 'Phone number ($_providerLabel)',
-            hintText: _providerHint,
+          decoration: _inputDecoration(
+            label: 'Phone number ($_providerLabel)',
+            hint: _providerHint,
             prefixIcon: Icon(_providerIcon),
-            border: const OutlineInputBorder(),
-            errorText: _phoneError,
-            helperText: '10 digits only',
+            helper: '10 digits only',
+            error: _phoneError,
           ),
         ),
       ],
@@ -519,13 +592,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Widget _qtyBtn(IconData icon, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(8),
       child: Container(
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey.shade400),
-          borderRadius: BorderRadius.circular(6),
+          color: Colors.white,
+          border: Border.all(color: Colors.black, width: 1),
+          borderRadius: BorderRadius.circular(8),
         ),
-        padding: const EdgeInsets.all(4),
+        padding: const EdgeInsets.all(6),
         child: Icon(icon, size: 18),
       ),
     );
@@ -533,7 +607,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   Widget _rowLine(String left, String right, {bool bold = false}) {
     final style = TextStyle(
-      fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+      fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
       fontSize: bold ? 16 : 14,
     );
     return Row(
@@ -545,7 +619,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 }
 
-// ── Delivery Address card widget ───────────────────────────────────────────
+// ── Delivery Address card widget (UI styling only) ─────────────────────────
 class _DeliveryAddressCard extends StatelessWidget {
   const _DeliveryAddressCard({
     required this.loading,
@@ -562,8 +636,10 @@ class _DeliveryAddressCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      elevation: 0.5,
+      elevation: 6,
+      shadowColor: Colors.black12,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
         child: Column(
@@ -610,7 +686,7 @@ class _DeliveryAddressCard extends StatelessWidget {
   static Widget _line(String a, String b) {
     return Row(
       children: [
-        Expanded(child: Text(a, style: const TextStyle(fontWeight: FontWeight.w600))),
+        Expanded(child: Text(a, style: const TextStyle(fontWeight: FontWeight.w700))),
         Text(b, style: const TextStyle(color: Colors.black87)),
       ],
     );

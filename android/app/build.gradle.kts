@@ -10,14 +10,15 @@ android {
     namespace = "com.vero.vero360"
     compileSdk = 36
 
-    defaultConfig {
-        applicationId = "com.vero.vero360"
-        minSdk = flutter.minSdkVersion   // or 21
-        targetSdk = 36
-        versionCode = 10001
-        versionName = "1.0.1"
-        multiDexEnabled = true
-    }
+   defaultConfig {
+    applicationId = "com.vero.vero360"
+    minSdk = 23               // 🔴 force minSdk 23
+    targetSdk = 36
+    versionCode = 10001
+    versionName = "1.0.1"
+    multiDexEnabled = true
+}
+
 
     buildTypes {
         debug {

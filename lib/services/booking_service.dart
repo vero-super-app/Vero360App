@@ -5,8 +5,8 @@ import 'dart:convert';
 import 'package:vero360_app/models/booking_model.dart';
 
 class BookingService {
-  static const String _bookingUrl = 'http://127.0.0.1:3000/accomodation/create';
-  static const String _paymentUrl = 'http://127.0.0.1:3000/payments/pay';
+  static const String _bookingUrl = 'https://unimatherapyapplication.com/vero/accomodation/create';
+  static const String _paymentUrl = 'https://unimatherapyapplication.com/vero/payments/pay';
 
   // Step 1: Create a booking
   Future<Map<String, dynamic>> createBooking(BookingRequest bookingRequest) async {

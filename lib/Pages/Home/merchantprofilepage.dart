@@ -703,6 +703,7 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
 
   Widget _otherDetailsGrid() {
     final items = <_DetailItem>[
+           _DetailItem('My Shop', Icons.shopping_bag_rounded, () { _openBottomSheet(const ServiceProviderCrudPage()); }),
     _DetailItem('Marketplace', Icons.storefront, () {
   _openBottomSheet(const MarketplaceCrudPage());
 }),
@@ -713,7 +714,7 @@ _DetailItem('Latest Arrivals', Icons.rocket_launch, () {
   _openBottomSheet(const LatestArrivalsCrudPage());
 }),
 
-     _DetailItem('My Shop', Icons.shopping_bag_rounded, () { _openBottomSheet(const ServiceProviderCrudPage()); }),
+
          _DetailItem('My Address', Icons.location_on, () { _openBottomSheet(const AddressPage()); }),
        _DetailItem('My transactions', Icons.history, _logout),
 

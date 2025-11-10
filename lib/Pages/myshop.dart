@@ -39,7 +39,10 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
   bool _saving = false;
   bool _deleting = false;
 
-  static const Color kActionGreen = Color(0xFF11A661);
+  // --- Brand (match Airport/Vero Courier) ---
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandSoft   = Color(0xFFFFE8CC);
+  static const Color kActionGreen = Color(0xFF11A661); // kept (not used) to avoid logic churn
 
   @override
   void initState() {
@@ -226,6 +229,43 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
     }
   }
 
+  // ---- UI helpers (keep logic unchanged) ----
+  InputDecoration _inputDecoration({String? label, String? hint}) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      enabledBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: Colors.black, width: 1), // black before active
+        borderRadius: BorderRadius.circular(12),
+      ),
+      focusedBorder: const OutlineInputBorder(
+        borderSide: BorderSide(color: _brandOrange, width: 2),
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+      ),
+    );
+  }
+
+  ButtonStyle _filledBtnStyle({double padV = 14}) => FilledButton.styleFrom(
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        padding: EdgeInsets.symmetric(vertical: padV, horizontal: 14),
+        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+      );
+
+  OutlinedButtonThemeData get _outlinedTheme => OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Colors.black87,
+          side: const BorderSide(color: Colors.black, width: 1),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          textStyle: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -235,23 +275,33 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
     final canSave = !_saving && (_myService == null ? _picked != null : true);
     final isUpdate = _myService != null;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('My Shop'),
-        bottom: TabBar(
+    return Theme(
+      data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('My Shop'),
+          backgroundColor: _brandOrange,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          bottom: TabBar(
+            controller: _tabs,
+            indicatorColor: Colors.white,
+            indicatorWeight: 3,
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white70,
+            tabs: const [
+              Tab(text: 'Shop Details'),
+              Tab(text: 'Manage Shop'),
+            ],
+          ),
+        ),
+        body: TabBarView(
           controller: _tabs,
-          tabs: const [
-            Tab(text: 'Shop Details'),
-            Tab(text: 'Manage Shop'),
+          children: [
+            _buildDetailsTab(canSave: canSave, isUpdate: isUpdate),
+            _buildManageTab(),
           ],
         ),
-      ),
-      body: TabBarView(
-        controller: _tabs,
-        children: [
-          _buildDetailsTab(canSave: canSave, isUpdate: isUpdate),
-          _buildManageTab(),
-        ],
       ),
     );
   }
@@ -260,7 +310,9 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       child: Card(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 8,
+        shadowColor: Colors.black12,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         clipBehavior: Clip.antiAlias,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
@@ -269,7 +321,23 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(isUpdate ? 'Update Shop' : 'Open Shop Now', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                // Mini banner for consistency
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _brandSoft,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _brandOrange.withOpacity(0.35)),
+                  ),
+                  child: const Text(
+                    'Add a clear logo and accurate opening hours so customers can trust your shop.',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                Text(isUpdate ? 'Update Shop' : 'Open Shop Now',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 12),
 
                 _FullBleedPicker(
@@ -278,12 +346,13 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
                   onPickGallery: _pickFromGallery,
                   onPickCamera: _pickFromCamera,
                   onClearPicked: _clearPicked,
+                  filledBtnStyle: _filledBtnStyle(),
                 ),
                 const SizedBox(height: 12),
 
                 TextFormField(
                   controller: _name,
-                  decoration: const InputDecoration(labelText: 'Business name', filled: true, border: OutlineInputBorder()),
+                  decoration: _inputDecoration(label: 'Business name'),
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                 ),
                 const SizedBox(height: 12),
@@ -292,13 +361,13 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
                   controller: _desc,
                   minLines: 2,
                   maxLines: 4,
-                  decoration: const InputDecoration(labelText: 'Business description', filled: true, border: OutlineInputBorder()),
+                  decoration: _inputDecoration(label: 'Business description'),
                 ),
                 const SizedBox(height: 12),
 
                 TextFormField(
                   controller: _status,
-                  decoration: const InputDecoration(labelText: 'Status (open / closed / busy)', filled: true, border: OutlineInputBorder()),
+                  decoration: _inputDecoration(label: 'Status (open / closed / busy)'),
                 ),
                 const SizedBox(height: 12),
 
@@ -324,14 +393,10 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
                 const SizedBox(height: 16),
 
                 FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: kActionGreen,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
+                  style: _filledBtnStyle(),
                   onPressed: canSave ? _save : null,
                   icon: _saving
-                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.save),
                   label: Text(isUpdate ? 'Save Changes' : 'Open Shop Now'),
                 ),
@@ -391,6 +456,7 @@ class _FullBleedPicker extends StatelessWidget {
     required this.onPickGallery,
     required this.onPickCamera,
     required this.onClearPicked,
+    required this.filledBtnStyle,
   });
 
   final XFile? picked;
@@ -398,6 +464,7 @@ class _FullBleedPicker extends StatelessWidget {
   final VoidCallback onPickGallery;
   final VoidCallback onPickCamera;
   final VoidCallback onClearPicked;
+  final ButtonStyle filledBtnStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -425,11 +492,18 @@ class _FullBleedPicker extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ClipRRect(borderRadius: BorderRadius.circular(16), child: inner),
+        Card(
+          elevation: 8,
+          shadowColor: Colors.black12,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          clipBehavior: Clip.antiAlias,
+          child: inner,
+        ),
         const SizedBox(height: 10),
         Row(
           children: [
-            FilledButton.tonalIcon(
+            FilledButton.icon(
+              style: filledBtnStyle,
               onPressed: onPickGallery,
               icon: const Icon(Icons.photo_library),
               label: const Text('Gallery'),
@@ -469,10 +543,12 @@ class _ServiceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final imgUrl = ApiConfig.prod;
+    final imgUrl = ApiConfig.prod; // kept as-is (logic unchanged)
     final hasImage = imgUrl.isNotEmpty;
 
     return Card(
+      elevation: 6,
+      shadowColor: Colors.black12,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -501,27 +577,17 @@ class _ServiceCard extends StatelessWidget {
                       runSpacing: 8,
                       alignment: WrapAlignment.end,
                       children: [
-                        FilledButton.tonalIcon(
+                        _overlayBtn(
+                          icon: Icons.edit_outlined,
+                          label: 'Edit',
                           onPressed: onEdit,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Colors.white.withOpacity(0.9),
-                            foregroundColor: Colors.blueGrey.shade700,
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          ),
-                          icon: const Icon(Icons.edit_outlined, size: 18),
-                          label: const Text('Edit', style: TextStyle(fontSize: 12)),
                         ),
-                        FilledButton.tonalIcon(
+                        _overlayBtn(
+                          icon: Icons.delete_outline,
+                          label: 'Delete',
                           onPressed: deleting ? null : onDelete,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Colors.white.withOpacity(0.9),
-                            foregroundColor: Colors.red.shade700,
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          ),
-                          icon: deleting
-                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                              : const Icon(Icons.delete_outline, size: 18),
-                          label: const Text('Delete', style: TextStyle(fontSize: 12)),
+                          busy: deleting,
+                          danger: true,
                         ),
                       ],
                     ),
@@ -560,6 +626,28 @@ class _ServiceCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _overlayBtn({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+    bool busy = false,
+    bool danger = false,
+  }) {
+    return FilledButton.tonalIcon(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: Colors.white.withOpacity(0.92),
+        foregroundColor: danger ? Colors.red.shade700 : Colors.blueGrey.shade700,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      icon: busy
+          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          : Icon(icon, size: 18),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
     );
   }
 

@@ -13,6 +13,7 @@ dependencies:
 
   # Core Flutter
   cupertino_icons: ^1.0.8
+  #cupertino_icons: ^1.0.6
   web_socket_channel: ^2.4.0
   http: ^1.2.2
   intl: ^0.20.1
@@ -24,12 +25,16 @@ dependencies:
   app_links: ^6.0.0
   permission_handler: ^11.3.1
   uuid: ^4.4.0
+  google_sign_in: ^6.2.1
+  sign_in_with_apple: ^6.1.0
+  google_maps_flutter: ^2.2.8
+  google_maps_flutter_web: ^0.4.0
 
   mime: ^2.0.0
   http_parser: ^4.0.2
 
   # Location
-  geolocator: ^10.1.0
+  geolocator: ^14.0.2
 
   # UI / UX
   carousel_slider: ^5.0.0
@@ -59,7 +64,7 @@ dev_dependencies:
 flutter_icons:
 android: true
 ios: true
-image_path: "assets/icons/logo_mark.png"
+image_path: "assets/icons/playstore.png"
 
 
 flutter_test:
@@ -74,9 +79,15 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/logo_mark.png
+    - assets/playstore.png
     - assets/happy.jpg
     - assets/uber-cabs-1024x576.webp
     - assets/Queens-Tavern-Steak.jpg
     - assets/veroai.png
+    - assets/google.png
+    - assets/apple.webp
+    - assets/brands/spotify.png
+    - assets/brands/apple_music.png
+    - assets/brands/netflix.png
+    - assets/brands/chatgpt.png
 

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
 // Make sure these exist in your project (adjust names/paths if needed)
-import 'package:vero360_app/Pages/Edu.dart';
-import 'package:vero360_app/Pages/Health.dart';
-import 'package:vero360_app/Pages/customerservice.dart';
-import 'package:vero360_app/Pages/social.dart';
+import 'package:vero360_app/Pages/Quickservices/Edu.dart';
+import 'package:vero360_app/Pages/Quickservices/Health.dart';
+import 'package:vero360_app/Pages/Quickservices/customerservice.dart';
+import 'package:vero360_app/Pages/Quickservices/social.dart';
 
 class MorePage extends StatelessWidget {
   const MorePage({Key? key}) : super(key: key);

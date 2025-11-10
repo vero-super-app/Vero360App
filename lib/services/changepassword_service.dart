@@ -15,7 +15,7 @@ class AccountService {
       throw Exception('No auth token found. Please log in again.');
     }
 
-    final base = await ApiConfig.readBase();
+    final base = await ApiConfig.prod;
     final headers = {
       'Accept': '*/*', // match your working cURL
       'Content-Type': 'application/json',

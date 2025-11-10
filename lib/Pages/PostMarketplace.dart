@@ -60,6 +60,10 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   bool _loadingItems = true;
   bool _busyRow = false; // disables per-card buttons when true
 
+  // --- Brand look to match Airport/Vero Courier ---
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandSoft   = Color(0xFFFFE8CC);
+
   @override
   void initState() {
     super.initState();
@@ -211,7 +215,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
       await svc.createItem(item);
 
-      ToastHelper.showCustomToast(context, 'Item Created', isSuccess: true, errorMessage: 'Created');
+      ToastHelper.showCustomToast(context, 'Item Posted', isSuccess: true, errorMessage: 'Created');
 
       // reset
       _form.currentState!.reset();
@@ -228,6 +232,36 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     }
   }
 
+  // ---------------- UI helpers (brand look) ----------------
+  InputDecoration _inputDecoration({
+    String? label,
+    String? hint,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      enabledBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: Colors.black, width: 1), // black before active
+        borderRadius: BorderRadius.circular(12),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: _brandOrange, width: 2),
+        borderRadius: BorderRadius.circular(12),
+      ),
+    );
+  }
+
+  ButtonStyle _filledBtnStyle({double padV = 14}) => FilledButton.styleFrom(
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        padding: EdgeInsets.symmetric(vertical: padV, horizontal: 14),
+        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+      );
+
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
@@ -236,9 +270,19 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Marketplace'),
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        elevation: 0,
         bottom: TabBar(
           controller: _tabs,
-          tabs: const [Tab(text: 'Add Item'), Tab(text: 'Manage My Items')],
+          indicatorColor: Colors.white,
+          indicatorWeight: 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          tabs: const [
+            Tab(text: 'Add Item'),
+            Tab(text: 'Manage My Items'),
+          ],
         ),
       ),
       body: SafeArea(
@@ -257,8 +301,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       child: Card(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        clipBehavior: Clip.antiAlias,
+        elevation: 8,
+        shadowColor: Colors.black12,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
           child: Form(
@@ -266,6 +311,30 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Mini banner (subtle, like the other pages)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _brandSoft,
+                    border: Border.all(color: _brandOrange.withOpacity(0.35)),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.info_outline, color: Colors.black87),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Add clear photos, set the right category and price. '
+                          'Your post goes live instantly.',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+
                 const Text('Add Product', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 12),
 
@@ -283,13 +352,21 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    FilledButton.tonalIcon(
+                    FilledButton.icon(
+                      style: _filledBtnStyle(padV: 12),
                       onPressed: () => _pickCover(ImageSource.gallery),
                       icon: const Icon(Icons.photo_library),
                       label: const Text('Gallery'),
                     ),
                     const SizedBox(width: 8),
                     OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.black87,
+                        side: const BorderSide(color: Colors.black, width: 1),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
                       onPressed: () => _pickCover(ImageSource.camera),
                       icon: const Icon(Icons.photo_camera),
                       label: const Text('Camera'),
@@ -319,7 +396,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 // NAME
                 TextFormField(
                   controller: _name,
-                  decoration: const InputDecoration(labelText: 'Name', filled: true, border: OutlineInputBorder()),
+                  decoration: _inputDecoration(label: 'Name'),
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Name is required' : null,
                 ),
                 const SizedBox(height: 12),
@@ -329,7 +406,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   controller: _price,
                   keyboardType: const TextInputType.numberWithOptions(decimal: false),
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(labelText: 'Price (MK)', filled: true, border: OutlineInputBorder()),
+                  decoration: _inputDecoration(label: 'Price (MK)'),
                   validator: (v) {
                     final pv = double.tryParse(v?.trim() ?? '');
                     if (pv == null || pv <= 0) return 'Enter a valid price';
@@ -345,11 +422,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                       .map((c) => DropdownMenuItem<String>(value: c, child: Text(_titleCase(c))))
                       .toList(),
                   onChanged: (v) => setState(() => _category = v),
-                  decoration: const InputDecoration(
-                    labelText: 'Category',
-                    filled: true,
-                    border: OutlineInputBorder(),
-                  ),
+                  decoration: _inputDecoration(label: 'Category'),
                   validator: (v) => (v == null || v.isEmpty) ? 'Please select a category' : null,
                 ),
                 const SizedBox(height: 12),
@@ -359,7 +432,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   controller: _desc,
                   minLines: 2,
                   maxLines: 4,
-                  decoration: const InputDecoration(labelText: 'Description (optional)', filled: true, border: OutlineInputBorder()),
+                  decoration: _inputDecoration(label: 'Description (optional)'),
                 ),
                 const SizedBox(height: 8),
 
@@ -374,9 +447,10 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
                 // SUBMIT
                 FilledButton.icon(
+                  style: _filledBtnStyle(),
                   onPressed: canCreate ? _create : null,
                   icon: _submitting
-                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.save),
                   label: const Text('Post on Marketplace'),
                 ),
@@ -398,6 +472,13 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         itemBuilder: (_, i) {
           if (i == _gallery.length) {
             return OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.black87,
+                side: const BorderSide(color: Colors.black, width: 1),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                textStyle: const TextStyle(fontWeight: FontWeight.w700),
+              ),
               onPressed: _pickGalleryMulti,
               icon: const Icon(Icons.add_photo_alternate),
               label: const Text('Add'),
@@ -407,14 +488,18 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
           return Stack(
             children: [
               ClipRRect(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(12),
                 child: Image.memory(m.bytes, width: 128, height: 96, fit: BoxFit.cover),
               ),
               Positioned(
                 right: 4, top: 4,
                 child: InkWell(
                   onTap: () => _removeGalleryAt(i),
-                  child: const CircleAvatar(radius: 12, backgroundColor: Colors.black54, child: Icon(Icons.close, size: 14, color: Colors.white)),
+                  child: const CircleAvatar(
+                    radius: 12,
+                    backgroundColor: Colors.black54,
+                    child: Icon(Icons.close, size: 14, color: Colors.white),
+                  ),
                 ),
               ),
             ],
@@ -434,6 +519,13 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         itemBuilder: (_, i) {
           if (i == _videos.length) {
             return OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.black87,
+                side: const BorderSide(color: Colors.black, width: 1),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                textStyle: const TextStyle(fontWeight: FontWeight.w700),
+              ),
               onPressed: _pickVideo,
               icon: const Icon(Icons.video_library),
               label: const Text('Add video'),
@@ -445,7 +537,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 width: 160, height: 72,
                 decoration: BoxDecoration(
                   color: Colors.black12,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Center(child: Icon(Icons.play_arrow_rounded)),
               ),
@@ -491,9 +583,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
           }
 
           // Safe aspect ratio: image 16:9 + texts/buttons
-          // 0.70…0.80 works well across widths; tweak slightly for wide screens
-  final aspect = (constraints.maxWidth >= 700) ? 0.90 : 0.88; // space yapansi pa card ← was 0.75 / 0.70
-
+          final aspect = (constraints.maxWidth >= 700) ? 0.90 : 0.88;
 
           return GridView.builder(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
@@ -522,13 +612,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   String _titleCase(String s) => s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
 }
 
-
-
-
-
-
-
 /* ---------- Manage card, tuned to avoid overflows ---------- */
+
 
 class _ManageCard extends StatelessWidget {
   const _ManageCard({
@@ -545,7 +630,12 @@ class _ManageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const brandOrange = Color(0xFFFF8A00);
+    const brandSoft   = Color(0xFFFFE8CC);
+
     return Card(
+      elevation: 6,
+      shadowColor: Colors.black12,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -594,7 +684,7 @@ class _ManageCard extends StatelessWidget {
 
           // Title
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
             child: Text(
               item.name,
               maxLines: 1,
@@ -603,18 +693,25 @@ class _ManageCard extends StatelessWidget {
             ),
           ),
 
-          // Price + fallback actions (for very narrow tiles)
+          // Price (styled to match Airport/Vero Courier UI)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
             child: Row(
               children: [
-                Text('MK ${item.price.toStringAsFixed(0)}',
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: brandSoft,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: brandOrange, width: 1),
+                  ),
+                  child: Text(
+                    'MK ${item.price.toStringAsFixed(0)}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
                 const Spacer(),
-                // small buttons visible on narrow layouts;
-                // they duplicate the overlay actions but help when overlay is cramped
-           
-               
+                // (Optional) Add small inline actions here if you want duplicates of the overlay buttons.
               ],
             ),
           ),
@@ -644,3 +741,4 @@ class _ManageCard extends StatelessWidget {
     return tooltip == null ? btn : Tooltip(message: tooltip, child: btn);
   }
 }
+

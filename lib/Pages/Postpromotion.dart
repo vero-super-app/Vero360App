@@ -1,3 +1,4 @@
+// lib/Pages/promotions_crud_page.dart
 import 'dart:io' show File;
 import 'dart:typed_data';
 
@@ -36,6 +37,10 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
   List<PromoModel> _items = [];
   bool _loading = true;
   bool _busyRow = false;
+
+  // --- Brand (match Airport/Vero Courier) ---
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandSoft   = Color(0xFFFFE8CC);
 
   @override
   void initState() {
@@ -257,25 +262,72 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
     }
   }
 
+  // ---- UI helpers (no logic changes) ----
+  InputDecoration _inputDecoration({String? label, String? hint}) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      enabledBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: Colors.black, width: 1), // black before active
+        borderRadius: BorderRadius.circular(12),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: _brandOrange, width: 2),
+        borderRadius: BorderRadius.circular(12),
+      ),
+    );
+  }
+
+  ButtonStyle _filledBtnStyle({double padV = 14}) => FilledButton.styleFrom(
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        padding: EdgeInsets.symmetric(vertical: padV, horizontal: 14),
+        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+      );
+
+  OutlinedButtonThemeData get _outlinedTheme => OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Colors.black87,
+          side: const BorderSide(color: Colors.black, width: 1),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          textStyle: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Promotions'),
-        bottom: TabBar(
+    return Theme(
+      data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Promotions'),
+          backgroundColor: _brandOrange,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          bottom: TabBar(
+            controller: _tabs,
+            indicatorColor: Colors.white,
+            indicatorWeight: 3,
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white70,
+            tabs: const [
+              Tab(text: 'New Promotion'),
+              Tab(text: 'Manage My Promotions'),
+            ],
+          ),
+        ),
+        body: TabBarView(
           controller: _tabs,
-          tabs: const [
-            Tab(text: 'New Promotion'),
-            Tab(text: 'Manage My Promotions'),
+          children: [
+            _buildCreateTab(),
+            _buildManageTab(),
           ],
         ),
-      ),
-      body: TabBarView(
-        controller: _tabs,
-        children: [
-          _buildCreateTab(),
-          _buildManageTab(),
-        ],
       ),
     );
   }
@@ -284,8 +336,9 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       child: Card(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 8,
+        shadowColor: Colors.black12,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         clipBehavior: Clip.antiAlias,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
@@ -294,9 +347,23 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Mini banner for consistency
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _brandSoft,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _brandOrange.withOpacity(0.35)),
+                  ),
+                  child: const Text(
+                    'Clear image, catchy title and correct price drive more clicks.',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
                 const Text('Post Promotion',
-                    style: TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w700)),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 12),
 
                 _FullBleedPicker(
@@ -305,15 +372,13 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                   onPickGallery: _pickFromGallery,
                   onPickCamera: _pickFromCamera,
                   onClearPicked: _clearPicked,
+                  filledBtnStyle: _filledBtnStyle(padV: 12),
                 ),
                 const SizedBox(height: 12),
 
                 TextFormField(
                   controller: _title,
-                  decoration: const InputDecoration(
-                      labelText: 'Title',
-                      filled: true,
-                      border: OutlineInputBorder()),
+                  decoration: _inputDecoration(label: 'Title'),
                   validator: (v) =>
                       (v == null || v.trim().isEmpty) ? 'Title is required' : null,
                 ),
@@ -323,10 +388,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                   controller: _desc,
                   minLines: 2,
                   maxLines: 4,
-                  decoration: const InputDecoration(
-                      labelText: 'Description (optional)',
-                      filled: true,
-                      border: OutlineInputBorder()),
+                  decoration: _inputDecoration(label: 'Description (optional)'),
                 ),
                 const SizedBox(height: 12),
 
@@ -335,10 +397,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: false),
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                      labelText: 'Price (MK)',
-                      filled: true,
-                      border: OutlineInputBorder()),
+                  decoration: _inputDecoration(label: 'Price (MK)'),
                   validator: (v) {
                     final pv = double.tryParse(v?.trim() ?? '');
                     if (pv == null || pv < 0) return 'Enter a valid price';
@@ -348,12 +407,13 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                 const SizedBox(height: 16),
 
                 FilledButton.icon(
+                  style: _filledBtnStyle(),
                   onPressed: _submitting ? null : _create,
                   icon: _submitting
                       ? const SizedBox(
                           height: 18,
                           width: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2))
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.campaign),
                   label: const Text('Post Promotion'),
                 ),
@@ -394,8 +454,9 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
         itemBuilder: (_, i) {
           final p = _items[i];
           return Card(
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14)),
+            elevation: 6,
+            shadowColor: Colors.black12,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             clipBehavior: Clip.antiAlias,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -403,24 +464,21 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                 // Full-bleed cover with consistent ratio
                 if ((p.image ?? '').isNotEmpty)
                   ClipRRect(
-                    borderRadius:
-                        const BorderRadius.only(
-                          topLeft: Radius.circular(14),
-                          topRight: Radius.circular(14),
-                        ),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(14),
+                      topRight: Radius.circular(14),
+                    ),
                     child: AspectRatio(
                       aspectRatio: 16 / 9,
                       child: _NetworkCover(url: p.image!),
                     ),
                   )
                 else
-                  // keep height consistent even without image
                   ClipRRect(
-                    borderRadius:
-                        const BorderRadius.only(
-                          topLeft: Radius.circular(14),
-                          topRight: Radius.circular(14),
-                        ),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(14),
+                      topRight: Radius.circular(14),
+                    ),
                     child: const AspectRatio(
                       aspectRatio: 16 / 9,
                       child: _PlaceholderCover(),
@@ -461,47 +519,50 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                                 overflow: TextOverflow.ellipsis,
                               ),
                             const SizedBox(height: 6),
-                            Text(
-                              'MWK ${((p.price ?? 0).toStringAsFixed(0))}',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w600),
+
+                            // Orange price pill (consistent with other screens)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: _brandSoft,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: _brandOrange, width: 1),
+                              ),
+                              child: Text(
+                                'MWK ${((p.price ?? 0).toStringAsFixed(0))}',
+                                style: const TextStyle(fontWeight: FontWeight.w700),
+                              ),
                             ),
+
                             if (p.freeTrialEndsAt != null)
                               Text(
                                 'Trial ends: ${p.freeTrialEndsAt}',
-                                style: const TextStyle(
-                                    color: Colors.black54, fontSize: 12),
+                                style: const TextStyle(color: Colors.black54, fontSize: 12),
                               ),
                             if (p.subscribedAt != null)
                               Text(
                                 'Subscribed: ${p.subscribedAt}',
-                                style: const TextStyle(
-                                    color: Colors.black54, fontSize: 12),
+                                style: const TextStyle(color: Colors.black54, fontSize: 12),
                               ),
                             const SizedBox(height: 10),
+
                             Wrap(
                               spacing: 8,
                               children: [
                                 FilledButton.tonalIcon(
-                                  onPressed:
-                                      _busyRow ? null : () => _subscribe(p),
+                                  onPressed: _busyRow ? null : () => _subscribe(p),
                                   icon: const Icon(Icons.payment),
                                   label: const Text('Subscribe'),
                                 ),
                                 OutlinedButton.icon(
-                                  onPressed:
-                                      _busyRow ? null : () => _deactivate(p),
-                                  icon: const Icon(
-                                      Icons.pause_circle_outline),
+                                  onPressed: _busyRow ? null : () => _deactivate(p),
+                                  icon: const Icon(Icons.pause_circle_outline),
                                   label: const Text('Deactivate'),
                                 ),
                                 TextButton.icon(
-                                  onPressed:
-                                      _busyRow ? null : () => _delete(p),
-                                  icon: const Icon(Icons.delete_outline,
-                                      color: Colors.red),
-                                  label: const Text('Delete',
-                                      style: TextStyle(color: Colors.red)),
+                                  onPressed: _busyRow ? null : () => _delete(p),
+                                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                  label: const Text('Delete', style: TextStyle(color: Colors.red)),
                                 ),
                               ],
                             ),
@@ -529,6 +590,7 @@ class _FullBleedPicker extends StatelessWidget {
     required this.onPickGallery,
     required this.onPickCamera,
     required this.onClearPicked,
+    required this.filledBtnStyle,
   });
 
   final XFile? picked;
@@ -536,6 +598,7 @@ class _FullBleedPicker extends StatelessWidget {
   final VoidCallback onPickGallery;
   final VoidCallback onPickCamera;
   final VoidCallback onClearPicked;
+  final ButtonStyle filledBtnStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -564,8 +627,11 @@ class _FullBleedPicker extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(16),
+        Card(
+          elevation: 8,
+          shadowColor: Colors.black12,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          clipBehavior: Clip.antiAlias,
           child: AspectRatio(
             aspectRatio: 16 / 9, // consistent, modern card ratio
             child: content,
@@ -575,6 +641,7 @@ class _FullBleedPicker extends StatelessWidget {
         Row(
           children: [
             FilledButton.tonalIcon(
+              style: filledBtnStyle,
               onPressed: onPickGallery,
               icon: const Icon(Icons.photo_library),
               label: const Text('Gallery'),
@@ -613,8 +680,7 @@ class _NetworkCover extends StatelessWidget {
         Container(color: Colors.grey.shade200),
         Image.network(
           url,
-          fit: BoxFit.cover, // ← key: no empty space, crop if needed
-          // keep it smooth on slow networks:
+          fit: BoxFit.cover, // crop if needed
           loadingBuilder: (ctx, child, progress) {
             if (progress == null) return child;
             return const _ShimmerishLoader();

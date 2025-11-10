@@ -1,10 +1,10 @@
+// lib/Pages/details_page.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:jwt_decoder/jwt_decoder.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/Pages/Home/Messages.dart';
 import 'package:vero360_app/Pages/checkout_page.dart';
 import 'package:vero360_app/models/marketplace.model.dart';
@@ -55,6 +55,10 @@ class _Media {
 }
 
 class _DetailsPageState extends State<DetailsPage> {
+  // ── Brand (UI only)
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandSoft   = Color(0xFFFFE8CC);
+
   Future<_SellerInfo>? _sellerFuture;
   final TextEditingController _commentController = TextEditingController();
   final FToast _fToast = FToast();
@@ -73,10 +77,10 @@ class _DetailsPageState extends State<DetailsPage> {
     _fToast.init(context);
 
     final it = widget.item;
-    final images = (it.gallery);
-    final videos = (it.videos);
+    final images = it.gallery;
+    final videos = it.videos;
     _media = [
-      if ((it.image).toString().trim().isNotEmpty) _Media.image(it.image),
+      if (it.image.toString().trim().isNotEmpty) _Media.image(it.image),
       ...images.map(_Media.image),
       ...videos.map(_Media.video),
     ];
@@ -90,6 +94,23 @@ class _DetailsPageState extends State<DetailsPage> {
     _commentController.dispose();
     super.dispose();
   }
+
+  // ── Inputs style helper (black before focus, orange on focus)
+  InputDecoration _inputDecoration({String? hint}) => InputDecoration(
+        hintText: hint,
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        border: const OutlineInputBorder(),
+        enabledBorder: OutlineInputBorder(
+          borderSide: const BorderSide(color: Colors.black, width: 1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        focusedBorder: const OutlineInputBorder(
+          borderSide: BorderSide(color: _brandOrange, width: 2),
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+        ),
+      );
 
   // autoplay
   void _startAutoplay() {
@@ -144,7 +165,7 @@ class _DetailsPageState extends State<DetailsPage> {
     return info;
   }
 
-   Future<String?> _readAuthToken() async {
+  Future<String?> _readAuthToken() async {
     final sp = await SharedPreferences.getInstance();
     for (final k in const ['token', 'jwt_token', 'jwt']) {
       final v = sp.getString(k);
@@ -152,7 +173,6 @@ class _DetailsPageState extends State<DetailsPage> {
     }
     return null;
   }
-
 
   Future<bool> _requireLogin() async {
     final t = await _readAuthToken();
@@ -168,20 +188,19 @@ class _DetailsPageState extends State<DetailsPage> {
     return ok;
   }
 
-
   Future<String?> getMyUserId() async {
-  final sp = await SharedPreferences.getInstance();
-  final token = sp.getString('jwt_token') ?? sp.getString('token');
-  if (token == null || token.isEmpty) return null;
-  final claims = JwtDecoder.decode(token);
-  final id = (claims['sub'] ?? claims['id'])?.toString();
-  return (id != null && id.isNotEmpty) ? id : null;
-}
-
+    final sp = await SharedPreferences.getInstance();
+    final token = sp.getString('jwt_token') ?? sp.getString('token');
+    if (token == null || token.isEmpty) return null;
+    final claims = JwtDecoder.decode(token);
+    final id = (claims['sub'] ?? claims['id'])?.toString();
+    return (id != null && id.isNotEmpty) ? id : null;
+  }
 
   Future<void> _goToCheckout(MarketplaceDetailModel item) async {
     final prefs = await SharedPreferences.getInstance();
-    final _ = prefs.getInt('userId');
+    final _ = prefs.getInt('userId'); // kept as-is
+    // ignore: use_build_context_synchronously
     Navigator.push(context, MaterialPageRoute(builder: (_) => CheckoutPage(item: item)));
   }
 
@@ -259,51 +278,52 @@ class _DetailsPageState extends State<DetailsPage> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => VideoPlayerPage(url: url)));
   }
 
- Future<void> _openChat(MarketplaceDetailModel item) async {
-  if (!await _requireLogin()) return;
+  Future<void> _openChat(MarketplaceDetailModel item) async {
+    if (!await _requireLogin()) return;
 
-    // 1) Resolve peer
-  final peerAppId = (item.serviceProviderId ?? item.sellerUserId ?? '').trim();
-  if (peerAppId.isEmpty) {
-    _toast('Seller chat unavailable', Icons.info_outline, Colors.orange);
-    return;
-  }
+    final peerAppId = (item.serviceProviderId ?? item.sellerUserId ?? '').trim();
+    if (peerAppId.isEmpty) {
+      _toast('Seller chat unavailable', Icons.info_outline, Colors.orange);
+      return;
+    }
 
-  // 2) Prepare names/avatars
-  final sellerName = item.sellerBusinessName ?? 'Seller';
-  final sellerAvatar = item.sellerLogoUrl ?? '';
+    final sellerName = item.sellerBusinessName ?? 'Seller';
+    final sellerAvatar = item.sellerLogoUrl ?? '';
 
-  // 3) Auth + ensure thread metadata
-  await ChatService.ensureFirebaseAuth();
-  final me = await ChatService.myAppUserId();
-  await ChatService.ensureThread(
-    myAppId: me,
-    peerAppId: peerAppId,
-    peerName: sellerName,
-    peerAvatar: sellerAvatar,
-  );
+    await ChatService.ensureFirebaseAuth();
+    final me = await ChatService.myAppUserId();
+    await ChatService.ensureThread(
+      myAppId: me,
+      peerAppId: peerAppId,
+      peerName: sellerName,
+      peerAvatar: sellerAvatar,
+    );
 
-  // 4) Go to chat
-  if (!mounted) return;
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => MessagePage(
-        peerAppId: peerAppId,
-        peerName: sellerName,
-        peerAvatarUrl: sellerAvatar, peerId: '',
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MessagePage(
+          peerAppId: peerAppId,
+          peerName: sellerName,
+          peerAvatarUrl: sellerAvatar,
+          peerId: '',
+        ),
       ),
-    ),
-  );
-}
-
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Item Details")),
+      appBar: AppBar(
+        title: const Text("Item Details"),
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
       body: FutureBuilder<_SellerInfo>(
         future: _sellerFuture ??= _loadSeller(),
         builder: (context, snapshot) {
@@ -320,49 +340,77 @@ class _DetailsPageState extends State<DetailsPage> {
             padding: const EdgeInsets.all(16.0),
             child: ListView(children: [
               // ----- MEDIA CAROUSEL -----
-              SizedBox(
-                height: MediaQuery.of(context).size.width * 9 / 16,
+              AspectRatio(
+                aspectRatio: 16 / 9,
                 child: Stack(
                   children: [
-                    PageView.builder(
-                      controller: _pc,
-                      physics: _media.length > 1 ? const BouncingScrollPhysics() : const NeverScrollableScrollPhysics(),
-                      itemCount: _media.length,
-                      onPageChanged: (i) => setState(() => _page = i),
-                      itemBuilder: (_, i) {
-                        final m = _media[i];
-                        if (!m.isVideo) {
-                          return ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image.network(
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: PageView.builder(
+                        controller: _pc,
+                        physics: _media.length > 1
+                            ? const BouncingScrollPhysics()
+                            : const NeverScrollableScrollPhysics(),
+                        itemCount: _media.length,
+                        onPageChanged: (i) => setState(() => _page = i),
+                        itemBuilder: (_, i) {
+                          final m = _media[i];
+                          if (!m.isVideo) {
+                            return Image.network(
                               m.url,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade200),
-                            ),
-                          );
-                        }
-                        return InkWell(
-                          onTap: () => _openVideo(m.url),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
+                              errorBuilder: (_, __, ___) =>
+                                  Container(color: Colors.grey.shade200),
+                            );
+                          }
+                          return InkWell(
+                            onTap: () => _openVideo(m.url),
                             child: Stack(children: [
                               Container(color: Colors.black26),
-                              const Center(child: Icon(Icons.play_circle_fill, size: 64, color: Colors.white)),
+                              const Center(
+                                child: Icon(Icons.play_circle_fill, size: 64, color: Colors.white),
+                              ),
                             ]),
-                          ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
                     if (_media.length > 1) ...[
-                      Positioned(left: 8, top: 0, bottom: 0, child: _NavBtn(icon: Icons.chevron_left, onTap: _prev)),
-                      Positioned(right: 8, top: 0, bottom: 0, child: _NavBtn(icon: Icons.chevron_right, onTap: _next)),
+                      Positioned(
+                        left: 8, top: 0, bottom: 0,
+                        child: _NavBtn(icon: Icons.chevron_left, onTap: _prev),
+                      ),
+                      Positioned(
+                        right: 8, top: 0, bottom: 0,
+                        child: _NavBtn(icon: Icons.chevron_right, onTap: _next),
+                      ),
+                      Positioned(
+                        bottom: 8, left: 0, right: 0,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(_media.length, (i) {
+                            final active = i == _page;
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              margin: const EdgeInsets.symmetric(horizontal: 3),
+                              width: active ? 18 : 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: active ? _brandOrange : Colors.white70,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: Colors.black26),
+                              ),
+                            );
+                          }),
+                        ),
+                      ),
                     ],
                   ],
                 ),
               ),
               const SizedBox(height: 16),
 
-              // ----- TEXTS + CHAT BUTTON IN LINE (BOTTOM-RIGHT) -----
+              // ----- TEXTS + CHAT BUTTON -----
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -370,33 +418,47 @@ class _DetailsPageState extends State<DetailsPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(item.name, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 6),
-                        Text("MWK ${item.price}", style: const TextStyle(fontSize: 20, color: Colors.green)),
+                        Text(item.name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: _brandSoft,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: _brandOrange),
+                          ),
+                          child: Text('MWK ${item.price.toStringAsFixed(0)}',
+                              style: const TextStyle(fontWeight: FontWeight.w700)),
+                        ),
                         const SizedBox(height: 12),
-                        Text(item.description),
+                        if ((item.description ?? '').isNotEmpty)
+                          Text(item.description!, style: const TextStyle(height: 1.3)),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Column(
-                    children: [
-                      IconButton.filledTonal(
-                        tooltip: 'Chat with seller',
-                        icon: const Icon(Icons.message_rounded, color: Colors.red),
-                        onPressed: () => _openChat(item),
-                      ),
-                    ],
+                  const SizedBox(width: 10),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _brandOrange,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    onPressed: () => _openChat(item),
+                    icon: const Icon(Icons.message_rounded),
+                    label: const Text('Chat'),
                   ),
                 ],
               ),
 
               const SizedBox(height: 20),
 
-              // ----- SELLER CARD (no transparent horizontal line requested → removed Divider) -----
+              // ----- SELLER CARD -----
               Card(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                elevation: 0.5,
+                elevation: 6,
+                shadowColor: Colors.black12,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                clipBehavior: Clip.antiAlias,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -407,9 +469,12 @@ class _DetailsPageState extends State<DetailsPage> {
                       const Icon(Icons.storefront_rounded, size: 20, color: Colors.black87),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(businessName ?? 'Posted by —',
+                        child: Text(
+                          businessName ?? 'Posted by —',
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       _ratingStars(rating),
@@ -419,7 +484,7 @@ class _DetailsPageState extends State<DetailsPage> {
                     const SizedBox(height: 10),
 
                     _infoRow('Business name', businessName, icon: Icons.badge_rounded),
-                    _infoRow('Closing hours', closing, icon: Icons.access_time_rounded),
+                    _infoRow('Closing hours', _closingFromHours(openingHours), icon: Icons.access_time_rounded),
                     _infoRow('Status', (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
                         icon: Icons.info_outline_rounded),
                     const SizedBox(height: 6),
@@ -436,15 +501,24 @@ class _DetailsPageState extends State<DetailsPage> {
               TextField(
                 controller: _commentController,
                 maxLines: 3,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  hintText: "Add a note (optional)",
-                ),
+                decoration: _inputDecoration(hint: "Add a note (optional)"),
               ),
               const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => _goToCheckout(widget.item),
-                child: const Text("Continue to checkout"),
+
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  onPressed: () => _goToCheckout(widget.item),
+                  icon: const Icon(Icons.shopping_bag_outlined),
+                  label: const Text("Continue to checkout"),
+                ),
               ),
             ]),
           );
@@ -467,9 +541,9 @@ class _NavBtn extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(24),
-        child: const SizedBox(
+        child: SizedBox(
           width: 40, height: 40,
-          child: Icon(Icons.chevron_right, color: Colors.white, size: 26),
+          child: Icon(icon, color: Colors.white, size: 26),
         ),
       ),
     );

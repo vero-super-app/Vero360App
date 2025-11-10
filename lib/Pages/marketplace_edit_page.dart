@@ -1,3 +1,4 @@
+// lib/pages/marketplace_edit_page.dart
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -40,6 +41,10 @@ class _MarketplaceEditPageState extends State<MarketplaceEditPage> {
   final List<_LocalMedia> _newVideos  = [];
 
   bool _saving = false;
+
+  // --- Brand (match Airport/Vero Courier) ---
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandSoft   = Color(0xFFFFE8CC);
 
   @override
   void initState() {
@@ -122,133 +127,202 @@ class _MarketplaceEditPageState extends State<MarketplaceEditPage> {
     }
   }
 
+  // ---- UI helpers (no logic changes) ----
+  InputDecoration _inputDecoration({String? label, String? hint}) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      enabledBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: Colors.black, width: 1), // black before active
+        borderRadius: BorderRadius.circular(12),
+      ),
+      focusedBorder: const OutlineInputBorder(
+        borderSide: BorderSide(color: _brandOrange, width: 2),
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+      ),
+    );
+  }
+
+  ButtonStyle _filledBtnStyle({double padV = 12}) => FilledButton.styleFrom(
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        padding: EdgeInsets.symmetric(horizontal: 14, vertical: padV),
+        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+      );
+
+  OutlinedButtonThemeData get _outlinedTheme => OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Colors.black87,
+          side: const BorderSide(color: Colors.black, width: 1),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          textStyle: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Edit Item')),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _saving ? null : _save,
-        icon: _saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save),
-        label: const Text('Save'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        children: [
-          // Cover
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Stack(
+    return Theme(
+      data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Edit Item'),
+          backgroundColor: _brandOrange,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          backgroundColor: _brandOrange,
+          foregroundColor: Colors.white,
+          onPressed: _saving ? null : _save,
+          icon: _saving
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.save),
+          label: const Text('Save'),
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+          children: [
+            // Cover
+            Card(
+              elevation: 8,
+              shadowColor: Colors.black12,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              clipBehavior: Clip.antiAlias,
+              child: Stack(
+                children: [
+                  AspectRatio(
+                    aspectRatio: 16/9,
+                    child: Image.network(
+                      _cover,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade200),
+                    ),
+                  ),
+                  Positioned(
+                    right: 8, bottom: 8,
+                    child: FilledButton.icon(
+                      style: _filledBtnStyle(),
+                      onPressed: _changeCover,
+                      icon: const Icon(Icons.photo),
+                      label: const Text('Change cover'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            TextField(
+              controller: _name,
+              decoration: _inputDecoration(label: 'Name'),
+            ),
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: _price,
+              keyboardType: const TextInputType.numberWithOptions(decimal: false),
+              decoration: _inputDecoration(label: 'Price (MK)'),
+            ),
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: _desc,
+              minLines: 2, maxLines: 4,
+              decoration: _inputDecoration(label: 'Description'),
+            ),
+            const SizedBox(height: 16),
+
+            const Text('Photos', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8, runSpacing: 8,
               children: [
-                AspectRatio(
-                  aspectRatio: 16/9,
-                  child: Image.network(_cover, fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade200),
+                for (int i = 0; i < _gallery.length; i++)
+                  Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(_gallery[i], width: 110, height: 90, fit: BoxFit.cover),
+                      ),
+                      Positioned(
+                        right: 4, top: 4,
+                        child: InkWell(
+                          onTap: () { setState(() { _gallery.removeAt(i); }); },
+                          child: const CircleAvatar(
+                            radius: 12,
+                            backgroundColor: Colors.black54,
+                            child: Icon(Icons.close, size: 14, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                Positioned(
-                  right: 8, bottom: 8,
-                  child: FilledButton.tonalIcon(
-                    onPressed: _changeCover,
-                    icon: const Icon(Icons.photo),
-                    label: const Text('Change cover'),
+                for (final n in _newGallery)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.memory(n.bytes, width: 110, height: 90, fit: BoxFit.cover),
                   ),
+                OutlinedButton.icon(
+                  onPressed: _pickNewImages,
+                  icon: const Icon(Icons.add_photo_alternate),
+                  label: const Text('Add'),
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: 16),
 
-          TextField(
-            controller: _name,
-            decoration: const InputDecoration(labelText: 'Name', border: OutlineInputBorder()),
-          ),
-          const SizedBox(height: 12),
-
-          TextField(
-            controller: _price,
-            keyboardType: const TextInputType.numberWithOptions(decimal: false),
-            decoration: const InputDecoration(labelText: 'Price (MK)', border: OutlineInputBorder()),
-          ),
-          const SizedBox(height: 12),
-
-          TextField(
-            controller: _desc,
-            minLines: 2, maxLines: 4,
-            decoration: const InputDecoration(labelText: 'Description', border: OutlineInputBorder()),
-          ),
-          const SizedBox(height: 16),
-
-          const Text('Photos'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8, runSpacing: 8,
-            children: [
-              for (int i = 0; i < _gallery.length; i++)
-                Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.network(_gallery[i], width: 110, height: 90, fit: BoxFit.cover),
-                    ),
-                    Positioned(
-                      right: 4, top: 4,
-                      child: InkWell(
-                        onTap: () { setState(() { _gallery.removeAt(i); }); },
-                        child: const CircleAvatar(radius: 12, backgroundColor: Colors.black54, child: Icon(Icons.close, size: 14, color: Colors.white)),
+            const SizedBox(height: 16),
+            const Text('Videos', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8, runSpacing: 8,
+              children: [
+                for (int i = 0; i < _videos.length; i++)
+                  Stack(
+                    children: [
+                      Container(
+                        width: 140, height: 80,
+                        decoration: BoxDecoration(
+                          color: Colors.black12,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Center(child: Icon(Icons.play_arrow_rounded)),
                       ),
-                    ),
-                  ],
-                ),
-              for (final n in _newGallery)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.memory(n.bytes, width: 110, height: 90, fit: BoxFit.cover),
-                ),
-              OutlinedButton.icon(
-                onPressed: _pickNewImages,
-                icon: const Icon(Icons.add_photo_alternate),
-                label: const Text('Add'),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-          const Text('Videos'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8, runSpacing: 8,
-            children: [
-              for (int i = 0; i < _videos.length; i++)
-                Stack(
-                  children: [
-                    Container(
-                      width: 140, height: 80,
-                      decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(10)),
-                      child: const Center(child: Icon(Icons.play_arrow_rounded)),
-                    ),
-                    Positioned(
-                      right: 4, top: 4,
-                      child: InkWell(
-                        onTap: () { setState(() { _videos.removeAt(i); }); },
-                        child: const CircleAvatar(radius: 12, backgroundColor: Colors.black54, child: Icon(Icons.close, size: 14, color: Colors.white)),
+                      Positioned(
+                        right: 4, top: 4,
+                        child: InkWell(
+                          onTap: () { setState(() { _videos.removeAt(i); }); },
+                          child: const CircleAvatar(
+                            radius: 12,
+                            backgroundColor: Colors.black54,
+                            child: Icon(Icons.close, size: 14, color: Colors.white),
+                          ),
+                        ),
                       ),
+                    ],
+                  ),
+                for (final n in _newVideos)
+                  Container(
+                    width: 140, height: 80,
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                  ],
+                    child: const Center(child: Icon(Icons.play_circle_outline)),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: _pickNewVideo,
+                  icon: const Icon(Icons.video_library),
+                  label: const Text('Add video'),
                 ),
-              for (final n in _newVideos)
-                Container(
-                  width: 140, height: 80,
-                  decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(10)),
-                  child: const Center(child: Icon(Icons.play_circle_outline)),
-                ),
-              OutlinedButton.icon(
-                onPressed: _pickNewVideo,
-                icon: const Icon(Icons.video_library),
-                label: const Text('Add video'),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

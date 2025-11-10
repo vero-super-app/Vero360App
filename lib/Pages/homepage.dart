@@ -1,16 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:carousel_slider/carousel_slider.dart';
+import 'package:flutter/foundation.dart'
+    show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
 
 // Feature pages
 import 'package:vero360_app/Accomodation.dart';
-import 'package:vero360_app/Pages/Bike.dart';
-import 'package:vero360_app/Pages/Edu.dart';
-import 'package:vero360_app/Pages/ExchangeRate.dart';
-import 'package:vero360_app/Pages/MobileMoney.dart';
-import 'package:vero360_app/Pages/More.dart';
-import 'package:vero360_app/Pages/Taxi.dart';
-import 'package:vero360_app/Pages/food.dart';
-import 'package:vero360_app/Pages/verocourier.dart';
+import 'package:vero360_app/Pages/Quickservices/Bike.dart';
+import 'package:vero360_app/Pages/Quickservices/Edu.dart';
+import 'package:vero360_app/Pages/Quickservices/ExchangeRate.dart';
+import 'package:vero360_app/Pages/Quickservices/Hairsaloon.dart';
+import 'package:vero360_app/Pages/Quickservices/MobileMoney.dart';
+import 'package:vero360_app/Pages/Quickservices/More.dart';
+import 'package:vero360_app/Pages/Quickservices/Taxi.dart';
+import 'package:vero360_app/Pages/Quickservices/airportpickup.dart';
+import 'package:vero360_app/Pages/Quickservices/carhire.dart';
+import 'package:vero360_app/Pages/Quickservices/fitness.dart';
+import 'package:vero360_app/Pages/Quickservices/food.dart';
+import 'package:vero360_app/Pages/Quickservices/jobs.dart';
+import 'package:vero360_app/Pages/Quickservices/verocourier.dart';
+import 'package:vero360_app/services/api_config.dart';
 import '../services/cart_services.dart';
 
 // Latest arrivals
@@ -31,6 +40,96 @@ class AppColors {
 
 /// Tunable gaps
 const double kGapAfterNearby = 6;
+
+/* ───────────────────────────────────────────
+   MINI ICON MODEL
+─────────────────────────────────────────── */
+class Mini {
+  final String keyId;
+  final String label;
+  final IconData icon;
+  const Mini(this.keyId, this.label, this.icon);
+}
+
+/* ───────────────────────────────────────────
+   QUICK SERVICES: single source of truth
+─────────────────────────────────────────── */
+const List<Mini> kQuickServices = [
+  // Transport
+  Mini('taxi', 'Vero ride/Taxi', Icons.local_taxi_rounded),
+  Mini('airport_pickup', 'Airport pickup', Icons.flight_takeoff_rounded),
+  Mini('courier', 'Vero courier', Icons.local_shipping_rounded),
+  Mini('vero_bike', 'Vero bike', Icons.pedal_bike_rounded),
+  Mini('car_hire', 'Car hire', Icons.car_rental_rounded),
+
+  // Money & info
+  Mini('fx', 'Exchange rates', Icons.currency_exchange_rounded),
+
+  // Lifestyle
+  Mini('hair', 'Hair salon', Icons.cut_rounded),
+  Mini('food', 'Food', Icons.fastfood_rounded),
+  Mini('fitness', 'Fitness', Icons.fitness_center_rounded),
+
+  // Other
+  Mini('jobs', 'Jobs', Icons.business_center_rounded),
+  Mini('accommodation', 'Accomodation', Icons.hotel_rounded),
+  Mini('more', 'More', Icons.more_horiz_rounded),
+];
+
+/* ───────────────────────────────────────────
+   DIGITAL & VIRTUAL SERVICES — model & data
+─────────────────────────────────────────── */
+class DigitalProduct {
+  final String key;
+  final String name;
+  final String subtitle; // e.g. "1-month key"
+  final String price; // display only; wire to backend later
+  final IconData? icon; // fallback icon if no logoAsset
+  final String? logoAsset; // e.g. 'assets/brands/spotify.png'
+  const DigitalProduct({
+    required this.key,
+    required this.name,
+    required this.subtitle,
+    required this.price,
+    this.icon,
+    this.logoAsset,
+  });
+}
+
+const List<DigitalProduct> kDigitalProducts = [
+  DigitalProduct(
+    key: 'spotify',
+    name: 'Spotify Premium',
+    subtitle: '1-month key',
+    price: 'MWK 8,000',
+    logoAsset: 'assets/brands/spotify.png',
+    icon: Icons.music_note_rounded,
+  ),
+  DigitalProduct(
+    key: 'apple_music',
+    name: 'Apple Music',
+    subtitle: '1-month key',
+    price: 'MWK 8,000',
+    logoAsset: 'assets/brands/apple_music.png',
+    icon: Icons.music_note_rounded,
+  ),
+  DigitalProduct(
+    key: 'netflix',
+    name: 'Netflix',
+    subtitle: '1-month key',
+    price: 'MWK 12,000',
+    logoAsset: 'assets/brands/netflix.png',
+    icon: Icons.movie_creation_outlined,
+  ),
+  DigitalProduct(
+    key: 'chatgpt_plus',
+    name: 'ChatGPT Plus',
+    subtitle: '1-month key',
+    price: 'MWK 16,000',
+    logoAsset: 'assets/brands/chatgpt.png',
+    icon: Icons.chat_bubble_outline_rounded,
+  ),
+];
 
 class Vero360Homepage extends StatefulWidget {
   final String email;
@@ -116,128 +215,152 @@ final cartService = CartService('https://unimatherapyapplication.com/vero/', api
   Widget build(BuildContext context) {
     final greeting = 'Hi, ${_firstNameFromEmail(widget.email)} 👋';
 
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFFFFBF6), AppColors.bgBottom],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: CustomScrollView(
-          physics: const BouncingScrollPhysics(),
-          slivers: [
-            // Top: brand + search
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 79, 16, 0),
-                child: Column(
-                  children: [
-                    const _BrandBar(appName: 'Vero360', logoPath: 'assets/logo_mark.png'),
-                    const SizedBox(height: 12),
-                    _TopSection(
-                      animateIn: _animateIn,
-                      greeting: greeting,
-                      searchController: _search,
-                      onSearchTap: _onSearchTap,
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.white, // keep solid so content never bleeds under
+        statusBarIconBrightness: Brightness.dark, // Android
+        statusBarBrightness: Brightness.light, // iOS
+        systemNavigationBarColor: Colors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ),
+      child: Scaffold(
+        extendBodyBehindAppBar: false,
+        body: SafeArea(
+          top: true,
+          bottom: false,
+          child: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFFFFBF6), AppColors.bgBottom],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+            child: CustomScrollView(
+              physics: const BouncingScrollPhysics(),
+              slivers: [
+                // Top: brand + search
+                SliverToBoxAdapter(
+                  child: Padding(
+                    // was 79 → now 16 because SafeArea handles status bar
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                    child: Column(
+                      children: [
+                        const _BrandBar(appName: 'Vero360', logoPath: 'assets/logo_mark.png'),
+                        const SizedBox(height: 12),
+                        _TopSection(
+                          animateIn: _animateIn,
+                          greeting: greeting,
+                          searchController: _search,
+                          onSearchTap: _onSearchTap,
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            ),
-
-            // Promos
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: _PromoCarousel(
-                  promos: _promos,
-                  onIndex: (i) => setState(() => _promoIndex = i),
-                  onTap: _onPromoTap,
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(child: _Dots(count: _promos.length, index: _promoIndex)),
-
-            // Space so Quick Services doesn't collide with chips
-            const SliverToBoxAdapter(child: SizedBox(height: 22)),
-
-            // Chips (Lightning deals etc.)
-            const SliverToBoxAdapter(child: _QuickStrip()),
-
-            // Extra breathing room before Quick Services
-            const SliverToBoxAdapter(child: SizedBox(height: 27)),
-
-            // ==== ONE CARD: QUICK SERVICES ====
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 7),
-                child: _SectionCard(
-                  title: 'Discover Our Quick Services',
-                  child: _MiniIconsGrid(
-                    items: const [
-                      // Transport
-                      Mini('taxi',          ' Vero ride/Taxi', Icons.local_taxi_rounded),
-                      Mini('airport_pickup','Airport pickup',   Icons.flight_takeoff_rounded),
-                      Mini('courier',       'Vero courier',     Icons.local_shipping_rounded),
-                      Mini('vero_bike',     'Vero bike',        Icons.pedal_bike_rounded),
-                      Mini('car_hire',      'Car hire',         Icons.car_rental_rounded),
-                  
-                      Mini('fx',           'Exchange rates',     Icons.currency_exchange_rounded),
-                      Mini('fx',           'Hair salon',         Icons.cut_rounded),
-                      Mini('food',         'Food',            Icons.fastfood_rounded),
-                      Mini('fx',           'Fitness',     Icons.fitness_center_rounded),
-                  
-                      Mini('fx',           'Jobs',         Icons.business_center_rounded),
-                     Mini('accommodation',          'Accomodation',  Icons.hotel_rounded),
-                     Mini('more'                ,'More',   Icons.more_horiz_rounded),
-
-
-                    ],
-                    onOpen: (key) => _Vero360HomepageState._openServiceStatic(context, key),
                   ),
                 ),
-              ),
+
+                // Promos
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: _PromoCarousel(
+                      promos: _promos,
+                      onIndex: (i) => setState(() => _promoIndex = i),
+                      onTap: _onPromoTap,
+                    ),
+                  ),
+                ),
+                SliverToBoxAdapter(child: _Dots(count: _promos.length, index: _promoIndex)),
+
+                // Space so Quick Services doesn't collide with chips
+                const SliverToBoxAdapter(child: SizedBox(height: 22)),
+
+                // Chips (Lightning deals etc.)
+                const SliverToBoxAdapter(child: _QuickStrip()),
+
+                // Extra breathing room before Quick Services
+                const SliverToBoxAdapter(child: SizedBox(height: 27)),
+
+                // ==== ONE CARD: QUICK SERVICES ====
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 7),
+                    child: _SectionCard(
+                      title: 'Discover Our Quick Services',
+                      child: _MiniIconsGrid(
+                        items: kQuickServices,
+                        onOpen: (key) => _openServiceStatic(context, key),
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SliverToBoxAdapter(child: SizedBox(height: 22)),
+
+                // Near you
+                const SliverToBoxAdapter(child: _NearYouCarousel()),
+                const SliverToBoxAdapter(child: SizedBox(height: 8)),
+
+                // Deals
+                const SliverToBoxAdapter(child: _DealsStrip()),
+                const SliverToBoxAdapter(child: SizedBox(height: 12)),
+
+                // Digital & Virtual Services (resell) — below Nearby
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(6, 4, 16, 0),
+                    child: DigitalServicesSection(onBuy: _openDigitalDetail),
+                  ),
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: 10)),
+
+                // Latest arrivals
+                const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(6, 12, 16, 16),
+                    child: LatestArrivalsSection(),
+                  ),
+                ),
+              ],
             ),
-
-            const SliverToBoxAdapter(child: SizedBox(height: 22)),
-
-            // Near you
-            const SliverToBoxAdapter(child: _NearYouCarousel()),
-            const SliverToBoxAdapter(child: SizedBox(height: 8)),
-
-            // Deals
-            const SliverToBoxAdapter(child: _DealsStrip()),
-            const SliverToBoxAdapter(child: SizedBox(height: 12)),
-
-            // Latest arrivals
-            const SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(10, 12, 16, 16),
-                child: LatestArrivalsSection(),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  void _onSearchTap() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Search location tapped')),
+  Future<void> _onSearchTap() async {
+    final picked = await showSearch<Mini?>(
+      context: context,
+      delegate: QuickServiceSearchDelegate(services: kQuickServices),
     );
+    if (picked != null) {
+      _openServiceStatic(context, picked.keyId);
+    }
   }
 
   void _onPromoTap(_Promo p) {
     if (p.serviceKey != null && p.serviceKey!.isNotEmpty) {
-      _Vero360HomepageState._openServiceStatic(context, p.serviceKey!);
+      _openServiceStatic(context, p.serviceKey!);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Coming soon')),
       );
     }
+  }
+
+  // open Digital Product detail/checkout
+  void _openDigitalDetail(DigitalProduct p) {
+    final suggestedName = _firstNameFromEmail(widget.email);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DigitalProductDetailPage(
+          product: p,
+          initialEmail: widget.email,
+          initialName: suggestedName == 'there' ? '' : suggestedName,
+        ),
+      ),
+    );
   }
 
   static void _openServiceStatic(BuildContext context, String key) {
@@ -247,28 +370,41 @@ final cartService = CartService('https://unimatherapyapplication.com/vero/', api
       case 'grocery':
         page = FoodPage();
         break;
-        
 
-        case 'more':
-        page =MorePage();
+      case 'more':
+        page = MorePage();
         break;
-        
 
+      case 'hair':
+        page = Hairsalonpage();
+        break;
+
+      case 'fitness':
+        page = Fitnespage();
+        break;
+
+      case 'jobs':
+        page = Jobspage();
+        break;
 
       case 'courier':
-        page = const UtilityPage(); // replace when you have a dedicated Courier page
-        break;    //
+        page = const UtilityPage(title: 'Vero Courier'); // placeholder
+        break;
 
       case 'vero_bike':
-         page = const BikePage(); // reuse Taxi flow for now
+        page = const BikePage();
         break;
- 
+
+      case 'airport_pickup':
+        page = const Airportpickuppage();
+        break;
 
       case 'taxi':
-      case 'airport_pickup':
+        page = const TaxiPage();
+        break;
 
       case 'car_hire':
-        page = const TaxiPage(); // reuse Taxi flow for now
+        page = const carhirepage();
         break;
 
       case 'send_money':
@@ -278,7 +414,7 @@ final cartService = CartService('https://unimatherapyapplication.com/vero/', api
 
       case 'home_cleaning':
       case 'hospital':
-        page = const UtilityPage();
+        page = const UtilityPage(title: 'Utility');
         break;
 
       case 'Vero Chat':
@@ -334,7 +470,8 @@ class _BrandBar extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
-        Text(appName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppColors.title)),
+        Text(appName,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppColors.title)),
         const Spacer(),
         IconButton(
           visualDensity: VisualDensity.compact,
@@ -377,7 +514,9 @@ class _TopSection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(greeting, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.title)),
+            Text(greeting,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.title)),
             const SizedBox(height: 10),
             Row(
               children: [
@@ -402,7 +541,8 @@ class _TopSection extends StatelessWidget {
                               'what are you looking for?',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(color: AppColors.body, fontWeight: FontWeight.w600),
+                              style:
+                                  TextStyle(color: AppColors.body, fontWeight: FontWeight.w600),
                             ),
                           ),
                           Icon(Icons.expand_more_rounded, color: Colors.grey),
@@ -413,20 +553,26 @@ class _TopSection extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 InkWell(
-                  onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Pay tapped')),
-                  ),
+                  onTap: onSearchTap,
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
                     height: 44,
                     padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(16)),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                          colors: [AppColors.brandOrange, Color(0xFFFFB85C)]),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: const [
+                        BoxShadow(color: Color(0x33FF8A00), blurRadius: 8, offset: Offset(0, 2))
+                      ],
+                    ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: const [
-                        Icon(Icons.account_balance_wallet_rounded, color: Colors.white, size: 20),
+                        Icon(Icons.search_rounded, color: Colors.white, size: 20),
                         SizedBox(width: 8),
-                        Text('search', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                        Text('Search',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
                         SizedBox(width: 4),
                         Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 18),
                       ],
@@ -644,16 +790,8 @@ class _QuickStrip extends StatelessWidget {
 }
 
 /* ───────────────────────────────────────────
-   MINI ICONS (one card: Quick Services)
+   SECTION CARD + GRID
 ─────────────────────────────────────────── */
-
-class Mini {
-  final String keyId;
-  final String label;
-  final IconData icon;
-  const Mini(this.keyId, this.label, this.icon);
-}
-
 class _SectionCard extends StatelessWidget {
   final String title;
   final Widget child;
@@ -696,31 +834,60 @@ class _MiniIconsGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Defensive layout to avoid pixel overflow on very narrow screens
     return LayoutBuilder(builder: (ctx, c) {
       final w = c.maxWidth;
-      final cross = w < 320 ? 3 : (w < 560 ? 4 : (w < 760 ? 5 : 6));
-      // Slightly taller tiles reduce risk of vertical overflow (icon + 2-line label)
-      final ratio = w < 140 ? 0.82 : 0.94;
 
-      return GridView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: items.length,
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: cross,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 8,
-          childAspectRatio: ratio,
+      // Tight but safe gaps
+      const crossSpacing = 8.0;
+      const mainSpacing = 5.0;
+      const minTileW = 92.0;
+
+      // Columns from available width
+      int cross = (w / minTileW).floor().clamp(3, 6);
+      double tileW = (w - (cross - 1) * crossSpacing) / cross;
+
+      // If tile too narrow, drop a column once
+      if (tileW < 88 && cross > 3) {
+        cross -= 1;
+        tileW = (w - (cross - 1) * crossSpacing) / cross;
+      }
+
+      // Compute minimal safe height (icon + gap + 2 text lines + padding)
+      final textScale = MediaQuery.textScaleFactorOf(context).clamp(1.0, 1.2);
+      const iconH = 48.0;
+      const gapH = 2.0;
+      const padH = 6.0;
+      const font = 11.0;
+      final twoLines = font * 1.25 * 2 * textScale; // rough line-height
+      final minHeight = iconH + gapH + twoLines + padH;
+
+      // width / height; higher ratio => shorter tiles. Clamp to avoid overflow.
+      final ratio = (tileW / (minHeight + 2)).clamp(0.86, 1.10);
+
+      return MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: MediaQuery.of(context).textScaler.clamp(maxScaleFactor: 1.2),
         ),
-        itemBuilder: (_, i) {
-          final m = items[i];
-          return _MiniIconTile(
-            icon: m.icon,
-            label: m.label,
-            onTap: () => onOpen(m.keyId),
-          );
-        },
+        child: GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.zero,
+          itemCount: items.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: cross,
+            crossAxisSpacing: crossSpacing,
+            mainAxisSpacing: mainSpacing,
+            childAspectRatio: ratio,
+          ),
+          itemBuilder: (_, i) {
+            final m = items[i];
+            return _MiniIconTile(
+              icon: m.icon,
+              label: m.label,
+              onTap: () => onOpen(m.keyId),
+            );
+          },
+        ),
       );
     });
   }
@@ -730,11 +897,7 @@ class _MiniIconTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  const _MiniIconTile({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
+  const _MiniIconTile({required this.icon, required this.label, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -742,35 +905,222 @@ class _MiniIconTile extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.start,
         children: [
           Container(
-            width: 56,
-            height: 56,
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
-              color: AppColors.brandOrangePale,                    // soft orange fill
+              color: AppColors.brandOrangePale,
               shape: BoxShape.circle,
-              border: Border.all(color: AppColors.brandOrange), // subtle orange outline
+              border: Border.all(color: AppColors.brandOrange),
             ),
-            child: Icon(icon, size: 26, color: AppColors.title),
+            child: Icon(icon, size: 22, color: AppColors.title),
           ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            softWrap: false,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: AppColors.title,
+          const SizedBox(height: 2),
+          Flexible(
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppColors.title,
+              ),
             ),
           ),
         ],
       ),
     );
   }
+}
+
+/// Search delegate for Quick Services (orange-themed)
+class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
+  final List<Mini> services;
+  QuickServiceSearchDelegate({required this.services})
+      : super(searchFieldLabel: 'Search quick services');
+
+  // Orange app bar + white text field
+  @override
+  ThemeData appBarTheme(BuildContext context) {
+    final base = Theme.of(context);
+    return base.copyWith(
+      appBarTheme: base.appBarTheme.copyWith(
+        backgroundColor: AppColors.brandOrange,
+        foregroundColor: Colors.white,
+        iconTheme: const IconThemeData(color: Colors.white),
+        titleTextStyle:
+            const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18),
+      ),
+      inputDecorationTheme: base.inputDecorationTheme.copyWith(
+        hintStyle: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
+        border: InputBorder.none,
+      ),
+      textTheme: base.textTheme.apply(bodyColor: Colors.white, displayColor: Colors.white),
+    );
+  }
+
+  // Common aliases/synonyms → service key
+  static final Map<String, String> _aliases = {
+    'taxi': 'taxi',
+    'vero ride': 'taxi',
+    'ride': 'taxi',
+    'cab': 'taxi',
+    'bike': 'vero_bike',
+    'bicycle': 'vero_bike',
+    'verobike': 'vero_bike',
+    'airport': 'airport_pickup',
+    'pickup': 'airport_pickup',
+    'airport pickup': 'airport_pickup',
+    'courier': 'courier',
+    'parcel': 'courier',
+    'delivery': 'courier',
+    'car hire': 'car_hire',
+    'rent': 'car_hire',
+    'rental': 'car_hire',
+    'accommodation': 'accommodation',
+    'accomodation': 'accommodation',
+    'hotel': 'accommodation',
+    'hostel': 'accommodation',
+    'rooms': 'accommodation',
+    'fx': 'fx',
+    'forex': 'fx',
+    'exchange rate': 'fx',
+    'exchange rates': 'fx',
+    'rates': 'fx',
+    'hair': 'hair',
+    'salon': 'hair',
+    'barber': 'hair',
+    'barbershop': 'hair',
+    'food': 'food',
+    'restaurant': 'food',
+    'order': 'food',
+    'meals': 'food',
+    'fitness': 'fitness',
+    'gym': 'fitness',
+    'workout': 'fitness',
+    'jobs': 'jobs',
+    'work': 'jobs',
+    'vacancies': 'jobs',
+    'vacancy': 'jobs',
+    'more': 'more'
+  };
+
+  Iterable<Mini> _filter(String q) {
+    final t = q.trim().toLowerCase();
+    if (t.isEmpty) return services;
+
+    final aliasKey = _aliases[t];
+    if (aliasKey != null) {
+      return services.where((m) => m.keyId == aliasKey);
+    }
+
+    // Fuzzy: contains any word from query in the label
+    final words = t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    return services.where((m) {
+      final l = m.label.toLowerCase();
+      return l.contains(t) || words.any(l.contains);
+    });
+  }
+
+  @override
+  Widget buildSuggestions(BuildContext context) {
+    if (query.trim().isEmpty) {
+      final popular = const [
+        'Taxi',
+        'Bike',
+        'Airport pickup',
+        'Food',
+        'Hotel',
+        'FX',
+        'Jobs',
+        'Courier'
+      ];
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final p in popular)
+              ActionChip(
+                label: Text(p),
+                onPressed: () {
+                  query = p.toLowerCase();
+                  showSuggestions(context);
+                },
+                backgroundColor: AppColors.brandOrangePale,
+                shape: StadiumBorder(side: BorderSide(color: AppColors.brandOrangeSoft)),
+              ),
+          ],
+        ),
+      );
+    }
+
+    final results = _filter(query).toList();
+    if (results.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'No matches. Try: taxi, bike, airport, hotel, forex, food, fitness, jobs...',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white),
+          ),
+        ),
+      );
+    }
+    return ListView.separated(
+      itemCount: results.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 6),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      itemBuilder: (_, i) {
+        final m = results[i];
+        return Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: AppColors.brandOrangeSoft),
+          ),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: AppColors.brandOrangePale,
+              child: Icon(m.icon, color: AppColors.brandOrange),
+            ),
+            title: Text(m.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+            subtitle: Text(m.keyId),
+            trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.body),
+            onTap: () => close(context, m),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget buildResults(BuildContext context) => buildSuggestions(context);
+
+  @override
+  List<Widget>? buildActions(BuildContext context) => [
+        if (query.isNotEmpty)
+          IconButton(
+            icon: const Icon(Icons.clear),
+            onPressed: () {
+              query = '';
+              showSuggestions(context);
+            },
+          ),
+      ];
+
+  @override
+  Widget? buildLeading(BuildContext context) => IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () => close(context, null),
+      );
 }
 
 /// NEAR YOU
@@ -783,24 +1133,38 @@ class _NearYouCarousel extends StatefulWidget {
 class _NearYouCarouselState extends State<_NearYouCarousel> {
   int _index = 0;
 
+  // Map the card name to the correct destination
+  void _openNearby(BuildContext context, String name) {
+    final t = name.toLowerCase();
+    if (t.contains('ride')) {
+      _Vero360HomepageState._openServiceStatic(context, 'taxi');
+    } else if (t.contains('food')) {
+      _Vero360HomepageState._openServiceStatic(context, 'food');
+    } else if (t.contains('accom')) {
+      _Vero360HomepageState._openServiceStatic(context, 'accommodation');
+    } else {
+      _Vero360HomepageState._openServiceStatic(context, 'more');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = const [
-      ['🚕', 'CityCab', '4.8'],
-      ['🍔', 'FoodExpress', '4.6'],
-      ['🏨', 'StayHub', '4.7'],
-      ['💼', 'UtilityPro', '4.9'],
+      ['🚕', 'Vero Ride', '4.8'],
+      ['🍔', 'Food & Restaurants', '4.6'],
+      ['🏨', 'Accomodations', '4.7'],
+      ['💼', 'Utility', '4.9'],
     ];
 
     return _Section(
-      title: 'Best Places Nearby',
+      title: 'Nearby Services',
       tight: true,
       gapAfterTitle: kGapAfterNearby,
       action: TextButton(
-        onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('See all tapped')),
-        ),
-        child: const Text('See all', style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
+        onPressed: () =>
+            _Vero360HomepageState._openServiceStatic(context, 'more'),
+        child: const Text('See all',
+            style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
       ),
       child: Column(
         children: [
@@ -819,7 +1183,12 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
             ),
             itemBuilder: (_, i, __) {
               final it = items[i];
-              return _ProviderCard(emoji: it[0], name: it[1], rating: it[2]);
+              return _ProviderCard(
+                emoji: it[0],
+                name: it[1],
+                rating: it[2],
+                onOpen: () => _openNearby(context, it[1]),
+              );
             },
           ),
           const SizedBox(height: 8),
@@ -832,33 +1201,56 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
 
 class _ProviderCard extends StatelessWidget {
   final String emoji, name, rating;
-  const _ProviderCard({required this.emoji, required this.name, required this.rating});
+  final VoidCallback onOpen;
+  const _ProviderCard({
+    required this.emoji,
+    required this.name,
+    required this.rating,
+    required this.onOpen,
+  });
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: AppColors.brandOrangeSoft)),
-      padding: const EdgeInsets.all(14),
-      child: Row(children: [
-        CircleAvatar(radius: 20, backgroundColor: AppColors.brandOrangePale, child: Text(emoji, style: const TextStyle(fontSize: 18))),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900)),
-            const SizedBox(height: 4),
-            Row(children: const [Icon(Icons.star, size: 16, color: Color(0xFFFFC107)), SizedBox(width: 2)]),
-          ]),
-        ),
-        const SizedBox(width: 6),
-        OutlinedButton(
-          onPressed: () {},
-          style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), side: const BorderSide(color: AppColors.brandOrange)),
-          child: const Text('Open', style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
-        ),
-      ]),
+    return InkWell(
+      onTap: onOpen, // tap anywhere on the card
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.brandOrangeSoft)),
+        padding: const EdgeInsets.all(14),
+        child: Row(children: [
+          CircleAvatar(
+              radius: 20,
+              backgroundColor: AppColors.brandOrangePale,
+              child: Text(emoji, style: const TextStyle(fontSize: 18))),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 4),
+              Row(children: const [
+                Icon(Icons.star, size: 16, color: Color(0xFFFFC107)),
+                SizedBox(width: 2)
+              ]),
+            ]),
+          ),
+          const SizedBox(width: 6),
+          OutlinedButton(
+            onPressed: onOpen, // button also routes
+            style: OutlinedButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                side: const BorderSide(color: AppColors.brandOrange)),
+            child: const Text('Open',
+                style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
+          ),
+        ]),
+      ),
     );
   }
 }
@@ -869,10 +1261,11 @@ class _DealsStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final deals = const [
-      ['🚕', 'Taxi: 20% off night rides'],
-      ['🍔', 'Food: free delivery this week'],
-      ['🏨', 'Stay: 3 nights, pay 2'],
-      ['💳', 'Mobile money: fee-off promos'],
+      ['🚕', 'Vero Ride: available 24/7'],
+      ['🍔', 'Food: order food on vero'],
+      ['🏨', 'Stay: All nights, pay now'],
+      ['💼', 'Utility: home cleaning deals'],
+      ['💳', 'Mobile money: send and receive money'],
     ];
     return SizedBox(
       height: 46,
@@ -886,10 +1279,138 @@ class _DealsStrip extends StatelessWidget {
             border: Border.all(color: AppColors.brandOrangeSoft),
             borderRadius: BorderRadius.circular(14),
           ),
-          child: Center(child: Text('${deals[i][0]}  ${deals[i][1]}', style: const TextStyle(fontWeight: FontWeight.w800, color: AppColors.title))),
+          child: Center(
+              child: Text('${deals[i][0]}  ${deals[i][1]}',
+                  style:
+                      const TextStyle(fontWeight: FontWeight.w800, color: AppColors.title))),
         ),
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemCount: deals.length,
+      ),
+    );
+  }
+}
+
+/* ───────────────────────────────────────────
+   DIGITAL & VIRTUAL SERVICES — circle tiles
+─────────────────────────────────────────── */
+class DigitalServicesSection extends StatelessWidget {
+  final void Function(DigitalProduct p) onBuy;
+  const DigitalServicesSection({super.key, required this.onBuy});
+
+  @override
+  Widget build(BuildContext context) {
+    return _Section(
+      title: 'Digital & Virtual Services',
+      action: TextButton(
+        onPressed: () => ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('See all digital services'))),
+        child: const Text('See all',
+            style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
+      ),
+      child: LayoutBuilder(builder: (ctx, c) {
+        final w = c.maxWidth;
+        const spacing = 10.0;
+        const minTileW = 90.0;
+
+        // Responsive columns 3..6
+        int cross = (w / minTileW).floor().clamp(3, 6);
+        double tileW = (w - (cross - 1) * spacing) / cross;
+
+        // If extremely tight, drop a column once
+        if (tileW < 86 && cross > 3) {
+          cross -= 1;
+          tileW = (w - (cross - 1) * spacing) / cross;
+        }
+
+        // Height math: circle + gap + two text lines + small pad
+        final textScale = MediaQuery.textScaleFactorOf(ctx).clamp(1.0, 1.2);
+        const circle = 52.0;
+        const gap = 4.0;
+        final twoLines = 11.0 * 1.25 * 2 * textScale; // ~ line-height
+        final minHeight = circle + gap + twoLines + 6.0;
+
+        // width/height; clamp to avoid overflow and weird tall tiles
+        final ratio = (tileW / minHeight).clamp(0.86, 1.15);
+
+        return MediaQuery(
+          data: MediaQuery.of(ctx).copyWith(
+            textScaler: MediaQuery.of(ctx).textScaler.clamp(maxScaleFactor: 1.2),
+          ),
+          child: GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            itemCount: kDigitalProducts.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: cross,
+              crossAxisSpacing: spacing,
+              mainAxisSpacing: 8,
+              childAspectRatio: ratio,
+            ),
+            itemBuilder: (_, i) {
+              final p = kDigitalProducts[i];
+              return _DigitalCircleTile(
+                p: p,
+                onTap: () => onBuy(p),
+              );
+            },
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _DigitalCircleTile extends StatelessWidget {
+  final DigitalProduct p;
+  final VoidCallback onTap;
+  const _DigitalCircleTile({required this.p, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Circle (logo or icon)
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: AppColors.brandOrangePale,
+              shape: BoxShape.circle,
+              border: Border.all(color: AppColors.brandOrange),
+            ),
+            child: ClipOval(
+              child: p.logoAsset != null
+                  ? Image.asset(
+                      p.logoAsset!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                          Icon(p.icon ?? Icons.shopping_bag, color: AppColors.title),
+                    )
+                  : Icon(p.icon ?? Icons.shopping_bag, size: 24, color: AppColors.title),
+            ),
+          ),
+          const SizedBox(height: 4),
+          // Two-line label (name)
+          Flexible(
+            child: Text(
+              p.name,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppColors.title,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -924,7 +1445,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("Latest Arrivals", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text("Latest Arrivals",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           FutureBuilder<List<LatestArrivalModels>>(
             future: _future,
@@ -938,7 +1460,10 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
               if (snap.hasError) {
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: Text('Could not load arrivals.\n${snap.error}', textAlign: TextAlign.center, style: TextStyle(color: Colors.red))),
+                  child: Center(
+                      child: Text('Could not load arrivals.\n${snap.error}',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.red))),
                 );
               }
 
@@ -951,7 +1476,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
               }
 
               final width = MediaQuery.of(context).size.width;
-              final cols  = width >= 1200 ? 4 : width >= 800 ? 3 : 2;
+              final cols = width >= 1200 ? 4 : width >= 800 ? 3 : 2;
               final ratio = width >= 1200 ? 0.95 : width >= 800 ? 0.85 : 0.72;
 
               return GridView.builder(
@@ -989,7 +1514,11 @@ class _ProductCardFromApi extends StatelessWidget {
   final String priceText;
   final Color brandOrange;
 
-  const _ProductCardFromApi({required this.imageUrl, required this.name, required this.priceText, required this.brandOrange});
+  const _ProductCardFromApi(
+      {required this.imageUrl,
+      required this.name,
+      required this.priceText,
+      required this.brandOrange});
 
   @override
   Widget build(BuildContext context) {
@@ -1002,15 +1531,26 @@ class _ProductCardFromApi extends StatelessWidget {
         children: [
           Expanded(
             child: ClipRRect(
-              borderRadius: const BorderRadius.only(topLeft: Radius.circular(16), topRight: Radius.circular(16)),
+              borderRadius:
+                  const BorderRadius.only(topLeft: Radius.circular(16), topRight: Radius.circular(16)),
               child: imageUrl.isNotEmpty
                   ? Image.network(
                       imageUrl,
                       fit: BoxFit.cover,
-                      loadingBuilder: (ctx, child, prog) => prog == null ? child : const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-                      errorBuilder: (_, __, ___) => Container(color: const Color(0xFFEDEDED), child: const Center(child: Icon(Icons.image_not_supported_rounded))),
+                      loadingBuilder: (ctx, child, prog) => prog == null
+                          ? child
+                          : const Center(
+                              child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2))),
+                      errorBuilder: (_, __, ___) => Container(
+                          color: const Color(0xFFEDEDED),
+                          child: const Center(child: Icon(Icons.image_not_supported_rounded))),
                     )
-                  : Container(color: const Color(0xFFEDEDED), child: const Center(child: Icon(Icons.image_not_supported_rounded))),
+                  : Container(
+                      color: const Color(0xFFEDEDED),
+                      child: const Center(child: Icon(Icons.image_not_supported_rounded))),
             ),
           ),
           Padding(
@@ -1019,9 +1559,18 @@ class _ProductCardFromApi extends StatelessWidget {
               children: [
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, softWrap: false, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                    Text(name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
                     const SizedBox(height: 4),
-                    Text(priceText, maxLines: 1, overflow: TextOverflow.ellipsis, softWrap: false, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.green)),
+                    Text(priceText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w700, color: Colors.green)),
                   ]),
                 ),
                 IconButton(
@@ -1042,23 +1591,26 @@ class _ProductCardFromApi extends StatelessWidget {
   void _showCardOptions(BuildContext context, String name) {
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => Padding(
         padding: const EdgeInsets.all(16),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('Choose an action', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+          const Text('Choose an action',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
           const SizedBox(height: 12),
           ListTile(
             leading: const Icon(Icons.shopping_cart, color: Colors.green),
             title: const Text('Add to cart'),
             onTap: () {
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$name added to cart')));
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text('$name added to cart')));
             },
           ),
           const Divider(height: 0),
           ListTile(
-            leading: Icon(Icons.info_outline_rounded, color: brandOrange),
+            leading: const Icon(Icons.info_outline_rounded, color: AppColors.brandOrange),
             title: const Text('More details'),
             onTap: () => Navigator.pop(context),
           ),
@@ -1068,7 +1620,7 @@ class _ProductCardFromApi extends StatelessWidget {
   }
 }
 
-/// Generic section wrapper (used by other sections)
+/// Generic section wrapper
 class _Section extends StatelessWidget {
   final String title;
   final Widget child;
@@ -1112,6 +1664,329 @@ class _Section extends StatelessWidget {
           child,
         ],
       ),
+    );
+  }
+}
+
+/// Minimal Utility placeholder
+class UtilityPage extends StatelessWidget {
+  final String title;
+  const UtilityPage({super.key, this.title = 'Utility'});
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(child: Text('$title coming soon')),
+    );
+  }
+}
+
+/* ───────────────────────────────────────────
+   DIGITAL PRODUCT DETAIL / CHECKOUT PAGE
+─────────────────────────────────────────── */
+class DigitalProductDetailPage extends StatefulWidget {
+  final DigitalProduct product;
+  final String? initialEmail;
+  final String? initialPhone;
+  final String? initialName;
+
+  const DigitalProductDetailPage({
+    super.key,
+    required this.product,
+    this.initialEmail,
+    this.initialPhone,
+    this.initialName,
+  });
+
+  @override
+  State<DigitalProductDetailPage> createState() => _DigitalProductDetailPageState();
+}
+
+class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _phoneCtrl;
+  late final TextEditingController _emailCtrl;
+  bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.initialName ?? '');
+    _phoneCtrl = TextEditingController(text: widget.initialPhone ?? '');
+    _emailCtrl = TextEditingController(text: widget.initialEmail ?? '');
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    super.dispose();
+  }
+
+  bool _isValidMwLocalPhone(String input) {
+    final digits = input.replaceAll(RegExp(r'\D'), '');
+    // 10 digits, starting with 08 or 09
+    return RegExp(r'^0[89]\d{8}$').hasMatch(digits);
+  }
+
+  Future<void> _payNow() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _submitting = true);
+
+    try {
+      // TODO: Wire to your backend checkout (e.g., POST to ${ApiConfig.prod}/vero/digital/checkout )
+      await Future.delayed(const Duration(seconds: 1));
+
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: const Text('Order Created'),
+          content: Text(
+            'Thanks ${_nameCtrl.text.trim()}, we\'ll email your ${widget.product.name} key to ${_emailCtrl.text.trim()}.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context)
+                ..pop() // close dialog
+                ..pop(), // go back to previous page
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Payment failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.product;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Buy ${p.name}'),
+        backgroundColor: AppColors.brandOrange,
+        foregroundColor: Colors.white,
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header card with brand circle + product summary
+              Container(
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: AppColors.brandOrangeSoft),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x14000000), blurRadius: 8, offset: Offset(0, 2)),
+                  ],
+                ),
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        color: AppColors.brandOrangePale,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: AppColors.brandOrange),
+                      ),
+                      child: ClipOval(
+                        child: p.logoAsset != null
+                            ? Image.asset(
+                                p.logoAsset!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    Icon(p.icon ?? Icons.shopping_bag, color: AppColors.title),
+                              )
+                            : Icon(p.icon ?? Icons.shopping_bag,
+                                size: 26, color: AppColors.title),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(p.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                          const SizedBox(height: 2),
+                          Text(p.subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: AppColors.body, fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 6),
+                          Text(
+                            p.price,
+                            style: const TextStyle(
+                                color: Colors.green, fontWeight: FontWeight.w800),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Form
+              Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    _LabeledField(
+                      label: 'Full name',
+                      controller: _nameCtrl,
+                      keyboardType: TextInputType.name,
+                      validator: (v) {
+                        final t = v?.trim() ?? '';
+                        if (t.length < 2) return 'Enter your name';
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _LabeledField(
+                      label: 'Phone Number',
+                      controller: _phoneCtrl,
+                      keyboardType: TextInputType.phone,
+                      validator: (v) {
+                        final t = v?.trim() ?? '';
+                        if (!_isValidMwLocalPhone(t)) {
+                          return 'Enter 10 digits starting with 08 or 09';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _LabeledField(
+                      label: 'Email address',
+                      controller: _emailCtrl,
+                      keyboardType: TextInputType.emailAddress,
+                      validator: (v) {
+                        final t = v?.trim() ?? '';
+                        if (t.isEmpty) return 'Enter your email';
+                        final ok = RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(t);
+                        if (!ok) return 'Enter a valid email';
+                        return null;
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              // Pay button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _submitting ? null : _payNow,
+                  icon: _submitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.lock_outline_rounded),
+                  label: Text(_submitting ? 'Processing...' : 'Pay Now'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.brandOrange,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 10),
+
+              Center(
+                child: Text(
+                  'Secure checkout • You’ll receive your code via email',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: AppColors.body, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Nice orange-themed text field with label on top
+class _LabeledField extends StatelessWidget {
+  final String label;
+  final TextEditingController controller;
+  final TextInputType? keyboardType;
+  final String? Function(String?)? validator;
+
+  const _LabeledField({
+    required this.label,
+    required this.controller,
+    this.keyboardType,
+    this.validator,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: AppColors.brandOrangeSoft),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(
+                fontWeight: FontWeight.w800, color: AppColors.title, fontSize: 13)),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: controller,
+          keyboardType: keyboardType,
+          validator: validator,
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            enabledBorder: border,
+            focusedBorder: border.copyWith(
+              borderSide: const BorderSide(color: AppColors.brandOrange),
+            ),
+            errorBorder: border.copyWith(
+              borderSide: const BorderSide(color: Colors.redAccent),
+            ),
+            focusedErrorBorder: border.copyWith(
+              borderSide: const BorderSide(color: Colors.redAccent),
+            ),
+            fillColor: Colors.white,
+            filled: true,
+            hintText: label,
+          ),
+        ),
+      ],
     );
   }
 }

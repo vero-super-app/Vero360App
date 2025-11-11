@@ -8,9 +8,9 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Load key.properties from android/key.properties
+// Load key.properties
 val keystoreProperties = Properties()
-val keystorePropertiesFile = rootProject.file("key.properties")
+val keystorePropertiesFile = rootProject.file("key.properties") // or "android/key.properties"
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
@@ -28,13 +28,22 @@ android {
         multiDexEnabled = true
     }
 
-    // 🔐 ADD THIS: use your upload-keystore.jks for release signing
     signingConfigs {
-        create("release") {
-            keyAlias = keystoreProperties["keyAlias"] as String
-            keyPassword = keystoreProperties["keyPassword"] as String
-            storeFile = keystoreProperties["storeFile"]?.let { file(it) }
-            storePassword = keystoreProperties["storePassword"] as String
+        // Only create release signing config if key.properties exists
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                    ?: error("keyAlias is missing in key.properties")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                    ?: error("keyPassword is missing in key.properties")
+
+                val storeFilePath = keystoreProperties.getProperty("storeFile")
+                    ?: error("storeFile is missing in key.properties")
+                storeFile = file(storeFilePath)
+
+                storePassword = keystoreProperties.getProperty("storePassword")
+                    ?: error("storePassword is missing in key.properties")
+            }
         }
     }
 
@@ -42,13 +51,15 @@ android {
         getByName("debug") {
             isMinifyEnabled = false
             isShrinkResources = false
-            // usually debug uses debug keystore, no need to touch
+            // debug will use the default debug keystore
         }
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
-            // ✅ make sure release uses your real signing config
-            signingConfig = signingConfigs.getByName("release")
+            // Only set signingConfig if we created it
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }

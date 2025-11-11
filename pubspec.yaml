@@ -13,7 +13,6 @@ dependencies:
 
   # Core Flutter
   cupertino_icons: ^1.0.8
-  #cupertino_icons: ^1.0.6
   web_socket_channel: ^2.4.0
   http: ^1.2.2
   intl: ^0.20.1
@@ -59,18 +58,17 @@ dependencies:
   jwt_decoder: ^2.0.1
 
 dev_dependencies:
-  flutter_launcher_icons: ^0.14.4
-
-flutter_icons:
-android: true
-ios: true
-image_path: "assets/icons/playstore.png"
-
-
-flutter_test:
-  sdk: flutter
+  flutter_test:
+    sdk: flutter
   flutter_lints: ^5.0.0
   firebase_auth_mocks: ^0.14.1
+  flutter_launcher_icons: ^0.14.4
+  rename: ^3.0.1 
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/playstore.png"
 
 dependency_overrides:
   firebase_storage_web: ^3.6.22
@@ -79,7 +77,7 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/playstore.png
+    - assets/icons/playstore.png
     - assets/happy.jpg
     - assets/uber-cabs-1024x576.webp
     - assets/Queens-Tavern-Steak.jpg
@@ -90,4 +88,3 @@ flutter:
     - assets/brands/apple_music.png
     - assets/brands/netflix.png
     - assets/brands/chatgpt.png
-

@@ -1,4 +1,6 @@
-// android/app/build.gradle.kts
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -6,49 +8,47 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Load key.properties from android/key.properties
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace = "com.vero.vero360"
-    compileSdk = 36
+    compileSdk = flutter.compileSdkVersion
 
-   defaultConfig {
-    applicationId = "com.vero.vero360"
-    minSdk = 23               // 🔴 force minSdk 23
-    targetSdk = 36
-    versionCode = 10001
-    versionName = "1.0.1"
-    multiDexEnabled = true
-}
+    defaultConfig {
+        applicationId = "com.vero.vero360"
+        minSdk = flutter.minSdkVersion
+        targetSdk = flutter.targetSdkVersion
+        versionCode = 10001
+        versionName = "1.0.1"
+        multiDexEnabled = true
+    }
 
+    // 🔐 ADD THIS: use your upload-keystore.jks for release signing
+    signingConfigs {
+        create("release") {
+            keyAlias = keystoreProperties["keyAlias"] as String
+            keyPassword = keystoreProperties["keyPassword"] as String
+            storeFile = keystoreProperties["storeFile"]?.let { file(it) }
+            storePassword = keystoreProperties["storePassword"] as String
+        }
+    }
 
     buildTypes {
-        debug {
+        getByName("debug") {
             isMinifyEnabled = false
             isShrinkResources = false
+            // usually debug uses debug keystore, no need to touch
         }
-        release {
+        getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            // allows `flutter run --release` without a keystore
-            signingConfig = signingConfigs.getByName("debug")
+            // ✅ make sure release uses your real signing config
+            signingConfig = signingConfigs.getByName("release")
         }
     }
-
-    // AGP 8+ uses Java 17
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions { jvmTarget = "17" }
-
-    packaging {
-        resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
-    }
-}
-
-flutter {
-    source = "../.."
 }

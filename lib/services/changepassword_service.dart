@@ -1,129 +1,87 @@
+// lib/services/account_service.dart
+
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:http/http.dart' as http;
+
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/services/api_client.dart';
+import 'package:vero360_app/services/api_exception.dart';
 
 class AccountService {
-  /// Public method: change password for the *current* user (no id required in UI).
+
+  /// Public method: change password for the current user
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,
   }) async {
     final token = await _readToken();
     if (token == null || token.isEmpty) {
-      throw Exception('No auth token found. Please log in again.');
+      throw const ApiException(
+        message: 'Please sign in again before changing your password.',
+      );
     }
 
-    final base = await ApiConfig.prod;
-    final headers = {
-      'Accept': '*/*', // match your working cURL
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $token',
-    };
-    final body = jsonEncode({
-      'currentPassword': currentPassword,
-      'newPassword': newPassword,
-    });
-
-    // 1) Try /users/me/password if backend supports it
-    final meUri = Uri.parse('$base/users/me/password');
-    final meRes = await http.put(meUri, headers: headers, body: body);
-
-    if (meRes.statusCode == 200 || meRes.statusCode == 204) {
-      return; // success
-    }
-
-    // If endpoint not found/allowed, fallback to id route
-    if (meRes.statusCode == 404 || meRes.statusCode == 405) {
-      final userId = await _resolveUserId(token, base, headers);
-      final idUri = Uri.parse('$base/users/$userId/password');
-      final idRes = await http.put(idUri, headers: headers, body: body);
-      if (idRes.statusCode == 200 || idRes.statusCode == 204) {
-        return; // success
+    // Try /users/me/password
+    try {
+      await ApiClient.put(
+        '/users/me/password',
+        headers: {'Authorization': 'Bearer $token'},
+        body: jsonEncode({
+          'currentPassword': currentPassword,
+          'newPassword': newPassword,
+        }),
+      );
+      return;
+    } on ApiException catch (e) {
+      // if endpoint doesn’t exist → use fallback route
+      if (e.statusCode == 404 || e.statusCode == 405) {
+        final userId = await _resolveUserId(token);
+        await ApiClient.put(
+          '/users/$userId/password',
+          headers: {'Authorization': 'Bearer $token'},
+          body: jsonEncode({
+            'currentPassword': currentPassword,
+            'newPassword': newPassword,
+          }),
+        );
+        return;
       }
-      _throwFor(idRes);
+      rethrow; // user-friendly message already
     }
-
-    // If backend returned another error on /users/me/password, surface it
-    _throwFor(meRes);
   }
 
   // ---------- helpers ----------
 
   Future<String?> _readToken() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('jwt_token') ?? prefs.getString('token');
+    return prefs.getString('token') ??
+           prefs.getString('jwt_token') ??
+           prefs.getString('jwt');
   }
 
-  Future<int> _resolveUserId(String token, String base, Map<String, String> headers) async {
+  Future<int> _resolveUserId(String token) async {
     final prefs = await SharedPreferences.getInstance();
 
-    // a) cached id?
+    // cached ID?
     final cached = prefs.getInt('user_id');
     if (cached != null && cached > 0) return cached;
 
-    // b) decode JWT sub
-    final fromJwt = _jwtSub(token);
-    if (fromJwt != null && fromJwt > 0) {
-      await prefs.setInt('user_id', fromJwt);
-      return fromJwt;
-    }
-
-    // c) fallback GET /users/me
-    final res = await http.get(Uri.parse('$base/users/me'), headers: headers);
-    if (res.statusCode == 200) {
+    // Try /users/me
+    try {
+      final res = await ApiClient.get(
+        '/users/me',
+        headers: {'Authorization': 'Bearer $token'},
+      );
       final data = jsonDecode(res.body);
-      final id = (data is Map && data['id'] != null)
-          ? int.tryParse(data['id'].toString())
-          : null;
-      if (id != null) {
+      final id = int.tryParse(data['id']?.toString() ?? '');
+      if (id != null && id > 0) {
         await prefs.setInt('user_id', id);
         return id;
       }
-    }
+    } catch (_) {}
 
-    throw Exception('Could not resolve current user id.');
-  }
-
-  int? _jwtSub(String jwt) {
-    try {
-      final parts = jwt.split('.');
-      if (parts.length != 3) return null;
-      final payload = _base64UrlDecode(parts[1]);
-      final map = jsonDecode(utf8.decode(payload));
-      final sub = map['sub'];
-      if (sub is int) return sub;
-      if (sub is String) return int.tryParse(sub);
-      return null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Uint8List _base64UrlDecode(String input) {
-    var s = input.replaceAll('-', '+').replaceAll('_', '/');
-    switch (s.length % 4) {
-      case 2: s += '=='; break;
-      case 3: s += '='; break;
-    }
-    return base64.decode(s);
-  }
-
-  Never _throwFor(http.Response res) {
-    String msg;
-    try {
-      final parsed = jsonDecode(res.body);
-      if (parsed is Map) {
-        msg = (parsed['message'] ?? parsed['error'] ?? res.body).toString();
-      } else if (parsed is List && parsed.isNotEmpty) {
-        msg = parsed.first.toString();
-      } else {
-        msg = res.body;
-      }
-    } catch (_) {
-      msg = res.body;
-    }
-    throw Exception('HTTP ${res.statusCode}: $msg');
+    throw const ApiException(
+      message: 'Could not determine your account information. Please sign in again.',
+    );
   }
 }

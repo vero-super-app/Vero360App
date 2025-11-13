@@ -3,6 +3,7 @@ class MarketplaceItem {
   final double price;
   final String image;                 // cover URL
   final String? description;
+  final String location;
   final bool isActive;
   final String? category;
   final List<String>? gallery;        // extra image URLs
@@ -12,6 +13,7 @@ class MarketplaceItem {
     required this.name,
     required this.price,
     required this.image,
+    required this.location,
     this.description,
     this.isActive = true,
     this.category,
@@ -23,6 +25,7 @@ class MarketplaceItem {
         'name': name,
         'price': price,
         'image': image,
+        'location': location,
         if (description != null) 'description': description,
         'isActive': isActive,
         if (category != null) 'category': category,
@@ -37,6 +40,7 @@ class MarketplaceDetailModel {
   final String image;
   final double price;
   final String description;
+  final String location;
   final String? comment;
   final String? category;
   final List<String> gallery;
@@ -58,6 +62,7 @@ class MarketplaceDetailModel {
     required this.image,
     required this.price,
     required this.description,
+    required this.location,
     this.comment,
     this.category,
     this.gallery = const [],
@@ -87,6 +92,7 @@ class MarketplaceDetailModel {
     image: '${j['image'] ?? ''}',
     price: _num(j['price'] ?? 0),
     description: '${j['description'] ?? ''}',
+    location: '${j['location'] ?? ''}',
     comment: j['comment']?.toString(),
     category: j['category']?.toString(),
     gallery: _arr(j['gallery']),

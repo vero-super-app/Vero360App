@@ -1,34 +1,15 @@
 // lib/services/hostel_service.dart
-import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart'
-    show kIsWeb, defaultTargetPlatform, TargetPlatform;
-import 'package:http/http.dart' as http;
-import 'package:vero360_app/models/Latest_model.dart';
 
+import 'package:vero360_app/models/Latest_model.dart';
+import 'package:vero360_app/services/api_client.dart';
+import 'package:vero360_app/services/api_exception.dart';
 
 class LatestArrivalServices {
-  String _localHost() {
-    if (kIsWeb) return 'localhost'; // Flutter web
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      return '10.0.2.2'; // Android emulator -> host machine
-    }
-    return '127.0.0.1'; // iOS sim / desktop
-  }
-
-  Uri _allUri() => Uri.parse('https://unimatherapyapplication.com/vero/latestarrivals');
-
   Future<List<LatestArrivalModels>> fetchLatestArrivals() async {
     try {
-      final response = await http
-          .get(_allUri(), headers: {'Accept': 'application/json'})
-          .timeout(const Duration(seconds: 20));
-
-      if (response.statusCode != 200) {
-        throw Exception(
-          'GET /latestarrivals failed: ${response.statusCode} ${response.body}',
-        );
-      }
+      // 🌐 Single source of truth for URLs + resilience
+      final response = await ApiClient.get('/latestarrivals');
 
       final decoded = jsonDecode(response.body);
 
@@ -43,12 +24,14 @@ class LatestArrivalServices {
           .whereType<Map<String, dynamic>>()
           .map<LatestArrivalModels>((m) => LatestArrivalModels.fromJson(m))
           .toList();
-    } on TimeoutException {
-      throw Exception('Request timed out. Please try again.');
-    } on http.ClientException catch (e) {
-      throw Exception('Network error: $e');
-    } catch (e) {
-      throw Exception('Unexpected error: $e');
+    } on ApiException {
+      // Re-throw so UI can handle a clean message
+      rethrow;
+    } catch (_) {
+      // Any weird decode errors, etc.
+      throw const ApiException(
+        message: 'Failed to load latest arrivals. Please try again.',
+      );
     }
   }
 }

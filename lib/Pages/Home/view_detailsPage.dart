@@ -498,12 +498,6 @@ class _DetailsPageState extends State<DetailsPage> {
 
               const SizedBox(height: 16),
 
-              TextField(
-                controller: _commentController,
-                maxLines: 3,
-                decoration: _inputDecoration(hint: "Add a note (optional)"),
-              ),
-              const SizedBox(height: 16),
 
               SizedBox(
                 width: double.infinity,

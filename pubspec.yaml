@@ -68,7 +68,7 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icons/playstore.png"
+  image_path: "assets/icons/logo_mark.png"
 
 dependency_overrides:
   firebase_storage_web: ^3.6.22
@@ -77,7 +77,7 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/icons/playstore.png
+    - assets/icons/logo_mark.png
     - assets/happy.jpg
     - assets/uber-cabs-1024x576.webp
     - assets/Queens-Tavern-Steak.jpg

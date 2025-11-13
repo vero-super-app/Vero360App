@@ -1,5 +1,6 @@
 import java.util.Properties
 import java.io.FileInputStream
+import org.gradle.api.JavaVersion
 
 plugins {
     id("com.android.application")
@@ -21,14 +22,23 @@ android {
 
     defaultConfig {
         applicationId = "com.vero.vero360"
-        minSdk = flutter.minSdkVersion
+        minSdk = 23
         targetSdk = flutter.targetSdkVersion
         versionCode = 10001
         versionName = "1.0.1"
         multiDexEnabled = true
     }
 
-    // 🔐 ADD THIS: use your upload-keystore.jks for release signing
+    // ✅ Make Java & Kotlin use the same JVM target (1.8)
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_1_8.toString()
+    }
+
+    // 🔐 Release signing with your upload-keystore.jks
     signingConfigs {
         create("release") {
             keyAlias = keystoreProperties["keyAlias"] as String
@@ -42,12 +52,10 @@ android {
         getByName("debug") {
             isMinifyEnabled = false
             isShrinkResources = false
-            // usually debug uses debug keystore, no need to touch
         }
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
-            // ✅ make sure release uses your real signing config
             signingConfig = signingConfigs.getByName("release")
         }
     }

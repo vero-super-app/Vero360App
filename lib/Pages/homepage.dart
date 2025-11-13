@@ -100,7 +100,7 @@ const List<DigitalProduct> kDigitalProducts = [
   DigitalProduct(
     key: 'spotify',
     name: 'Spotify Premium',
-    subtitle: '1-month key',
+    subtitle: '1-month subscription',
     price: 'MWK 8,000',
     logoAsset: 'assets/brands/spotify.png',
     icon: Icons.music_note_rounded,
@@ -108,7 +108,7 @@ const List<DigitalProduct> kDigitalProducts = [
   DigitalProduct(
     key: 'apple_music',
     name: 'Apple Music',
-    subtitle: '1-month key',
+    subtitle: '1-month subscription',
     price: 'MWK 8,000',
     logoAsset: 'assets/brands/apple_music.png',
     icon: Icons.music_note_rounded,
@@ -116,7 +116,7 @@ const List<DigitalProduct> kDigitalProducts = [
   DigitalProduct(
     key: 'netflix',
     name: 'Netflix',
-    subtitle: '1-month key',
+    subtitle: '1-month subscription',
     price: 'MWK 12,000',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
@@ -124,7 +124,7 @@ const List<DigitalProduct> kDigitalProducts = [
   DigitalProduct(
     key: 'chatgpt_plus',
     name: 'ChatGPT Plus',
-    subtitle: '1-month key',
+    subtitle: '1-month subscription',
     price: 'MWK 16,000',
     logoAsset: 'assets/brands/chatgpt.png',
     icon: Icons.chat_bubble_outline_rounded,
@@ -195,7 +195,7 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
     ),
   ];
   
-final cartService = CartService('https://unimatherapyapplication.com/vero/', apiPrefix: 'api');
+final cartService = CartService('https://unimatherapyapplication.com/vero/', apiPrefix: 'vero');
 
   @override
   void initState() {
@@ -388,7 +388,7 @@ final cartService = CartService('https://unimatherapyapplication.com/vero/', api
         break;
 
       case 'courier':
-        page = const UtilityPage(title: 'Vero Courier'); // placeholder
+        page = const VerocourierPage();
         break;
 
       case 'vero_bike':

@@ -9,14 +9,14 @@ import 'package:geolocator/geolocator.dart';
 const Color kBrandOrange = Color(0xFFFF8A00);
 const Color kBrandSoft   = Color(0xFFFFE8CC);
 
-class UtilityPage extends StatefulWidget {
-  const UtilityPage({super.key});
+class VerocourierPage extends StatefulWidget {
+  const VerocourierPage ({super.key});
 
   @override
-  State<UtilityPage> createState() => _UtilityPageState();
+  State<VerocourierPage > createState() => _VerocourierPageState();
 }
 
-class _UtilityPageState extends State<UtilityPage> {
+class _VerocourierPageState extends State<VerocourierPage > {
   // ---- Lilongwe geofence ----
   static final LatLng _lilongweCenter = LatLng(-13.9626, 33.7741);
   static const double _llRadiusKm = 60;
@@ -196,7 +196,7 @@ class _UtilityPageState extends State<UtilityPage> {
     if (_pickup == null) return _toast('Set a pickup location (tap Pick on Map).');
     if (_dropoff == null) return _toast('Set a drop-off location (tap Pick on Map).');
     if (!(_insideLilongwe(_pickup!) && _insideLilongwe(_dropoff!))) {
-      return _toast('Local Vero Courier is Lilongwe-only. Keep both pins inside Lilongwe.');
+      return _toast('Local Vero Courier is in Lilongwe-only. Keep both pins inside Lilongwe.');
     }
     final fare = _localFare();
     // TODO: POST to backend: mode=local, pickupLatLng, dropoffLatLng, vehicleId, fareEstimate
@@ -526,19 +526,25 @@ class _UtilityPageState extends State<UtilityPage> {
                           ),
                         ),
                         const SizedBox(height: 12),
-
                         _Labeled(
-                          label: 'Destination Address (optional details)',
-                          child: TextField(
-                            controller: _destAddressCtrl,
-                            decoration: _inputDecoration().copyWith(
-                              hintText: 'Street, contact name & phone…',
-                            ),
-                            maxLines: 2,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
+  label: 'Destination Address (required details)',
+  child: TextFormField(
+    controller: _destAddressCtrl,
+    decoration: _inputDecoration().copyWith(
+      hintText: 'receiver name & phone…',
+      suffixText: '*',
+      suffixStyle: const TextStyle(color: Colors.red),
+    ),
+    maxLines: 2,
+    autovalidateMode: AutovalidateMode.onUserInteraction,
+    validator: (v) =>
+        (v == null || v.trim().isEmpty) ? 'This field is required' : null,
+  ),
+),
 
+const SizedBox(height: 12),
+
+                       
                         _Labeled(
                           label: 'Courier Partner',
                           child: Wrap(

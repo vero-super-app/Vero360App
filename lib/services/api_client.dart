@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -79,6 +78,24 @@ class ApiClient {
     );
   }
 
+  // ✅ NEW: PATCH helper
+  static Future<http.Response> patch(
+    String path, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration? timeout,
+    Set<int>? allowedStatusCodes,
+  }) {
+    return _request(
+      method: 'PATCH',
+      path: path,
+      headers: headers,
+      body: body,
+      timeout: timeout,
+      allowedStatusCodes: allowedStatusCodes,
+    );
+  }
+
   // ---------- Core request + error handling ----------
 
   static Future<http.Response> _request({
@@ -107,6 +124,7 @@ class ApiClient {
 
     try {
       Future<http.Response> future;
+
       switch (method) {
         case 'GET':
           future = http.get(uri, headers: allHeaders);
@@ -119,6 +137,9 @@ class ApiClient {
           break;
         case 'DELETE':
           future = http.delete(uri, headers: allHeaders, body: body);
+          break;
+        case 'PATCH':
+          future = http.patch(uri, headers: allHeaders, body: body);
           break;
         default:
           throw ArgumentError('Unsupported HTTP method: $method');
@@ -146,11 +167,10 @@ class ApiClient {
           }
         }
       } catch (_) {
-    
+        // ignore JSON errors
       }
 
       if (kDebugMode) {
-        // Debug only; only path, no full base URL
         debugPrint(
           'API $method ${uri.path} -> ${res.statusCode} ${res.body}',
         );

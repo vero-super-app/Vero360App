@@ -1,25 +1,32 @@
-// lib/services/api_config.dart
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 class ApiConfig {
-  /// PRIMARY + BACKUP PROD SERVERS
+  /// List of PROD servers.
 
-  /// set up a second instance / load balancer).
-  static const String _primaryProd = 'https://unimatherapyapplication.com/vero';
-  static const String _backupProd  = 'https://backup.unimatherapyapplication.com/vero';
+  /// For now: ONE real server.
+  /// When you have a real backup, add it here:
+
+  static const List<String> _prodServers = [
+    'https://unimatherapyapplication.com/vero',
+  
+    // 'https://backup.unimatherapyapplication.com/vero', // <- REAL backup later
+  ];
 
   static const String _prefsKeyBase = 'api_base';
 
   static bool _inited = false;
 
-
-  static String _base = _primaryProd;
+  /// Active base (no trailing slash, includes `/vero`)
+  static String _base = _prodServers.first;
 
   static String get prod => _base;
   static String get prodBase => _base;
 
+  // ---------------------------------------------------------------------------
+  // INIT & BASE SELECTION
+  // ---------------------------------------------------------------------------
 
   static Future<void> init() async {
     if (_inited) return;
@@ -30,15 +37,12 @@ class ApiConfig {
     if (saved != null && saved.trim().isNotEmpty) {
       _base = _normalizeBase(saved);
     } else {
-      _base = _normalizeBase(_primaryProd);
+      _base = _normalizeBase(_prodServers.first);
     }
 
-    // Pick the best reachable between primary + backup
     await _selectBestBase();
-
     _inited = true;
   }
-
 
   static Future<String> readBase() async {
     if (!_inited) await init();
@@ -48,14 +52,16 @@ class ApiConfig {
   static Future<void> useProd() => init();
   static Future<void> setBase(String _ignored) => useProd();
 
- 
+  // ---------------------------------------------------------------------------
+  // URL BUILDERS
+  // ---------------------------------------------------------------------------
+
   static Uri endpoint(String path) {
     final p = path.startsWith('/') ? path : '/$path';
-    return Uri.parse('$_base$p'); 
+    return Uri.parse('$_base$p'); // e.g. https://.../vero/auth/login
   }
 
-  /// Build URIs that ignore `/vero` (for /healthz, /, etc.).
-
+  /// For /healthz, /, etc. (ignores /vero prefix).
   static Uri rootEndpoint(String path) {
     final p = path.startsWith('/') ? path : '/$path';
     final u = Uri.parse(_base);
@@ -71,29 +77,20 @@ class ApiConfig {
   // RESILIENCE & HEALTH CHECKS
   // ---------------------------------------------------------------------------
 
-  /// Ensure some backend is up.
-  /// - Checks current `_base`
-  /// - If dead, tries backup
-  /// - Updates `_base` + persists if it switches
+
   static Future<bool> ensureBackendUp({
     Duration timeout = const Duration(milliseconds: 800),
   }) async {
     await init();
 
-    // 1) Try current base
+    // 1) try the current base
     if (await _isReachable(_base, timeout: timeout)) {
       return true;
     }
 
-    // 2) Try the other one (primary/backup)
-    final candidates = <String>{
-      _normalizeBase(_primaryProd),
-      _normalizeBase(_backupProd),
-    }.toList();
-
-    candidates.remove(_base); // don't re-test the one that just failed
-
-    for (final candidate in candidates) {
+    // 2) try others in the list (if you add backups later)
+    for (final candidate in _prodServers.map(_normalizeBase)) {
+      if (candidate == _base) continue;
       if (await _isReachable(candidate, timeout: timeout)) {
         _base = candidate;
         final prefs = await SharedPreferences.getInstance();
@@ -105,7 +102,6 @@ class ApiConfig {
     return false; // nothing reachable
   }
 
-  /// Simple public health check that uses the current base.
   static Future<bool> prodReachable({
     Duration timeout = const Duration(milliseconds: 800),
   }) async {
@@ -113,28 +109,25 @@ class ApiConfig {
     return _isReachable(_base, timeout: timeout);
   }
 
-
+  // ---------------------------------------------------------------------------
+  // INTERNAL HELPERS
+  // ---------------------------------------------------------------------------
 
   static String _normalizeBase(String s) =>
       s.trim().replaceFirst(RegExp(r'/+$'), '');
 
   static Future<void> _selectBestBase() async {
-    final candidates = [
-      _normalizeBase(_primaryProd),
-      _normalizeBase(_backupProd),
-    ];
-
-    for (final c in candidates) {
-      if (await _isReachable(c)) {
-        _base = c;
+    // Try the configured servers in order.
+    for (final raw in _prodServers) {
+      final candidate = _normalizeBase(raw);
+      if (await _isReachable(candidate)) {
+        _base = candidate;
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_prefsKeyBase, _base);
         return;
       }
     }
-
-    // If both look dead, still pick primary as default.
-    _base = candidates.first;
+    // If none reachable, keep whatever was there; app will show error.
   }
 
   static Future<bool> _isReachable(
@@ -149,10 +142,10 @@ class ApiConfig {
     );
 
     final probes = <Uri>[
-      root.replace(path: '/healthz'),     // matches your Nest /healthz
+      root.replace(path: '/healthz'),
       root.replace(path: '/health'),
       root.replace(path: '/'),
-      Uri.parse('$base/auth/login'),      // prove /vero side also works
+      Uri.parse('$base/auth/login'),
     ];
 
     for (final uri in probes) {
@@ -162,11 +155,9 @@ class ApiConfig {
           return true;
         }
       } catch (_) {
-        // ignore error and try next probe
+        // ignore and try next probe
       }
     }
     return false;
   }
-
-
 }

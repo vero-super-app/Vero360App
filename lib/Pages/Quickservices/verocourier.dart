@@ -1,30 +1,40 @@
 // lib/Pages/address.dart  (Vero Courier)
+
 import 'dart:async';
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:vero360_app/models/courier.models.dart';
+
+import 'package:vero360_app/services/api_exception.dart';
+import 'package:vero360_app/services/vero_courier_service.dart';
 
 // ---- Brand (file-level so all widgets can use these) ----
 const Color kBrandOrange = Color(0xFFFF8A00);
-const Color kBrandSoft   = Color(0xFFFFE8CC);
+const Color kBrandSoft = Color(0xFFFFE8CC);
 
 class VerocourierPage extends StatefulWidget {
-  const VerocourierPage ({super.key});
+  const VerocourierPage({super.key});
 
   @override
-  State<VerocourierPage > createState() => _VerocourierPageState();
+  State<VerocourierPage> createState() => _VerocourierPageState();
 }
 
-class _VerocourierPageState extends State<VerocourierPage > {
+class _VerocourierPageState extends State<VerocourierPage> {
   // ---- Lilongwe geofence ----
   static final LatLng _lilongweCenter = LatLng(-13.9626, 33.7741);
   static const double _llRadiusKm = 60;
 
   // ---- Google Map state ----
   GoogleMapController? _map;
-  static final CameraPosition _initialCamera =
-      const CameraPosition(target: LatLng(-14.3, 34.3), zoom: 6.8); // Malawi fallback
+  static const CameraPosition _initialCamera = CameraPosition(
+    target: LatLng(-14.3, 34.3), // Malawi fallback
+    zoom: 6.8,
+  );
 
   // ---- Device location banner info ----
   LatLng? _myLatLng;
@@ -38,15 +48,22 @@ class _VerocourierPageState extends State<VerocourierPage > {
 
   // Vehicle options for local courier (bike/car/van)
   static const List<_Vehicle> _vehicles = [
-    _Vehicle(id: 'bike', label: 'Bike', note: 'Small parcels', base: 2500, perKm: 500),
-    _Vehicle(id: 'car', label: 'Car', note: 'Medium loads', base: 4000, perKm: 800),
-    _Vehicle(id: 'van', label: 'Van', note: 'Bulk items', base: 7000, perKm: 1200),
+    _Vehicle(
+        id: 'bike',
+        label: 'Bike',
+        note: 'Small parcels',
+        base: 2500,
+        perKm: 500),
+    _Vehicle(
+        id: 'car', label: 'Car', note: 'Medium loads', base: 4000, perKm: 800),
+    _Vehicle(
+        id: 'van', label: 'Van', note: 'Bulk items', base: 7000, perKm: 1200),
   ];
   _Vehicle _vehicle = _vehicles.first;
 
   // ---- Inter-district mode ----
   final TextEditingController _destDistrictCtrl = TextEditingController();
-  final TextEditingController _destAddressCtrl  = TextEditingController();
+  final TextEditingController _destAddressCtrl = TextEditingController();
   String _courier = 'Speed Courier';
   static const List<String> _couriers = [
     'Speed Courier',
@@ -57,6 +74,11 @@ class _VerocourierPageState extends State<VerocourierPage > {
 
   // ---- Mode toggle ----
   _Mode _mode = _Mode.local;
+
+  // API service & loading flags
+  final CourierService _courierService = const CourierService();
+  bool _submittingLocal = false;
+  bool _submittingIntercity = false;
 
   // Markers
   final Set<Marker> _markers = {};
@@ -86,11 +108,13 @@ class _VerocourierPageState extends State<VerocourierPage > {
       if (perm == LocationPermission.denied) {
         perm = await Geolocator.requestPermission();
       }
-      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
         setState(() => _locating = false);
         return;
       }
-      final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      final pos =
+          await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
       final me = LatLng(pos.latitude, pos.longitude);
       setState(() {
         _myLatLng = me;
@@ -102,6 +126,14 @@ class _VerocourierPageState extends State<VerocourierPage > {
     } catch (_) {
       setState(() => _locating = false);
     }
+  }
+
+  // --- Token helper (guest or logged-in) ---
+  Future<String?> _readToken() async {
+    final sp = await SharedPreferences.getInstance();
+    return sp.getString('jwt_token') ??
+        sp.getString('token') ??
+        sp.getString('jwt');
   }
 
   // --- Map handlers ---
@@ -147,7 +179,8 @@ class _VerocourierPageState extends State<VerocourierPage > {
         markerId: const MarkerId('pickup'),
         position: _pickup!,
         infoWindow: const InfoWindow(title: 'Pickup'),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        icon:
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
       ));
     }
     if (_mode == _Mode.local && _dropoff != null) {
@@ -155,7 +188,8 @@ class _VerocourierPageState extends State<VerocourierPage > {
         markerId: const MarkerId('dropoff'),
         position: _dropoff!,
         infoWindow: const InfoWindow(title: 'Drop-off'),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+        icon:
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
       ));
     }
     setState(() {
@@ -173,47 +207,133 @@ class _VerocourierPageState extends State<VerocourierPage > {
     final lat1 = _deg2rad(a.latitude);
     final lat2 = _deg2rad(b.latitude);
     final h = math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(lat1) * math.cos(lat2) * math.sin(dLng / 2) * math.sin(dLng / 2);
+        math.cos(lat1) *
+            math.cos(lat2) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
     final c = 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
     return R * c;
   }
 
   static double _deg2rad(double d) => d * math.pi / 180.0;
-  static bool _withinKm(LatLng p, LatLng center, double km) => _kmBetween(p, center) <= km;
+  static bool _withinKm(LatLng p, LatLng center, double km) =>
+      _kmBetween(p, center) <= km;
 
   bool _insideLilongwe(LatLng p) => _withinKm(p, _lilongweCenter, _llRadiusKm);
 
   // --- Fare for local deliveries ---
   double? _localFare() {
     if (_pickup == null || _dropoff == null) return null;
-    if (!(_insideLilongwe(_pickup!) && _insideLilongwe(_dropoff!))) return null;
+    if (!(_insideLilongwe(_pickup!) && _insideLilongwe(_dropoff!))) {
+      return null;
+    }
     final km = _kmBetween(_pickup!, _dropoff!);
     return _vehicle.base + _vehicle.perKm * km;
   }
 
-  // --- Actions ---
-  void _bookLocal() {
-    if (_pickup == null) return _toast('Set a pickup location (tap Pick on Map).');
-    if (_dropoff == null) return _toast('Set a drop-off location (tap Pick on Map).');
-    if (!(_insideLilongwe(_pickup!) && _insideLilongwe(_dropoff!))) {
-      return _toast('Local Vero Courier is in Lilongwe-only. Keep both pins inside Lilongwe.');
+  // --- Actions (LOCAL) ---
+  Future<void> _bookLocal() async {
+    if (_pickup == null) {
+      return _toast('Set a pickup location (tap Pick on Map).');
     }
+    if (_dropoff == null) {
+      return _toast('Set a drop-off location (tap Pick on Map).');
+    }
+    if (!(_insideLilongwe(_pickup!) && _insideLilongwe(_dropoff!))) {
+      return _toast(
+          'Local Vero Courier is in Lilongwe-only. Keep both pins inside Lilongwe.');
+    }
+
     final fare = _localFare();
-    // TODO: POST to backend: mode=local, pickupLatLng, dropoffLatLng, vehicleId, fareEstimate
-    _toast('Request sent! ${_vehicle.label} booked in Lilongwe'
-        '${fare != null ? ' • Est: MWK ${_fmtMoney(fare)}' : ''}.');
+    final token = await _readToken();
+
+    final payload = CourierLocalRequestPayload(
+      pickupLat: _pickup!.latitude,
+      pickupLng: _pickup!.longitude,
+      dropoffLat: _dropoff!.latitude,
+      dropoffLng: _dropoff!.longitude,
+      vehicleId: _vehicle.id,
+      clientFareEstimate: fare,
+      notes: null, // you can add a notes field in UI later
+    );
+
+    setState(() => _submittingLocal = true);
+
+    try {
+      final booking = await _courierService.createLocalDelivery(
+        payload,
+        authToken: token,
+      );
+
+      _toast(
+        'Local courier booked • '
+        '${booking.vehicleLabel ?? booking.vehicleId ?? _vehicle.label} '
+        '• Status: ${booking.status}',
+      );
+    } on ApiException catch (e) {
+      _toast(e.message);
+    } catch (_) {
+      _toast('Could not submit courier request. Please try again.');
+    } finally {
+      if (mounted) {
+        setState(() => _submittingLocal = false);
+      }
+    }
   }
 
-  void _bookIntercity() {
-    if (_pickup == null) return _toast('Set a pickup location in Lilongwe.');
-    if (!_insideLilongwe(_pickup!)) {
-      return _toast('Pickup must be within Lilongwe for inter-district shipments.');
+  // --- Actions (INTERCITY) ---
+  Future<void> _bookIntercity() async {
+    if (_pickup == null) {
+      return _toast('Set a pickup location in Lilongwe.');
     }
-    if (_destDistrictCtrl.text.trim().isEmpty) {
+    if (!_insideLilongwe(_pickup!)) {
+      return _toast(
+          'Pickup must be within Lilongwe for inter-district shipments.');
+    }
+    final destDistrict = _destDistrictCtrl.text.trim();
+    final destAddress = _destAddressCtrl.text.trim();
+
+    if (destDistrict.isEmpty) {
       return _toast('Enter the destination district (outside Lilongwe).');
     }
-    // TODO: POST to backend: mode=intercity, pickupLatLng, destDistrict, destAddress, courier
-    _toast('Inter-district via $_courier submitted to ${_destDistrictCtrl.text.trim()}.');
+    if (destAddress.isEmpty) {
+      return _toast(
+          'Enter destination address (receiver name, phone & location).');
+    }
+
+    final token = await _readToken();
+
+    final payload = CourierIntercityRequestPayload(
+      pickupLat: _pickup!.latitude,
+      pickupLng: _pickup!.longitude,
+      destinationDistrict: destDistrict,
+      destinationAddressText: destAddress,
+      courierName: _courier,
+      notes: null,
+    );
+
+    setState(() => _submittingIntercity = true);
+
+    try {
+      final booking = await _courierService.createIntercityDelivery(
+        payload,
+        authToken: token,
+      );
+
+      _toast(
+        'Inter-district via ${booking.courierName ?? _courier} '
+        'to ${booking.destinationDistrict ?? destDistrict}. '
+        'Status: ${booking.status}',
+      );
+    } on ApiException catch (e) {
+      _toast(e.message);
+    } catch (_) {
+      _toast('Could not submit inter-district request. Please try again.');
+    } finally {
+      if (mounted) {
+        setState(() => _submittingIntercity = false);
+      }
+    }
   }
 
   void _toast(String msg) {
@@ -225,20 +345,24 @@ class _VerocourierPageState extends State<VerocourierPage > {
   }
 
   // --- Styles/helpers ---
-  static ButtonStyle _btnStyle({double padV = 12}) => FilledButton.styleFrom(
+  static ButtonStyle _btnStyle({double padV = 12}) =>
+      FilledButton.styleFrom(
         backgroundColor: kBrandOrange,
         foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         padding: EdgeInsets.symmetric(horizontal: 14, vertical: padV),
-        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        textStyle: const TextStyle(
+            fontSize: 16, fontWeight: FontWeight.w700),
       );
 
   static InputDecoration _inputDecoration() => const InputDecoration(
         filled: true,
         fillColor: Colors.white,
-        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        contentPadding:
+            EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         enabledBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: Colors.black, width: 1), // black before active
+          borderSide: BorderSide(color: Colors.black, width: 1),
           borderRadius: BorderRadius.all(Radius.circular(12)),
         ),
         focusedBorder: OutlineInputBorder(
@@ -281,7 +405,7 @@ class _VerocourierPageState extends State<VerocourierPage > {
             zoomControlsEnabled: false,
           ),
 
-          // Top banner (now defined below)
+          // Top banner
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -300,10 +424,18 @@ class _VerocourierPageState extends State<VerocourierPage > {
             child: Container(
               decoration: const BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                boxShadow: [BoxShadow(blurRadius: 20, color: Colors.black26, offset: Offset(0, -6))],
+                borderRadius:
+                    BorderRadius.vertical(top: Radius.circular(20)),
+                boxShadow: [
+                  BoxShadow(
+                    blurRadius: 20,
+                    color: Colors.black26,
+                    offset: Offset(0, -6),
+                  )
+                ],
               ),
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              padding:
+                  const EdgeInsets.fromLTRB(16, 12, 16, 16),
               child: SafeArea(
                 top: false,
                 child: SingleChildScrollView(
@@ -327,13 +459,15 @@ class _VerocourierPageState extends State<VerocourierPage > {
                           _ModeChip(
                             label: 'Lilongwe (Local)',
                             selected: _mode == _Mode.local,
-                            onTap: () => setState(() => _mode = _Mode.local),
+                            onTap: () =>
+                                setState(() => _mode = _Mode.local),
                           ),
                           const SizedBox(width: 8),
                           _ModeChip(
                             label: 'Other Districts',
                             selected: _mode == _Mode.intercity,
-                            onTap: () => setState(() => _mode = _Mode.intercity),
+                            onTap: () => setState(
+                                () => _mode = _Mode.intercity),
                           ),
                         ],
                       ),
@@ -349,7 +483,7 @@ class _VerocourierPageState extends State<VerocourierPage > {
                                   value: _pickup == null
                                       ? null
                                       : 'Lat ${_pickup!.latitude.toStringAsFixed(5)}, '
-                                        'Lng ${_pickup!.longitude.toStringAsFixed(5)}',
+                                          'Lng ${_pickup!.longitude.toStringAsFixed(5)}',
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -361,10 +495,13 @@ class _VerocourierPageState extends State<VerocourierPage > {
                                     _pickingDropoff = false;
                                   });
                                   _map?.animateCamera(
-                                    CameraUpdate.newLatLngZoom(_lilongweCenter, 13.0),
+                                    CameraUpdate.newLatLngZoom(
+                                        _lilongweCenter, 13.0),
                                   );
                                 },
-                                child: Text(_pickingPickup ? 'Cancel' : 'Pick on Map'),
+                                child: Text(_pickingPickup
+                                    ? 'Cancel'
+                                    : 'Pick on Map'),
                               ),
                             ],
                           ),
@@ -380,7 +517,7 @@ class _VerocourierPageState extends State<VerocourierPage > {
                                   value: _dropoff == null
                                       ? null
                                       : 'Lat ${_dropoff!.latitude.toStringAsFixed(5)}, '
-                                        'Lng ${_dropoff!.longitude.toStringAsFixed(5)}',
+                                          'Lng ${_dropoff!.longitude.toStringAsFixed(5)}',
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -392,10 +529,13 @@ class _VerocourierPageState extends State<VerocourierPage > {
                                     _pickingPickup = false;
                                   });
                                   _map?.animateCamera(
-                                    CameraUpdate.newLatLngZoom(_lilongweCenter, 13.0),
+                                    CameraUpdate.newLatLngZoom(
+                                        _lilongweCenter, 13.0),
                                   );
                                 },
-                                child: Text(_pickingDropoff ? 'Cancel' : 'Pick on Map'),
+                                child: Text(_pickingDropoff
+                                    ? 'Cancel'
+                                    : 'Pick on Map'),
                               ),
                             ],
                           ),
@@ -414,27 +554,40 @@ class _VerocourierPageState extends State<VerocourierPage > {
                                 onTap: () => setState(() => _vehicle = v),
                                 borderRadius: BorderRadius.circular(12),
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  padding:
+                                      const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 10),
                                   decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(12),
+                                    borderRadius:
+                                        BorderRadius.circular(12),
                                     border: Border.all(
-                                      color: selected ? kBrandOrange : Colors.black,
+                                      color: selected
+                                          ? kBrandOrange
+                                          : Colors.black,
                                       width: 1,
                                     ),
-                                    color: selected ? kBrandSoft : Colors.white,
+                                    color: selected
+                                        ? kBrandSoft
+                                        : Colors.white,
                                   ),
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Icon(Icons.local_shipping,
-                                          size: 18,
-                                          color: selected ? kBrandOrange : Colors.black87),
+                                      Icon(
+                                        Icons.local_shipping,
+                                        size: 18,
+                                        color: selected
+                                            ? kBrandOrange
+                                            : Colors.black87,
+                                      ),
                                       const SizedBox(width: 6),
                                       Text(
                                         '${v.label} • ${v.note}',
                                         style: TextStyle(
                                           fontWeight: FontWeight.w600,
-                                          color: selected ? Colors.black : Colors.black87,
+                                          color: selected
+                                              ? Colors.black
+                                              : Colors.black87,
                                         ),
                                       ),
                                     ],
@@ -451,8 +604,10 @@ class _VerocourierPageState extends State<VerocourierPage > {
                           width: double.infinity,
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.black12),
+                            borderRadius:
+                                BorderRadius.circular(12),
+                            border:
+                                Border.all(color: Colors.black12),
                             color: const Color(0xFFF8F8F8),
                           ),
                           child: Row(
@@ -464,11 +619,13 @@ class _VerocourierPageState extends State<VerocourierPage > {
                                   (_pickup == null || _dropoff == null)
                                       ? 'Set pickup & drop-off to see estimate.'
                                       : (_insideLilongwe(_pickup!) &&
-                                             _insideLilongwe(_dropoff!) &&
-                                             fare != null)
-                                        ? 'Estimated fare: MWK ${_fmtMoney(fare)}'
-                                        : 'Both locations must be inside Lilongwe.',
-                                  style: const TextStyle(fontWeight: FontWeight.w600),
+                                              _insideLilongwe(
+                                                  _dropoff!) &&
+                                              fare != null)
+                                          ? 'Estimated fare: MWK ${_fmtMoney(fare)}'
+                                          : 'Both locations must be inside Lilongwe.',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600),
                                 ),
                               ),
                             ],
@@ -480,8 +637,21 @@ class _VerocourierPageState extends State<VerocourierPage > {
                           width: double.infinity,
                           child: FilledButton(
                             style: _btnStyle(padV: 14),
-                            onPressed: _bookLocal,
-                            child: const Text('Book Local Delivery'),
+                            onPressed:
+                                _submittingLocal ? null : _bookLocal,
+                            child: _submittingLocal
+                                ? const SizedBox(
+                                    height: 20,
+                                    width: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor:
+                                          AlwaysStoppedAnimation<Color>(
+                                        Colors.white,
+                                      ),
+                                    ),
+                                  )
+                                : const Text('Book Local Delivery'),
                           ),
                         ),
                       ] else ...[
@@ -494,7 +664,7 @@ class _VerocourierPageState extends State<VerocourierPage > {
                                   value: _pickup == null
                                       ? null
                                       : 'Lat ${_pickup!.latitude.toStringAsFixed(5)}, '
-                                        'Lng ${_pickup!.longitude.toStringAsFixed(5)}',
+                                          'Lng ${_pickup!.longitude.toStringAsFixed(5)}',
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -506,10 +676,13 @@ class _VerocourierPageState extends State<VerocourierPage > {
                                     _pickingDropoff = false;
                                   });
                                   _map?.animateCamera(
-                                    CameraUpdate.newLatLngZoom(_lilongweCenter, 13.0),
+                                    CameraUpdate.newLatLngZoom(
+                                        _lilongweCenter, 13.0),
                                   );
                                 },
-                                child: Text(_pickingPickup ? 'Cancel' : 'Pick on Map'),
+                                child: Text(_pickingPickup
+                                    ? 'Cancel'
+                                    : 'Pick on Map'),
                               ),
                             ],
                           ),
@@ -517,34 +690,32 @@ class _VerocourierPageState extends State<VerocourierPage > {
                         const SizedBox(height: 12),
 
                         _Labeled(
-                          label: 'Destination District (outside Lilongwe)',
+                          label:
+                              'Destination District (outside Lilongwe)',
                           child: TextField(
                             controller: _destDistrictCtrl,
                             decoration: _inputDecoration().copyWith(
-                              hintText: 'e.g., Mzimba, Zomba, Karonga…',
+                              hintText:
+                                  'e.g., Mzimba, Zomba, Karonga…',
                             ),
                           ),
                         ),
                         const SizedBox(height: 12),
+
                         _Labeled(
-  label: 'Destination Address (required details)',
-  child: TextFormField(
-    controller: _destAddressCtrl,
-    decoration: _inputDecoration().copyWith(
-      hintText: 'receiver name & phone…',
-      suffixText: '*',
-      suffixStyle: const TextStyle(color: Colors.red),
-    ),
-    maxLines: 2,
-    autovalidateMode: AutovalidateMode.onUserInteraction,
-    validator: (v) =>
-        (v == null || v.trim().isEmpty) ? 'This field is required' : null,
-  ),
-),
+                          label:
+                              'Destination Address (required details)',
+                          child: TextField(
+                            controller: _destAddressCtrl,
+                            decoration: _inputDecoration().copyWith(
+                              hintText:
+                                  'Receiver name, phone & exact address…',
+                            ),
+                            maxLines: 2,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
 
-const SizedBox(height: 12),
-
-                       
                         _Labeled(
                           label: 'Courier Partner',
                           child: Wrap(
@@ -553,30 +724,45 @@ const SizedBox(height: 12),
                             children: _couriers.map((name) {
                               final selected = _courier == name;
                               return InkWell(
-                                onTap: () => setState(() => _courier = name),
-                                borderRadius: BorderRadius.circular(12),
+                                onTap: () =>
+                                    setState(() => _courier = name),
+                                borderRadius:
+                                    BorderRadius.circular(12),
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  padding:
+                                      const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 10),
                                   decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(12),
+                                    borderRadius:
+                                        BorderRadius.circular(12),
                                     border: Border.all(
-                                      color: selected ? kBrandOrange : Colors.black,
+                                      color: selected
+                                          ? kBrandOrange
+                                          : Colors.black,
                                       width: 1,
                                     ),
-                                    color: selected ? kBrandSoft : Colors.white,
+                                    color: selected
+                                        ? kBrandSoft
+                                        : Colors.white,
                                   ),
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Icon(Icons.local_post_office,
-                                          size: 18,
-                                          color: selected ? kBrandOrange : Colors.black87),
+                                      Icon(
+                                        Icons.local_post_office,
+                                        size: 18,
+                                        color: selected
+                                            ? kBrandOrange
+                                            : Colors.black87,
+                                      ),
                                       const SizedBox(width: 6),
                                       Text(
                                         name,
                                         style: TextStyle(
                                           fontWeight: FontWeight.w600,
-                                          color: selected ? Colors.black : Colors.black87,
+                                          color: selected
+                                              ? Colors.black
+                                              : Colors.black87,
                                         ),
                                       ),
                                     ],
@@ -592,8 +778,22 @@ const SizedBox(height: 12),
                           width: double.infinity,
                           child: FilledButton(
                             style: _btnStyle(padV: 14),
-                            onPressed: _bookIntercity,
-                            child: const Text('Send to Other District'),
+                            onPressed: _submittingIntercity
+                                ? null
+                                : _bookIntercity,
+                            child: _submittingIntercity
+                                ? const SizedBox(
+                                    height: 20,
+                                    width: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor:
+                                          AlwaysStoppedAnimation<Color>(
+                                        Colors.white,
+                                      ),
+                                    ),
+                                  )
+                                : const Text('Send to Other District'),
                           ),
                         ),
                       ],
@@ -612,7 +812,8 @@ const SizedBox(height: 12),
                 alignment: Alignment.topCenter,
                 margin: const EdgeInsets.only(top: 90),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: Colors.black87,
                     borderRadius: BorderRadius.circular(10),
@@ -647,7 +848,8 @@ class _ServiceBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: okColor,
         borderRadius: BorderRadius.circular(12),
@@ -657,14 +859,18 @@ class _ServiceBanner extends StatelessWidget {
         children: [
           Icon(
             locating ? Icons.my_location : Icons.check_circle,
-            color: locating ? Colors.black54 : const Color(0xFF1B8F3E),
+            color: locating
+                ? Colors.black54
+                : const Color(0xFF1B8F3E),
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               locating ? 'Detecting your location…' : text,
               style: TextStyle(
-                color: locating ? Colors.black87 : const Color(0xFF0A5730),
+                color: locating
+                    ? Colors.black87
+                    : const Color(0xFF0A5730),
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -679,7 +885,11 @@ class _ModeChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _ModeChip({required this.label, required this.selected, required this.onTap});
+  const _ModeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -687,7 +897,8 @@ class _ModeChip extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? kBrandSoft : Colors.white,
           borderRadius: BorderRadius.circular(20),
@@ -718,7 +929,8 @@ class _Labeled extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+        Text(label,
+            style: const TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
         child,
       ],
@@ -737,12 +949,15 @@ class _PinnedReadout extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.black, width: 1),
+        border:
+            Border.all(color: Colors.black, width: 1),
         color: Colors.white,
       ),
       child: Text(
         value ?? 'Tap "Pick on Map" and place a pin',
-        style: TextStyle(color: value == null ? Colors.black54 : Colors.black),
+        style: TextStyle(
+          color: value == null ? Colors.black54 : Colors.black,
+        ),
         overflow: TextOverflow.ellipsis,
       ),
     );

@@ -18,7 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/merchantbottomnavbar.dart';
 import 'package:vero360_app/Pages/cartpage.dart';
-import 'package:vero360_app/pages/profile_from_link_page.dart';
+import 'package:vero360_app/Pages/profile_from_link_page.dart';
 import 'package:vero360_app/screens/login_screen.dart';
 import 'package:vero360_app/screens/register_screen.dart';
 import 'package:vero360_app/services/auth_guard.dart';
@@ -73,8 +73,8 @@ class _MyAppState extends State<MyApp> {
     _initDeepLinks();
     // Run the role check in the FIRST frame so initialRoute shows instantly.
     SchedulerBinding.instance.addPostFrameCallback((_) {
-      _fastRedirectFromCache();          // instant, no network
-      _verifyRoleFromServerInBg();       // short network check; may correct
+      _fastRedirectFromCache(); // instant, no network
+      _verifyRoleFromServerInBg(); // short network check; may correct
     });
   }
 
@@ -120,7 +120,8 @@ class _MyAppState extends State<MyApp> {
       // Unknown: if no token, optionally send to login (commented to keep your UX)
       final token = prefs.getString('jwt_token') ??
           prefs.getString('token') ??
-          prefs.getString('authToken') ?? '';
+          prefs.getString('authToken') ??
+          '';
       if (token == '') {
         // _pushLogin();  // enable if you want login-first UX
       }
@@ -132,25 +133,29 @@ class _MyAppState extends State<MyApp> {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('jwt_token') ??
         prefs.getString('token') ??
-        prefs.getString('authToken') ?? '';
+        prefs.getString('authToken') ??
+        '';
 
     if (token.isEmpty) return;
 
     final base = ApiConfig.prod ?? 'https://vero-backend.onrender.com';
 
     try {
-      final resp = await http
-          .get(
-            Uri.parse('$base/users/me'),
-            headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 5)); // be snappy
+      final resp = await http.get(
+        Uri.parse('$base/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json'
+        },
+      ).timeout(const Duration(seconds: 5)); // be snappy
 
       if (resp.statusCode == 200) {
         final decoded = json.decode(resp.body);
         final user = (decoded is Map && decoded['data'] is Map)
             ? Map<String, dynamic>.from(decoded['data'])
-            : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
+            : (decoded is Map
+                ? Map<String, dynamic>.from(decoded)
+                : <String, dynamic>{});
 
         // Persist normalized fields so profile page sees correct values
         await _persistUserToPrefs(prefs, user);
@@ -185,23 +190,31 @@ class _MyAppState extends State<MyApp> {
       'merchant': u['merchant'] == true,
       'merchantId': (u['merchantId'] ?? '').toString().isNotEmpty,
     };
-    return role == 'merchant' || roles.contains('merchant') || flags.values.any((v) => v == true);
+    return role == 'merchant' ||
+        roles.contains('merchant') ||
+        flags.values.any((v) => v == true);
   }
 
-  Future<void> _persistUserToPrefs(SharedPreferences prefs, Map<String, dynamic> u) async {
+  Future<void> _persistUserToPrefs(
+      SharedPreferences prefs, Map<String, dynamic> u) async {
     String _join(String? a, String? b) {
-      final parts = [a, b].where((x) => x != null && x!.trim().isNotEmpty).map((x) => x!.trim()).toList();
+      final parts = [a, b]
+          .where((x) => x != null && x!.trim().isNotEmpty)
+          .map((x) => x!.trim())
+          .toList();
       return parts.isEmpty ? '' : parts.join(' ');
     }
 
     final name = (u['name'] ?? _join(u['firstName'], u['lastName'])).toString();
     final email = (u['email'] ?? u['userEmail'] ?? '').toString();
     final phone = (u['phone'] ?? '').toString();
-    final pic   = (u['profilepicture'] ?? u['profilePicture'] ?? '').toString();
+    final pic = (u['profilepicture'] ?? u['profilePicture'] ?? '').toString();
 
-    final applicationStatus = (u['applicationStatus'] ?? '').toString().toLowerCase();
+    final applicationStatus =
+        (u['applicationStatus'] ?? '').toString().toLowerCase();
     final kycStatus = (u['kycStatus'] ?? '').toString().toLowerCase();
-    final isVerified = (u['isVerified'] == true) || (u['merchantVerified'] == true);
+    final isVerified =
+        (u['isVerified'] == true) || (u['merchantVerified'] == true);
 
     await prefs.setString('fullName', name.isEmpty ? 'Guest User' : name);
     await prefs.setString('name', name.isEmpty ? 'Guest User' : name);
@@ -267,8 +280,11 @@ class _MyAppState extends State<MyApp> {
         '/marketplace': (context) => const Bottomnavbar(email: ''),
         '/signup': (context) => const RegisterScreen(),
         '/login': (context) => const LoginScreen(),
-        '/cartpage': (context) =>
-            _authGuard(context, CartPage(cartService: CartService('https://vero-backend.onrender.com', apiPrefix: ''))),
+        '/cartpage': (context) => _authGuard(
+            context,
+            CartPage(
+                cartService: CartService('https://vero-backend.onrender.com',
+                    apiPrefix: ''))),
       },
     );
   }

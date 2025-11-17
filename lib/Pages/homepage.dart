@@ -404,7 +404,7 @@ final cartService = CartService('https://unimatherapyapplication.com/vero/', api
         break;
 
       case 'car_hire':
-        page = const carhirepage();
+        page = const CarHirePage();
         break;
 
       case 'send_money':

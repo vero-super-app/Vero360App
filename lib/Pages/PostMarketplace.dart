@@ -4,13 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
+import 'package:vero360_app/Pages/myshop.dart';
+import 'package:vero360_app/services/api_exception.dart';
 
 import '../models/marketplace.model.dart';
 import '../services/marketplace.service.dart';
+import '../services/serviceprovider_service.dart';
 import '../toasthelper.dart';
 
-
 import 'marketplace_edit_page.dart';
+
 
 class LocalMedia {
   final Uint8List bytes;
@@ -47,29 +50,43 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   bool _submitting = false;
 
   static const List<String> _kCategories = <String>[
-    'food', 'drinks', 'electronics', 'clothes', 'shoes', 'other'
+    'food',
+    'drinks',
+    'electronics',
+    'clothes',
+    'shoes',
+    'other'
   ];
   String? _category = 'other';
 
   // media (create tab)
   LocalMedia? _cover;
   final List<LocalMedia> _gallery = <LocalMedia>[];
-  final List<LocalMedia> _videos  = <LocalMedia>[];
+  final List<LocalMedia> _videos = <LocalMedia>[];
 
   // manage tab
   List<MarketplaceDetailModel> _items = [];
   bool _loadingItems = true;
   bool _busyRow = false; // disables per-card buttons when true
 
+  // NEW: shop check
+  bool _checkingShop = true;
+  bool _hasShop = false;
+
   // --- Brand look to match Airport/Vero Courier ---
   static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandSoft   = Color(0xFFFFE8CC);
+  static const Color _brandSoft = Color(0xFFFFE8CC);
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
-    _loadItems();
+    _initData();
+  }
+
+  Future<void> _initData() async {
+    await _checkShop();
+    await _loadItems();
   }
 
   @override
@@ -80,6 +97,20 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     _location.dispose();
     _desc.dispose();
     super.dispose();
+  }
+
+  // ---------------- shop check ----------------
+  Future<void> _checkShop() async {
+    setState(() => _checkingShop = true);
+    try {
+      final sp = await ServiceProviderServicess.fetchMine();
+      _hasShop = sp != null;
+    } catch (e) {
+      // If something goes wrong, just assume no shop to be safe
+      _hasShop = false;
+    } finally {
+      if (mounted) setState(() => _checkingShop = false);
+    }
   }
 
   // ---------------- data ----------------
@@ -101,10 +132,16 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         title: const Text('Delete item'),
         content: Text('Delete “${item.name}”? This cannot be undone.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -116,9 +153,19 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       await svc.deleteItem(item.id);
       _items.removeWhere((e) => e.id == item.id);
       setState(() {});
-      ToastHelper.showCustomToast(context, 'Deleted • ${item.name}', isSuccess: true, errorMessage: 'Deleted');
+      ToastHelper.showCustomToast(
+        context,
+        'Deleted • ${item.name}',
+        isSuccess: true,
+        errorMessage: 'Deleted',
+      );
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Delete failed: $e', isSuccess: false, errorMessage: 'Delete failed');
+      ToastHelper.showCustomToast(
+        context,
+        'Delete failed: $e',
+        isSuccess: false,
+        errorMessage: 'Delete failed',
+      );
     } finally {
       if (mounted) setState(() => _busyRow = false);
     }
@@ -130,14 +177,17 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       MaterialPageRoute(builder: (_) => MarketplaceEditPage(item: item)),
     );
     if (changed == true) {
-      // refresh grid after editing
       await _loadItems();
     }
   }
 
   // ---------------- pickers (bytes) ----------------
   Future<void> _pickCover(ImageSource src) async {
-    final x = await _picker.pickImage(source: src, imageQuality: 90, maxWidth: 2048);
+    final x = await _picker.pickImage(
+      source: src,
+      imageQuality: 90,
+      maxWidth: 2048,
+    );
     if (x == null) return;
     final bytes = await x.readAsBytes();
     setState(() {
@@ -150,34 +200,55 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   }
 
   Future<void> _pickGalleryMulti() async {
-    final xs = await _picker.pickMultiImage(imageQuality: 90, maxWidth: 2048);
+    final xs = await _picker.pickMultiImage(
+      imageQuality: 90,
+      maxWidth: 2048,
+    );
     for (final x in xs) {
       final bytes = await x.readAsBytes();
-      _gallery.add(LocalMedia(
-        bytes: bytes,
-        filename: x.name,
-        mime: lookupMimeType(x.name, headerBytes: bytes),
-      ));
+      _gallery.add(
+        LocalMedia(
+          bytes: bytes,
+          filename: x.name,
+          mime: lookupMimeType(x.name, headerBytes: bytes),
+        ),
+      );
     }
     setState(() {});
   }
 
   Future<void> _pickVideo() async {
-    final x = await _picker.pickVideo(source: ImageSource.gallery, maxDuration: const Duration(minutes: 2));
+    final x = await _picker.pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(minutes: 2),
+    );
     if (x == null) return;
     final bytes = await x.readAsBytes();
-    _videos.add(LocalMedia(
-      bytes: bytes,
-      filename: x.name,
-      mime: lookupMimeType(x.name, headerBytes: bytes),
-      isVideo: true,
-    ));
+    _videos.add(
+      LocalMedia(
+        bytes: bytes,
+        filename: x.name,
+        mime: lookupMimeType(x.name, headerBytes: bytes),
+        isVideo: true,
+      ),
+    );
     setState(() {});
   }
 
-  void _removeGalleryAt(int i) { _gallery.removeAt(i); setState(() {}); }
-  void _removeVideoAt(int i) { _videos.removeAt(i); setState(() {}); }
-  void _clearCover() { _cover = null; setState(() {}); }
+  void _removeGalleryAt(int i) {
+    _gallery.removeAt(i);
+    setState(() {});
+  }
+
+  void _removeVideoAt(int i) {
+    _videos.removeAt(i);
+    setState(() {});
+  }
+
+  void _clearCover() {
+    _cover = null;
+    setState(() {});
+  }
 
   // ---------------- uploads ----------------
   Future<List<String>> _uploadAll(List<LocalMedia> items) async {
@@ -191,45 +262,113 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
   // ---------------- create ----------------
   Future<void> _create() async {
+    // 🔒 hard guard: must have shop
+    if (!_hasShop) {
+      ToastHelper.showCustomToast(
+        context,
+        'You need to open a shop before posting on Marketplace.',
+        isSuccess: false,
+        errorMessage: 'No shop',
+      );
+      return;
+    }
+
     if (!_form.currentState!.validate()) return;
     if (_cover == null) {
-      ToastHelper.showCustomToast(context, 'Please pick a cover photo',
-          isSuccess: false, errorMessage: 'Photo required');
+      ToastHelper.showCustomToast(
+        context,
+        'Please pick a cover photo',
+        isSuccess: false,
+        errorMessage: 'Photo required',
+      );
       return;
     }
 
     setState(() => _submitting = true);
-    try {
-      final coverUrl   = await svc.uploadBytes(_cover!.bytes, filename: _cover!.filename);
-      final galleryUrl = await _uploadAll(_gallery);
-      final videoUrl   = await _uploadAll(_videos);
 
+    try {
+      // 1️⃣ Upload media first
+      String coverUrl;
+      List<String> galleryUrl = [];
+      List<String> videoUrl = [];
+
+      try {
+        coverUrl = await svc.uploadBytes(
+          _cover!.bytes,
+          filename: _cover!.filename,
+        );
+        galleryUrl = await _uploadAll(_gallery);
+        videoUrl = await _uploadAll(_videos);
+      } on ApiException catch (e) {
+        ToastHelper.showCustomToast(
+          context,
+          'Upload failed: ${e.message}',
+          isSuccess: false,
+          errorMessage: 'Upload failed',
+        );
+        return;
+      } catch (e) {
+        ToastHelper.showCustomToast(
+          context,
+          'Upload failed: $e',
+          isSuccess: false,
+          errorMessage: 'Upload failed',
+        );
+        return;
+      }
+
+      // 2️⃣ Create marketplace item
       final item = MarketplaceItem(
-  name: _name.text.trim(),
-  price: double.tryParse(_price.text.trim()) ?? 0,
-  image: coverUrl,
-  description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
-  location: _location.text.trim(),            
-  isActive: _isActive,
-  category: _category,
-  gallery: galleryUrl,
-  videos: videoUrl,
-);
+        name: _name.text.trim(),
+        price: double.tryParse(_price.text.trim()) ?? 0,
+        image: coverUrl,
+        description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+        location: _location.text.trim(),
+        isActive: _isActive,
+        category: _category ?? 'other',
+        gallery: galleryUrl,
+        videos: videoUrl,
+      );
 
       await svc.createItem(item);
 
-      ToastHelper.showCustomToast(context, 'Item Posted', isSuccess: true, errorMessage: 'Created');
+      ToastHelper.showCustomToast(
+        context,
+        'Item Posted',
+        isSuccess: true,
+        errorMessage: 'Created',
+      );
 
-      // reset
+      // reset form + media
       _form.currentState!.reset();
-      _name.clear(); _price.clear(); _desc.clear();
-      _cover = null; _gallery.clear(); _videos.clear();
-      _isActive = true; _category = 'other';
+      _name.clear();
+      _price.clear();
+      _location.clear();
+      _desc.clear();
+      _cover = null;
+      _gallery.clear();
+      _videos.clear();
+      _isActive = true;
+      _category = 'other';
+
       setState(() {});
+
       await _loadItems();
       _tabs.animateTo(1);
+    } on ApiException catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Create failed: ${e.message}',
+        isSuccess: false,
+        errorMessage: 'Create failed',
+      );
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Create failed: $e', isSuccess: false, errorMessage: 'Create failed');
+      ToastHelper.showCustomToast(
+        context,
+        'Create failed: $e',
+        isSuccess: false,
+        errorMessage: 'Create failed',
+      );
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -245,9 +384,11 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       hintText: hint,
       filled: true,
       fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       enabledBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: Colors.black, width: 1), // black before active
+        borderSide:
+            const BorderSide(color: Colors.black, width: 1), // black before active
         borderRadius: BorderRadius.circular(12),
       ),
       focusedBorder: OutlineInputBorder(
@@ -260,15 +401,17 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   ButtonStyle _filledBtnStyle({double padV = 14}) => FilledButton.styleFrom(
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         padding: EdgeInsets.symmetric(vertical: padV, horizontal: 14),
-        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        textStyle:
+            const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
       );
 
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
-    final canCreate = !_submitting && _cover != null;
+    final canCreate = !_submitting && _cover != null && _hasShop;
 
     return Scaffold(
       appBar: AppBar(
@@ -301,12 +444,72 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   }
 
   Widget _buildAddTab(bool canCreate) {
+    // While checking shop, show loader
+    if (_checkingShop) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // No shop -> show message and CTA to open a shop
+    if (!_hasShop) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Card(
+          elevation: 8,
+          shadowColor: Colors.black12,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _brandSoft,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _brandOrange.withOpacity(0.35),
+                    ),
+                  ),
+                  child: const Text(
+                    'To post on Marketplace you must first open your shop. '
+                    'Create your shop profile with a logo and opening hours, then come back here.',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Icon(Icons.storefront_outlined,
+                    size: 80, color: Colors.black38),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  style: _filledBtnStyle(),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const ServiceProviderCrudPage(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.store),
+                  label: const Text('Open My Shop'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Normal form when a shop exists
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       child: Card(
         elevation: 8,
         shadowColor: Colors.black12,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
           child: Form(
@@ -314,12 +517,15 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Mini banner (subtle, like the other pages)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: _brandSoft,
-                    border: Border.all(color: _brandOrange.withOpacity(0.35)),
+                    border:
+                        Border.all(color: _brandOrange.withOpacity(0.35)),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -338,19 +544,35 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 ),
                 const SizedBox(height: 14),
 
-                const Text('Add Product', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                const Text(
+                  'Add Product',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 const SizedBox(height: 12),
 
-                // cover picker preview
                 ClipRRect(
                   borderRadius: BorderRadius.circular(16),
                   child: _cover == null
                       ? Container(
                           height: 220,
                           color: Colors.grey.shade100,
-                          child: const Center(child: Icon(Icons.image, size: 64, color: Colors.black38)),
+                          child: const Center(
+                            child: Icon(
+                              Icons.image,
+                              size: 64,
+                              color: Colors.black38,
+                            ),
+                          ),
                         )
-                      : Image.memory(_cover!.bytes, height: 220, width: double.infinity, fit: BoxFit.cover),
+                      : Image.memory(
+                          _cover!.bytes,
+                          height: 220,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
                 ),
                 const SizedBox(height: 10),
                 Row(
@@ -365,10 +587,20 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.black87,
-                        side: const BorderSide(color: Colors.black, width: 1),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                        textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                        side: const BorderSide(
+                          color: Colors.black,
+                          width: 1,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       onPressed: () => _pickCover(ImageSource.camera),
                       icon: const Icon(Icons.photo_camera),
@@ -385,29 +617,36 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 ),
 
                 const SizedBox(height: 16),
-                const Text('More photos (optional)', style: TextStyle(fontWeight: FontWeight.w700)),
+                const Text(
+                  'More photos (optional)',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
                 const SizedBox(height: 8),
                 _mediaStripImages(),
 
                 const SizedBox(height: 12),
-                const Text('Videos (optional)', style: TextStyle(fontWeight: FontWeight.w700)),
+                const Text(
+                  'Videos (optional)',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
                 const SizedBox(height: 8),
                 _mediaStripVideos(),
 
                 const SizedBox(height: 16),
 
-                // NAME
                 TextFormField(
                   controller: _name,
                   decoration: _inputDecoration(label: 'Name'),
-                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Name is required' : null,
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Name is required' : null,
                 ),
                 const SizedBox(height: 12),
 
-                // PRICE
                 TextFormField(
                   controller: _price,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: false),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: false,
+                  ),
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: _inputDecoration(label: 'Price (MK)'),
                   validator: (v) {
@@ -418,38 +657,41 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 ),
                 const SizedBox(height: 12),
 
-                    // location
                 TextFormField(
                   controller: _location,
                   decoration: _inputDecoration(label: 'Location'),
-                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Location is required' : null,
-                ),
-                const SizedBox(height: 12),
-                
-                
-                
-                // CATEGORY
-                DropdownButtonFormField<String>(
-                  value: _category,
-                  items: _kCategories
-                      .map((c) => DropdownMenuItem<String>(value: c, child: Text(_titleCase(c))))
-                      .toList(),
-                  onChanged: (v) => setState(() => _category = v),
-                  decoration: _inputDecoration(label: 'Category'),
-                  validator: (v) => (v == null || v.isEmpty) ? 'Please select a category' : null,
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Location is required'
+                      : null,
                 ),
                 const SizedBox(height: 12),
 
-                // DESCRIPTION
+                DropdownButtonFormField<String>(
+                  value: _category,
+                  items: _kCategories
+                      .map(
+                        (c) => DropdownMenuItem<String>(
+                          value: c,
+                          child: Text(_titleCase(c)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (v) => setState(() => _category = v),
+                  decoration: _inputDecoration(label: 'Category'),
+                  validator: (v) =>
+                      (v == null || v.isEmpty) ? 'Please select a category' : null,
+                ),
+                const SizedBox(height: 12),
+
                 TextFormField(
                   controller: _desc,
                   minLines: 2,
                   maxLines: 4,
-                  decoration: _inputDecoration(label: 'Description (optional)'),
+                  decoration:
+                      _inputDecoration(label: 'Description (optional)'),
                 ),
                 const SizedBox(height: 8),
 
-                // ACTIVE
                 SwitchListTile(
                   value: _isActive,
                   onChanged: (v) => setState(() => _isActive = v),
@@ -458,12 +700,18 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 ),
                 const SizedBox(height: 8),
 
-                // SUBMIT
                 FilledButton.icon(
                   style: _filledBtnStyle(),
                   onPressed: canCreate ? _create : null,
                   icon: _submitting
-                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
                       : const Icon(Icons.save),
                   label: const Text('Post on Marketplace'),
                 ),
@@ -488,8 +736,13 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
               style: OutlinedButton.styleFrom(
                 foregroundColor: Colors.black87,
                 side: const BorderSide(color: Colors.black, width: 1),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
                 textStyle: const TextStyle(fontWeight: FontWeight.w700),
               ),
               onPressed: _pickGalleryMulti,
@@ -502,16 +755,26 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.memory(m.bytes, width: 128, height: 96, fit: BoxFit.cover),
+                child: Image.memory(
+                  m.bytes,
+                  width: 128,
+                  height: 96,
+                  fit: BoxFit.cover,
+                ),
               ),
               Positioned(
-                right: 4, top: 4,
+                right: 4,
+                top: 4,
                 child: InkWell(
                   onTap: () => _removeGalleryAt(i),
                   child: const CircleAvatar(
                     radius: 12,
                     backgroundColor: Colors.black54,
-                    child: Icon(Icons.close, size: 14, color: Colors.white),
+                    child: Icon(
+                      Icons.close,
+                      size: 14,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ),
@@ -535,8 +798,13 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
               style: OutlinedButton.styleFrom(
                 foregroundColor: Colors.black87,
                 side: const BorderSide(color: Colors.black, width: 1),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
                 textStyle: const TextStyle(fontWeight: FontWeight.w700),
               ),
               onPressed: _pickVideo,
@@ -547,18 +815,30 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
           return Stack(
             children: [
               Container(
-                width: 160, height: 72,
+                width: 160,
+                height: 72,
                 decoration: BoxDecoration(
                   color: Colors.black12,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Center(child: Icon(Icons.play_arrow_rounded)),
+                child: const Center(
+                  child: Icon(Icons.play_arrow_rounded),
+                ),
               ),
               Positioned(
-                right: 4, top: 4,
+                right: 4,
+                top: 4,
                 child: InkWell(
                   onTap: () => _removeVideoAt(i),
-                  child: const CircleAvatar(radius: 12, backgroundColor: Colors.black54, child: Icon(Icons.close, size: 14, color: Colors.white)),
+                  child: const CircleAvatar(
+                    radius: 12,
+                    backgroundColor: Colors.black54,
+                    child: Icon(
+                      Icons.close,
+                      size: 14,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -569,7 +849,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   }
 
   Widget _buildManageTab() {
-    if (_loadingItems) return const Center(child: CircularProgressIndicator());
+    if (_loadingItems) {
+      return const Center(child: CircularProgressIndicator());
+    }
     if (_items.isEmpty) {
       return RefreshIndicator(
         onRefresh: _loadItems,
@@ -577,7 +859,12 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
           physics: const AlwaysScrollableScrollPhysics(),
           children: const [
             SizedBox(height: 120),
-            Center(child: Text('No items yet. Add your first product!', style: TextStyle(color: Colors.red))),
+            Center(
+              child: Text(
+                'No items yet. Add your first product!',
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
           ],
         ),
       );
@@ -587,7 +874,6 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       onRefresh: _loadItems,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // Responsive columns
           int crossAxisCount = 2;
           if (constraints.maxWidth >= 1200) {
             crossAxisCount = 4;
@@ -595,7 +881,6 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             crossAxisCount = 3;
           }
 
-          // Safe aspect ratio: image 16:9 + texts/buttons
           final aspect = (constraints.maxWidth >= 700) ? 0.90 : 0.88;
 
           return GridView.builder(
@@ -622,11 +907,11 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     );
   }
 
-  String _titleCase(String s) => s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
+  String _titleCase(String s) =>
+      s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
 }
 
-/* ---------- Manage card, tuned to avoid overflows ---------- */
-
+/* ---------- Manage card ---------- */
 
 class _ManageCard extends StatelessWidget {
   const _ManageCard({
@@ -644,7 +929,7 @@ class _ManageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const brandOrange = Color(0xFFFF8A00);
-    const brandSoft   = Color(0xFFFFE8CC);
+    const brandSoft = Color(0xFFFFE8CC);
 
     return Card(
       elevation: 6,
@@ -654,7 +939,6 @@ class _ManageCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Top media (fixed ratio prevents overflow)
           Stack(
             children: [
               AspectRatio(
@@ -665,12 +949,14 @@ class _ManageCard extends StatelessWidget {
                   errorBuilder: (_, __, ___) => Container(
                     color: Colors.grey.shade200,
                     child: const Center(
-                      child: Icon(Icons.image_not_supported_outlined, color: Colors.black38),
+                      child: Icon(
+                        Icons.image_not_supported_outlined,
+                        color: Colors.black38,
+                      ),
                     ),
                   ),
                 ),
               ),
-              // Overlay actions (top-right)
               Positioned(
                 right: 6,
                 top: 6,
@@ -686,7 +972,7 @@ class _ManageCard extends StatelessWidget {
                     _roundIcon(
                       icon: Icons.delete_outline,
                       tooltip: 'Delete',
-                      color: Colors.red.shade600,
+                      color: Colors.red,
                       onTap: busy ? null : onDelete,
                     ),
                   ],
@@ -694,8 +980,6 @@ class _ManageCard extends StatelessWidget {
               ),
             ],
           ),
-
-          // Title
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
             child: Text(
@@ -705,14 +989,15 @@ class _ManageCard extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
           ),
-
-          // Price (styled to match Airport/Vero Courier UI)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: brandSoft,
                     borderRadius: BorderRadius.circular(20),
@@ -724,7 +1009,6 @@ class _ManageCard extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
-                // (Optional) Add small inline actions here if you want duplicates of the overlay buttons.
               ],
             ),
           ),
@@ -747,11 +1031,14 @@ class _ManageCard extends StatelessWidget {
         customBorder: const CircleBorder(),
         child: Padding(
           padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: 18, color: color ?? Colors.black87),
+          child: Icon(
+            icon,
+            size: 18,
+            color: color ?? Colors.black87,
+          ),
         ),
       ),
     );
     return tooltip == null ? btn : Tooltip(message: tooltip, child: btn);
   }
 }
-

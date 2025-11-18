@@ -5,9 +5,13 @@ class FoodModel {
   final String RestrauntName;
   final double price;
 
-  // Optional extras (safe to keep nullable)
+  // Optional extras
   final String? description;
   final String? category;
+
+  // ✅ New: gallery + videos like Marketplace
+  final List<String> gallery;
+  final List<String> videos;
 
   FoodModel({
     required this.id,
@@ -17,6 +21,8 @@ class FoodModel {
     required this.price,
     this.description,
     this.category,
+    this.gallery = const [],
+    this.videos = const [],
   });
 
   factory FoodModel.fromJson(Map<String, dynamic> json) {
@@ -33,6 +39,16 @@ class FoodModel {
 
     String _str(dynamic v) => (v == null) ? '' : v.toString();
 
+    // 🔁 same style as MarketplaceDetailModel
+    List<String> _arr(dynamic v) =>
+        (v is List)
+            ? v
+                .map((e) => '$e')
+                .where((s) => s.isNotEmpty)
+                .cast<String>()
+                .toList()
+            : const <String>[];
+
     return FoodModel(
       id: _id(json['id']),
       FoodName: _str(json['FoodName']),
@@ -41,6 +57,20 @@ class FoodModel {
       price: _double(json['price']),
       description: json['description']?.toString(),
       category: json['category']?.toString(),
+      gallery: _arr(json['gallery']),
+      videos: _arr(json['videos']),
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'FoodName': FoodName,
+        'FoodImage': FoodImage,
+        'RestrauntName': RestrauntName,
+        'price': price,
+        if (description != null) 'description': description,
+        if (category != null) 'category': category,
+        if (gallery.isNotEmpty) 'gallery': gallery,
+        if (videos.isNotEmpty) 'videos': videos,
+      };
 }

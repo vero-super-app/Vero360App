@@ -28,6 +28,7 @@ dependencies:
   sign_in_with_apple: ^6.1.0
   google_maps_flutter: ^2.2.8
   google_maps_flutter_web: ^0.4.0
+  
 
   mime: ^2.0.0
   http_parser: ^4.0.2

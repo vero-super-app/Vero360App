@@ -28,7 +28,7 @@
 //             children: [
 //               // Hostel Image
 //               ClipRRect(
-//                 borderRadius: BorderRadius.circular(16.0),
+//                 borderRadius: BorderRadius.circular(16.0),                                                             n
 //                 child: Image.network(
 //                   hostel.image.isNotEmpty
 //                       ? hostel.image

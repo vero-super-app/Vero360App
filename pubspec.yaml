@@ -77,9 +77,10 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/icons/logo_mark.png
+    
     - assets/happy.jpg
     - assets/uber-cabs-1024x576.webp
+    - assets/logo_mark.png
     - assets/Queens-Tavern-Steak.jpg
     - assets/veroai.png
     - assets/google.png
@@ -88,3 +89,5 @@ flutter:
     - assets/brands/apple_music.png
     - assets/brands/netflix.png
     - assets/brands/chatgpt.png
+    - assets/icons/playstore.png
+    - assets/playstore.png

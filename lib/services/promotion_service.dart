@@ -1,11 +1,11 @@
+// lib/services/promo_service.dart  (your file name may differ)
 import 'dart:convert';
 import 'dart:io' show File;
 
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import 'api_config.dart';
+import 'package:vero360_app/services/api_config.dart';
 
 class PromoModel {
   final int id;
@@ -40,11 +40,16 @@ class PromoModel {
         serviceProviderId: j['serviceProviderId'],
         title: j['title'] ?? '',
         description: j['description'],
-        price: (j['price'] == null) ? null : (j['price'] as num).toDouble(),
+        price:
+            (j['price'] == null) ? null : (j['price'] as num).toDouble(),
         image: j['image'],
         isActive: j['isActive'] == true,
-        freeTrialEndsAt: j['freeTrialEndsAt'] == null ? null : DateTime.parse(j['freeTrialEndsAt']),
-        subscribedAt: j['subscribedAt'] == null ? null : DateTime.parse(j['subscribedAt']),
+        freeTrialEndsAt: j['freeTrialEndsAt'] == null
+            ? null
+            : DateTime.parse(j['freeTrialEndsAt']),
+        subscribedAt: j['subscribedAt'] == null
+            ? null
+            : DateTime.parse(j['subscribedAt']),
         createdAt: DateTime.parse(j['createdAt']),
       );
 
@@ -53,7 +58,6 @@ class PromoModel {
         'description': description,
         'price': price,
         'image': image,
-        // serviceProviderId intentionally omitted (server maps internally)
       };
 }
 
@@ -69,15 +73,34 @@ class PromoService {
         if (extra != null) ...extra,
       };
 
+  String _friendlyError(String body) {
+    try {
+      final parsed = json.decode(body);
+      if (parsed is Map) {
+        final m = parsed['message'] ?? parsed['error'];
+        if (m is List && m.isNotEmpty) return m.first.toString();
+        if (m is String) return m;
+      }
+      if (parsed is List && parsed.isNotEmpty) {
+        return parsed.first.toString();
+      }
+    } catch (_) {}
+    return 'Request failed. Please try again.';
+  }
+
   dynamic _decode(http.Response r, {required String where}) {
+    // `where` is for debugging only, not exposed to user
     if (r.statusCode < 200 || r.statusCode >= 300) {
-      throw Exception('HTTP ${r.statusCode} at $where: ${r.body}');
+      throw Exception(_friendlyError(r.body));
     }
     return r.body.isEmpty ? {} : json.decode(r.body);
   }
 
   // === uploads (auth) ===
-  Future<String> uploadImageFile(File f, {String filename = 'promo.jpg'}) async {
+  Future<String> uploadImageFile(
+    File f, {
+    String filename = 'promo.jpg',
+  }) async {
     final base = await ApiConfig.readBase();
     final t = await _token();
     final url = Uri.parse('$base/uploads');
@@ -93,10 +116,10 @@ class PromoService {
 
     final streamed = await req.send();
     final resp = await http.Response.fromStream(streamed);
-    final body = _decode(resp, where: 'POST $url');
+    final body = _decode(resp, where: 'POST /uploads');
     final imageUrl = (body is Map ? body['url']?.toString() : null);
     if (imageUrl == null || imageUrl.isEmpty) {
-      throw Exception('Upload ok but no "url" returned');
+      throw Exception('Upload succeeded but no image URL was returned.');
     }
     return imageUrl;
   }
@@ -107,7 +130,7 @@ class PromoService {
     final t = await _token();
     final url = Uri.parse('$base/promos/me');
     final r = await http.get(url, headers: _auth(t));
-    final body = _decode(r, where: 'GET $url');
+    final body = _decode(r, where: 'GET /promos/me');
     final list = (body as List).cast<Map<String, dynamic>>();
     return list.map(PromoModel.fromJson).toList();
   }
@@ -121,8 +144,8 @@ class PromoService {
       headers: _auth(t, extra: {'Content-Type': 'application/json'}),
       body: jsonEncode(p.toCreateJson()),
     );
-    final body = _decode(r, where: 'POST $url') as Map<String, dynamic>;
-    return PromoModel.fromJson(body);
+    final body = _decode(r, where: 'POST /promos');
+    return PromoModel.fromJson(Map<String, dynamic>.from(body));
   }
 
   Future<void> subscribe(int promoId, double amountPaid) async {
@@ -134,7 +157,7 @@ class PromoService {
       headers: _auth(t, extra: {'Content-Type': 'application/json'}),
       body: jsonEncode({'amountPaid': amountPaid}),
     );
-    _decode(r, where: 'PATCH $url');
+    _decode(r, where: 'PATCH /promos/$promoId/subscribe');
   }
 
   Future<void> deactivate(int promoId) async {
@@ -142,7 +165,7 @@ class PromoService {
     final t = await _token();
     final url = Uri.parse('$base/promos/$promoId/deactivate');
     final r = await http.patch(url, headers: _auth(t));
-    _decode(r, where: 'PATCH $url');
+    _decode(r, where: 'PATCH /promos/$promoId/deactivate');
   }
 
   Future<void> deletePromo(int promoId) async {
@@ -150,6 +173,6 @@ class PromoService {
     final t = await _token();
     final url = Uri.parse('$base/promos/$promoId');
     final r = await http.delete(url, headers: _auth(t));
-    _decode(r, where: 'DELETE $url');
+    _decode(r, where: 'DELETE /promos/$promoId');
   }
 }

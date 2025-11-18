@@ -1,22 +1,19 @@
 // lib/services/merchantform.service.dart
 import 'dart:convert';
-import 'dart:io' show File;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/services/api_config.dart';
 import 'package:vero360_app/toasthelper.dart';
 
 class ServiceProviderService {
+  // Kept for compatibility, but not used (we rely on ApiConfig inside).
   final String baseUrl;
   ServiceProviderService({required this.baseUrl});
 
   /// Multipart POST /serviceprovider
-  /// fields (strings): businessName, businessDescription, openingHours, status
-  /// files:
-  ///  - nationalIdImage  (REQUIRED)
-  ///  - logoimage        (optional)
   Future<bool> submitServiceProviderMultipart({
     required Map<String, String> fields,
     required XFile nationalIdFile,
@@ -25,13 +22,19 @@ class ServiceProviderService {
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('jwt_token') ?? prefs.getString('token') ?? '';
+      final token =
+          prefs.getString('jwt_token') ?? prefs.getString('token') ?? '';
       if (token.isEmpty) {
-        ToastHelper.showCustomToast(context, 'Please log in again', isSuccess: false, errorMessage: '');
+        ToastHelper.showCustomToast(
+          context,
+          'Please log in again',
+          isSuccess: false,
+          errorMessage: '',
+        );
         return false;
       }
 
-      // Strictly only accepted keys (whitelist to avoid 400 "should not exist")
+      // Strict whitelist for fields to avoid "should not exist"
       final allowed = <String>{
         'businessName',
         'businessDescription',
@@ -40,12 +43,13 @@ class ServiceProviderService {
       };
       final sanitized = <String, String>{};
       fields.forEach((k, v) {
-        if (allowed.contains(k) && v.trim().isNotEmpty) {
-          sanitized[k] = v.trim();
+        final trimmed = v.trim();
+        if (allowed.contains(k) && trimmed.isNotEmpty) {
+          sanitized[k] = trimmed;
         }
       });
 
-      final uri = Uri.parse('$baseUrl/serviceprovider');
+      final uri = ApiConfig.endpoint('/serviceprovider');
       final req = http.MultipartRequest('POST', uri)
         ..headers.addAll({
           'Authorization': 'Bearer $token',
@@ -53,27 +57,35 @@ class ServiceProviderService {
         })
         ..fields.addAll(sanitized);
 
-      // Attach files with EXACT Multer field names:
-      // nationalIdImage (required)
+      // Attach files with correct field names
       if (kIsWeb) {
         final bytes = await nationalIdFile.readAsBytes();
         req.files.add(http.MultipartFile.fromBytes(
           'nationalIdImage',
           bytes,
-          filename: nationalIdFile.name.isEmpty ? 'national-id.jpg' : nationalIdFile.name,
+          filename: nationalIdFile.name.isEmpty
+              ? 'national-id.jpg'
+              : nationalIdFile.name,
         ));
         if (logoFile != null) {
           final lbytes = await logoFile.readAsBytes();
           req.files.add(http.MultipartFile.fromBytes(
             'logoimage',
             lbytes,
-            filename: logoFile.name.isEmpty ? 'logo.jpg' : logoFile.name,
+            filename:
+                logoFile.name.isEmpty ? 'logo.jpg' : logoFile.name,
           ));
         }
       } else {
-        req.files.add(await http.MultipartFile.fromPath('nationalIdImage', nationalIdFile.path));
+        req.files.add(await http.MultipartFile.fromPath(
+          'nationalIdImage',
+          nationalIdFile.path,
+        ));
         if (logoFile != null) {
-          req.files.add(await http.MultipartFile.fromPath('logoimage', logoFile.path));
+          req.files.add(await http.MultipartFile.fromPath(
+            'logoimage',
+            logoFile.path,
+          ));
         }
       }
 
@@ -84,20 +96,28 @@ class ServiceProviderService {
         return true;
       }
 
-      // Friendly errors (400 validation / 413 big images / others)
       String message = _extractMessage(res.body);
       if (res.statusCode == 413) {
         message = 'Images are too large. Please pick a smaller photo.';
       }
+
       ToastHelper.showCustomToast(
         context,
-        'Failed to submit: ${res.statusCode} ${message}',
+        message,
         isSuccess: false,
         errorMessage: '',
       );
       return false;
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Network error: $e', isSuccess: false, errorMessage: '');
+      if (kIsWeb) {
+        debugPrint('submitServiceProviderMultipart error: $e');
+      }
+      ToastHelper.showCustomToast(
+        context,
+        'Network error. Please check your connection and try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
       return false;
     }
   }
@@ -107,14 +127,14 @@ class ServiceProviderService {
       final parsed = jsonDecode(body);
       if (parsed is Map) {
         final m = parsed['message'];
-        if (m is List) return m.join(', ');
+        if (m is List && m.isNotEmpty) return m.first.toString();
         if (m is String) return m;
-        return parsed['error']?.toString() ?? body;
+        if (parsed['error'] != null) return parsed['error'].toString();
       }
-      if (parsed is List) return parsed.join(', ');
-      return body;
-    } catch (_) {
-      return body;
-    }
+      if (parsed is List && parsed.isNotEmpty) {
+        return parsed.first.toString();
+      }
+    } catch (_) {}
+    return 'Failed to submit. Please check your details and try again.';
   }
 }

@@ -9,7 +9,7 @@ import '../models/marketplace.model.dart';
 import '../services/marketplace.service.dart';
 import '../toasthelper.dart';
 
-// ⬇️ import your edit page (create it if you haven't yet)
+
 import 'marketplace_edit_page.dart';
 
 class LocalMedia {
@@ -40,6 +40,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _price = TextEditingController();
+  final _location = TextEditingController();
   final _desc = TextEditingController();
 
   bool _isActive = true;
@@ -76,6 +77,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     _tabs.dispose();
     _name.dispose();
     _price.dispose();
+    _location.dispose();
     _desc.dispose();
     super.dispose();
   }
@@ -203,15 +205,16 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       final videoUrl   = await _uploadAll(_videos);
 
       final item = MarketplaceItem(
-        name: _name.text.trim(),
-        price: double.tryParse(_price.text.trim()) ?? 0,
-        image: coverUrl,
-        description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
-        isActive: _isActive,
-        category: _category,
-        gallery: galleryUrl,
-        videos: videoUrl,
-      );
+  name: _name.text.trim(),
+  price: double.tryParse(_price.text.trim()) ?? 0,
+  image: coverUrl,
+  description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+  location: _location.text.trim(),            
+  isActive: _isActive,
+  category: _category,
+  gallery: galleryUrl,
+  videos: videoUrl,
+);
 
       await svc.createItem(item);
 
@@ -325,7 +328,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Add clear photos, set the right category and price. '
+                          'Add clear photos, set the right category,location and price. '
                           'Your post goes live instantly.',
                           style: TextStyle(fontWeight: FontWeight.w600),
                         ),
@@ -415,6 +418,16 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 ),
                 const SizedBox(height: 12),
 
+                    // location
+                TextFormField(
+                  controller: _location,
+                  decoration: _inputDecoration(label: 'Location'),
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Location is required' : null,
+                ),
+                const SizedBox(height: 12),
+                
+                
+                
                 // CATEGORY
                 DropdownButtonFormField<String>(
                   value: _category,

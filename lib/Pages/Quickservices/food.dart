@@ -10,6 +10,9 @@ import 'package:vero360_app/Pages/Home/food_details.dart';
 import 'package:vero360_app/models/food_model.dart';
 import 'package:vero360_app/services/food_service.dart';
 
+const Color kBrandOrange = Color(0xFFFF8A00);
+const Color kBrandSoft = Color(0xFFFFE8CC);
+
 class FoodPage extends StatefulWidget {
   const FoodPage({Key? key}) : super(key: key);
 
@@ -97,7 +100,6 @@ class _FoodPageState extends State<FoodPage> {
 
   Future<void> _showPhotoPickerSheet() async {
     if (kIsWeb) {
-      // On web, we don’t have camera permissions by default; fall back to gallery and warn.
       final XFile? picked = await _picker.pickImage(
         source: ImageSource.gallery,
         imageQuality: 85,
@@ -170,40 +172,44 @@ class _FoodPageState extends State<FoodPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[200],
+      backgroundColor: const Color(0xFFF6F6F6),
       appBar: AppBar(
         title: const Text(
           "Restaurants & Food",
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+          ),
         ),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        elevation: 2,
+        centerTitle: true,
+        backgroundColor: kBrandOrange,
+        foregroundColor: Colors.white,
+        elevation: 0,
       ),
       body: Column(
         children: [
           // Search bar with photo icon
           Padding(
-            padding: const EdgeInsets.all(12.0),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: TextField(
               controller: _searchCtrl,
               textInputAction: TextInputAction.search,
               onSubmitted: _onSubmit,
               decoration: InputDecoration(
                 hintText: "Search by food or restaurant...",
-                prefixIcon: const Icon(Icons.search),
+                prefixIcon: const Icon(Icons.search, color: Colors.black54),
                 suffixIcon: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (_searchCtrl.text.isNotEmpty)
                       IconButton(
-                        icon: const Icon(Icons.clear),
+                        icon: const Icon(Icons.clear, color: Colors.black54),
                         onPressed: () {
                           _searchCtrl.clear();
                           _onSubmit('');
                         },
                       ),
                     IconButton(
-                      icon: const Icon(Icons.camera_alt),
+                      icon: const Icon(Icons.camera_alt, color: kBrandOrange),
                       onPressed: _showPhotoPickerSheet,
                       tooltip: 'Search by Photo',
                     ),
@@ -212,23 +218,40 @@ class _FoodPageState extends State<FoodPage> {
                 filled: true,
                 fillColor: Colors.white,
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(30),
+                  borderRadius: BorderRadius.circular(28),
                   borderSide: BorderSide.none,
                 ),
-                contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: const BorderSide(color: kBrandOrange, width: 1.4),
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
               ),
             ),
           ),
 
           if (_photoMode)
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-              child: Row(
-                children: const [
-                  Icon(Icons.image_search, size: 16),
-                  SizedBox(width: 6),
-                  Text("Showing results similar to your photo"),
-                ],
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: kBrandSoft,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Icon(Icons.image_search, size: 16, color: kBrandOrange),
+                    SizedBox(width: 6),
+                    Text(
+                      "Showing results similar to your photo",
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ],
+                ),
               ),
             ),
 
@@ -251,14 +274,35 @@ class _FoodPageState extends State<FoodPage> {
                         Center(
                           child: Column(
                             children: [
-                              const Text("Failed to fetch food", style: TextStyle(color: Colors.red)),
+                              const Text(
+                                "Failed to fetch food",
+                                style: TextStyle(
+                                  color: Colors.red,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                               const SizedBox(height: 8),
                               Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                                child: Text(err, textAlign: TextAlign.center, style: const TextStyle(color: Colors.black54)),
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16.0),
+                                child: Text(
+                                  err,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.black54),
+                                ),
                               ),
                               const SizedBox(height: 12),
-                              ElevatedButton(onPressed: _refresh, child: const Text('Retry')),
+                              FilledButton(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: kBrandOrange,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                onPressed: _refresh,
+                                child: const Text('Retry'),
+                              ),
                             ],
                           ),
                         ),
@@ -271,18 +315,26 @@ class _FoodPageState extends State<FoodPage> {
                       physics: const AlwaysScrollableScrollPhysics(),
                       children: const [
                         SizedBox(height: 120),
-                        Center(child: Text("No food available", style: TextStyle(color: Colors.red))),
+                        Center(
+                          child: Text(
+                            "No food available",
+                            style: TextStyle(
+                              color: Colors.black54,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
                       ],
                     );
                   }
 
                   return Padding(
-                    padding: const EdgeInsets.all(12.0),
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                     child: LayoutBuilder(
                       builder: (context, constraints) {
                         final isWide = constraints.maxWidth >= 700;
                         final crossAxisCount = isWide ? 3 : 2;
-                        final childAspectRatio = isWide ? 0.72 : 0.70;
+                        final childAspectRatio = isWide ? 0.75 : 0.73;
 
                         return GridView.builder(
                           itemCount: items.length,
@@ -300,7 +352,8 @@ class _FoodPageState extends State<FoodPage> {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => FoodDetailsPage(foodItem: item),
+                                    builder: (_) =>
+                                        FoodDetailsPage(foodItem: item),
                                   ),
                                 );
                               },
@@ -320,9 +373,7 @@ class _FoodPageState extends State<FoodPage> {
   }
 }
 
-
-
-/* ---------- card widget (fixes pixel overflow) ---------- */
+/* ---------- card widget (orange, modern) ---------- */
 
 class _FoodCard extends StatelessWidget {
   const _FoodCard({required this.item, required this.onPressed});
@@ -333,17 +384,18 @@ class _FoodCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: onPressed, // tap whole card → details
-      borderRadius: BorderRadius.circular(15),
+      onTap: onPressed, // whole card clickable
+      borderRadius: BorderRadius.circular(18),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 10,
+              spreadRadius: 1,
+              offset: const Offset(0, 6),
             ),
           ],
         ),
@@ -351,32 +403,78 @@ class _FoodCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // image — use Expanded to avoid vertical overflow
+            // image with slight overlay
             Expanded(
               child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-                child: (item.FoodImage.isEmpty)
-                    ? Container(
-                        color: Colors.grey[300],
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.broken_image),
-                      )
-                    : Image.network(
-                        item.FoodImage,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        errorBuilder: (_, __, ___) => Container(
-                          color: Colors.grey[300],
-                          alignment: Alignment.center,
-                          child: const Icon(Icons.broken_image),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(18)),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    (item.FoodImage.isEmpty)
+                        ? Container(
+                            color: Colors.grey[300],
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.broken_image),
+                          )
+                        : Image.network(
+                            item.FoodImage,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              color: Colors.grey[300],
+                              alignment: Alignment.center,
+                              child: const Icon(Icons.broken_image),
+                            ),
+                          ),
+                    // gradient
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
+                            colors: [
+                              Colors.black.withOpacity(0.35),
+                              Colors.transparent,
+                            ],
+                          ),
                         ),
                       ),
+                    ),
+                    // small corner badge
+                    Positioned(
+                      left: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.55),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(Icons.restaurant_menu,
+                                size: 12, color: Colors.white),
+                            SizedBox(width: 4),
+                            Text(
+                              'Food',
+                              style: TextStyle(
+                                  color: Colors.white, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
 
             // title + subtitle + price
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -384,35 +482,63 @@ class _FoodCard extends StatelessWidget {
                     item.FoodName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     item.RestrauntName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, color: Colors.grey),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    "MWK ${item.price}",
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.green),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: kBrandSoft,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          "MWK ${item.price.toStringAsFixed(0)}",
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: kBrandOrange,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
 
-            // CTA button – fixed height to avoid overflow
+            // CTA button
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               child: SizedBox(
                 height: 40,
-                child: ElevatedButton(
-                  onPressed: onPressed, // button → details too
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
+                child: FilledButton(
+                  onPressed: onPressed,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: kBrandOrange,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   child: const Text("Order Food Now"),
                 ),

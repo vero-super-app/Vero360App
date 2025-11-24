@@ -1,26 +1,25 @@
 // lib/Pages/PostMarketplace.dart
-import 'dart:typed_data';
+
 import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
-import 'package:vero360_app/Pages/myshop.dart';
-import 'package:vero360_app/services/api_exception.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:path/path.dart' as path;
 
-import '../toasthelper.dart';
+import 'package:vero360_app/Pages/myshop.dart';
+import 'package:vero360_app/models/marketplace.model.dart'; // same model as edit page
+import 'package:vero360_app/services/api_exception.dart';
+
 import '../services/serviceprovider_service.dart';
-// NOTE: use the same model file as MarketplaceEditPage
-import 'package:vero360_app/models/marketplace.model.dart';
-
+import '../toasthelper.dart';
 import 'marketplace_edit_page.dart';
 
 class LocalMedia {
@@ -28,6 +27,7 @@ class LocalMedia {
   final String filename;
   final String? mime;
   final bool isVideo;
+
   const LocalMedia({
     required this.bytes,
     required this.filename,
@@ -38,6 +38,7 @@ class LocalMedia {
 
 class MarketplaceCrudPage extends StatefulWidget {
   const MarketplaceCrudPage({super.key});
+
   @override
   State<MarketplaceCrudPage> createState() => _MarketplaceCrudPageState();
 }
@@ -62,14 +63,14 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     'electronics',
     'clothes',
     'shoes',
-    'other'
+    'other',
   ];
   String? _category = 'other';
 
   // media (create tab)
   LocalMedia? _cover;
   final List<LocalMedia> _gallery = <LocalMedia>[];
-  final List<LocalMedia> _videos = <LocalMedia>[];
+  final List<LocalMedia> _videos = <LocalMedia>[]; // not stored for now
 
   // manage tab
   List<Map<String, dynamic>> _items = [];
@@ -80,15 +81,14 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   bool _checkingShop = true;
   bool _hasShop = false;
 
-  // Firebase instances
+  // Firebase
   final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // Service provider (NestJS) client
+  // NestJS service provider client
   final _spService = ServiceproviderService();
 
-  // --- Brand look to match Airport/Vero Courier ---
+  // Brand look
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandSoft = Color(0xFFFFE8CC);
 
@@ -118,10 +118,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   Future<void> _checkShop() async {
     setState(() => _checkingShop = true);
     try {
-      final sp = await _spService.fetchMine();
-      // fetchMine returns a single ServiceProvider? (not a list)
+      final sp = await _spService.fetchMine(); // ServiceProvider? from NestJS
       _hasShop = sp != null;
-    } catch (e) {
+    } catch (_) {
       _hasShop = false;
     } finally {
       if (mounted) setState(() => _checkingShop = false);
@@ -141,8 +140,13 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
           .collection('marketplace_items')
           .where('sellerUserId', isEqualTo: userId)
           .get();
-      _items =
-          query.docs.map((doc) => {...doc.data(), 'id': doc.id}).toList();
+
+      _items = query.docs
+          .map((doc) => {
+                ...doc.data(),
+                'id': doc.id, // Firestore doc id (string)
+              })
+          .toList();
     } catch (e) {
       ToastHelper.showCustomToast(
         context,
@@ -183,16 +187,10 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     try {
       final id = item['id'] as String;
       await _db.collection('marketplace_items').doc(id).delete();
-      // Delete media from Storage
-      await _deleteStorageFile(item['image'] as String?);
-      for (final url in (item['gallery'] as List? ?? [])) {
-        await _deleteStorageFile(url as String?);
-      }
-      for (final url in (item['videos'] as List? ?? [])) {
-        await _deleteStorageFile(url as String?);
-      }
+
       _items.removeWhere((e) => e['id'] == id);
       setState(() {});
+
       ToastHelper.showCustomToast(
         context,
         'Deleted • ${item['name']}',
@@ -211,16 +209,6 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     }
   }
 
-  Future<void> _deleteStorageFile(String? url) async {
-    if (url == null || url.isEmpty) return;
-    try {
-      final ref = _storage.refFromURL(url);
-      await ref.delete();
-    } catch (e) {
-      // Ignore if file not found
-    }
-  }
-
   Future<void> _editItem(Map<String, dynamic> item) async {
     final marketplaceItem = _createMarketplaceDetailModel(item);
 
@@ -235,30 +223,28 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     }
   }
 
-  // Helper to create MarketplaceDetailModel from Map
-   // Helper to create MarketplaceDetailModel from Map
-  MarketplaceDetailModel _createMarketplaceDetailModel(
-      Map<String, dynamic> item) {
-    // Firestore doc id is a String; your MarketplaceDetailModel expects an int.
-    // Try to parse it, fall back to 0 if it isn't numeric.
-    final firebaseId = item['id'] as String?;
-    final parsedId = int.tryParse(firebaseId ?? '') ?? 0;
+  /// Build a MarketplaceDetailModel from Firestore map
+  /// Only uses fields that we know exist in the constructor (no id/isActive/createdAt).
+ MarketplaceDetailModel _createMarketplaceDetailModel(
+  Map<String, dynamic> item,
+) {
+  // MarketplaceDetailModel requires an integer id.
+  // Firestore doc IDs are strings, so we fall back to 0 when we don't have an int.
+  final dynamic rawId = item['id'];
+  final int safeId = rawId is int ? rawId : 0;
 
-    return MarketplaceDetailModel(
-      id: parsedId,
-      name: item['name'] as String? ?? '',
-      image: item['image'] as String? ?? '',
-      price: (item['price'] as num?)?.toDouble() ?? 0.0,
-      description: item['description'] as String? ?? '',
-      location: item['location'] as String? ?? '',
-      // ⚠️ Do NOT pass isActive / createdAt here – the constructor doesn't have them
-      category: item['category'] as String?,
-      gallery: (item['gallery'] as List<dynamic>?)?.cast<String>() ?? [],
-      videos: (item['videos'] as List<dynamic>?)?.cast<String>() ?? [],
-      sellerUserId: item['sellerUserId'] as String?,
-      // If you later add createdAt to the constructor, you can wire it up here.
-    );
-  }
+  return MarketplaceDetailModel(
+    id: safeId, // ✅ required param satisfied
+    name: (item['name'] as String?) ?? '',
+    image: (item['image'] as String?) ?? '',
+    price: (item['price'] as num?)?.toDouble() ?? 0.0,
+    description: (item['description'] as String?) ?? '',
+    location: (item['location'] as String?) ?? '',
+    category: item['category'] as String?,
+    gallery: (item['gallery'] as List<dynamic>?)?.cast<String>() ?? const [],
+    videos: (item['videos'] as List<dynamic>?)?.cast<String>() ?? const [],
+  );
+}
 
 
   // ---------------- pickers (bytes) ----------------
@@ -330,7 +316,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     setState(() {});
   }
 
-  // ---------------- BASE64 COMPRESSION AND FIREBASE UPLOADS ----------------
+  // ---------------- compression + base64 ----------------
   Future<Uint8List> _compressImage(Uint8List imageBytes) async {
     try {
       final compressedBytes = await FlutterImageCompress.compressWithList(
@@ -341,72 +327,34 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         format: CompressFormat.jpeg,
       );
       return compressedBytes;
-    } catch (e) {
+    } catch (_) {
       return imageBytes;
     }
   }
 
-  Future<String> _uploadMedia(LocalMedia media) async {
-    try {
-      Uint8List bytesToUpload = media.bytes;
+  Future<String> _encodeImage(LocalMedia media) async {
+    Uint8List bytes = media.bytes;
 
-      // Compress images (not videos)
-      if (!media.isVideo) {
-        bytesToUpload = await _compressImage(media.bytes);
-
-        // If you need base64 to send to NestJS later, you can still get it here:
-        // ignore: unused_local_variable
-        final base64String = base64Encode(bytesToUpload);
-
-        // Get file extension and MIME type
-        final extension = path.extension(media.filename).toLowerCase();
-        final mimeType = media.mime ?? lookupMimeType(media.filename);
-
-        // Create unique filename with timestamp
-        final timestamp = DateTime.now().millisecondsSinceEpoch;
-        final filename = 'image_${timestamp}_compressed$extension';
-
-        // Create reference to Firebase Storage
-        final ref = _storage.ref('marketplace_media/$filename');
-
-        // Upload compressed bytes directly
-        final uploadTask = ref.putData(
-          bytesToUpload,
-          SettableMetadata(contentType: mimeType),
-        );
-
-        final snapshot = await uploadTask.whenComplete(() {});
-        final url = await snapshot.ref.getDownloadURL();
-        return url;
-      } else {
-        // For videos, upload directly without compression here
-        final extension = path.extension(media.filename).toLowerCase();
-        final mimeType = media.mime ?? lookupMimeType(media.filename);
-        final timestamp = DateTime.now().millisecondsSinceEpoch;
-        final filename = 'video_$timestamp$extension';
-
-        final ref = _storage.ref('marketplace_media/$filename');
-        final uploadTask = ref.putData(
-          bytesToUpload,
-          SettableMetadata(contentType: mimeType),
-        );
-
-        final snapshot = await uploadTask.whenComplete(() {});
-        final url = await snapshot.ref.getDownloadURL();
-        return url;
+    // Compress images (not videos)
+    if (!media.isVideo) {
+      try {
+        final compressed = await _compressImage(bytes);
+        if (compressed.isNotEmpty) bytes = compressed;
+      } catch (_) {
+        // ignore and fall back to original bytes
       }
-    } catch (e) {
-      throw ApiException(message: 'Upload failed: $e');
     }
+
+    // base64 string for Firestore (Spark plan friendly)
+    return base64Encode(bytes);
   }
 
-  Future<List<String>> _uploadAll(List<LocalMedia> items) async {
-    final urls = <String>[];
+  Future<List<String>> _encodeAll(List<LocalMedia> items) async {
+    final result = <String>[];
     for (final m in items) {
-      final url = await _uploadMedia(m);
-      urls.add(url);
+      result.add(await _encodeImage(m));
     }
-    return urls;
+    return result;
   }
 
   // ---------------- create ----------------
@@ -436,21 +384,19 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     setState(() => _submitting = true);
 
     try {
-      // 1️⃣ Upload all media to Firebase Storage first
-      String coverUrl;
-      List<String> galleryUrls = [];
-      List<String> videoUrls = [];
+      // 1️⃣ Convert images to base64 strings
+      String coverBase64;
+      List<String> galleryBase64 = [];
 
       try {
-        coverUrl = await _uploadMedia(_cover!);
-        galleryUrls = await _uploadAll(_gallery);
-        videoUrls = await _uploadAll(_videos);
+        coverBase64 = await _encodeImage(_cover!);
+        galleryBase64 = await _encodeAll(_gallery);
       } catch (e) {
         ToastHelper.showCustomToast(
           context,
-          'Upload failed: $e',
+          'Image encoding failed: $e',
           isSuccess: false,
-          errorMessage: 'Upload failed',
+          errorMessage: 'Image encode failed',
         );
         return;
       }
@@ -467,23 +413,21 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         return;
       }
 
-      // Prepare data for Firestore
       final data = {
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? 0,
-        'image': coverUrl,
+        'image': coverBase64, // base64
         'description':
             _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         'location': _location.text.trim(),
         'isActive': _isActive,
         'category': _category ?? 'other',
-        'gallery': galleryUrls,
-        'videos': videoUrls,
+        'gallery': galleryBase64, // base64 list
+        'videos': <String>[], // skip videos for now
         'createdAt': FieldValue.serverTimestamp(),
         'sellerUserId': userId,
       };
 
-      // Save to Firestore
       await _db.collection('marketplace_items').add(data);
 
       ToastHelper.showCustomToast(
@@ -507,7 +451,6 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
       setState(() {});
 
-      // Reload items and switch to manage tab
       await _loadItems();
       _tabs.animateTo(1);
     } catch (e) {
@@ -560,10 +503,11 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         return;
       }
 
-      Position position =
+      final position =
           await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      List<Placemark> placemarks =
+      final placemarks =
           await placemarkFromCoordinates(position.latitude, position.longitude);
+
       if (placemarks.isEmpty) {
         ToastHelper.showCustomToast(
           context,
@@ -573,14 +517,16 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         );
         return;
       }
-      Placemark place = placemarks[0];
-      String address = [
+
+      final place = placemarks[0];
+      final address = [
         place.name,
         place.street,
         place.locality,
         place.administrativeArea,
         place.country,
-      ].where((e) => e != null && e.isNotEmpty).join(', ');
+      ].where((e) => e != null && e!.isNotEmpty).join(', ');
+
       setState(() {
         _location.text = address;
       });
@@ -604,9 +550,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       );
       return;
     }
-    String query = Uri.encodeComponent(_location.text.trim());
-    Uri uri =
-        Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
+    final query = Uri.encodeComponent(_location.text.trim());
+    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     } else {
@@ -662,15 +607,17 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     );
   }
 
-  ButtonStyle _filledBtnStyle({double padV = 14}) =>
-      FilledButton.styleFrom(
+  ButtonStyle _filledBtnStyle({double padV = 14}) => FilledButton.styleFrom(
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
         padding: EdgeInsets.symmetric(vertical: padV, horizontal: 14),
         textStyle: const TextStyle(
-            fontSize: 16, fontWeight: FontWeight.w700),
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+        ),
       );
 
   // ---------------- UI ----------------
@@ -709,20 +656,18 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   }
 
   Widget _buildAddTab(bool canCreate) {
-    // While checking shop, show loader
     if (_checkingShop) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    // No shop -> show message and CTA to open a shop
     if (!_hasShop) {
       return SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Card(
           elevation: 8,
           shadowColor: Colors.black12,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
             child: Column(
@@ -744,8 +689,11 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   ),
                 ),
                 const SizedBox(height: 20),
-                const Icon(Icons.storefront_outlined,
-                    size: 80, color: Colors.black38),
+                const Icon(
+                  Icons.storefront_outlined,
+                  size: 80,
+                  color: Colors.black38,
+                ),
                 const SizedBox(height: 16),
                 FilledButton.icon(
                   style: _filledBtnStyle(),
@@ -773,8 +721,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       child: Card(
         elevation: 8,
         shadowColor: Colors.black12,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
           child: Form(
@@ -790,20 +738,19 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   decoration: BoxDecoration(
                     color: _brandSoft,
                     border: Border.all(
-                        color: _brandOrange.withOpacity(0.35)),
+                      color: _brandOrange.withOpacity(0.35),
+                    ),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
                     children: const [
-                      Icon(Icons.info_outline,
-                          color: Colors.black87),
+                      Icon(Icons.info_outline, color: Colors.black87),
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           'Add clear photos, set the right category, location and price. '
                           'Images are automatically compressed and optimized.',
-                          style:
-                              TextStyle(fontWeight: FontWeight.w600),
+                          style: TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),
                     ],
@@ -815,7 +762,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   'Add Product',
                   style: TextStyle(
                     fontSize: 18,
-                    fontWeight: FontWeight.w700),
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 12),
 
@@ -905,18 +853,17 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   controller: _name,
                   decoration: _inputDecoration(label: 'Name'),
                   validator: (v) =>
-                      (v == null || v.trim().isEmpty)
-                          ? 'Name is required'
-                          : null,
+                      (v == null || v.trim().isEmpty) ? 'Name is required' : null,
                 ),
                 const SizedBox(height: 12),
 
                 TextFormField(
                   controller: _price,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: false),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: false,
+                  ),
                   inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly
+                    FilteringTextInputFormatter.digitsOnly,
                   ],
                   decoration: _inputDecoration(label: 'Price (MK)'),
                   validator: (v) {
@@ -1177,7 +1124,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             crossAxisCount = 3;
           }
 
-          final aspect = (constraints.maxWidth >= 700) ? 0.90 : 0.88;
+          final aspect =
+              (constraints.maxWidth >= 700) ? 0.90 : 0.88;
 
           return GridView.builder(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
@@ -1228,12 +1176,62 @@ class _ManageCard extends StatelessWidget {
     const brandSoft = Color(0xFFFFE8CC);
 
     final price = (item['price'] as num?)?.toDouble() ?? 0;
+    final imageStr = item['image'] as String?;
+
+    Widget imageWidget;
+
+    if (imageStr == null || imageStr.isEmpty) {
+      imageWidget = Container(
+        color: Colors.grey.shade200,
+        child: const Center(
+          child: Icon(
+            Icons.image_not_supported_outlined,
+            color: Colors.black38,
+          ),
+        ),
+      );
+    } else if (imageStr.startsWith('http') || imageStr.startsWith('gs://')) {
+      // Old data: URL stored
+      imageWidget = Image.network(
+        imageStr,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(
+          color: Colors.grey.shade200,
+          child: const Center(
+            child: Icon(
+              Icons.image_not_supported_outlined,
+              color: Colors.black38,
+            ),
+          ),
+        ),
+      );
+    } else {
+      // New data: base64 string
+      try {
+        final bytes = base64Decode(imageStr);
+        imageWidget = Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+        );
+      } catch (_) {
+        imageWidget = Container(
+          color: Colors.grey.shade200,
+          child: const Center(
+            child: Icon(
+              Icons.image_not_supported_outlined,
+              color: Colors.black38,
+            ),
+          ),
+        );
+      }
+    }
 
     return Card(
       elevation: 6,
       shadowColor: Colors.black12,
       shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16)),
+        borderRadius: BorderRadius.circular(16),
+      ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1242,19 +1240,7 @@ class _ManageCard extends StatelessWidget {
             children: [
               AspectRatio(
                 aspectRatio: 16 / 9,
-                child: Image.network(
-                  item['image'] as String,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    color: Colors.grey.shade200,
-                    child: const Center(
-                      child: Icon(
-                        Icons.image_not_supported_outlined,
-                        color: Colors.black38,
-                      ),
-                    ),
-                  ),
-                ),
+                child: imageWidget,
               ),
               Positioned(
                 right: 6,
@@ -1309,7 +1295,9 @@ class _ManageCard extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  _timeAgo((item['createdAt'] as Timestamp?)?.toDate()),
+                  _timeAgo(
+                    (item['createdAt'] as Timestamp?)?.toDate(),
+                  ),
                   style: const TextStyle(
                     color: Colors.grey,
                     fontSize: 12,
@@ -1345,9 +1333,7 @@ class _ManageCard extends StatelessWidget {
         ),
       ),
     );
-    return tooltip == null
-        ? btn
-        : Tooltip(message: tooltip, child: btn);
+    return tooltip == null ? btn : Tooltip(message: tooltip, child: btn);
   }
 
   String _timeAgo(DateTime? date) {

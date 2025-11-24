@@ -468,7 +468,7 @@ class _MarketPageState extends State<MarketPage> {
         borderRadius: BorderRadius.circular(15),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -511,7 +511,7 @@ class _MarketPageState extends State<MarketPage> {
                     top: 8,
                     child: Chip(
                       label: Text(_titleCase(cat)),
-                      backgroundColor: Colors.black.withOpacity(0.75),
+                      backgroundColor: Colors.black.withValues(alpha: 0.75),
                       labelStyle: const TextStyle(color: Colors.white),
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       visualDensity: VisualDensity.compact,

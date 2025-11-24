@@ -257,7 +257,7 @@ class _BikePageState extends State<BikePage> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF101010).withOpacity(0.03),
+                    color: const Color(0xFF101010).withValues(alpha: 0.03),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Row(

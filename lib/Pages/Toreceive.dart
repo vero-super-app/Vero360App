@@ -47,13 +47,13 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: c.withOpacity(.10),
+        color: c.withValues(alpha: .10),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: c.withOpacity(.35)),
+        border: Border.all(color: c.withValues(alpha: .35)),
       ),
       child: Text(
         text,
-        style: TextStyle(color: c.withOpacity(.95), fontWeight: FontWeight.w700),
+        style: TextStyle(color: c.withValues(alpha: .95), fontWeight: FontWeight.w700),
       ),
     );
   }

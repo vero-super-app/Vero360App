@@ -28,7 +28,12 @@ class _ActiveRentalPageState extends State<ActiveRentalPage> {
   double _totalDistance = 0;
   int _secondsElapsed = 0;
   late Timer _timer;
+  late Timer _costTimer;
   bool _ending = false;
+  double _liveCost = 0;
+  double _fuelLevel = 85.0;
+  String _currentLocationAddress = 'Loading location...';
+  bool _showIssueReport = false;
 
   @override
   void initState() {
@@ -48,12 +53,42 @@ class _ActiveRentalPageState extends State<ActiveRentalPage> {
         setState(() => _secondsElapsed++);
       }
     });
+
+    // Timer for live cost updates (every minute)
+    _costTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) {
+        _updateLiveCost();
+      }
+    });
+
+    // Initial location load
+    _loadLocationAddress();
+  }
+
+  void _updateLiveCost() {
+    // Calculate live cost based on elapsed time
+    final hoursPassed = _secondsElapsed / 3600;
+    final dailyRate = widget.car.dailyRate;
+    setState(() {
+      _liveCost = hoursPassed * (dailyRate / 24);
+    });
+  }
+
+  Future<void> _loadLocationAddress() async {
+    // Simulate address lookup from GPS coordinates
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (mounted) {
+      setState(() {
+        _currentLocationAddress = 'Lilongwe, Malawi';
+      });
+    }
   }
 
   @override
   void dispose() {
     _trackingService.stopTracking();
     _timer.cancel();
+    _costTimer.cancel();
     super.dispose();
   }
 
@@ -126,6 +161,36 @@ class _ActiveRentalPageState extends State<ActiveRentalPage> {
       appBar: AppBar(
         title: Text('${widget.car.brand} ${widget.car.model}'),
         elevation: 0,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.green[50],
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.green),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.circle, color: Colors.green, size: 8),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Owner Monitoring',
+                      style: TextStyle(
+                        color: Colors.green[700],
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -195,7 +260,7 @@ class _ActiveRentalPageState extends State<ActiveRentalPage> {
             ),
           ),
 
-          // Trip stats
+          // Trip stats and details
           Expanded(
             flex: 1,
             child: SingleChildScrollView(
@@ -219,14 +284,85 @@ class _ActiveRentalPageState extends State<ActiveRentalPage> {
                           icon: Icons.location_on,
                         ),
                         _StatCard(
-                          label: 'Cost',
-                          value:
-                              'MWK${widget.booking.totalCost.toStringAsFixed(0)}',
+                          label: 'Live Cost',
+                          value: 'MWK${_liveCost.toStringAsFixed(0)}',
                           icon: Icons.attach_money,
                         ),
                       ],
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
+
+                    // Trip details section
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[50],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Current Location',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: Colors.grey[600],
+                                    ),
+                              ),
+                              Icon(Icons.location_on, size: 16, color: Colors.blue),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _currentLocationAddress,
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                          const SizedBox(height: 8),
+                          LinearProgressIndicator(
+                            value: _fuelLevel / 100,
+                            backgroundColor: Colors.grey[300],
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              _fuelLevel > 30 ? Colors.green : Colors.orange,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Fuel: ${_fuelLevel.toStringAsFixed(0)}%',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: Colors.grey[600],
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Report issue button
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() => _showIssueReport = !_showIssueReport);
+                        },
+                        icon: const Icon(Icons.warning),
+                        label: const Text('Report Issue'),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: Colors.orange[700]!),
+                        ),
+                      ),
+                    ),
+
+                    // Issue report form
+                    if (_showIssueReport) ...[
+                      const SizedBox(height: 12),
+                      _buildIssueReportForm(context),
+                    ],
+
+                    const SizedBox(height: 16),
 
                     // End rental button
                     SizedBox(
@@ -262,6 +398,84 @@ class _ActiveRentalPageState extends State<ActiveRentalPage> {
                 ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIssueReportForm(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.orange[50],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Report an Issue',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: Colors.orange[900],
+                ),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            decoration: InputDecoration(
+              labelText: 'Issue Type',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            items: [
+              'Engine Problem',
+              'Tire Issue',
+              'Brake Problem',
+              'Electrical Issue',
+              'Other',
+            ]
+                .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                .toList(),
+            onChanged: (value) {},
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Camera access needed')),
+                    );
+                  },
+                  icon: const Icon(Icons.camera_alt),
+                  label: const Text('Add Photo'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Accident report sent to owner'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.emergency),
+                  label: const Text('Accident'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

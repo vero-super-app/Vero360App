@@ -168,7 +168,7 @@ class _HeroCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0x22FF8A00)),
         boxShadow: [
-          BoxShadow(color: _Brand.orange.withOpacity(0.12), blurRadius: 14, offset: const Offset(0, 8)),
+          BoxShadow(color: _Brand.orange.withValues(alpha: 0.12), blurRadius: 14, offset: const Offset(0, 8)),
         ],
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12),

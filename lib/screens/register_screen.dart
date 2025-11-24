@@ -299,7 +299,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       decoration: BoxDecoration(
                         gradient: const LinearGradient(colors: [AppColors.brandOrange, Color(0xFFFFB85C)]),
                         shape: BoxShape.circle,
-                        boxShadow: [BoxShadow(color: AppColors.brandOrange.withOpacity(0.25), blurRadius: 20, offset: const Offset(0, 10))],
+                        boxShadow: [BoxShadow(color: AppColors.brandOrange.withValues(alpha: 0.25), blurRadius: 20, offset: const Offset(0, 10))],
                       ),
                       child: CircleAvatar(
                         radius: 44,
@@ -330,7 +330,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     Container(
                       decoration: BoxDecoration(
                         color: Colors.white, borderRadius: BorderRadius.circular(20),
-                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 10))],
+                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, 10))],
                       ),
                       padding: const EdgeInsets.all(18),
                       child: Form(

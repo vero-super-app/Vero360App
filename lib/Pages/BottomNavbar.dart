@@ -159,8 +159,8 @@ class _GlassPillNavBar extends StatelessWidget {
             child: Container(
               height: 74,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.55),
-                border: Border.all(color: Colors.white.withOpacity(0.65), width: 1),
+                color: Colors.white.withValues(alpha: 0.55),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.65), width: 1),
               ),
             ),
           ),
@@ -173,11 +173,11 @@ class _GlassPillNavBar extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Colors.white.withOpacity(0.55), Colors.white.withOpacity(0.34)],
+                colors: [Colors.white.withValues(alpha: 0.55), Colors.white.withValues(alpha: 0.34)],
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
+                  color: Colors.black.withValues(alpha: 0.06),
                   blurRadius: 20,
                   offset: const Offset(0, 8),
                 ),
@@ -253,7 +253,7 @@ class _AnimatedNavButton extends StatelessWidget {
                 boxShadow: selected
                     ? [
                         BoxShadow(
-                          color: glowColor.withOpacity(0.55),
+                          color: glowColor.withValues(alpha: 0.55),
                           blurRadius: 18,
                           spreadRadius: 1,
                           offset: const Offset(0, 6),

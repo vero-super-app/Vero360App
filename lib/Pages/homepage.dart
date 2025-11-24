@@ -804,7 +804,7 @@ class _SectionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.brandOrangeSoft.withOpacity(0.55)),
+        border: Border.all(color: AppColors.brandOrangeSoft.withValues(alpha: 0.55)),
         boxShadow: const [
           BoxShadow(color: Color(0x14000000), blurRadius: 8, offset: Offset(0, 2)),
         ],

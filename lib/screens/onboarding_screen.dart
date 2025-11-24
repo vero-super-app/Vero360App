@@ -229,7 +229,7 @@ class _PageOne extends StatelessWidget {
                   borderRadius: BorderRadius.circular(28),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.08),
+                      color: Colors.black.withValues(alpha: 0.08),
                       blurRadius: 24,
                       offset: const Offset(0, 14),
                     ),
@@ -309,7 +309,7 @@ class _BasketCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(28),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 24,
             offset: const Offset(0, 14),
           ),
@@ -483,12 +483,12 @@ class _ConcentricRRectPainter extends CustomPainter {
       final t = i / (rings - 1);
       final shrink = 8.0 + t * 48.0;
       final r = baseR.deflate(shrink);
-      p.color = Colors.white.withOpacity(0.22 - t * 0.18);
+      p.color = Colors.white.withValues(alpha: 0.22 - t * 0.18);
       canvas.drawRRect(r, p);
     }
     final fill = Paint()
       ..style = PaintingStyle.fill
-      ..color = Colors.white.withOpacity(0.45);
+      ..color = Colors.white.withValues(alpha: 0.45);
     canvas.drawRRect(baseR.deflate(56), fill);
   }
 

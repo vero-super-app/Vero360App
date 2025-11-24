@@ -574,7 +574,7 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
             decoration: BoxDecoration(
               color: _cardBg,
               borderRadius: BorderRadius.circular(16),
-              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 6))],
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 12, offset: const Offset(0, 6))],
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -644,7 +644,7 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
       decoration: BoxDecoration(
         color: _cardBg,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 6))],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 12, offset: const Offset(0, 6))],
       ),
       child: LayoutBuilder(
         builder: (context, c) {
@@ -727,7 +727,7 @@ _DetailItem('Latest Arrivals', Icons.rocket_launch, () {
       decoration: BoxDecoration(
         color: _cardBg,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 6))],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 12, offset: const Offset(0, 6))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

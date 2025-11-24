@@ -319,7 +319,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
                     color: _brandSoft,
-                    border: Border.all(color: _brandOrange.withOpacity(0.35)),
+                    border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -740,7 +740,7 @@ class _ManageCard extends StatelessWidget {
     VoidCallback? onTap,
   }) {
     final btn = Material(
-      color: Colors.white.withOpacity(0.90),
+      color: Colors.white.withValues(alpha: 0.90),
       shape: const CircleBorder(),
       child: InkWell(
         onTap: onTap,

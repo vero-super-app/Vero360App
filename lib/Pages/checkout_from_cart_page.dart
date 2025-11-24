@@ -356,7 +356,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               decoration: BoxDecoration(
                 color: _brandSoft,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _brandOrange.withOpacity(0.35)),
+                border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
               ),
               child: const Row(
                 children: [

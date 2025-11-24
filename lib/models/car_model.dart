@@ -11,6 +11,10 @@ class CarModel {
   final String fuelType;
   final double rating;
   final int reviews;
+  final String? ownerName;
+  final int year;
+  final String? description;
+  final String? color;
 
   CarModel({
     required this.id,
@@ -25,6 +29,10 @@ class CarModel {
     this.fuelType = 'Petrol',
     this.rating = 0,
     this.reviews = 0,
+    this.ownerName,
+    this.year = 2020,
+    this.description,
+    this.color,
   });
 
   factory CarModel.fromJson(Map<String, dynamic> json) {
@@ -41,6 +49,10 @@ class CarModel {
       fuelType: json['fuelType'] ?? json['fuel_type'] ?? 'Petrol',
       rating: (json['rating'] ?? 0).toDouble(),
       reviews: json['reviews'] ?? 0,
+      ownerName: json['ownerName'] ?? json['owner_name'],
+      year: json['year'] ?? 2020,
+      description: json['description'],
+      color: json['color'],
     );
   }
 
@@ -57,6 +69,10 @@ class CarModel {
         'fuelType': fuelType,
         'rating': rating,
         'reviews': reviews,
+        'ownerName': ownerName,
+        'year': year,
+        'description': description,
+        'color': color,
       };
 
   CarModel copyWith({
@@ -72,6 +88,10 @@ class CarModel {
     String? fuelType,
     double? rating,
     int? reviews,
+    String? ownerName,
+    int? year,
+    String? description,
+    String? color,
   }) {
     return CarModel(
       id: id ?? this.id,
@@ -86,6 +106,10 @@ class CarModel {
       fuelType: fuelType ?? this.fuelType,
       rating: rating ?? this.rating,
       reviews: reviews ?? this.reviews,
+      ownerName: ownerName ?? this.ownerName,
+      year: year ?? this.year,
+      description: description ?? this.description,
+      color: color ?? this.color,
     );
   }
 }

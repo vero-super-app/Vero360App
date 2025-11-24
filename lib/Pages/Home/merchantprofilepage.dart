@@ -716,7 +716,7 @@ _DetailItem('Latest Arrivals', Icons.rocket_launch, () {
 
 
          _DetailItem('My Address', Icons.location_on, () { _openBottomSheet(const AddressPage()); }),
-       _DetailItem('My transactions', Icons.history, _logout),
+       _DetailItem('My transactions', Icons.history, () { /* TODO: implement */ }),
 
 
     ];

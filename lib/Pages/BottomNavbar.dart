@@ -24,7 +24,7 @@ class _BottomnavbarState extends State<Bottomnavbar> {
   int _selectedIndex = 0;
   late final List<Widget> _pages;
 
-final cartService = CartService('https://heflexitservice.co.za/vero', apiPrefix: 'api');
+final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
 
   bool _isLoggedIn = false;
 

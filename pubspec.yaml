@@ -28,6 +28,8 @@ dependencies:
   sign_in_with_apple: ^6.1.0
   google_maps_flutter: ^2.2.8
   google_maps_flutter_web: ^0.4.0
+  flutter_image_compress: ^2.3.0  # Latest as of November 23, 2025
+  
 
   mime: ^2.0.0
   http_parser: ^4.0.2
@@ -48,6 +50,8 @@ dependencies:
   firebase_auth_web: ^5.9.0
   cloud_firestore: ^5.6.0
   firebase_storage: ^12.4.1
+  geocoding: ^4.0.0
+
 
   # WebView support
   webview_flutter: ^4.10.0 

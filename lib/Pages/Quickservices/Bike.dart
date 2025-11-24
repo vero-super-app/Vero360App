@@ -1,272 +1,327 @@
-// lib/Pages/bike_page.dart
-import 'package:flutter/material.dart';
+// lib/Pages/Quickservices/vero_ride_page.dart
 
-class BikePage extends StatefulWidget {
-  const BikePage({super.key});
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import 'package:vero360_app/models/vero_bike.models.dart';
+import 'package:vero360_app/services/vero_bike_service.dart';
+import 'package:vero360_app/services/api_exception.dart';
+
+class VeroRidePage extends StatefulWidget {
+  const VeroRidePage({super.key});
 
   @override
-  State<BikePage> createState() => _BikePageState();
+  State<VeroRidePage> createState() => _VeroRidePageState();
 }
 
-class _BikePageState extends State<BikePage> {
-  final _pickup = TextEditingController();
-  final _dropoff = TextEditingController();
+class _VeroRidePageState extends State<VeroRidePage> {
+  static const _brandOrange = Color(0xFFFF8A00);
+  static const _brandSoft = Color(0xFFFFE8CC);
+
+  final _service = const VeroBikeService();
+
+  List<VeroBikeDriver> _drivers = [];
+  bool _loading = false;
+  String? _error;
+
+  // simple: pick city manually here
+  String _city = 'Lilongwe';
 
   @override
-  void dispose() {
-    _pickup.dispose();
-    _dropoff.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _load();
   }
 
-  // --- THEME ---
-  static const _brandOrange = Color(0xFFFF8A00);
-  static const _brandOrangeSoft = Color(0xFFFFE3C2);
-
-  // --- ESTIMATION HELPERS (mock distance; replace with real API later) ---
-  int _pseudoKm(String a, String b) {
-    final s = (a.trim() + b.trim());
-    if (s.isEmpty) return 0;
-    final code = s.codeUnits.fold<int>(0, (acc, v) => (acc + v) % 1000);
-    return 2 + (code % 12); // 2..13 km
+  Future<String?> _readToken() async {
+    final sp = await SharedPreferences.getInstance();
+    return sp.getString('jwt_token') ??
+        sp.getString('token') ??
+        sp.getString('jwt');
   }
 
-  int _bikePriceMwk(int km) {
-    // Example pricing: base 2,000 + 450/km
-    return 2000 + (km * 450);
-  }
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
 
-  String _money(int amount) {
-    final s = amount.toString();
-    final buf = StringBuffer();
-    for (int i = 0; i < s.length; i++) {
-      final rev = s.length - i;
-      buf.write(s[i]);
-      if (rev > 1 && rev % 3 == 1) buf.write(',');
-    }
-    return 'MK ${buf.toString()}';
-  }
-
-  void _onEstimate() {
-    FocusScope.of(context).unfocus();
-    final km = _pseudoKm(_pickup.text, _dropoff.text);
-    if (km == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter pickup and drop-off to estimate.')),
+    try {
+      final token = await _readToken();
+      final data = await _service.fetchAvailableBikes(
+        city: _city,
+        authToken: token,
       );
-      return;
+      setState(() {
+        _drivers = data;
+      });
+    } on ApiException catch (e) {
+      setState(() {
+        _error = e.message;
+      });
+    } catch (_) {
+      setState(() {
+        _error = 'Something went wrong. Please try again.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
-    final price = _bikePriceMwk(km);
-    showModalBottomSheet(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 4),
-            Text('Estimated Fare', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 8),
-            Text(
-              '${_money(price)}  •  ~${km} km',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: _brandOrange,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'This is an instant estimate. Final price may adjust based on exact route & traffic.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54),
-            ),
-            const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _onBook,
-                icon: const Icon(Icons.pedal_bike_rounded),
-                label: const Text('Book Bike'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  backgroundColor: _brandOrange,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-            ),
-          ],
+  }
+
+  Future<void> _callNumber(String phone) async {
+    final uri = Uri(scheme: 'tel', path: phone.trim());
+    if (!await canLaunchUrl(uri)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open the dialer on this device.'),
+          behavior: SnackBarBehavior.floating,
         ),
-      ),
-    );
-  }
-
-  void _onBook() {
-    if (_pickup.text.isEmpty || _dropoff.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill pickup and drop-off.')),
       );
       return;
     }
-    final km = _pseudoKm(_pickup.text, _dropoff.text);
-    final price = _bikePriceMwk(km);
-    // TODO: call your backend create-ride endpoint here
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Bike booked! ${_money(price)} • ~${km} km')),
-    );
-    Navigator.of(context).maybePop();
+    await launchUrl(uri);
   }
 
-  InputDecoration _decor(String label, IconData icon, {String? hint}) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      prefixIcon: Icon(icon),
-      filled: true,
-      fillColor: Colors.white,
-      // Black border before active (requested)
-      enabledBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: Colors.black87, width: 1),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: _brandOrange, width: 2),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderSide: BorderSide(color: Colors.red.shade600, width: 1.5),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
-    );
+  String _statusLabel(String status) {
+    switch (status) {
+      case 'ONLINE_AVAILABLE':
+        return 'Available now';
+      case 'ONLINE_ON_TRIP':
+        return 'On a trip';
+      case 'OFFLINE':
+      default:
+        return 'Offline';
+    }
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'ONLINE_AVAILABLE':
+        return const Color(0xFF1B8F3E); // green
+      case 'ONLINE_ON_TRIP':
+        return const Color(0xFFFFA000); // amber
+      case 'OFFLINE':
+      default:
+        return Colors.grey;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final titleStyle = Theme.of(context).textTheme.titleLarge?.copyWith(
-          fontWeight: FontWeight.w700,
-          color: Colors.black87,
-        );
-
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [_brandOrangeSoft, Colors.white],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+      appBar: AppBar(
+        title: const Text('VeroBike'),
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          // simple city selector
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              setState(() => _city = value);
+              _load();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'Lilongwe',
+                child: Text('Lilongwe'),
+              ),
+              PopupMenuItem(
+                value: 'Blantyre',
+                child: Text('Blantyre'),
+              ),
+            ],
+            icon: const Icon(Icons.location_city),
           ),
-        ),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: _buildBody(),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading && _drivers.isEmpty && _error == null) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (_error != null && _drivers.isEmpty) {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const SizedBox(height: 60),
+          Icon(Icons.error_outline, size: 48, color: Colors.red.shade400),
+          const SizedBox(height: 12),
+          Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 14),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: FilledButton(
+              onPressed: _load,
+              style: FilledButton.styleFrom(
+                backgroundColor: _brandOrange,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Retry'),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (_drivers.isEmpty) {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: const [
+          SizedBox(height: 60),
+          Icon(Icons.directions_bike, size: 56, color: Colors.black45),
+          SizedBox(height: 12),
+          Text(
+            'No bikes are available right now.\nPlease refresh in a few minutes.',
+            textAlign: TextAlign.center,
+          ),
+        ],
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      itemCount: _drivers.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (_, index) {
+        final d = _drivers[index];
+        final statusColor = _statusColor(d.status);
+        final statusText = _statusLabel(d.status);
+
+        final locationText = (d.baseLocationText != null &&
+                d.baseLocationText!.trim().isNotEmpty)
+            ? d.baseLocationText!
+            : d.city;
+
+        return Card(
+          elevation: 3,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
               children: [
-                // AppBar substitute (modern)
-                Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.of(context).maybePop(),
-                      icon: const Icon(Icons.arrow_back_rounded),
-                    ),
-                    const SizedBox(width: 4),
-                    const Icon(Icons.pedal_bike_rounded, color: _brandOrange, size: 28),
-                    const SizedBox(width: 8),
-                    Text('Request a Bike', style: titleStyle),
-                  ],
+                // Avatar
+                _DriverAvatar(
+                  name: d.name,
+                  photoUrl: d.photoUrl,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(width: 12),
 
-                // Card
-                Card(
-                  elevation: 0,
-                  color: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-                    child: Column(
-                      children: [
-                        TextField(
-                          controller: _pickup,
-                          textInputAction: TextInputAction.next,
-                          decoration: _decor('Pickup location', Icons.my_location_rounded, hint: 'e.g. Vero’s Guest House'),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _dropoff,
-                          textInputAction: TextInputAction.done,
-                          decoration: _decor('Drop-off location', Icons.place_rounded, hint: 'e.g. Gateway Mall'),
-                        ),
-                        const SizedBox(height: 6),
-
-                        // Small helper “quick service” pill area (optional space for you to tweak)
-                        // -------------------------------------------
-                        // TODO: adjust spacing/text as you like:
-                        // const SizedBox(height: 6),
-                        // Align(
-                        //   alignment: Alignment.centerLeft,
-                        //   child: Text('Quick service • no login needed',
-                        //       style: TextStyle(fontSize: 12, color: Colors.black54)),
-                        // ),
-                        // -------------------------------------------
-
-                        const SizedBox(height: 14),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _onEstimate,
-                                icon: const Icon(Icons.calculate_rounded),
-                                label: const Text('Estimate price'),
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
-                                  side: const BorderSide(color: Colors.black87, width: 1),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                                ),
+                // Info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Name + status chip
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              d.name,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: statusColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: statusColor),
+                            ),
+                            child: Text(
+                              statusText,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: statusColor,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                onPressed: _onBook,
-                                icon: const Icon(Icons.check_circle_rounded),
-                                label: const Text('Book bike'),
-                                style: ElevatedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
-                                  backgroundColor: _brandOrange,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                                ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          const Icon(Icons.location_on,
+                              size: 14, color: Colors.black54),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              locationText,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.black54,
                               ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          const Icon(Icons.phone,
+                              size: 14, color: Colors.black54),
+                          const SizedBox(width: 4),
+                          Text(
+                            d.phone,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
 
-                const SizedBox(height: 16),
-                // Mini info card
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF101010).withOpacity(0.03),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Row(
-                    children: const [
-                      Icon(Icons.info_outline_rounded, size: 18),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text('Safe • Fast • Affordable — perfect for quick errands.',
-                            style: TextStyle(fontSize: 12.5)),
+                      // Call button
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _brandOrange,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          onPressed: () => _callNumber(d.phone),
+                          icon: const Icon(Icons.call, size: 18),
+                          label: const Text('Call bike now'),
+                        ),
                       ),
                     ],
                   ),
@@ -274,6 +329,42 @@ class _BikePageState extends State<BikePage> {
               ],
             ),
           ),
+        );
+      },
+    );
+  }
+}
+
+class _DriverAvatar extends StatelessWidget {
+  final String name;
+  final String? photoUrl;
+
+  const _DriverAvatar({
+    required this.name,
+    required this.photoUrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
+
+    if (photoUrl != null && photoUrl!.trim().isNotEmpty) {
+      return CircleAvatar(
+        radius: 28,
+        backgroundImage: NetworkImage(photoUrl!),
+        backgroundColor: Colors.grey.shade200,
+      );
+    }
+
+    return CircleAvatar(
+      radius: 28,
+      backgroundColor: Colors.grey.shade300,
+      child: Text(
+        initial,
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+          color: Colors.black87,
         ),
       ),
     );

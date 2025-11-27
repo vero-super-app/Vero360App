@@ -51,7 +51,7 @@ Future<void> main() async {
 }
 
 class MyApp extends StatefulWidget {
-  const MyApp({Key? key}) : super(key: key);
+  const MyApp({super.key});
   @override
   State<MyApp> createState() => _MyAppState();
 }
@@ -80,7 +80,6 @@ class _MyAppState extends State<MyApp> {
   Future<void> _initDeepLinks() async {
     _appLinks = AppLinks();
     _sub = _appLinks.uriLinkStream.listen((uri) {
-      if (uri == null) return;
       if (uri.scheme == 'vero360' && uri.host == 'users' && uri.path == '/me') {
         navKey.currentState?.push(
             MaterialPageRoute(builder: (_) => const ProfileFromLinkPage()));

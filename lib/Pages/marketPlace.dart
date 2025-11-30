@@ -1,20 +1,101 @@
-// lib/Pages/MarketPage.dart
-import 'dart:async';
-import 'dart:io';
+// lib/Pages/marketPlace.dart
 
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/models/cart_model.dart';
-import 'package:vero360_app/models/marketplace.model.dart';
 import 'package:vero360_app/services/cart_services.dart';
-import 'package:vero360_app/services/marketplace.service.dart';
 import 'package:vero360_app/toasthelper.dart';
 
-import '../Pages/Home/view_detailsPage.dart';
+/// --------------------
+/// Local marketplace model (Firestore)
+/// --------------------
+class MarketplaceDetailModel {
+  final String id;
+  final String name;
+  final String category;
+  final double price;
+  final String image; // raw string from Firestore (base64 or URL)
+  final Uint8List? imageBytes; // decoded image if base64
+  final String? description;
+  final String? location;
+  final bool isActive;
+  final DateTime? createdAt;
 
+  MarketplaceDetailModel({
+    required this.id,
+    required this.name,
+    required this.category,
+    required this.price,
+    required this.image,
+    this.imageBytes,
+    this.description,
+    this.location,
+    this.isActive = true,
+    this.createdAt,
+  });
+
+  factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
+    final data = (doc.data() as Map<String, dynamic>?) ?? {};
+
+    // Image: base64 → bytes (from your sample)
+    final rawImage = (data['image'] ?? '').toString();
+    Uint8List? bytes;
+    if (rawImage.isNotEmpty) {
+      try {
+        bytes = base64Decode(rawImage);
+      } catch (_) {
+        bytes = null; // if it's actually a URL, decoding will fail
+      }
+    }
+
+    // createdAt: Timestamp → DateTime
+    DateTime? created;
+    final createdRaw = data['createdAt'];
+    if (createdRaw is Timestamp) {
+      created = createdRaw.toDate();
+    } else if (createdRaw is DateTime) {
+      created = createdRaw;
+    }
+
+    // price: number
+    double price = 0;
+    final p = data['price'];
+    if (p is num) {
+      price = p.toDouble();
+    } else if (p != null) {
+      price = double.tryParse(p.toString()) ?? 0;
+    }
+
+    final cat = (data['category'] ?? '').toString().toLowerCase();
+
+    return MarketplaceDetailModel(
+      id: doc.id,
+      name: (data['name'] ?? '').toString(),
+      category: cat,
+      price: price,
+      image: rawImage,
+      imageBytes: bytes,
+      description:
+          data['description'] == null ? null : data['description'].toString(),
+      location: data['location'] == null ? null : data['location'].toString(),
+      isActive: data['isActive'] is bool ? data['isActive'] as bool : true,
+      createdAt: created,
+    );
+  }
+}
+
+/// --------------------
+/// Market Page
+/// --------------------
 class MarketPage extends StatefulWidget {
   final CartService cartService;
   const MarketPage({required this.cartService, Key? key}) : super(key: key);
@@ -24,13 +105,18 @@ class MarketPage extends StatefulWidget {
 }
 
 class _MarketPageState extends State<MarketPage> {
-  final MarketplaceService marketplaceService = MarketplaceService();
   final TextEditingController _searchCtrl = TextEditingController();
   final ImagePicker _picker = ImagePicker();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // keep in sync with backend: food/drinks/electronics/clothes/shoes/other
+  // keep in sync with your categories: food/drinks/electronics/clothes/shoes/other
   static const List<String> _kCategories = <String>[
-    'food', 'drinks', 'electronics', 'clothes', 'shoes', 'other'
+    'food',
+    'drinks',
+    'electronics',
+    'clothes',
+    'shoes',
+    'other'
   ];
   String? _selectedCategory; // null = all
 
@@ -56,16 +142,51 @@ class _MarketPageState extends State<MarketPage> {
     super.dispose();
   }
 
-  // ---------- Data loaders ----------
+  // ---------- Helper: time ago ----------
+  String _formatTimeAgo(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
+    if (diff.inHours < 24) return '${diff.inHours} hrs ago';
+    if (diff.inDays < 7) return '${diff.inDays} days ago';
+    final weeks = (diff.inDays / 7).floor();
+    if (weeks < 4) return '$weeks weeks ago';
+    final months = (diff.inDays / 30).floor();
+    if (months < 12) return '$months months ago';
+    final years = (diff.inDays / 365).floor();
+    return '$years years ago';
+  }
+
+  // ---------- Data loaders (Firestore) ----------
   Future<List<MarketplaceDetailModel>> _loadAll({String? category}) async {
     setState(() {
       _loading = true;
       _photoMode = false;
       _selectedCategory = category;
     });
+
     try {
-      final items = await marketplaceService.fetchMarketItems(category: category);
-      return items;
+      // Pull all active items ordered by createdAt desc
+      final snapshot = await _firestore
+          .collection('marketplace_items')
+          .orderBy('createdAt', descending: true)
+          .get();
+
+      final all = snapshot.docs
+          .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
+          .where((item) => item.isActive)
+          .toList();
+
+      if (category == null || category.isEmpty) {
+        return all;
+      }
+
+      final c = category.toLowerCase();
+      return all
+          .where((item) => item.category.toLowerCase() == c)
+          .toList();
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -74,20 +195,27 @@ class _MarketPageState extends State<MarketPage> {
   Future<List<MarketplaceDetailModel>> _searchByName(String raw) async {
     final q = raw.trim();
     if (q.isEmpty || q.length < 2) {
+      // Just reload all for the current category
       return _loadAll(category: _selectedCategory);
     }
+
     setState(() {
       _loading = true;
       _photoMode = false;
     });
+
     try {
-      final items = await marketplaceService.searchByName(q);
-      return items;
+      final all = await _loadAll(category: _selectedCategory);
+      final lower = q.toLowerCase();
+      return all
+          .where((item) => item.name.toLowerCase().contains(lower))
+          .toList();
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  /// For now, photo search just reloads all items.
   Future<List<MarketplaceDetailModel>> _searchByPhoto(File file) async {
     setState(() {
       _loading = true;
@@ -95,8 +223,14 @@ class _MarketPageState extends State<MarketPage> {
       _selectedCategory = null; // photo mode ignores category
     });
     try {
-      final items = await marketplaceService.searchByPhoto(file);
-      return items;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Photo search not implemented yet. Showing all items.'),
+          ),
+        );
+      }
+      return _loadAll(category: null);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -128,14 +262,18 @@ class _MarketPageState extends State<MarketPage> {
         return;
       }
 
+      // CartModel.item is int → convert Firestore doc id (String) to int
+      final intItemId = int.tryParse(item.id) ?? 0;
+
       final cartItem = CartModel(
         userId: '0', // not used by backend
-        item: item.id,
+        item: intItemId,
         quantity: 1,
         name: item.name,
         image: item.image,
         price: item.price,
-        description: item.description,
+        // description in model is nullable, CartModel expects String
+        description: item.description ?? '',
         comment: note ?? '',
       );
 
@@ -257,6 +395,147 @@ class _MarketPageState extends State<MarketPage> {
     await _future;
   }
 
+  // ---------- Details bottom sheet (no overflow) ----------
+  Future<void> _showDetailsBottomSheet(MarketplaceDetailModel item) async {
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return FractionallySizedBox(
+          heightFactor: 0.85, // 85% of screen height
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 12,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  AspectRatio(
+                    aspectRatio: 4 / 3,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: _buildItemImageWidget(item),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    item.name,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    "MWK ${item.price.toStringAsFixed(0)}",
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (item.location != null &&
+                      item.location!.trim().isNotEmpty)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.location_on,
+                            size: 16, color: Colors.redAccent),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            item.location!,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  if (item.createdAt != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      "Posted ${_formatTimeAgo(item.createdAt!)}",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  if (item.description != null &&
+                      item.description!.trim().isNotEmpty)
+                    Text(
+                      item.description!,
+                      style: const TextStyle(
+                        fontSize: 14,
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            _addToCart(item);
+                          },
+                          icon: const Icon(Icons.shopping_cart),
+                          label: const Text("Add to Cart"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            // Hook your “buy now” flow here
+                            Navigator.pop(ctx);
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text("Buy Now"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   // ---------- UI ----------
   @override
   Widget build(BuildContext context) {
@@ -344,7 +623,7 @@ class _MarketPageState extends State<MarketPage> {
                 children: const [
                   Icon(Icons.image_search, size: 16),
                   SizedBox(width: 6),
-                  Text("Showing results similar to your photo"),
+                  Text("Showing results from photo search"),
                 ],
               ),
             ),
@@ -375,7 +654,8 @@ class _MarketPageState extends State<MarketPage> {
                     );
                   }
 
-                  final items = snapshot.data ?? const <MarketplaceDetailModel>[];
+                  final items =
+                      snapshot.data ?? const <MarketplaceDetailModel>[];
                   if (items.isEmpty) {
                     return ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
@@ -403,7 +683,8 @@ class _MarketPageState extends State<MarketPage> {
 
                         return GridView.builder(
                           itemCount: items.length,
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: crossAxisCount,
                             crossAxisSpacing: 12,
                             mainAxisSpacing: 12,
@@ -412,17 +693,7 @@ class _MarketPageState extends State<MarketPage> {
                           itemBuilder: (context, i) {
                             final item = items[i];
                             return GestureDetector(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => DetailsPage(
-                                      item: item,
-                                      cartService: widget.cartService,
-                                    ),
-                                  ),
-                                );
-                              },
+                              onTap: () => _showDetailsBottomSheet(item),
                               child: _buildMarketItem(item),
                             );
                           },
@@ -459,8 +730,46 @@ class _MarketPageState extends State<MarketPage> {
     );
   }
 
+  Widget _buildItemImageWidget(MarketplaceDetailModel item) {
+    if (item.imageBytes != null) {
+      return Image.memory(
+        item.imageBytes!,
+        fit: BoxFit.cover,
+        width: double.infinity,
+      );
+    }
+
+    // fallback if `image` happens to be a URL
+    if (item.image.isNotEmpty && item.image.startsWith('http')) {
+      return Image.network(
+        item.image,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        errorBuilder: (_, __, ___) => Container(
+          color: Colors.grey[300],
+          alignment: Alignment.center,
+          child: const Icon(Icons.broken_image),
+        ),
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return Container(
+            color: Colors.grey[200],
+            alignment: Alignment.center,
+            child: const CircularProgressIndicator(strokeWidth: 2),
+          );
+        },
+      );
+    }
+
+    return Container(
+      color: Colors.grey[300],
+      alignment: Alignment.center,
+      child: const Icon(Icons.image, size: 32),
+    );
+  }
+
   Widget _buildMarketItem(MarketplaceDetailModel item) {
-    final cat = (item.category ?? '').trim();
+    final cat = (item.category).trim();
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -485,24 +794,7 @@ class _MarketPageState extends State<MarketPage> {
                   child: ClipRRect(
                     borderRadius:
                         const BorderRadius.vertical(top: Radius.circular(15)),
-                    child: Image.network(
-                      item.image,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: Colors.grey[300],
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.broken_image),
-                      ),
-                      loadingBuilder: (context, child, progress) {
-                        if (progress == null) return child;
-                        return Container(
-                          color: Colors.grey[200],
-                          alignment: Alignment.center,
-                          child: const CircularProgressIndicator(strokeWidth: 2),
-                        );
-                      },
-                    ),
+                    child: _buildItemImageWidget(item),
                   ),
                 ),
                 if (cat.isNotEmpty)
@@ -532,14 +824,49 @@ class _MarketPageState extends State<MarketPage> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black),
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   "MWK ${item.price.toStringAsFixed(0)}",
                   style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600, color: Colors.green),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.green,
+                  ),
                 ),
+                const SizedBox(height: 4),
+                if (item.location != null &&
+                    item.location!.trim().isNotEmpty)
+                  Row(
+                    children: [
+                      const Icon(Icons.location_on,
+                          size: 12, color: Colors.redAccent),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          item.location!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                if (item.createdAt != null)
+                  Text(
+                    _formatTimeAgo(item.createdAt!),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey[500],
+                    ),
+                  ),
               ],
             ),
           ),
@@ -566,17 +893,7 @@ class _MarketPageState extends State<MarketPage> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => DetailsPage(
-                            item: item,
-                            cartService: widget.cartService,
-                          ),
-                        ),
-                      );
-                    },
+                    onPressed: () => _showDetailsBottomSheet(item),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red,
                       foregroundColor: Colors.white,

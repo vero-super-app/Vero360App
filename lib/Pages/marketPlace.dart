@@ -19,12 +19,13 @@ import 'package:vero360_app/toasthelper.dart';
 /// Local marketplace model (Firestore)
 /// --------------------
 class MarketplaceDetailModel {
-  final String id;
+  final String id;              // Firestore document id
+  final int? sqlItemId;         // Optional numeric backend id for Nest/SQL
   final String name;
   final String category;
   final double price;
-  final String image; // raw string from Firestore (base64 or URL)
-  final Uint8List? imageBytes; // decoded image if base64
+  final String image;           // raw string from Firestore (base64 or URL)
+  final Uint8List? imageBytes;  // decoded image if base64
   final String? description;
   final String? location;
   final bool isActive;
@@ -36,6 +37,7 @@ class MarketplaceDetailModel {
     required this.category,
     required this.price,
     required this.image,
+    this.sqlItemId,
     this.imageBytes,
     this.description,
     this.location,
@@ -43,10 +45,13 @@ class MarketplaceDetailModel {
     this.createdAt,
   });
 
+  /// True only if there is a valid numeric backend id
+  bool get hasValidSqlItemId => sqlItemId != null && sqlItemId! > 0;
+
   factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
     final data = (doc.data() as Map<String, dynamic>?) ?? {};
 
-    // Image: base64 → bytes (from your sample)
+    // --- image: base64 → bytes ---
     final rawImage = (data['image'] ?? '').toString();
     Uint8List? bytes;
     if (rawImage.isNotEmpty) {
@@ -57,7 +62,7 @@ class MarketplaceDetailModel {
       }
     }
 
-    // createdAt: Timestamp → DateTime
+    // --- createdAt: Timestamp → DateTime ---
     DateTime? created;
     final createdRaw = data['createdAt'];
     if (createdRaw is Timestamp) {
@@ -66,7 +71,7 @@ class MarketplaceDetailModel {
       created = createdRaw;
     }
 
-    // price: number
+    // --- price: number ---
     double price = 0;
     final p = data['price'];
     if (p is num) {
@@ -74,6 +79,20 @@ class MarketplaceDetailModel {
     } else if (p != null) {
       price = double.tryParse(p.toString()) ?? 0;
     }
+
+    // --- helper to parse any int-like field ---
+    int? _parseInt(dynamic v) {
+      if (v == null) return null;
+      if (v is num) return v.toInt();
+      return int.tryParse(
+        v.toString().replaceAll(RegExp(r'[^\d]'), ''),
+      );
+    }
+
+    // Try multiple keys in case your docs use different names
+    final rawSql =
+        data['sqlItemId'] ?? data['backendId'] ?? data['itemId'] ?? data['id'];
+    final sqlId = _parseInt(rawSql);
 
     final cat = (data['category'] ?? '').toString().toLowerCase();
 
@@ -89,6 +108,7 @@ class MarketplaceDetailModel {
       location: data['location'] == null ? null : data['location'].toString(),
       isActive: data['isActive'] is bool ? data['isActive'] as bool : true,
       createdAt: created,
+      sqlItemId: sqlId,
     );
   }
 }
@@ -109,7 +129,6 @@ class _MarketPageState extends State<MarketPage> {
   final ImagePicker _picker = ImagePicker();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // keep in sync with your categories: food/drinks/electronics/clothes/shoes/other
   static const List<String> _kCategories = <String>[
     'food',
     'drinks',
@@ -159,6 +178,16 @@ class _MarketPageState extends State<MarketPage> {
     return '$years years ago';
   }
 
+  // Stable positive int from a string (Firestore doc id)
+  int _stablePositiveIdFromString(String s) {
+    int hash = 0;
+    for (final code in s.codeUnits) {
+      hash = (hash * 31 + code) & 0x7fffffff; // keep it positive
+    }
+    if (hash == 0) hash = 1; // ensure > 0
+    return hash;
+  }
+
   // ---------- Data loaders (Firestore) ----------
   Future<List<MarketplaceDetailModel>> _loadAll({String? category}) async {
     setState(() {
@@ -168,7 +197,6 @@ class _MarketPageState extends State<MarketPage> {
     });
 
     try {
-      // Pull all active items ordered by createdAt desc
       final snapshot = await _firestore
           .collection('marketplace_items')
           .orderBy('createdAt', descending: true)
@@ -184,9 +212,7 @@ class _MarketPageState extends State<MarketPage> {
       }
 
       final c = category.toLowerCase();
-      return all
-          .where((item) => item.category.toLowerCase() == c)
-          .toList();
+      return all.where((item) => item.category.toLowerCase() == c).toList();
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -195,7 +221,6 @@ class _MarketPageState extends State<MarketPage> {
   Future<List<MarketplaceDetailModel>> _searchByName(String raw) async {
     final q = raw.trim();
     if (q.isEmpty || q.length < 2) {
-      // Just reload all for the current category
       return _loadAll(category: _selectedCategory);
     }
 
@@ -215,18 +240,18 @@ class _MarketPageState extends State<MarketPage> {
     }
   }
 
-  /// For now, photo search just reloads all items.
   Future<List<MarketplaceDetailModel>> _searchByPhoto(File file) async {
     setState(() {
       _loading = true;
       _photoMode = true;
-      _selectedCategory = null; // photo mode ignores category
+      _selectedCategory = null;
     });
     try {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Photo search not implemented yet. Showing all items.'),
+            content:
+                Text('Photo search not implemented yet. Showing all items.'),
           ),
         );
       }
@@ -262,17 +287,18 @@ class _MarketPageState extends State<MarketPage> {
         return;
       }
 
-      // CartModel.item is int → convert Firestore doc id (String) to int
-      final intItemId = int.tryParse(item.id) ?? 0;
+      // Prefer numeric id from backend if available, otherwise derive from doc.id
+      final int numericItemId = item.hasValidSqlItemId
+          ? item.sqlItemId!
+          : _stablePositiveIdFromString(item.id);
 
       final cartItem = CartModel(
-        userId: '0', // not used by backend
-        item: intItemId,
+        userId: '0',
+        item: numericItemId, // always positive
         quantity: 1,
         name: item.name,
         image: item.image,
         price: item.price,
-        // description in model is nullable, CartModel expects String
         description: item.description ?? '',
         comment: note ?? '',
       );
@@ -334,7 +360,8 @@ class _MarketPageState extends State<MarketPage> {
       if (picked == null) return;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Photo search works best in mobile builds.')),
+        const SnackBar(
+            content: Text('Photo search works best in mobile builds.')),
       );
       return;
     }
@@ -395,7 +422,7 @@ class _MarketPageState extends State<MarketPage> {
     await _future;
   }
 
-  // ---------- Details bottom sheet (no overflow) ----------
+  // ---------- Details bottom sheet ----------
   Future<void> _showDetailsBottomSheet(MarketplaceDetailModel item) async {
     if (!mounted) return;
 
@@ -408,7 +435,7 @@ class _MarketPageState extends State<MarketPage> {
       ),
       builder: (ctx) {
         return FractionallySizedBox(
-          heightFactor: 0.85, // 85% of screen height
+          heightFactor: 0.85,
           child: SingleChildScrollView(
             child: Padding(
               padding: EdgeInsets.only(
@@ -515,7 +542,6 @@ class _MarketPageState extends State<MarketPage> {
                       Expanded(
                         child: ElevatedButton(
                           onPressed: () {
-                            // Hook your “buy now” flow here
                             Navigator.pop(ctx);
                           },
                           style: ElevatedButton.styleFrom(
@@ -739,7 +765,6 @@ class _MarketPageState extends State<MarketPage> {
       );
     }
 
-    // fallback if `image` happens to be a URL
     if (item.image.isNotEmpty && item.image.startsWith('http')) {
       return Image.network(
         item.image,

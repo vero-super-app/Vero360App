@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert'; // <-- for base64 image support
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -31,12 +32,16 @@ class _CartPageState extends State<CartPage> {
 
   Future<bool> _hasToken() async {
     final sp = await SharedPreferences.getInstance();
-    final t = sp.getString('token') ?? sp.getString('jwt_token') ?? sp.getString('jwt');
+    final t =
+        sp.getString('token') ?? sp.getString('jwt_token') ?? sp.getString('jwt');
     return t != null && t.isNotEmpty;
   }
 
   Future<List<CartModel>> _fetch() async {
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       if (!await _hasToken()) {
         _items.clear();
@@ -50,11 +55,14 @@ class _CartPageState extends State<CartPage> {
       }
 
       final data = await widget.cartService.fetchCartItems();
-      _items..clear()..addAll(data);
+      _items
+        ..clear()
+        ..addAll(data);
       return _items;
     } catch (e) {
       final msg = e.toString();
-      if (msg.contains('404') || msg.toLowerCase().contains('no items in cart')) {
+      if (msg.contains('404') ||
+          msg.toLowerCase().contains('no items in cart')) {
         _items.clear();
         return _items;
       }
@@ -82,6 +90,16 @@ class _CartPageState extends State<CartPage> {
   String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
 
   Future<void> _remove(CartModel item) async {
+    if (item.item <= 0) {
+      ToastHelper.showCustomToast(
+        context,
+        'Invalid cart item id.',
+        isSuccess: false,
+        errorMessage: 'item <= 0',
+      );
+      return;
+    }
+
     final idx = _items.indexWhere((x) => x.item == item.item);
     if (idx == -1) return;
     final backup = _items[idx];
@@ -115,6 +133,16 @@ class _CartPageState extends State<CartPage> {
     if (newQty == item.quantity) return;
     if (newQty == 0) return _remove(item);
 
+    if (item.item <= 0) {
+      ToastHelper.showCustomToast(
+        context,
+        'Invalid cart item id.',
+        isSuccess: false,
+        errorMessage: 'item <= 0',
+      );
+      return;
+    }
+
     final idx = _items.indexWhere((x) => x.item == item.item);
     if (idx == -1) return;
     final backup = _items[idx];
@@ -125,7 +153,7 @@ class _CartPageState extends State<CartPage> {
       await widget.cartService.addToCart(
         CartModel(
           userId: backup.userId,
-          item: item.item,
+          item: item.item, // int, positive
           quantity: newQty,
           name: item.name,
           image: item.image,
@@ -156,8 +184,14 @@ class _CartPageState extends State<CartPage> {
         title: const Text('Clear cart?'),
         content: const Text('Remove all items from your cart.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Clear')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Clear'),
+          ),
         ],
       ),
     );
@@ -182,40 +216,39 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
-Future<void> _proceedToCheckout() async {
-  if (!await _hasToken()) {
-    ToastHelper.showCustomToast(
+  Future<void> _proceedToCheckout() async {
+    if (!await _hasToken()) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please log in to checkout.',
+        isSuccess: false,
+        errorMessage: 'Not logged in',
+      );
+      return;
+    }
+    if (_items.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Your cart is empty.',
+        isSuccess: false,
+        errorMessage: 'Empty cart',
+      );
+      return;
+    }
+
+    // Pass a copy so the checkout page can mutate locally if it needs to
+    final itemsForCheckout = List<CartModel>.from(_items);
+
+    await Navigator.push(
       context,
-      'Please log in to checkout.',
-      isSuccess: false,
-      errorMessage: 'Not logged in',
+      MaterialPageRoute(
+        builder: (_) => CheckoutFromCartPage(items: itemsForCheckout),
+      ),
     );
-    return;
+
+    // After returning from checkout, refresh in case the cart changed
+    if (mounted) _refresh();
   }
-  if (_items.isEmpty) {
-    ToastHelper.showCustomToast(
-      context,
-      'Your cart is empty.',
-      isSuccess: false,
-      errorMessage: 'Empty cart',
-    );
-    return;
-  }
-
-  // Pass a copy so the checkout page can mutate locally if it needs to
-  final itemsForCheckout = List<CartModel>.from(_items);
-
-  await Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => CheckoutFromCartPage(items: itemsForCheckout),
-    ),
-  );
-
-  // After returning from checkout, refresh in case the cart changed
-  if (mounted) _refresh();
-}
-
 
   @override
   Widget build(BuildContext context) {
@@ -240,7 +273,8 @@ Future<void> _proceedToCheckout() async {
         child: FutureBuilder<List<CartModel>>(
           future: _cartFuture,
           builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting && _items.isEmpty) {
+            if (snapshot.connectionState == ConnectionState.waiting &&
+                _items.isEmpty) {
               return const Center(child: CircularProgressIndicator());
             }
 
@@ -290,8 +324,10 @@ Future<void> _proceedToCheckout() async {
                     separatorBuilder: (_, __) => const SizedBox(height: 4),
                     itemBuilder: (context, i) => _CartItemTile(
                       item: _items[i],
-                      onInc: () => _changeQty(_items[i], _items[i].quantity + 1),
-                      onDec: () => _changeQty(_items[i], _items[i].quantity - 1),
+                      onInc: () =>
+                          _changeQty(_items[i], _items[i].quantity + 1),
+                      onDec: () =>
+                          _changeQty(_items[i], _items[i].quantity - 1),
                       onRemove: () => _remove(_items[i]),
                     ),
                   ),
@@ -328,15 +364,61 @@ class _CartItemTile extends StatelessWidget {
 
   String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
 
+  bool _looksLikeBase64(String v) {
+    if (v.isEmpty) return false;
+    if (v.toLowerCase().startsWith('http')) return false;
+    // very rough check, but fine for our use
+    return v.length > 50;
+  }
+
   @override
   Widget build(BuildContext context) {
+    Widget imageWidget;
+
+    if (item.image.isEmpty) {
+      imageWidget = const ColoredBox(
+        color: Color(0xFFEAEAEA),
+        child: Icon(Icons.image_not_supported, size: 40),
+      );
+    } else if (_looksLikeBase64(item.image)) {
+      // decode base64 image (like coming from Firestore)
+      try {
+        final bytes = base64Decode(item.image);
+        imageWidget = Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+        );
+      } catch (_) {
+        imageWidget = const ColoredBox(
+          color: Color(0xFFEAEAEA),
+          child: Icon(Icons.broken_image, size: 40),
+        );
+      }
+    } else {
+      // normal network image
+      imageWidget = Image.network(
+        item.image,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const ColoredBox(
+          color: Color(0xFFEAEAEA),
+          child: Icon(Icons.broken_image, size: 40),
+        ),
+      );
+    }
+
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [BoxShadow(color: Colors.black12.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, 3))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12.withOpacity(0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -347,19 +429,7 @@ class _CartItemTile extends StatelessWidget {
             child: SizedBox(
               width: 80,
               height: 80,
-              child: item.image.isNotEmpty
-                  ? Image.network(
-                      item.image,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const ColoredBox(
-                        color: Color(0xFFEAEAEA),
-                        child: Icon(Icons.broken_image, size: 40),
-                      ),
-                    )
-                  : const ColoredBox(
-                      color: Color(0xFFEAEAEA),
-                      child: Icon(Icons.image_not_supported, size: 40),
-                    ),
+              child: imageWidget,
             ),
           ),
           const SizedBox(width: 12),
@@ -375,12 +445,18 @@ class _CartItemTile extends StatelessWidget {
                     item.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     _mwk(item.price),
-                    style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      color: Colors.green,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 8),
 
@@ -390,13 +466,20 @@ class _CartItemTile extends StatelessWidget {
                       _IconBtn(icon: Icons.remove, onTap: onDec),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 10),
-                        child: Text('${item.quantity}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                        child: Text(
+                          '${item.quantity}',
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                       _IconBtn(icon: Icons.add, onTap: onInc),
                       const Spacer(),
                       IconButton(
                         onPressed: onRemove,
-                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                        icon: const Icon(Icons.delete_outline,
+                            color: Colors.red),
                         tooltip: 'Remove',
                       ),
                     ],
@@ -477,9 +560,14 @@ class _CartSummary extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   backgroundColor: const Color(0xFFFF8A00),
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
-                child: Text(loading ? 'Please wait…' : 'Checkout', style: const TextStyle(fontSize: 16)),
+                child: Text(
+                  loading ? 'Please wait…' : 'Checkout',
+                  style: const TextStyle(fontSize: 16),
+                ),
               ),
             ),
           ],
@@ -488,13 +576,19 @@ class _CartSummary extends StatelessWidget {
     );
   }
 
-  Widget _row(String label, String value, {bool bold = false, bool green = false}) {
+  Widget _row(String label, String value,
+      {bool bold = false, bool green = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontWeight: bold ? FontWeight.w700 : FontWeight.w500)),
+          Text(
+            label,
+            style: TextStyle(
+              fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
           Text(
             value,
             style: TextStyle(

@@ -348,7 +348,6 @@ class _CartPageState extends State<CartPage> {
     );
   }
 }
-
 class _CartItemTile extends StatelessWidget {
   const _CartItemTile({
     required this.item,
@@ -364,11 +363,23 @@ class _CartItemTile extends StatelessWidget {
 
   String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
 
-  bool _looksLikeBase64(String v) {
-    if (v.isEmpty) return false;
-    if (v.toLowerCase().startsWith('http')) return false;
-    // very rough check, but fine for our use
-    return v.length > 50;
+  /// Try to decode a base64 image string.
+  /// Supports both plain base64 and data URLs like "data:image/jpeg;base64,..."
+  Uint8List? _decodeBase64Image(String v) {
+    if (v.isEmpty) return null;
+    try {
+      var cleaned = v.trim();
+
+      // If it is a data URL: data:image/jpeg;base64,XXXXX
+      final commaIndex = cleaned.indexOf(',');
+      if (cleaned.startsWith('data:image') && commaIndex != -1) {
+        cleaned = cleaned.substring(commaIndex + 1);
+      }
+
+      return base64Decode(cleaned);
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -376,34 +387,31 @@ class _CartItemTile extends StatelessWidget {
     Widget imageWidget;
 
     if (item.image.isEmpty) {
+      // No image at all
       imageWidget = const ColoredBox(
         color: Color(0xFFEAEAEA),
         child: Icon(Icons.image_not_supported, size: 40),
       );
-    } else if (_looksLikeBase64(item.image)) {
-      // decode base64 image (like coming from Firestore)
-      try {
-        final bytes = base64Decode(item.image);
+    } else {
+      // 1) Try base64 first
+      final bytes = _decodeBase64Image(item.image);
+
+      if (bytes != null) {
         imageWidget = Image.memory(
           bytes,
           fit: BoxFit.cover,
         );
-      } catch (_) {
-        imageWidget = const ColoredBox(
-          color: Color(0xFFEAEAEA),
-          child: Icon(Icons.broken_image, size: 40),
+      } else {
+        // 2) Fallback: treat as normal URL (http/https/whatever)
+        imageWidget = Image.network(
+          item.image,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => const ColoredBox(
+            color: Color(0xFFEAEAEA),
+            child: Icon(Icons.broken_image, size: 40),
+          ),
         );
       }
-    } else {
-      // normal network image
-      imageWidget = Image.network(
-        item.image,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const ColoredBox(
-          color: Color(0xFFEAEAEA),
-          child: Icon(Icons.broken_image, size: 40),
-        ),
-      );
     }
 
     return Container(
@@ -493,6 +501,7 @@ class _CartItemTile extends StatelessWidget {
     );
   }
 }
+
 
 class _IconBtn extends StatelessWidget {
   const _IconBtn({required this.icon, required this.onTap});

@@ -2,12 +2,13 @@
 import 'dart:async';
 import 'dart:convert'; // for base64 image support
 import 'dart:math';
-import 'dart:typed_data'; // 👈 needed for Uint8List
+import 'dart:typed_data';
 
+import 'package:cloud_firestore/cloud_firestore.dart'; // 👈 FIREBASE BACKUP
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/Pages/checkout_from_cart_page.dart';
 
+import 'package:vero360_app/Pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/models/cart_model.dart';
 import 'package:vero360_app/services/cart_services.dart';
 import 'package:vero360_app/toasthelper.dart';
@@ -26,6 +27,9 @@ class _CartPageState extends State<CartPage> {
   String? _error;
   bool _loading = false;
 
+  // --- Firebase ---
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
   @override
   void initState() {
     super.initState();
@@ -39,11 +43,172 @@ class _CartPageState extends State<CartPage> {
     return t != null && t.isNotEmpty;
   }
 
+  /// Firestore document id for the current user (we use saved email).
+  Future<String?> _userCartDocId() async {
+    final sp = await SharedPreferences.getInstance();
+    final email = sp.getString('email');
+    if (email != null && email.isNotEmpty) return email;
+    return null;
+  }
+
+  bool _looksLikeServiceUnavailable(Object e) {
+    final msg = e.toString().toLowerCase();
+    return msg.contains('service is temporarily unavailable') ||
+        msg.contains('503') ||
+        msg.contains('socketexception') ||
+        msg.contains('failed host lookup') ||
+        msg.contains('connection refused') ||
+        msg.contains('network is unreachable');
+  }
+
+  // -------- FIREBASE BACKUP HELPERS --------
+
+  Future<void> _saveCartToFirestore(List<CartModel> items) async {
+    try {
+      final userId = await _userCartDocId();
+      if (userId == null || userId.isEmpty) return;
+
+      final col = _firestore
+          .collection('backup_carts')
+          .doc(userId)
+          .collection('items');
+
+      final batch = _firestore.batch();
+
+      // clear existing
+      final existing = await col.get();
+      for (final doc in existing.docs) {
+        batch.delete(doc.reference);
+      }
+
+      // write fresh
+      for (final it in items) {
+        final docRef = col.doc(it.item.toString());
+        batch.set(docRef, {
+          'itemId': it.item,
+          'name': it.name,
+          'image': it.image,
+          'price': it.price,
+          'quantity': it.quantity,
+          'description': it.description,
+          'comment': it.comment,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+    } catch (_) {
+      // backup errors should never crash the UI
+    }
+  }
+
+  Future<List<CartModel>> _loadCartFromFirestore() async {
+    try {
+      final userId = await _userCartDocId();
+      if (userId == null || userId.isEmpty) return [];
+
+      final snapshot = await _firestore
+          .collection('backup_carts')
+          .doc(userId)
+          .collection('items')
+          .get();
+
+      return snapshot.docs.map((d) {
+        final data = d.data();
+        final rawItemId = data['itemId'] ?? data['item'];
+        final itemId = rawItemId is num
+            ? rawItemId.toInt()
+            : int.tryParse(rawItemId.toString()) ?? 0;
+
+        final rawQty = data['quantity'];
+        final quantity = rawQty is num
+            ? rawQty.toInt()
+            : int.tryParse(rawQty.toString()) ?? 1;
+
+        final rawPrice = data['price'];
+        final price = rawPrice is num
+            ? rawPrice.toDouble()
+            : double.tryParse(rawPrice.toString()) ?? 0.0;
+
+        return CartModel(
+          userId: userId,
+          item: itemId,
+          quantity: quantity,
+          name: (data['name'] ?? '').toString(),
+          image: (data['image'] ?? '').toString(),
+          price: price,
+          description: (data['description'] ?? '').toString(),
+          comment: (data['comment'] ?? '').toString(),
+        );
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> _upsertCartItemInFirestore(CartModel item) async {
+    try {
+      final userId = await _userCartDocId();
+      if (userId == null || userId.isEmpty) return;
+
+      final doc = _firestore
+          .collection('backup_carts')
+          .doc(userId)
+          .collection('items')
+          .doc(item.item.toString());
+
+      await doc.set({
+        'itemId': item.item,
+        'name': item.name,
+        'image': item.image,
+        'price': item.price,
+        'quantity': item.quantity,
+        'description': item.description,
+        'comment': item.comment,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
+  Future<void> _removeFromFirestore(CartModel item) async {
+    try {
+      final userId = await _userCartDocId();
+      if (userId == null || userId.isEmpty) return;
+
+      final doc = _firestore
+          .collection('backup_carts')
+          .doc(userId)
+          .collection('items')
+          .doc(item.item.toString());
+      await doc.delete();
+    } catch (_) {}
+  }
+
+  Future<void> _clearCartInFirestore() async {
+    try {
+      final userId = await _userCartDocId();
+      if (userId == null || userId.isEmpty) return;
+
+      final col = _firestore
+          .collection('backup_carts')
+          .doc(userId)
+          .collection('items');
+      final snap = await col.get();
+      final batch = _firestore.batch();
+      for (final doc in snap.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+    } catch (_) {}
+  }
+
+  // -------- MAIN FETCH (API + FIREBASE FALLBACK) --------
   Future<List<CartModel>> _fetch() async {
     setState(() {
       _loading = true;
       _error = null;
     });
+
     try {
       if (!await _hasToken()) {
         _items.clear();
@@ -56,26 +221,55 @@ class _CartPageState extends State<CartPage> {
         return _items;
       }
 
-      final data = await widget.cartService.fetchCartItems();
-      _items
-        ..clear()
-        ..addAll(data);
-      return _items;
-    } catch (e) {
-      final msg = e.toString();
-      if (msg.contains('404') ||
-          msg.toLowerCase().contains('no items in cart')) {
-        _items.clear();
+      try {
+        // 1) Try main backend
+        final data = await widget.cartService.fetchCartItems();
+        _items
+          ..clear()
+          ..addAll(data);
+
+        // 2) Mirror to Firebase backup
+        await _saveCartToFirestore(_items);
+
         return _items;
+      } catch (e) {
+        // Backend down → FALL BACK to Firebase
+        if (_looksLikeServiceUnavailable(e)) {
+          final backup = await _loadCartFromFirestore();
+          _items
+            ..clear()
+            ..addAll(backup);
+
+          if (backup.isEmpty) {
+            _error =
+                'Backend is down and no cart backup is available yet in Firebase.';
+          }
+
+          ToastHelper.showCustomToast(
+            context,
+            'Service unavailable. Showing your last saved cart from backup.',
+            isSuccess: backup.isNotEmpty,
+            errorMessage: backup.isEmpty ? 'No backup' : '',
+          );
+          return _items;
+        }
+
+        // Other errors: old behaviour
+        final msg = e.toString();
+        if (msg.contains('404') ||
+            msg.toLowerCase().contains('no items in cart')) {
+          _items.clear();
+          return _items;
+        }
+        _error = msg;
+        ToastHelper.showCustomToast(
+          context,
+          'Error loading cart',
+          isSuccess: false,
+          errorMessage: msg,
+        );
+        rethrow;
       }
-      _error = msg;
-      ToastHelper.showCustomToast(
-        context,
-        'Error loading cart',
-        isSuccess: false,
-        errorMessage: msg,
-      );
-      rethrow;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -105,10 +299,12 @@ class _CartPageState extends State<CartPage> {
     final idx = _items.indexWhere((x) => x.item == item.item);
     if (idx == -1) return;
     final backup = _items[idx];
+
     setState(() => _items.removeAt(idx));
 
     try {
       await widget.cartService.removeFromCart(item.item);
+      await _removeFromFirestore(backup); // keep backup clean
       if (mounted) {
         ToastHelper.showCustomToast(
           context,
@@ -118,14 +314,28 @@ class _CartPageState extends State<CartPage> {
         );
       }
     } catch (e) {
-      setState(() => _items.insert(idx, backup));
-      if (mounted) {
-        ToastHelper.showCustomToast(
-          context,
-          'Failed to remove item',
-          isSuccess: false,
-          errorMessage: e.toString(),
-        );
+      if (_looksLikeServiceUnavailable(e)) {
+        // Server offline: keep local removal + update backup only
+        await _removeFromFirestore(backup);
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            'Server offline. Removed from local backup only.',
+            isSuccess: true,
+            errorMessage: '',
+          );
+        }
+      } else {
+        // real error → restore item
+        setState(() => _items.insert(idx, backup));
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            'Failed to remove item',
+            isSuccess: false,
+            errorMessage: e.toString(),
+          );
+        }
       }
     }
   }
@@ -147,15 +357,18 @@ class _CartPageState extends State<CartPage> {
 
     final idx = _items.indexWhere((x) => x.item == item.item);
     if (idx == -1) return;
-    final backup = _items[idx];
-    setState(() => _items[idx] = backup.copyWith(quantity: newQty));
+
+    final old = _items[idx];
+    final updated = old.copyWith(quantity: newQty);
+
+    setState(() => _items[idx] = updated);
 
     try {
       // Server upserts on POST /cart
       await widget.cartService.addToCart(
         CartModel(
-          userId: backup.userId,
-          item: item.item, // int, positive
+          userId: old.userId,
+          item: item.item,
           quantity: newQty,
           name: item.name,
           image: item.image,
@@ -164,15 +377,29 @@ class _CartPageState extends State<CartPage> {
           comment: item.comment,
         ),
       );
+      await _upsertCartItemInFirestore(updated);
     } catch (e) {
-      setState(() => _items[idx] = backup);
-      if (mounted) {
-        ToastHelper.showCustomToast(
-          context,
-          'Failed to update quantity',
-          isSuccess: false,
-          errorMessage: e.toString(),
-        );
+      if (_looksLikeServiceUnavailable(e)) {
+        // Update Firebase backup only
+        await _upsertCartItemInFirestore(updated);
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            'Server offline. Quantity updated in local backup only.',
+            isSuccess: true,
+            errorMessage: '',
+          );
+        }
+      } else {
+        setState(() => _items[idx] = old);
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            'Failed to update quantity',
+            isSuccess: false,
+            errorMessage: e.toString(),
+          );
+        }
       }
     }
   }
@@ -199,9 +426,12 @@ class _CartPageState extends State<CartPage> {
     );
     if (confirm != true) return;
 
+    final backupItems = List<CartModel>.from(_items);
+    setState(() => _items.clear());
+
     try {
       await widget.cartService.clearCart();
-      setState(() => _items.clear());
+      await _clearCartInFirestore();
       ToastHelper.showCustomToast(
         context,
         'Cart cleared',
@@ -209,12 +439,28 @@ class _CartPageState extends State<CartPage> {
         errorMessage: 'OK',
       );
     } catch (e) {
-      ToastHelper.showCustomToast(
-        context,
-        'Failed to clear cart',
-        isSuccess: false,
-        errorMessage: e.toString(),
-      );
+      if (_looksLikeServiceUnavailable(e)) {
+        await _clearCartInFirestore();
+        ToastHelper.showCustomToast(
+          context,
+          'Server offline. Cleared local backup cart only.',
+          isSuccess: true,
+          errorMessage: '',
+        );
+      } else {
+        // restore items
+        setState(() {
+          _items
+            ..clear()
+            ..addAll(backupItems);
+        });
+        ToastHelper.showCustomToast(
+          context,
+          'Failed to clear cart',
+          isSuccess: false,
+          errorMessage: e.toString(),
+        );
+      }
     }
   }
 
@@ -238,7 +484,6 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
-    // Pass a copy so the checkout page can mutate locally if it needs to
     final itemsForCheckout = List<CartModel>.from(_items);
 
     await Navigator.push(
@@ -248,7 +493,6 @@ class _CartPageState extends State<CartPage> {
       ),
     );
 
-    // After returning from checkout, refresh in case the cart changed
     if (mounted) _refresh();
   }
 
@@ -366,26 +610,22 @@ class _CartItemTile extends StatelessWidget {
 
   String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
 
-  /// Debug helper so we can see what image string we're getting
   void _debugLogImage() {
     if (item.image.isEmpty) {
       // ignore: avoid_print
       print('[CartPage] image EMPTY for "${item.name}" (itemId=${item.item})');
     } else {
-      final short = item.image.length > 80
-          ? item.image.substring(0, 80)
-          : item.image;
+      final short =
+          item.image.length > 80 ? item.image.substring(0, 80) : item.image;
       // ignore: avoid_print
-      print('[CartPage] image for "${item.name}" (itemId=${item.item}): $short');
+      print(
+          '[CartPage] image for "${item.name}" (itemId=${item.item}): $short');
     }
   }
 
-  /// Try to decode a base64 image string.
-  /// Supports both plain base64 and data URLs like "data:image/jpeg;base64,..."
   Uint8List? _decodeBase64Image(String v) {
     if (v.isEmpty) return null;
 
-    // If it looks like a normal URL, don't even try base64
     final lower = v.toLowerCase();
     if (lower.startsWith('http://') || lower.startsWith('https://')) {
       return null;
@@ -393,13 +633,10 @@ class _CartItemTile extends StatelessWidget {
 
     try {
       var cleaned = v.trim();
-
-      // If it is a data URL: data:image/jpeg;base64,XXXXX
       final commaIndex = cleaned.indexOf(',');
       if (cleaned.startsWith('data:image') && commaIndex != -1) {
         cleaned = cleaned.substring(commaIndex + 1);
       }
-
       return base64Decode(cleaned);
     } catch (_) {
       return null;
@@ -408,18 +645,16 @@ class _CartItemTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    _debugLogImage(); // 👈 log what we're receiving
+    _debugLogImage();
 
     Widget imageWidget;
 
     if (item.image.isEmpty) {
-      // No image at all
       imageWidget = const ColoredBox(
         color: Color(0xFFEAEAEA),
         child: Icon(Icons.image_not_supported, size: 40),
       );
     } else {
-      // 1) Try base64 first (unless it's clearly a URL)
       final bytes = _decodeBase64Image(item.image);
 
       if (bytes != null) {
@@ -428,7 +663,6 @@ class _CartItemTile extends StatelessWidget {
           fit: BoxFit.cover,
         );
       } else {
-        // 2) Fallback: treat as normal URL (http/https/whatever)
         imageWidget = Image.network(
           item.image,
           fit: BoxFit.cover,
@@ -457,7 +691,6 @@ class _CartItemTile extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // image
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
             child: SizedBox(
@@ -467,8 +700,6 @@ class _CartItemTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-
-          // details
           Expanded(
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 80),
@@ -493,8 +724,6 @@ class _CartItemTile extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 8),
-
-                  // qty controls
                   Row(
                     children: [
                       _IconBtn(icon: Icons.remove, onTap: onDec),

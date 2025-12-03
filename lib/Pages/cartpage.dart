@@ -1,6 +1,8 @@
+// lib/Pages/cartpage.dart
 import 'dart:async';
-import 'dart:convert'; // <-- for base64 image support
+import 'dart:convert'; // for base64 image support
 import 'dart:math';
+import 'dart:typed_data'; // 👈 needed for Uint8List
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -348,6 +350,7 @@ class _CartPageState extends State<CartPage> {
     );
   }
 }
+
 class _CartItemTile extends StatelessWidget {
   const _CartItemTile({
     required this.item,
@@ -363,10 +366,31 @@ class _CartItemTile extends StatelessWidget {
 
   String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
 
+  /// Debug helper so we can see what image string we're getting
+  void _debugLogImage() {
+    if (item.image.isEmpty) {
+      // ignore: avoid_print
+      print('[CartPage] image EMPTY for "${item.name}" (itemId=${item.item})');
+    } else {
+      final short = item.image.length > 80
+          ? item.image.substring(0, 80)
+          : item.image;
+      // ignore: avoid_print
+      print('[CartPage] image for "${item.name}" (itemId=${item.item}): $short');
+    }
+  }
+
   /// Try to decode a base64 image string.
   /// Supports both plain base64 and data URLs like "data:image/jpeg;base64,..."
   Uint8List? _decodeBase64Image(String v) {
     if (v.isEmpty) return null;
+
+    // If it looks like a normal URL, don't even try base64
+    final lower = v.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      return null;
+    }
+
     try {
       var cleaned = v.trim();
 
@@ -384,6 +408,8 @@ class _CartItemTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    _debugLogImage(); // 👈 log what we're receiving
+
     Widget imageWidget;
 
     if (item.image.isEmpty) {
@@ -393,7 +419,7 @@ class _CartItemTile extends StatelessWidget {
         child: Icon(Icons.image_not_supported, size: 40),
       );
     } else {
-      // 1) Try base64 first
+      // 1) Try base64 first (unless it's clearly a URL)
       final bytes = _decodeBase64Image(item.image);
 
       if (bytes != null) {
@@ -501,7 +527,6 @@ class _CartItemTile extends StatelessWidget {
     );
   }
 }
-
 
 class _IconBtn extends StatelessWidget {
   const _IconBtn({required this.icon, required this.onTap});

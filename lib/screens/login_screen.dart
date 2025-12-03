@@ -9,7 +9,6 @@ import 'package:vero360_app/services/auth_service.dart';
 import 'package:vero360_app/toasthelper.dart';
 import 'package:vero360_app/widget/oauth_buttons.dart';
 
-
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
   static const title = Color(0xFF101010);
@@ -38,37 +37,67 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  /// Handles both backend auth and Firebase fallback auth.
   Future<void> _handleAuthResult(Map<String, dynamic>? result) async {
     if (result == null) return;
+
     final prefs = await SharedPreferences.getInstance();
 
+    // Which provider did AuthService use?
+    final authProvider =
+        (result['authProvider'] ?? 'backend').toString().toLowerCase();
+    await prefs.setString('auth_provider', authProvider);
+
+    // Token: backend = Nest JWT, firebase = Firebase ID token
     final token = result['token']?.toString();
     if (token == null || token.isEmpty) {
-      ToastHelper.showCustomToast(context, 'No token received', isSuccess: false, errorMessage: '');
-      return;
-    }
-    await prefs.setString('token', token);
-    await prefs.setString('jwt_token', token);
-
-    final user = Map<String, dynamic>.from(result['user'] ?? {});
-    final displayId = user['email']?.toString()
-        ?? user['phone']?.toString()
-        ?? _identifier.text.trim();
-    await prefs.setString('email', displayId);
-
-    final role = (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
-    if (!mounted) return;
-    if (role == 'merchant') {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => MerchantBottomnavbar(email: displayId)),
-        (_) => false,
+      ToastHelper.showCustomToast(
+        context,
+        'No token received from $authProvider login',
+        isSuccess: false,
+        errorMessage: '',
       );
       return;
     }
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => Bottomnavbar(email: displayId)),
-      (_) => false,
-    );
+
+    // For now, keep writing to token/jwt_token so the rest of the app
+    // can still treat the user as "logged in".
+    await prefs.setString('token', token);
+    await prefs.setString('jwt_token', token);
+
+    // Normalise user payload a bit defensively
+    Map<String, dynamic> user = {};
+    final rawUser = result['user'];
+    if (rawUser is Map<String, dynamic>) {
+      user = Map<String, dynamic>.from(rawUser);
+    }
+
+    final displayId = user['email']?.toString() ??
+        user['phone']?.toString() ??
+        _identifier.text.trim();
+    await prefs.setString('email', displayId);
+
+    // Role from backend; Firebase sessions may not have this → default customer
+    final role =
+        (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
+
+    if (!mounted) return;
+
+    if (role == 'merchant') {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => MerchantBottomnavbar(email: displayId),
+        ),
+        (_) => false,
+      );
+    } else {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => Bottomnavbar(email: displayId),
+        ),
+        (_) => false,
+      );
+    }
   }
 
   Future<void> _submit() async {
@@ -122,11 +151,16 @@ class _LoginScreenState extends State<LoginScreen> {
       suffixIcon: trailing,
       filled: true,
       fillColor: AppColors.fieldFill,
-      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+      contentPadding:
+          const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: AppColors.brandOrange, width: 1.2),
+        borderSide:
+            const BorderSide(color: AppColors.brandOrange, width: 1.2),
       ),
     );
   }
@@ -138,7 +172,8 @@ class _LoginScreenState extends State<LoginScreen> {
         Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              begin: Alignment(0, -1), end: Alignment(0, 1),
+              begin: Alignment(0, -1),
+              end: Alignment(0, 1),
               colors: [Color(0xFFEFF6FF), Colors.white],
             ),
           ),
@@ -146,7 +181,8 @@ class _LoginScreenState extends State<LoginScreen> {
         SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
                 child: Column(
@@ -158,29 +194,47 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: ClipOval(
                         child: Image.asset(
                           'assets/logo_mark.png',
-                          width: 72, height: 72, fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                            const Icon(Icons.eco, size: 42, color: AppColors.brandOrange),
+                          width: 72,
+                          height: 72,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.eco,
+                            size: 42,
+                            color: AppColors.brandOrange,
+                          ),
                         ),
                       ),
                     ),
                     const SizedBox(height: 18),
-                    const Text('Welcome back',
-                      style: TextStyle(color: AppColors.title, fontSize: 26, fontWeight: FontWeight.w800)),
+                    const Text(
+                      'Welcome back',
+                      style: TextStyle(
+                        color: AppColors.title,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                     const SizedBox(height: 8),
 
                     // Logo-only socials (always visible)
                     OAuthButtonsRow(
                       onGoogle: _socialLoading ? null : _google,
-                      onApple:  _socialLoading ? null : _apple,
+                      onApple: _socialLoading ? null : _apple,
                     ),
                     const SizedBox(height: 18),
 
                     // Form card
                     Container(
                       decoration: BoxDecoration(
-                        color: Colors.white, borderRadius: BorderRadius.circular(20),
-                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 10))],
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.06),
+                            blurRadius: 20,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
                       ),
                       padding: const EdgeInsets.all(18),
                       child: Form(
@@ -198,12 +252,23 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               validator: (v) {
                                 final val = v?.trim() ?? '';
-                                if (val.isEmpty) return 'Email or phone is required';
-                                final isEmail = RegExp(r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(val);
-                                final digits = val.replaceAll(RegExp(r'\D'), '');
-                                final isLocal = RegExp(r'^(08|09)\d{8}$').hasMatch(digits);
-                                final isE164  = RegExp(r'^\+265[89]\d{8}$').hasMatch(val);
-                                if (!isEmail && !isLocal && !isE164) return 'Use email or phone (08/09… or +265…)';
+                                if (val.isEmpty) {
+                                  return 'Email or phone is required';
+                                }
+                                final isEmail = RegExp(
+                                  r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$',
+                                ).hasMatch(val);
+                                final digits =
+                                    val.replaceAll(RegExp(r'\D'), '');
+                                final isLocal = RegExp(
+                                  r'^(08|09)\d{8}$',
+                                ).hasMatch(digits);
+                                final isE164 = RegExp(
+                                  r'^\+265[89]\d{8}$',
+                                ).hasMatch(val);
+                                if (!isEmail && !isLocal && !isE164) {
+                                  return 'Use email or phone (08/09… or +265…)';
+                                }
                                 return null;
                               },
                             ),
@@ -219,27 +284,46 @@ class _LoginScreenState extends State<LoginScreen> {
                                 icon: Icons.lock_outline,
                                 trailing: IconButton(
                                   tooltip: _obscure ? 'Show' : 'Hide',
-                                  icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
-                                  onPressed: () => setState(() => _obscure = !_obscure),
+                                  icon: Icon(
+                                    _obscure
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                  ),
+                                  onPressed: () => setState(
+                                    () => _obscure = !_obscure,
+                                  ),
                                 ),
                               ),
                               validator: (v) {
-                                if (v == null || v.isEmpty) return 'Password is required';
-                                if (v.length < 6) return 'Must be at least 6 characters';
+                                if (v == null || v.isEmpty) {
+                                  return 'Password is required';
+                                }
+                                if (v.length < 6) {
+                                  return 'Must be at least 6 characters';
+                                }
                                 return null;
                               },
                             ),
                             const SizedBox(height: 18),
                             SizedBox(
-                              width: double.infinity, height: 50,
+                              width: double.infinity,
+                              height: 50,
                               child: ElevatedButton(
                                 onPressed: _loading ? null : _submit,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: AppColors.brandOrange,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
                                 ),
-                                child: Text(_loading ? 'Signing in…' : 'Sign in',
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                                child: Text(
+                                  _loading ? 'Signing in…' : 'Sign in',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 16,
+                                  ),
+                                ),
                               ),
                             ),
                           ],
@@ -251,14 +335,32 @@ class _LoginScreenState extends State<LoginScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Text("Don't have an account?", style: TextStyle(color: AppColors.body, fontWeight: FontWeight.w600)),
+                        const Text(
+                          "Don't have an account?",
+                          style: TextStyle(
+                            color: AppColors.body,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         const SizedBox(width: 6),
                         TextButton(
-                          onPressed: _loading ? null : () {
-                            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RegisterScreen()));
-                          },
-                          child: const Text('Create one',
-                            style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
+                          onPressed: _loading
+                              ? null
+                              : () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const RegisterScreen(),
+                                    ),
+                                  );
+                                },
+                          child: const Text(
+                            'Create one',
+                            style: TextStyle(
+                              color: AppColors.brandOrange,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
                         ),
                       ],
                     ),

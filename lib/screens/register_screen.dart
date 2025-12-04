@@ -233,6 +233,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+  // ---------- Register (OTP is now OPTIONAL; Firebase backup always used) ----------
   Future<void> _verifyAndRegister() async {
     if (!_agree) {
       ToastHelper.showCustomToast(
@@ -245,46 +246,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    if (!_otpSent) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please request a code first',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return;
-    }
-    if (_code.text.trim().isEmpty) {
-      ToastHelper.showCustomToast(
-        context,
-        'Enter the verification code',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return;
-    }
-
     final preferred =
         _method == VerifyMethod.email ? 'email' : 'phone';
     final identifier =
         preferred == 'email' ? _email.text.trim() : _phone.text.trim();
 
-    setState(() => _verifying = true);
-    String? ticket;
-    try {
-      ticket = await AuthService().verifyOtpGetTicket(
-        identifier: identifier,
-        code: _code.text.trim(),
-        context: context,
-      );
-    } finally {
-      if (mounted) setState(() => _verifying = false);
+    // ✅ OTP is now OPTIONAL.
+    // If a code was requested AND entered, we try to verify to get a ticket.
+    // If it fails (server down, invalid code, etc.) we'll continue with
+    // an empty ticket and AuthService.registerUser will fall back to
+    // Firebase-only signup.
+    String ticket = '';
+    if (_otpSent && _code.text.trim().isNotEmpty) {
+      setState(() => _verifying = true);
+      try {
+        final t = await AuthService().verifyOtpGetTicket(
+          identifier: identifier,
+          code: _code.text.trim(),
+          context: context,
+        );
+        if (t != null && t.isNotEmpty) {
+          ticket = t;
+        }
+      } finally {
+        if (mounted) setState(() => _verifying = false);
+      }
     }
-    if (ticket == null) return;
 
     setState(() => _registering = true);
     try {
-      // This method should now internally handle backend + Firebase fallback
+      // This method now:
+      // - uses NestJS backend when `ticket` is non-empty (and mirrors user to Firebase)
+      // - OR falls back to pure Firebase signup when backend is down / ticket is empty
       final resp = await AuthService().registerUser(
         name: _name.text.trim(),
         email: _email.text.trim(),

@@ -4,7 +4,7 @@ import 'dart:convert'; // for base64 image support
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:cloud_firestore/cloud_firestore.dart'; // 👈 FIREBASE BACKUP
+import 'package:cloud_firestore/cloud_firestore.dart'; // FIREBASE BACKUP
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -36,11 +36,22 @@ class _CartPageState extends State<CartPage> {
     _cartFuture = _fetch();
   }
 
+  /// "True login" = has a backend token (needed for real API calls / checkout).
   Future<bool> _hasToken() async {
     final sp = await SharedPreferences.getInstance();
     final t =
         sp.getString('token') ?? sp.getString('jwt_token') ?? sp.getString('jwt');
     return t != null && t.isNotEmpty;
+  }
+
+  /// "Session" = either a backend token **or** at least an email (Firebase-only user).
+  /// We use this to decide whether the user may use the cart UI (including Firestore-only mode).
+  Future<bool> _hasSession() async {
+    final sp = await SharedPreferences.getInstance();
+    final t =
+        sp.getString('token') ?? sp.getString('jwt_token') ?? sp.getString('jwt');
+    final email = sp.getString('email');
+    return (t != null && t.isNotEmpty) || (email != null && email.isNotEmpty);
   }
 
   /// Firestore document id for the current user (we use saved email).
@@ -58,7 +69,9 @@ class _CartPageState extends State<CartPage> {
         msg.contains('socketexception') ||
         msg.contains('failed host lookup') ||
         msg.contains('connection refused') ||
-        msg.contains('network is unreachable');
+        msg.contains('network is unreachable') ||
+        msg.contains('unauthorized') ||        // 🔴 treat 401 as "offline" for Firebase-only users
+        msg.contains('401');
   }
 
   // -------- FIREBASE BACKUP HELPERS --------
@@ -210,7 +223,8 @@ class _CartPageState extends State<CartPage> {
     });
 
     try {
-      if (!await _hasToken()) {
+      // 🔹 Allow either NestJS token OR Firebase-only session.
+      if (!await _hasSession()) {
         _items.clear();
         ToastHelper.showCustomToast(
           context,
@@ -222,7 +236,7 @@ class _CartPageState extends State<CartPage> {
       }
 
       try {
-        // 1) Try main backend
+        // 1) Try main backend (NestJS)
         final data = await widget.cartService.fetchCartItems();
         _items
           ..clear()
@@ -233,7 +247,7 @@ class _CartPageState extends State<CartPage> {
 
         return _items;
       } catch (e) {
-        // Backend down → FALL BACK to Firebase
+        // Backend down / unauthorized → FALL BACK to Firebase
         if (_looksLikeServiceUnavailable(e)) {
           final backup = await _loadCartFromFirestore();
           _items
@@ -315,7 +329,7 @@ class _CartPageState extends State<CartPage> {
       }
     } catch (e) {
       if (_looksLikeServiceUnavailable(e)) {
-        // Server offline: keep local removal + update backup only
+        // Server offline/unauthorized: keep local removal + update backup only
         await _removeFromFirestore(backup);
         if (mounted) {
           ToastHelper.showCustomToast(
@@ -364,7 +378,7 @@ class _CartPageState extends State<CartPage> {
     setState(() => _items[idx] = updated);
 
     try {
-      // Server upserts on POST /cart
+      // Server upserts on POST /cart (NestJS).
       await widget.cartService.addToCart(
         CartModel(
           userId: old.userId,
@@ -380,7 +394,7 @@ class _CartPageState extends State<CartPage> {
       await _upsertCartItemInFirestore(updated);
     } catch (e) {
       if (_looksLikeServiceUnavailable(e)) {
-        // Update Firebase backup only
+        // Server offline/unauthorized → Firebase-only update
         await _upsertCartItemInFirestore(updated);
         if (mounted) {
           ToastHelper.showCustomToast(
@@ -465,6 +479,7 @@ class _CartPageState extends State<CartPage> {
   }
 
   Future<void> _proceedToCheckout() async {
+    // 🔸 Checkout still requires a real backend token (NestJS) for payments.
     if (!await _hasToken()) {
       ToastHelper.showCustomToast(
         context,
@@ -623,22 +638,39 @@ class _CartItemTile extends StatelessWidget {
     }
   }
 
+  /// Decode base64 image (supports raw base64 and data URLs).
+  /// Fixes missing padding to avoid FormatException.
   Uint8List? _decodeBase64Image(String v) {
     if (v.isEmpty) return null;
 
+    // If it looks like a normal URL, skip base64 and let Image.network handle it
     final lower = v.toLowerCase();
     if (lower.startsWith('http://') || lower.startsWith('https://')) {
       return null;
     }
 
     try {
-      var cleaned = v.trim();
+      // Remove whitespace/newlines
+      var cleaned = v.trim().replaceAll(RegExp(r'\s+'), '');
+
+      // If it is a data URL: data:image/jpeg;base64,XXXX
       final commaIndex = cleaned.indexOf(',');
       if (cleaned.startsWith('data:image') && commaIndex != -1) {
         cleaned = cleaned.substring(commaIndex + 1);
       }
-      return base64Decode(cleaned);
-    } catch (_) {
+
+      // base64 length must be a multiple of 4
+      final mod = cleaned.length % 4;
+      if (mod != 0) {
+        cleaned = cleaned.padRight(cleaned.length + (4 - mod), '=');
+      }
+
+      final bytes = base64Decode(cleaned);
+      if (bytes.isEmpty) return null;
+      return bytes;
+    } catch (e) {
+      // ignore: avoid_print
+      print('[CartPage] base64 decode failed for "${item.name}": $e');
       return null;
     }
   }

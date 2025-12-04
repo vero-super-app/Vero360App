@@ -1,4 +1,7 @@
 // lib/Pages/checkout_from_cart_page.dart
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,7 +28,7 @@ class CheckoutFromCartPage extends StatefulWidget {
 class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   // ► Brand (match main checkout)
   static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandSoft   = Color(0xFFFFE8CC);
+  static const Color _brandSoft = Color(0xFFFFE8CC);
 
   // ► Mobile money providers
   static const String _kAirtel = 'AirtelMoney';
@@ -61,7 +64,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     super.dispose();
   }
 
-  // ── Shared UI helpers to mirror main checkout ────────────────────────────
+  // ── Shared UI helpers ─────────────────────────────────────────────────────
   InputDecoration _inputDecoration({
     String? label,
     String? hint,
@@ -108,8 +111,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       );
 
   // ── Provider helpers ─────────────────────────────────────────────────────
-  String get _providerLabel => _provider == _kAirtel ? 'Airtel Money' : 'TNM Mpamba';
-  String get _providerHint  => _provider == _kAirtel ? '09xxxxxxxx'   : '08xxxxxxxx';
+  String get _providerLabel =>
+      _provider == _kAirtel ? 'Airtel Money' : 'TNM Mpamba';
+  String get _providerHint =>
+      _provider == _kAirtel ? '09xxxxxxxx' : '08xxxxxxxx';
   IconData get _providerIcon => _provider == _kAirtel
       ? Icons.phone_android_rounded
       : Icons.phone_iphone_rounded;
@@ -178,6 +183,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     }
   }
 
+  // NOTE: keep this for later, but we won't use it while testing payments.
   Future<bool> _ensureDefaultAddress() async {
     if (!_loggedIn) {
       ToastHelper.showCustomToast(
@@ -194,16 +200,22 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delivery address required'),
-        content: const Text('You need to set a default address before checkout.'),
+        content:
+            const Text('You need to set a default address before checkout.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Set address')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Set address')),
         ],
       ),
     );
 
     if (go == true) {
-      await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
+      await Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const AddressPage()));
       await _initAuthAndAddress();
       return _defaultAddr != null;
     }
@@ -212,7 +224,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
   // ── Pay routing ─────────────────────────────────────────────────────────
   Future<void> _onPayPressed() async {
-    if (!await _ensureDefaultAddress()) return;
+    // TEMP: skip address requirement so you can test payments
+    // if (!await _ensureDefaultAddress()) return;
 
     switch (_method) {
       case PaymentMethod.mobile:
@@ -231,12 +244,14 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     final err = _validatePhoneForSelectedProvider(_phoneCtrl.text);
     if (err != null) {
       setState(() => _phoneError = err);
-      ToastHelper.showCustomToast(context, err, isSuccess: false, errorMessage: 'Invalid phone');
+      ToastHelper.showCustomToast(context, err,
+          isSuccess: false, errorMessage: 'Invalid phone');
       return;
     }
     setState(() => _phoneError = null);
 
-    final itemsStr = widget.items.map((e) => '${e.name} x${e.quantity}').join(', ');
+    final itemsStr =
+        widget.items.map((e) => '${e.name} x${e.quantity}').join(', ');
     setState(() => _submitting = true);
     try {
       final resp = await PaymentsService.pay(
@@ -244,14 +259,17 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         currency: 'MWK',
         phoneNumber: _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
         relatedType: 'ORDER',
-        description: 'Cart: $itemsStr • $_providerLabel • Deliver to: ${_defaultAddr?.city ?? '-'}',
+        description:
+            'Cart: $itemsStr • $_providerLabel • Deliver to: ${_defaultAddr?.city ?? '-'}',
       );
 
       if (resp.checkoutUrl != null && resp.checkoutUrl!.isNotEmpty) {
         if (!mounted) return;
         await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => PaymentWebView(checkoutUrl: resp.checkoutUrl!)),
+          MaterialPageRoute(
+              builder: (_) =>
+                  PaymentWebView(checkoutUrl: resp.checkoutUrl!)),
         );
       } else {
         ToastHelper.showCustomToast(
@@ -275,7 +293,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   }
 
   Future<void> _payCard() async {
-    final itemsStr = widget.items.map((e) => '${e.name} x${e.quantity}').join(', ');
+    final itemsStr =
+        widget.items.map((e) => '${e.name} x${e.quantity}').join(', ');
     setState(() => _submitting = true);
     try {
       final resp = await PaymentsService.pay(
@@ -283,14 +302,17 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         currency: 'MWK',
         phoneNumber: null,
         relatedType: 'ORDER',
-        description: 'Cart (card): $itemsStr • Deliver to: ${_defaultAddr?.city ?? '-'}',
+        description:
+            'Cart (card): $itemsStr • Deliver to: ${_defaultAddr?.city ?? '-'}',
       );
 
       if (resp.checkoutUrl != null && resp.checkoutUrl!.isNotEmpty) {
         if (!mounted) return;
         await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => PaymentWebView(checkoutUrl: resp.checkoutUrl!)),
+          MaterialPageRoute(
+              builder: (_) =>
+                  PaymentWebView(checkoutUrl: resp.checkoutUrl!)),
         );
       } else {
         ToastHelper.showCustomToast(
@@ -325,18 +347,71 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
   String _methodLabel(PaymentMethod m) {
     switch (m) {
-      case PaymentMethod.mobile: return 'Pay Now';
-      case PaymentMethod.card:   return 'Pay Now';
-      case PaymentMethod.cod:    return 'Place Order';
+      case PaymentMethod.mobile:
+        return 'Pay Now';
+      case PaymentMethod.card:
+        return 'Pay Now';
+      case PaymentMethod.cod:
+        return 'Place Order';
     }
   }
 
   String _mwk(num n) => 'MWK ${n.toStringAsFixed(0)}';
 
+  // ── IMAGE HELPERS (Firestore/base64 aware) ───────────────────────────────
+
+  Uint8List? _decodeBase64Image(String v) {
+    if (v.isEmpty) return null;
+
+    // If it looks like a normal URL, don't treat as base64
+    final lower = v.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      return null;
+    }
+
+    try {
+      var cleaned = v.trim();
+
+      // Support data URLs: data:image/jpeg;base64,XXXXX
+      final commaIndex = cleaned.indexOf(',');
+      if (cleaned.startsWith('data:image') && commaIndex != -1) {
+        cleaned = cleaned.substring(commaIndex + 1);
+      }
+
+      return base64Decode(cleaned);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _buildCartItemImage(CartModel it) {
+    if (it.image.isEmpty) {
+      return const _ImgFallback();
+    }
+
+    final bytes = _decodeBase64Image(it.image);
+    if (bytes != null) {
+      // Image originally stored in Firestore as base64
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const _ImgFallback(),
+      );
+    }
+
+    // Fallback: treat as URL (from backend or elsewhere)
+    return Image.network(
+      it.image,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => const _ImgFallback(),
+    );
+  }
+
   // ── UI ───────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final canPay = !_submitting && _loggedIn && _defaultAddr != null;
+    // TEMP: allow paying as long as logged in (address optional)
+    final canPay = !_submitting && _loggedIn;
 
     return Theme(
       data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),
@@ -350,9 +425,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: [
-            // Trust banner (same as main)
+            // Trust banner
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: _brandSoft,
                 borderRadius: BorderRadius.circular(12),
@@ -362,7 +438,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                 children: [
                   Icon(Icons.lock, size: 18),
                   SizedBox(width: 8),
-                  Expanded(child: Text('Secure checkout — review your address and payment details.')),
+                  Expanded(
+                      child: Text(
+                          'Secure checkout — review your address and payment details.')),
                 ],
               ),
             ),
@@ -372,7 +450,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
             Card(
               elevation: 6,
               shadowColor: Colors.black12,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
               clipBehavior: Clip.antiAlias,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
@@ -380,13 +459,15 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('Your Items',
-                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                        style: TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 16)),
                     const SizedBox(height: 8),
                     ListView.separated(
                       itemCount: widget.items.length,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      separatorBuilder: (_, __) => const Divider(height: 14),
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 14),
                       itemBuilder: (_, i) {
                         final it = widget.items[i];
                         final lineTotal = it.price * it.quantity;
@@ -396,45 +477,47 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                             ClipRRect(
                               borderRadius: BorderRadius.circular(12),
                               child: SizedBox(
-                                width: 64, height: 64,
-                                child: (it.image.isNotEmpty)
-                                    ? Image.network(
-                                        it.image,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) => const _ImgFallback(),
-                                      )
-                                    : const _ImgFallback(),
+                                width: 64,
+                                height: 64,
+                                child: _buildCartItemImage(it),
                               ),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
                                 children: [
                                   Text(it.name,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
-                                          fontWeight: FontWeight.w700, fontSize: 15)),
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 15)),
                                   const SizedBox(height: 4),
                                   Text(
                                     '${_mwk(it.price)}  •  Qty: ${it.quantity}',
-                                    style: TextStyle(color: Colors.grey.shade700),
+                                    style: TextStyle(
+                                        color: Colors.grey.shade700),
                                   ),
                                 ],
                               ),
                             ),
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              padding:
+                                  const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
                                 color: _brandSoft,
                                 borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: _brandOrange),
+                                border:
+                                    Border.all(color: _brandOrange),
                               ),
                               child: Text(
                                 _mwk(lineTotal),
-                                style: const TextStyle(fontWeight: FontWeight.w700),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700),
                               ),
                             ),
                           ],
@@ -448,13 +531,14 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
             const SizedBox(height: 12),
 
-            // Delivery Address (same style as main)
+            // Delivery Address card (still visible, but not required)
             _DeliveryAddressCard(
               loading: _loadingAddr,
               loggedIn: _loggedIn,
               address: _defaultAddr,
               onManage: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
+                await Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const AddressPage()));
                 await _initAuthAndAddress();
               },
             ),
@@ -465,7 +549,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
             Card(
               elevation: 6,
               shadowColor: Colors.black12,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
               clipBehavior: Clip.antiAlias,
               child: Column(
                 children: [
@@ -477,7 +562,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                         groupValue: _method,
                         onChanged: (v) => setState(() => _method = v!),
                         title: const Text('Mobile Money'),
-                        secondary: const Icon(Icons.phone_iphone_rounded),
+                        secondary:
+                            const Icon(Icons.phone_iphone_rounded),
                       ),
                       AnimatedSwitcher(
                         duration: const Duration(milliseconds: 220),
@@ -486,10 +572,12 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                         child: _method == PaymentMethod.mobile
                             ? Padding(
                                 key: const ValueKey('mobile-fields'),
-                                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                                padding: const EdgeInsets.fromLTRB(
+                                    16, 0, 16, 16),
                                 child: _mobileFields(),
                               )
-                            : const SizedBox.shrink(key: ValueKey('mobile-empty')),
+                            : const SizedBox.shrink(
+                                key: ValueKey('mobile-empty')),
                       ),
                     ],
                   ),
@@ -499,7 +587,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                     groupValue: _method,
                     onChanged: (v) => setState(() => _method = v!),
                     title: const Text('Card'),
-                    secondary: const Icon(Icons.credit_card_rounded),
+                    secondary:
+                        const Icon(Icons.credit_card_rounded),
                   ),
                   const Divider(height: 1),
                   RadioListTile<PaymentMethod>(
@@ -507,7 +596,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                     groupValue: _method,
                     onChanged: (v) => setState(() => _method = v!),
                     title: const Text('Cash on Delivery'),
-                    secondary: const Icon(Icons.delivery_dining_rounded),
+                    secondary:
+                        const Icon(Icons.delivery_dining_rounded),
                   ),
                 ],
               ),
@@ -515,11 +605,12 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
             const SizedBox(height: 12),
 
-            // Summary (styled)
+            // Summary
             Card(
               elevation: 6,
               shadowColor: Colors.black12,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
               clipBehavior: Clip.antiAlias,
               child: Padding(
                 padding: const EdgeInsets.all(12.0),
@@ -535,17 +626,22 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
             const SizedBox(height: 16),
 
-            // Action button (same style as main)
+            // Action button
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
                 style: _filledBtnStyle(),
                 onPressed: canPay ? _onPayPressed : null,
                 icon: _submitting
-                    ? const SizedBox(width: 18, height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
                     : const Icon(Icons.lock),
-                label: Text(_submitting ? 'Processing…' : _methodLabel(_method)),
+                label: Text(
+                    _submitting ? 'Processing…' : _methodLabel(_method)),
               ),
             ),
           ],
@@ -554,7 +650,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     );
   }
 
-  // Inline Mobile Money fields (styled)
+  // Inline Mobile Money fields
   Widget _mobileFields() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -564,8 +660,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
           icon: const Icon(Icons.arrow_drop_down),
           decoration: _inputDecoration(label: 'Provider'),
           items: const [
-            DropdownMenuItem(value: _kAirtel, child: Text('Airtel Money')),
-            DropdownMenuItem(value: _kMpamba, child: Text('TNM Mpamba')),
+            DropdownMenuItem(
+                value: _kAirtel, child: Text('Airtel Money')),
+            DropdownMenuItem(
+                value: _kMpamba, child: Text('TNM Mpamba')),
           ],
           onChanged: (v) {
             if (v == null) return;
@@ -584,7 +682,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
             LengthLimitingTextInputFormatter(10),
           ],
           onChanged: (_) {
-            if (_phoneError != null) setState(() => _phoneError = null);
+            if (_phoneError != null) {
+              setState(() => _phoneError = null);
+            }
           },
           decoration: _inputDecoration(
             label: 'Phone number ($_providerLabel)',
@@ -652,17 +752,20 @@ class _DeliveryAddressCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('Delivery Address',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                style:
+                    TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
             const SizedBox(height: 8),
             if (loading)
               const SizedBox(
                 height: 40,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                child:
+                    Center(child: CircularProgressIndicator(strokeWidth: 2)),
               )
             else if (!loggedIn)
               _line('Not logged in', 'Please log in to select address')
             else if (address == null)
-              _line('No default address', 'Set your default delivery address')
+              _line('No default address',
+                  'Set your default delivery address')
             else
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -670,7 +773,9 @@ class _DeliveryAddressCard extends StatelessWidget {
                   _line(_label(address!.addressType), address!.city),
                   if (address!.description.isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text(address!.description, style: TextStyle(color: Colors.grey.shade700)),
+                    Text(address!.description,
+                        style:
+                            TextStyle(color: Colors.grey.shade700)),
                   ],
                 ],
               ),
@@ -680,7 +785,8 @@ class _DeliveryAddressCard extends StatelessWidget {
               child: OutlinedButton.icon(
                 onPressed: onManage,
                 icon: const Icon(Icons.location_pin),
-                label: Text(address == null ? 'Set address' : 'Change'),
+                label:
+                    Text(address == null ? 'Set address' : 'Change'),
               ),
             ),
           ],
@@ -692,7 +798,9 @@ class _DeliveryAddressCard extends StatelessWidget {
   static Widget _line(String a, String b) {
     return Row(
       children: [
-        Expanded(child: Text(a, style: const TextStyle(fontWeight: FontWeight.w700))),
+        Expanded(
+            child: Text(a,
+                style: const TextStyle(fontWeight: FontWeight.w700))),
         Text(b, style: const TextStyle(color: Colors.black87)),
       ],
     );
@@ -700,10 +808,14 @@ class _DeliveryAddressCard extends StatelessWidget {
 
   static String _label(AddressType t) {
     switch (t) {
-      case AddressType.home: return 'Home';
-      case AddressType.work: return 'Office';
-      case AddressType.business: return 'Business';
-      case AddressType.other: return 'Other';
+      case AddressType.home:
+        return 'Home';
+      case AddressType.work:
+        return 'Office';
+      case AddressType.business:
+        return 'Business';
+      case AddressType.other:
+        return 'Other';
     }
   }
 }

@@ -64,13 +64,31 @@ class _CartPageState extends State<CartPage> {
 
   bool _looksLikeServiceUnavailable(Object e) {
     final msg = e.toString().toLowerCase();
-    return msg.contains('service is temporarily unavailable') ||
+
+    return
+        // explicit “service temporarily unavailable”
+        msg.contains('service is temporarily unavailable') ||
+
+        // 5xx / gateway style issues
+        msg.contains('502') ||
+        msg.contains('bad gateway') ||
         msg.contains('503') ||
+        msg.contains('504') ||
+        msg.contains('gateway') ||
+        msg.contains('internal server error') ||
+        msg.contains('server error') ||
+
+        // network-ish errors
         msg.contains('socketexception') ||
         msg.contains('failed host lookup') ||
         msg.contains('connection refused') ||
         msg.contains('network is unreachable') ||
-        msg.contains('unauthorized') ||        // 🔴 treat 401 as "offline" for Firebase-only users
+
+        // your ApiClient generic message: “We couldn’t process your request…”
+        msg.contains('couldn') ||
+
+        // treat unauthorized as “API not usable” for cart
+        msg.contains('unauthorized') ||
         msg.contains('401');
   }
 
@@ -223,7 +241,7 @@ class _CartPageState extends State<CartPage> {
     });
 
     try {
-      // 🔹 Allow either NestJS token OR Firebase-only session.
+      // Allow either NestJS token OR Firebase-only session.
       if (!await _hasSession()) {
         _items.clear();
         ToastHelper.showCustomToast(
@@ -247,7 +265,9 @@ class _CartPageState extends State<CartPage> {
 
         return _items;
       } catch (e) {
-        // Backend down / unauthorized → FALL BACK to Firebase
+        final msg = e.toString();
+
+        // 2a) Backend down / unauthorized → FALL BACK to Firebase
         if (_looksLikeServiceUnavailable(e)) {
           final backup = await _loadCartFromFirestore();
           _items
@@ -268,21 +288,27 @@ class _CartPageState extends State<CartPage> {
           return _items;
         }
 
-        // Other errors: old behaviour
-        final msg = e.toString();
+        // 2b) Explicit “no items” case
         if (msg.contains('404') ||
             msg.toLowerCase().contains('no items in cart')) {
           _items.clear();
           return _items;
         }
+
+        // 2c) Any other error: still NEVER rethrow, just try Firebase
+        final backup = await _loadCartFromFirestore();
+        _items
+          ..clear()
+          ..addAll(backup);
+
         _error = msg;
         ToastHelper.showCustomToast(
           context,
-          'Error loading cart',
-          isSuccess: false,
+          'Problem loading live cart. Showing backup if available.',
+          isSuccess: backup.isNotEmpty,
           errorMessage: msg,
         );
-        rethrow;
+        return _items;
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -479,7 +505,7 @@ class _CartPageState extends State<CartPage> {
   }
 
   Future<void> _proceedToCheckout() async {
-    // 🔸 Checkout still requires a real backend token (NestJS) for payments.
+    // Checkout still requires a real backend token (NestJS) for payments.
     if (!await _hasToken()) {
       ToastHelper.showCustomToast(
         context,
@@ -539,6 +565,8 @@ class _CartPageState extends State<CartPage> {
               return const Center(child: CircularProgressIndicator());
             }
 
+            // Since we now swallow errors in _fetch(), snapshot.hasError
+            // should rarely be true – but we keep this block just in case.
             if (snapshot.hasError && _items.isEmpty) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),

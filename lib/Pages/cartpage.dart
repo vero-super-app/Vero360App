@@ -662,7 +662,7 @@ class _CartItemTile extends StatelessWidget {
           item.image.length > 80 ? item.image.substring(0, 80) : item.image;
       // ignore: avoid_print
       print(
-          '[CartPage] image for "${item.name}" (itemId=${item.item}): $short');
+          '[CartPage] image for "${item.name}" (itemId=${item.item}) len=${item.image.length}: $short...');
     }
   }
 
@@ -671,7 +671,7 @@ class _CartItemTile extends StatelessWidget {
   Uint8List? _decodeBase64Image(String v) {
     if (v.isEmpty) return null;
 
-    // If it looks like a normal URL, skip base64 and let Image.network handle it
+    // If it looks like a normal URL, skip base64 and let Image.network handle it.
     final lower = v.toLowerCase();
     if (lower.startsWith('http://') || lower.startsWith('https://')) {
       return null;
@@ -695,12 +695,25 @@ class _CartItemTile extends StatelessWidget {
 
       final bytes = base64Decode(cleaned);
       if (bytes.isEmpty) return null;
+
+      // Debug length only, no "too small" filter.
+      // ignore: avoid_print
+      print(
+          '[CartPage] decoded base64 for "${item.name}" -> ${bytes.length} bytes');
+
       return bytes;
     } catch (e) {
       // ignore: avoid_print
       print('[CartPage] base64 decode failed for "${item.name}": $e');
       return null;
     }
+  }
+
+  Widget _placeholder() {
+    return const ColoredBox(
+      color: Color(0xFFEAEAEA),
+      child: Icon(Icons.image_not_supported, size: 40),
+    );
   }
 
   @override
@@ -710,27 +723,31 @@ class _CartItemTile extends StatelessWidget {
     Widget imageWidget;
 
     if (item.image.isEmpty) {
-      imageWidget = const ColoredBox(
-        color: Color(0xFFEAEAEA),
-        child: Icon(Icons.image_not_supported, size: 40),
-      );
+      imageWidget = _placeholder();
     } else {
-      final bytes = _decodeBase64Image(item.image);
+      final lower = item.image.toLowerCase();
+      final isUrl =
+          lower.startsWith('http://') || lower.startsWith('https://');
 
-      if (bytes != null) {
-        imageWidget = Image.memory(
-          bytes,
-          fit: BoxFit.cover,
-        );
-      } else {
+      if (isUrl) {
         imageWidget = Image.network(
           item.image,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const ColoredBox(
-            color: Color(0xFFEAEAEA),
-            child: Icon(Icons.broken_image, size: 40),
-          ),
+          errorBuilder: (_, __, ___) => _placeholder(),
         );
+      } else {
+        final bytes = _decodeBase64Image(item.image);
+
+        if (bytes != null) {
+          imageWidget = Image.memory(
+            bytes,
+            fit: BoxFit.cover,
+            // If the bytes are still not a valid image, fall back gracefully
+            errorBuilder: (_, __, ___) => _placeholder(),
+          );
+        } else {
+          imageWidget = _placeholder();
+        }
       }
     }
 

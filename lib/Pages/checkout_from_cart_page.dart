@@ -25,7 +25,6 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   double get _subtotal =>
       widget.items.fold(0.0, (sum, it) => sum + (it.price * it.quantity));
 
-  // If you already calculate delivery elsewhere, you can pass it in instead.
   double get _deliveryFee => widget.items.isEmpty ? 0.0 : 20.0;
   double get _total => max(0.0, _subtotal + _deliveryFee);
 
@@ -35,12 +34,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   void initState() {
     super.initState();
 
-    // ⚠️ IMPORTANT:
-    // Put your real PayChangu secret key here.
-    // In production set isTestMode: false and use live key.
     _paychangu = PayChangu(
       PayChanguConfig(
-        secretKey: 'sk_test_xxx_replace_me', // TODO: put your key
+        secretKey: 'SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u', // TODO: your real key
         isTestMode: true,
       ),
     );
@@ -61,8 +57,6 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
     final rootContext = context;
 
-    // Pull some basic user info from SharedPreferences.
-    // You already save 'email' in your auth flow.
     final prefs = await SharedPreferences.getInstance();
     final email = prefs.getString('email') ?? 'customer@example.com';
     final fullName = prefs.getString('name') ?? 'Vero Customer';
@@ -72,10 +66,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     final lastName =
         parts.length > 1 ? parts.sublist(1).join(' ') : 'Customer';
 
-    // Generate a txRef. In production you usually create this in your backend.
     final txRef = 'vero-${DateTime.now().millisecondsSinceEpoch}';
-
-    final amountInt = _total.round(); // PayChangu expects an int in MWK.
+    final amountInt = _total.round(); // PayChangu expects an int (MWK)
 
     final request = PaymentRequest(
       txRef: txRef,
@@ -84,12 +76,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       email: email,
       currency: Currency.MWK,
       amount: amountInt,
-      // TODO: Replace these with your real callback / return URLs
       callbackUrl: 'https://your-backend.com/paychangu/callback',
       returnUrl: 'https://your-frontend.com/paychangu/return',
     );
 
-    // Push a new route with the PayChangu WebView.
     await Navigator.of(rootContext).push(
       MaterialPageRoute(
         builder: (innerContext) {
@@ -98,11 +88,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
             body: _paychangu.launchPayment(
               request: request,
               onSuccess: (response) async {
-                // response['tx_ref'] should equal txRef
                 final ref = response['tx_ref']?.toString() ?? txRef;
 
                 try {
-                  // Verify transaction using SDK.
                   final verification =
                       await _paychangu.verifyTransaction(ref);
 
@@ -116,8 +104,6 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   if (!mounted) return;
 
                   if (isValid) {
-                    // ✅ Payment ok. In production, you ALSO confirm this from your backend
-                    // before marking order as paid.
                     ToastHelper.showCustomToast(
                       rootContext,
                       'Payment successful!',
@@ -125,11 +111,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                       errorMessage: '',
                     );
 
-                    // Close the PayChangu WebView
+                    // Close PayChangu webview
                     Navigator.of(innerContext).pop();
 
-                    // Close the checkout page and send a "true" back to CartPage
-                    // (CartPage already refreshes after returning).
+                    // Close checkout → CartPage will refresh
                     Navigator.of(rootContext).pop(true);
                   } else {
                     ToastHelper.showCustomToast(
@@ -151,16 +136,33 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   Navigator.of(innerContext).pop();
                 }
               },
+
+              // 👇 IMPORTANT: soften this handler
               onError: (error) {
                 if (!mounted) return;
+
+                // Workaround: the SDK sometimes throws even when the
+                // response body is "status: success" (HTTP 201).
+                final detailsStr = error.details?.toString() ?? '';
+
+                if (detailsStr.contains('"status":"success"') &&
+                    detailsStr.contains('"checkout_url"')) {
+                  // This is a "soft error" – session actually created.
+                  // We just log and DO NOT close the WebView.
+                  debugPrint(
+                      '[PayChangu] Soft error (201 with success payload) – ignoring.');
+                  return;
+                }
+
                 ToastHelper.showCustomToast(
                   rootContext,
                   'Payment failed. Please try again.',
                   isSuccess: false,
-                  errorMessage: error.toString(),
+                  errorMessage: error.message ?? error.toString(),
                 );
                 Navigator.of(innerContext).pop();
               },
+
               onCancel: () {
                 if (!mounted) return;
                 ToastHelper.showCustomToast(
@@ -249,8 +251,6 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               },
             ),
           ),
-
-          // --- Summary + Pay button ---
           SafeArea(
             top: false,
             child: Container(
@@ -280,7 +280,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                         ),
                       ),
                       child: Text(
-                        _paying ? 'Processing…' : 'Pay with PayChangu',
+                        _paying ? 'Processing…' : 'Pay Now',
                         style: const TextStyle(fontSize: 16),
                       ),
                     ),

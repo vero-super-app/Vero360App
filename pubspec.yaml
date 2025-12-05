@@ -51,6 +51,7 @@ dependencies:
   cloud_firestore: ^5.6.0
   firebase_storage: ^12.4.1
   geocoding: ^4.0.0
+  paychangu_flutter: ^0.0.1
 
 
   # WebView support

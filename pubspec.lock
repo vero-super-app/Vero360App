@@ -1072,6 +1072,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.3.0"
+  paychangu_flutter:
+    dependency: "direct main"
+    description:
+      name: paychangu_flutter
+      sha256: "4ea9dc82e04b746b1c3a800f2d9747ec539c86c2101ae2552be17aa25d53156b"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.3"
   permission_handler:
     dependency: "direct main"
     description:

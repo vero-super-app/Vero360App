@@ -1,20 +1,18 @@
-// lib/Pages/checkout_from_cart_page.dart
 import 'dart:convert';
 import 'dart:async';
 import 'dart:math';
+import 'dart:io'; // Add this import
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:paychangu_flutter/paychangu_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/models/cart_model.dart';
 import 'package:vero360_app/toasthelper.dart';
 
 class CheckoutFromCartPage extends StatefulWidget {
   final List<CartModel> items;
-
   const CheckoutFromCartPage({Key? key, required this.items}) : super(key: key);
 
   @override
@@ -22,22 +20,16 @@ class CheckoutFromCartPage extends StatefulWidget {
 }
 
 class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
-  // FIXED: No more late initialization
-  final PayChanguConfig _config = PayChanguConfig(
-    secretKey: 'SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
-    isTestMode: true,
-  );
-
   bool _paying = false;
 
   double get _subtotal =>
-      widget.items.fold(0.0, (sum, it) => sum + (it.price * it.quantity));
+      widget.items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
   double get _deliveryFee => widget.items.isEmpty ? 0.0 : 20.0;
   double get _total => max(0.0, _subtotal + _deliveryFee);
   String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
 
   Future<void> _startPayChanguPayment() async {
-    if (widget.items.isEmpty || _total <= 0) {
+    if (widget.items.isEmpty) {
       ToastHelper.showCustomToast(
         context,
         'Your cart is empty.',
@@ -48,72 +40,104 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     }
 
     setState(() => _paying = true);
-    final rootContext = context;
 
     try {
-      print('Starting payment...');
-
       final prefs = await SharedPreferences.getInstance();
       final email = prefs.getString('email') ?? 'customer@example.com';
-      final fullName = prefs.getString('name') ?? 'Vero Customer';
-      final parts = fullName.trim().split(RegExp(r'\s+'));
-      final firstName = parts.isNotEmpty ? parts.first : 'Vero';
-      final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : 'Customer';
+      final name = prefs.getString('name') ?? 'Customer';
+      final phone = prefs.getString('phone') ?? '+265888000000';
+      
+      final parts = name.split(' ');
+      final firstName = parts.isNotEmpty ? parts.first : 'Customer';
+      final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
 
       final txRef = 'vero-${DateTime.now().millisecondsSinceEpoch}';
-      final amountInt = _total.round();
 
-      print('tx_ref: $txRef | amount: $amountInt MWK | email: $email');
+      // First, test if we can resolve the hostname
+      try {
+        final lookup = await InternetAddress.lookup('api.paychangu.com');
+        print('DNS lookup successful: ${lookup.first.address}');
+      } on SocketException catch (e) {
+        print('DNS lookup failed: $e');
+        throw Exception('Cannot connect to payment service. Please check your internet connection.');
+      }
 
+      // PayChangu API call
       final response = await http.post(
         Uri.parse('https://api.paychangu.com/payment'),
         headers: {
           'Accept': 'application/json',
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${_config.secretKey}',
+          'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
         },
         body: json.encode({
           'tx_ref': txRef,
           'first_name': firstName,
           'last_name': lastName,
           'email': email,
+          'phone_number': phone,
           'currency': 'MWK',
-          'amount': amountInt.toString(),
-          'callback_url': 'https://your-backend.com/paychangu/callback',
-          'return_url': 'https://your-frontend.com/paychangu/return',
-          'customization': {'title': 'Vero Payment', 'description': 'Cart checkout'},
+          'amount': _total.round().toString(),
+          'payment_methods': ['card', 'mobile_money', 'bank'],
+          'callback_url': 'https://webhook.site/your-webhook',
+          'return_url': 'https://your-app.com/payment-success',
+          'customization': {
+            'title': 'Vero 360 Payment',
+            'description': 'Order checkout',
+          },
         }),
       ).timeout(const Duration(seconds: 30));
 
-      print('PayChangu Response: ${response.statusCode} ${response.body}');
+      print('API Response: ${response.statusCode}');
+      print('Response Body: ${response.body}');
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        final jsonResp = json.decode(response.body) as Map<String, dynamic>;
-        if (jsonResp['status'] == 'success') {
-          final checkoutUrl = jsonResp['data']['checkout_url'] as String;
-          print('Checkout URL: $checkoutUrl');
+        final Map<String, dynamic> responseJson = json.decode(response.body);
+        
+        if (responseJson['status'] == 'success' || responseJson['status'] == 'Success') {
+          final checkoutUrl = responseJson['data']['checkout_url'] as String;
+          print('Opening checkout URL: $checkoutUrl');
 
-          await Navigator.of(rootContext).push(
-            MaterialPageRoute(
-              builder: (_) => PaymentLauncherPage(
-                checkoutUrl: checkoutUrl,
-                txRef: txRef,
-                secretKey: _config.secretKey,
-                rootContext: rootContext,
-              ),
+          if (!mounted) return;
+          
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => InAppPaymentPage(
+              checkoutUrl: checkoutUrl,
+              txRef: txRef,
+              totalAmount: _total,
+              rootContext: context,
             ),
-          );
+          ));
         } else {
-          throw Exception(jsonResp['message'] ?? 'Unknown error');
+          throw Exception(responseJson['message'] ?? 'Payment failed');
         }
       } else {
-        throw Exception('HTTP ${response.statusCode}');
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
-    } on TimeoutException {
-      ToastHelper.showCustomToast(rootContext, 'No internet connection', isSuccess: false, errorMessage: 'Timeout');
+    } on SocketException catch (e) {
+      print('Network Error: $e');
+      ToastHelper.showCustomToast(
+        context,
+        'Network error. Please check your internet connection.',
+        isSuccess: false,
+        errorMessage: e.message,
+      );
+    } on TimeoutException catch (e) {
+      print('Timeout Error: $e');
+      ToastHelper.showCustomToast(
+        context,
+        'Connection timeout. Please try again.',
+        isSuccess: false,
+        errorMessage: 'Request timed out',
+      );
     } catch (e) {
-      print('Payment failed: $e');
-      ToastHelper.showCustomToast(rootContext, 'Payment setup failed', isSuccess: false, errorMessage: e.toString());
+      print('Payment Error: $e');
+      ToastHelper.showCustomToast(
+        context,
+        'Payment initialization failed',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
     } finally {
       if (mounted) setState(() => _paying = false);
     }
@@ -122,46 +146,134 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Checkout'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('Checkout'), 
+        centerTitle: true,
+        backgroundColor: const Color(0xFFFF8A00),
+      ),
       body: Column(
         children: [
           Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: widget.items.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (_, i) {
-                final it = widget.items[i];
-                return Card(
-                  child: ListTile(
-                    title: Text(it.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text('Qty: ${it.quantity} × ${_mwk(it.price)}'),
-                    trailing: Text(_mwk(it.price * it.quantity), style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+            child: widget.items.isEmpty
+                ? const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.shopping_cart_outlined, size: 80, color: Colors.grey),
+                        SizedBox(height: 16),
+                        Text('Your cart is empty', style: TextStyle(fontSize: 18, color: Colors.grey)),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: widget.items.length,
+                    itemBuilder: (_, i) {
+                      final item = widget.items[i];
+                      return Card(
+                        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 0),
+                        elevation: 1,
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          leading: Container(
+                            width: 50,
+                            height: 50,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[200],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.shopping_bag, color: Colors.grey),
+                          ),
+                          title: Text(
+                            item.name,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                          subtitle: Text('Quantity: ${item.quantity}'),
+                          trailing: Text(
+                            _mwk(item.price * item.quantity),
+                            style: const TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
           Container(
-            padding: const EdgeInsets.all(16),
-            decoration: const BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)]),
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 10,
+                  spreadRadius: 1,
+                  offset: const Offset(0, -2),
+                ),
+              ],
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
+            ),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const Text(
+                  'Order Summary',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
                 _row('Subtotal', _mwk(_subtotal)),
                 _row('Delivery Fee', _mwk(_deliveryFee)),
-                const Divider(),
+                const SizedBox(height: 8),
+                const Divider(thickness: 1),
+                const SizedBox(height: 8),
                 _row('Total', _mwk(_total), bold: true, green: true),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _paying ? null : _startPayChanguPayment,
+                    onPressed: _paying || widget.items.isEmpty ? null : _startPayChanguPayment,
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
                       backgroundColor: const Color(0xFFFF8A00),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 3,
                     ),
-                    child: Text(_paying ? 'Processing...' : 'Pay Now', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (_paying)
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        else
+                          const Icon(Icons.payment, color: Colors.white),
+                        const SizedBox(width: 10),
+                        Text(
+                          _paying ? 'Processing...' : 'Pay Now',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -174,100 +286,211 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
   Widget _row(String label, String value, {bool bold = false, bool green = false}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontWeight: bold ? FontWeight.bold : FontWeight.normal)),
-          Text(value, style: TextStyle(color: green ? Colors.green : null, fontWeight: bold ? FontWeight.bold : FontWeight.w600)),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+              color: Colors.grey[700],
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
+              color: green ? const Color(0xFF2E7D32) : Colors.black,
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-// ────────────────────── PAYMENT LAUNCHER (WORKS 100%) ──────────────────────
-class PaymentLauncherPage extends StatefulWidget {
+// ────────────────────── SIMPLIFIED IN-APP PAYMENT PAGE ──────────────────────
+class InAppPaymentPage extends StatefulWidget {
   final String checkoutUrl;
   final String txRef;
-  final String secretKey;
+  final double totalAmount;
   final BuildContext rootContext;
 
-  const PaymentLauncherPage({
+  const InAppPaymentPage({
     Key? key,
     required this.checkoutUrl,
     required this.txRef,
-    required this.secretKey,
+    required this.totalAmount,
     required this.rootContext,
   }) : super(key: key);
 
   @override
-  State<PaymentLauncherPage> createState() => _PaymentLauncherPageState();
+  State<InAppPaymentPage> createState() => _InAppPaymentPageState();
 }
 
-class _PaymentLauncherPageState extends State<PaymentLauncherPage> {
-  Timer? _timer;
+class _InAppPaymentPageState extends State<InAppPaymentPage> {
+  late final WebViewController _controller;
+  Timer? _pollTimer;
+  bool _isLoading = true;
+  bool _hasError = false;
 
   @override
   void initState() {
     super.initState();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final uri = Uri.parse(widget.checkoutUrl);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
-    });
-
-    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _pollStatus());
+    print('Opening PayChangu URL: ${widget.checkoutUrl}');
+    _initializeWebView();
+    _startStatusPolling();
   }
 
-  Future<void> _pollStatus() async {
+  void _initializeWebView() {
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.white)
+      ..setNavigationDelegate(NavigationDelegate(
+        onProgress: (int progress) {
+          setState(() {
+            _isLoading = progress < 100;
+          });
+        },
+        onPageStarted: (String url) {
+          setState(() {
+            _isLoading = true;
+            _hasError = false;
+          });
+        },
+        onPageFinished: (String url) {
+          setState(() => _isLoading = false);
+        },
+        onWebResourceError: (WebResourceError error) {
+          setState(() {
+            _hasError = true;
+            _isLoading = false;
+          });
+        },
+      ))
+      ..loadRequest(Uri.parse(widget.checkoutUrl));
+  }
+
+  void _startStatusPolling() {
+    _pollTimer = Timer.periodic(const Duration(seconds: 7), (timer) async {
+      await _checkPaymentStatus();
+    });
+  }
+
+  Future<void> _checkPaymentStatus() async {
     try {
-      final resp = await http.get(
+      final response = await http.get(
         Uri.parse('https://api.paychangu.com/transaction/verify/${widget.txRef}'),
-        headers: {'Authorization': 'Bearer ${widget.secretKey}'},
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
+        },
       );
-
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body);
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
         final status = (data['data']?['status'] as String?)?.toLowerCase();
-
-        if (status == 'success' || status == 'successful') {
-          _timer?.cancel();
-          if (mounted) Navigator.of(context).pop();
-          ToastHelper.showCustomToast(widget.rootContext, 'Payment Successful!', isSuccess: true, errorMessage: '');
-          Navigator.of(widget.rootContext).pop(true);
+        
+        if (status == 'successful' || status == 'success') {
+          _handlePaymentSuccess();
         } else if (status == 'failed' || status == 'cancelled') {
-          _timer?.cancel();
-          if (mounted) Navigator.of(context).pop();
-          ToastHelper.showCustomToast(widget.rootContext, 'Payment Failed', isSuccess: false, errorMessage: status ?? '');
+          _handlePaymentFailure();
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      // Silently fail for polling
+    }
+  }
+
+  void _handlePaymentSuccess() {
+    _pollTimer?.cancel();
+    ToastHelper.showCustomToast(
+      widget.rootContext,
+      'Payment Successful!',
+      isSuccess: true,
+      errorMessage: '',
+    );
+    if (mounted) {
+      Navigator.of(context).pop();
+      Navigator.of(widget.rootContext).pop(true);
+    }
+  }
+
+  void _handlePaymentFailure() {
+    _pollTimer?.cancel();
+    ToastHelper.showCustomToast(
+      widget.rootContext,
+      'Payment Failed or Cancelled',
+      isSuccess: false,
+      errorMessage: 'Payment was not completed',
+    );
+    if (mounted) Navigator.of(context).pop();
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _pollTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Complete Payment')),
-      body: const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 24),
-            Text('Opening payment in browser...', style: TextStyle(fontSize: 18)),
-            SizedBox(height: 12),
-            Text('Complete payment and return to app', style: TextStyle(color: Colors.grey)),
-          ],
+      appBar: AppBar(
+        title: const Text('Complete Payment'),
+        backgroundColor: const Color(0xFFFF8A00),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Cancel Payment?'),
+                content: const Text('Are you sure you want to cancel this payment?'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Continue Payment'),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      _handlePaymentFailure();
+                    },
+                    child: const Text('Cancel', style: TextStyle(color: Colors.red)),
+                  ),
+                ],
+              ),
+            );
+          },
         ),
+      ),
+      body: Stack(
+        children: [
+          WebViewWidget(controller: _controller),
+          if (_isLoading)
+            Container(
+              color: Colors.white,
+              child: const Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00)),
+                    ),
+                    SizedBox(height: 20),
+                    Text(
+                      'Loading payment gateway...',
+                      style: TextStyle(fontSize: 16, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

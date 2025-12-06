@@ -33,6 +33,7 @@ import 'package:vero360_app/services/auth_service.dart';
 import 'package:vero360_app/services/latest_Services.dart';
 import 'package:vero360_app/toasthelper.dart';
 import 'package:vero360_app/Pages/MerchantApplicationForm.dart';
+import 'package:vero360_app/Pages/wallet/merchant_wallet_page.dart';
 
 class MerchantProfilePage extends StatefulWidget {
   const MerchantProfilePage({Key? key}) : super(key: key);
@@ -718,6 +719,28 @@ _DetailItem('Latest Arrivals', Icons.rocket_launch, () {
          _DetailItem('My Address', Icons.location_on, () { _openBottomSheet(const AddressPage()); }),
        _DetailItem('My transactions', Icons.history, () { /* TODO: implement */ }),
 
+
+  _DetailItem('My Wallet', Icons.account_balance_wallet, () async {
+      final userId = await _getCurrentUserId();
+      if (userId.isEmpty) {
+        ToastHelper.showCustomToast(
+          context,
+          'Please login to access wallet',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+      
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => MerchantWalletPage(
+            merchantId: userId,
+            merchantName: name,
+          ),
+        ),
+      );
+    }),
 
     ];
 

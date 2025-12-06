@@ -1,9 +1,13 @@
 // lib/Pages/checkout_from_cart_page.dart
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:paychangu_flutter/paychangu_flutter.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/models/cart_model.dart';
 import 'package:vero360_app/toasthelper.dart';
@@ -34,11 +38,36 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   void initState() {
     super.initState();
 
+    // Initialize WebView for Android if needed (adjust based on webview_flutter version)
+    if (Platform.isAndroid) {
+      WebViewPlatform.instance = SurfaceAndroidWebView();
+    }
+
+    // ⚠️ IMPORTANT:
+    // Use your real PayChangu secret key here.
+    // In production: set isTestMode: false and use a live key.
     _paychangu = PayChangu(
       PayChanguConfig(
-        secretKey: 'SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u', // TODO: your real key
+        secretKey: 'SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u', // TODO: replace
         isTestMode: true,
       ),
+    );
+  }
+
+  void _handlePayChanguError(
+    BuildContext rootContext, {
+    required String message,
+    dynamic error,
+  }) {
+    final details = error?.toString() ?? '';
+    // ignore: avoid_print
+    print('[PayChangu] onError: $details');
+
+    ToastHelper.showCustomToast(
+      rootContext,
+      message,
+      isSuccess: false,
+      errorMessage: details,
     );
   }
 
@@ -57,6 +86,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
     final rootContext = context;
 
+    // Pull basic user info from SharedPreferences.
     final prefs = await SharedPreferences.getInstance();
     final email = prefs.getString('email') ?? 'customer@example.com';
     final fullName = prefs.getString('name') ?? 'Vero Customer';
@@ -66,8 +96,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     final lastName =
         parts.length > 1 ? parts.sublist(1).join(' ') : 'Customer';
 
+    // Generate a txRef. In production, you usually generate this in backend.
     final txRef = 'vero-${DateTime.now().millisecondsSinceEpoch}';
-    final amountInt = _total.round(); // PayChangu expects an int (MWK)
+    final amountInt = _total.round(); // PayChangu expects an int for MWK.
 
     final request = PaymentRequest(
       txRef: txRef,
@@ -76,110 +107,144 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       email: email,
       currency: Currency.MWK,
       amount: amountInt,
+      // TODO: Replace with your real callback / return URLs
       callbackUrl: 'https://your-backend.com/paychangu/callback',
       returnUrl: 'https://your-frontend.com/paychangu/return',
     );
 
-    await Navigator.of(rootContext).push(
-      MaterialPageRoute(
-        builder: (innerContext) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('Complete Payment')),
-            body: _paychangu.launchPayment(
-              request: request,
-              onSuccess: (response) async {
-                final ref = response['tx_ref']?.toString() ?? txRef;
+    // Manual payment initiation to bypass SDK bug with status 201
+    final baseUrl = _paychangu.config.isTestMode
+        ? 'https://test-api.paychangu.com'
+        : 'https://api.paychangu.com';
+    final uri = Uri.parse('$baseUrl/payment');
+    final headers = {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ${_paychangu.config.secretKey}',
+    };
+    final body = {
+      'tx_ref': request.txRef,
+      'first_name': request.firstName,
+      'last_name': request.lastName,
+      'email': request.email,
+      'currency': request.currency.name,
+      'amount': request.amount.toString(),
+      'callback_url': request.callbackUrl,
+      'return_url': request.returnUrl,
+      // Optional: 'customization': {'title': 'Your Title', 'description': 'Your Description'},
+    };
 
-                try {
-                  final verification =
-                      await _paychangu.verifyTransaction(ref);
+    try {
+      final response = await http.post(uri, headers: headers, body: json.encode(body));
 
-                  final isValid = _paychangu.validatePayment(
-                    verification,
-                    expectedTxRef: ref,
-                    expectedCurrency: 'MWK',
-                    expectedAmount: amountInt,
-                  );
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final jsonResp = json.decode(response.body) as Map<String, dynamic>;
 
-                  if (!mounted) return;
+        if (jsonResp['status'] == 'success') {
+          final checkoutUrl = jsonResp['data']['checkout_url'] as String;
 
-                  if (isValid) {
-                    ToastHelper.showCustomToast(
-                      rootContext,
-                      'Payment successful!',
-                      isSuccess: true,
-                      errorMessage: '',
-                    );
+          // Launch WebView with checkout URL
+          await Navigator.of(rootContext).push(
+            MaterialPageRoute(
+              builder: (innerContext) {
+                final controller = WebViewController()
+                  ..setJavaScriptMode(JavaScriptMode.unrestricted)
+                  ..setNavigationDelegate(
+                    NavigationDelegate(
+                      onNavigationRequest: (NavigationRequest navReq) async {
+                        if (navReq.url.startsWith(request.callbackUrl)) {
+                          // Success redirect
+                          final uri = Uri.parse(navReq.url);
+                          final respTxRef = uri.queryParameters['tx_ref'] ?? txRef;
 
-                    // Close PayChangu webview
-                    Navigator.of(innerContext).pop();
+                          try {
+                            // Verify transaction using SDK.
+                            final verification =
+                                await _paychangu.verifyTransaction(respTxRef);
 
-                    // Close checkout → CartPage will refresh
-                    Navigator.of(rootContext).pop(true);
-                  } else {
-                    ToastHelper.showCustomToast(
-                      rootContext,
-                      'Payment validation failed. Please contact support.',
-                      isSuccess: false,
-                      errorMessage: 'Validation failed',
-                    );
-                    Navigator.of(innerContext).pop();
-                  }
-                } catch (e) {
-                  if (!mounted) return;
-                  ToastHelper.showCustomToast(
-                    rootContext,
-                    'Could not verify payment. Please try again.',
-                    isSuccess: false,
-                    errorMessage: e.toString(),
-                  );
-                  Navigator.of(innerContext).pop();
-                }
-              },
+                            final isValid = _paychangu.validatePayment(
+                              verification,
+                              expectedTxRef: respTxRef,
+                              expectedCurrency: 'MWK',
+                              expectedAmount: amountInt,
+                            );
 
-              // 👇 IMPORTANT: soften this handler
-              onError: (error) {
-                if (!mounted) return;
+                            if (!mounted) return NavigationDecision.prevent;
 
-                // Workaround: the SDK sometimes throws even when the
-                // response body is "status: success" (HTTP 201).
-                final detailsStr = error.details?.toString() ?? '';
+                            if (isValid) {
+                              ToastHelper.showCustomToast(
+                                rootContext,
+                                'Payment successful!',
+                                isSuccess: true,
+                                errorMessage: '',
+                              );
 
-                if (detailsStr.contains('"status":"success"') &&
-                    detailsStr.contains('"checkout_url"')) {
-                  // This is a "soft error" – session actually created.
-                  // We just log and DO NOT close the WebView.
-                  debugPrint(
-                      '[PayChangu] Soft error (201 with success payload) – ignoring.');
-                  return;
-                }
+                              // Close WebView and checkout page
+                              Navigator.of(innerContext).pop();
+                              Navigator.of(rootContext).pop(true);
+                            } else {
+                              _handlePayChanguError(
+                                rootContext,
+                                message:
+                                    'Payment validation failed. Please contact support.',
+                                error: 'Validation failed for tx_ref: $respTxRef',
+                              );
+                              Navigator.of(innerContext).pop();
+                            }
+                          } catch (e) {
+                            if (!mounted) return NavigationDecision.prevent;
+                            _handlePayChanguError(
+                              rootContext,
+                              message: 'Could not verify payment. Please try again.',
+                              error: e,
+                            );
+                            Navigator.of(innerContext).pop();
+                          }
 
-                ToastHelper.showCustomToast(
-                  rootContext,
-                  'Payment failed. Please try again.',
-                  isSuccess: false,
-                  errorMessage: error.message ?? error.toString(),
+                          return NavigationDecision.prevent;
+                        } else if (navReq.url.startsWith(request.returnUrl)) {
+                          // Failure or cancel redirect
+                          final uri = Uri.parse(navReq.url);
+                          final respTxRef = uri.queryParameters['tx_ref'] ?? txRef;
+                          final status = uri.queryParameters['status'];
+
+                          _handlePayChanguError(
+                            rootContext,
+                            message: 'Payment ${status ?? 'failed or cancelled'}.',
+                            error: 'tx_ref: $respTxRef',
+                          );
+                          Navigator.of(innerContext).pop();
+
+                          return NavigationDecision.prevent;
+                        }
+                        return NavigationDecision.navigate;
+                      },
+                    ),
+                  )
+                  ..loadRequest(Uri.parse(checkoutUrl));
+
+                return Scaffold(
+                  appBar: AppBar(title: const Text('Complete Payment')),
+                  body: WebViewWidget(controller: controller),
                 );
-                Navigator.of(innerContext).pop();
-              },
-
-              onCancel: () {
-                if (!mounted) return;
-                ToastHelper.showCustomToast(
-                  rootContext,
-                  'Payment cancelled.',
-                  isSuccess: false,
-                  errorMessage: 'User cancelled',
-                );
-                Navigator.of(innerContext).pop();
               },
             ),
           );
-        },
-      ),
-    );
-
-    if (mounted) setState(() => _paying = false);
+        } else {
+          throw Exception('Initiation failed: ${jsonResp['message']}');
+        }
+      } else {
+        throw Exception('Initiation failed with status: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      _handlePayChanguError(
+        rootContext,
+        message: 'Payment initiation failed. Please try again.',
+        error: e,
+      );
+    } finally {
+      if (mounted) setState(() => _paying = false);
+    }
   }
 
   @override
@@ -251,6 +316,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               },
             ),
           ),
+
+          // --- Summary + Pay button ---
           SafeArea(
             top: false,
             child: Container(
@@ -294,8 +361,12 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     );
   }
 
-  Widget _summaryRow(String label, String value,
-      {bool bold = false, bool green = false}) {
+  Widget _summaryRow(
+    String label,
+    String value, {
+    bool bold = false,
+    bool green = false,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(

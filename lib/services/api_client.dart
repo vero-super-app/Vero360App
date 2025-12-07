@@ -111,7 +111,7 @@ class ApiClient {
     if (!ok) {
       throw const ApiException(
         message:
-            'Service is temporarily unavailable. Please try again in a moment.',
+            'Please check your internet connection and try again.',
       );
     }
 

@@ -42,7 +42,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   final _amountController = TextEditingController();
   final _phoneController = TextEditingController();
   
-  // Banks list for Malawi (same as example)
+  // Banks list for Malawi
   static const List<Map<String, String>> _banks = [
     {"uuid": "82310dd1-ec9b-4fe7-a32c-2f262ef08681", "name": "National Bank of Malawi"},
     {"uuid": "5b9f76b1-620a-4eb9-8848-43d1e3e372dd", "name": "NBS Bank Limited"},
@@ -62,7 +62,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   ];
   
   int? _selectedBankIndex;
-  String _selectedPayoutMethod = 'bank'; // 'bank' or 'mobile_money'
+  String _selectedPayoutMethod = 'bank';
   String _selectedMobileProvider = 'airtel_money';
   
   // Stream subscriptions
@@ -123,17 +123,11 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
       if (mounted) {
         setState(() {
           _recentTransactions = snapshot.docs.map((doc) {
-            final data = doc.data();
-            return WalletTransaction(
-              transactionId: doc.id,
-              walletId: data['walletId'] ?? '',
-              type: data['type'] ?? '',
-              amount: (data['amount'] ?? 0.0).toDouble(),
-              status: data['status'] ?? '',
-              description: data['description'] ?? '',
-              reference: data['reference'] ?? '',
-              createdAt: (data['createdAt'] as Timestamp).toDate(),
-            );
+            final data = doc.data() as Map<String, dynamic>;
+            return WalletTransaction.fromMap({
+              ...data,
+              'transactionId': doc.id,
+            });
           }).toList();
         });
       }
@@ -232,7 +226,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                     ),
                     const SizedBox(height: 20),
 
-                    // Bank Selection (only for bank transfer)
+                    // Bank Selection
                     if (_selectedPayoutMethod == 'bank') ...[
                       const Text(
                         'Select Bank *',
@@ -573,14 +567,18 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
       await _processPayChanguPayout(amount, payoutRef);
       
       // 3. Show success and close dialog
-      Navigator.pop(context);
-      _showSuccess('Payout request submitted successfully!');
+      if (mounted) {
+        Navigator.pop(context);
+        _showSuccess('Payout request submitted successfully!');
+      }
       _clearControllers();
       
     } catch (e) {
       _showError('Failed to process payout: $e');
     } finally {
-      setState(() => _isProcessingPayout = false);
+      if (mounted) {
+        setState(() => _isProcessingPayout = false);
+      }
     }
   }
 
@@ -639,6 +637,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   }
 
   void _showSuccess(String message) {
+    if (!mounted) return;
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -658,6 +658,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   }
 
   void _showError(String message) {
+    if (!mounted) return;
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -700,7 +702,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Balance Card (with gradient like example)
+                  // Balance Card
                   Container(
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(

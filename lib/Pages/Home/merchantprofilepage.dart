@@ -746,9 +746,8 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
       _DetailItem('My Address', Icons.location_on, () { 
         _openBottomSheet(const AddressPage()); 
       }),
-      _DetailItem('My transactions', Icons.history, () { 
-        /* TODO: implement */ 
-      }),
+   
+      
       _DetailItem('My Wallet', Icons.account_balance_wallet, () async {
         final user = FirebaseAuth.instance.currentUser;
         if (user == null || user.uid.isEmpty) {
@@ -771,6 +770,9 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
         );
       }),
     ];
+
+
+
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 24),

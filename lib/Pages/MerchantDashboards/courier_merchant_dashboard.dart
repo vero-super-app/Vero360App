@@ -4,10 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
+import 'package:vero360_app/services/merchant_service_helper.dart';
+import 'package:vero360_app/Pages/marketPlace.dart';
+import 'package:vero360_app/Pages/Home/Profilepage.dart';
+import 'package:vero360_app/screens/chat_list_page.dart';
+import 'package:vero360_app/services/cart_services.dart';
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/merchant_wallet.dart';
-import 'package:vero360_app/services/merchant_service_helper.dart';
 
 class CourierMerchantDashboard extends StatefulWidget {
   final String email;
@@ -21,6 +24,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final MerchantServiceHelper _helper = MerchantServiceHelper();
+  final CartService _cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
   
   Map<String, dynamic>? _merchantData;
   List<dynamic> _recentDeliveries = [];
@@ -40,11 +44,25 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
   String _status = 'pending';
   int _availableCouriers = 0;
 
+  // Navigation State
+  int _selectedIndex = 0;
+  late List<Widget> _merchantPages;
+
   @override
   void initState() {
     super.initState();
+    _setupPages();
     _loadMerchantData();
     _startPeriodicUpdates();
+  }
+
+  void _setupPages() {
+    _merchantPages = [
+      _buildDashboardContent(),
+      MarketPage(cartService: _cartService),
+      ChatListPage(),
+      ProfilePage(),
+    ];
   }
 
   void _startPeriodicUpdates() {
@@ -56,7 +74,9 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
   }
 
   Future<void> _loadMerchantData() async {
-    setState(() => _isLoading = true);
+    if (mounted) {
+      setState(() => _isLoading = true);
+    }
     
     final prefs = await SharedPreferences.getInstance();
     _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? '';
@@ -67,15 +87,17 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
         final dashboardData = await _helper.getMerchantDashboardData(_uid, 'courier');
         
         if (!dashboardData.containsKey('error')) {
-          setState(() {
-            _merchantData = dashboardData['merchant'];
-            _recentDeliveries = dashboardData['recentOrders'] ?? [];
-            _totalDeliveries = dashboardData['totalOrders'] ?? 0;
-            _completedDeliveries = dashboardData['completedOrders'] ?? 0;
-            _totalEarnings = dashboardData['totalRevenue'] ?? 0;
-            _rating = dashboardData['merchant']?['rating'] ?? 0.0;
-            _status = dashboardData['merchant']?['status'] ?? 'pending';
-          });
+          if (mounted) {
+            setState(() {
+              _merchantData = dashboardData['merchant'];
+              _recentDeliveries = dashboardData['recentOrders'] ?? [];
+              _totalDeliveries = dashboardData['totalOrders'] ?? 0;
+              _completedDeliveries = dashboardData['completedOrders'] ?? 0;
+              _totalEarnings = dashboardData['totalRevenue'] ?? 0;
+              _rating = dashboardData['merchant']?['rating'] ?? 0.0;
+              _status = dashboardData['merchant']?['status'] ?? 'pending';
+            });
+          }
         }
 
         await _loadCouriers();
@@ -89,7 +111,9 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
       }
     }
     
-    setState(() => _isLoading = false);
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _loadCouriers() async {
@@ -99,15 +123,17 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
           .where('merchantId', isEqualTo: _uid)
           .get();
       
-      _couriers = snapshot.docs.map((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        return {
-          'id': doc.id,
-          ...data,
-        };
-      }).toList();
-      
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {
+          _couriers = snapshot.docs.map((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return {
+              'id': doc.id,
+              ...data,
+            };
+          }).toList();
+        });
+      }
     } catch (e) {
       print('Error loading couriers: $e');
     }
@@ -120,8 +146,11 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
           .where('merchantId', isEqualTo: _uid)
           .get();
       
-      _vehicles = snapshot.docs.map((doc) => doc.data()).toList();
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {
+          _vehicles = snapshot.docs.map((doc) => doc.data()).toList();
+        });
+      }
     } catch (e) {
       print('Error loading vehicles: $e');
     }
@@ -134,7 +163,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
           .doc(_uid)
           .get();
       
-      if (walletDoc.exists) {
+      if (walletDoc.exists && mounted) {
         setState(() {
           _walletBalance = (walletDoc.data()?['balance'] ?? 0).toDouble();
         });
@@ -152,9 +181,11 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
           .where('status', whereIn: ['accepted', 'in_transit', 'out_for_delivery'])
           .get();
       
-      setState(() {
-        _activeDeliveries = snapshot.size;
-      });
+      if (mounted) {
+        setState(() {
+          _activeDeliveries = snapshot.size;
+        });
+      }
     } catch (e) {
       print('Error calculating active deliveries: $e');
     }
@@ -167,9 +198,11 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
         return courierMap['status'] == 'available';
       }).length;
       
-      setState(() {
-        _availableCouriers = available;
-      });
+      if (mounted) {
+        setState(() {
+          _availableCouriers = available;
+        });
+      }
     } catch (e) {
       print('Error calculating available couriers: $e');
     }
@@ -208,7 +241,6 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
     }
   }
 
-  // ADD THIS METHOD TO FIX THE _StatCard ERROR
   Widget _StatCard({
     required String title,
     required String value,
@@ -258,21 +290,36 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
     );
   }
 
+  void _onItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      body: _merchantPages[_selectedIndex],
+      bottomNavigationBar: _buildMerchantNavBar(),
+    );
+  }
+
+  Widget _buildDashboardContent() {
+    return Scaffold(
       appBar: AppBar(
-        title: const Text('Courier Merchant Dashboard'),
+        title: Text(_isLoading ? 'Loading...' : '$_businessName Dashboard'),
         backgroundColor: Colors.teal,
         actions: [
           IconButton(
-            icon: const Icon(Icons.local_shipping),
+            icon: const Icon(Icons.switch_account),
+            tooltip: 'Switch to Customer View',
             onPressed: () {
-              Navigator.push(
+              Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(
                   builder: (_) => Bottomnavbar(email: widget.email),
                 ),
+                (_) => false,
               );
             },
           ),
@@ -283,8 +330,8 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
                 context,
                 MaterialPageRoute(
                   builder: (_) => MerchantWalletPage(
-                    merchantId: _uid, 
-                    merchantName: _businessName, 
+                    merchantId: _uid,
+                    merchantName: _businessName,
                     serviceType: 'courier',
                   ),
                 ),
@@ -300,25 +347,12 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Welcome Section
                   _buildWelcomeSection(),
-                  
-                  // Stats Overview
                   _buildStatsSection(),
-                  
-                  // Quick Actions
                   _buildQuickActions(),
-                  
-                  // Wallet Summary
                   _buildWalletSummary(),
-                  
-                  // Recent Deliveries
                   _buildRecentDeliveries(),
-                  
-                  // Couriers
                   _buildCouriersSection(),
-                  
-                  // Vehicles
                   _buildVehiclesSection(),
                 ],
               ),
@@ -516,10 +550,9 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        // FIXED: Added all required parameters
                         builder: (_) => MerchantWalletPage(
                           merchantId: _uid,
-                          merchantName: _businessName, // Added missing parameter
+                          merchantName: _businessName,
                           serviceType: 'courier',
                         ),
                       ),
@@ -763,6 +796,71 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
             },
           ),
       ],
+    );
+  }
+
+  Widget _buildMerchantNavBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.3),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+        border: Border(top: BorderSide(color: Colors.grey[200]!)),
+      ),
+      child: SafeArea(
+        child: SizedBox(
+          height: 70,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildNavItem(Icons.dashboard, 'Dashboard', 0),
+              _buildNavItem(Icons.store, 'Marketplace', 1),
+              _buildNavItem(Icons.message, 'Messages', 2),
+              _buildNavItem(Icons.person, 'Profile', 3),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavItem(IconData icon, String label, int index) {
+    bool isSelected = _selectedIndex == index;
+    
+    return GestureDetector(
+      onTap: () => _onItemTapped(index),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.teal.withOpacity(0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? Colors.teal : Colors.grey[600],
+              size: 24,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: isSelected ? Colors.teal : Colors.grey[600],
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

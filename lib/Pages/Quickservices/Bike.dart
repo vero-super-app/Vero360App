@@ -299,29 +299,21 @@ class _VeroRidePageState extends State<VeroRidePage> {
                       ),
                       const SizedBox(height: 8),
 
-                      // Call button
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: _brandOrange,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30),
-                            ),
-                            textStyle: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          onPressed: () => _callNumber(d.phone),
-                          icon: const Icon(Icons.call, size: 18),
-                          label: const Text('Call bike now'),
-                        ),
+                const SizedBox(height: 16),
+                // Mini info card
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF101010).withValues(alpha: 0.03),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.info_outline_rounded, size: 18),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text('Safe • Fast • Affordable — perfect for quick errands.',
+                            style: TextStyle(fontSize: 12.5)),
                       ),
                     ],
                   ),

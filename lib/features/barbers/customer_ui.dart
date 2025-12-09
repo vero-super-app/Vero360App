@@ -405,7 +405,7 @@ class _BestSalonCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: r,
-              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 14, offset: const Offset(0, 8))],
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 14, offset: const Offset(0, 8))],
               border: Border.all(color: const Color(0x11FF8A00)),
             ),
             child: Column(
@@ -499,7 +499,7 @@ class _BarberListTile extends StatelessWidget {
         child: Ink(
           decoration: BoxDecoration(
             color: Colors.white, borderRadius: r,
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 14, offset: const Offset(0, 8))],
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 14, offset: const Offset(0, 8))],
             border: Border.all(color: const Color(0x11FF8A00)),
           ),
           child: Row(
@@ -591,7 +591,7 @@ class _CoverImage extends StatelessWidget {
                 ),
               ),
               Container(
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.9), borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.9), borderRadius: BorderRadius.circular(12)),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: Row(children: [
                   const Icon(Icons.star_rounded, color: AppColors.brandOrange, size: 18),
@@ -609,7 +609,7 @@ class _CoverImage extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Ink(
-          decoration: BoxDecoration(color: Colors.white.withOpacity(0.92), shape: BoxShape.circle),
+          decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.92), shape: BoxShape.circle),
           child: Padding(padding: const EdgeInsets.all(8), child: Icon(i, color: AppColors.title)),
         ),
       );
@@ -723,7 +723,7 @@ class _ScheduleSheetState extends State<_ScheduleSheet> {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white, borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 30)],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 30)],
       ),
       padding: EdgeInsets.only(left: 16, right: 16, top: 12, bottom: 16 + MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(

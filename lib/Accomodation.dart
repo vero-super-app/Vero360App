@@ -221,7 +221,7 @@ class _SearchBar extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0x22FF8A00)),
-        boxShadow: [BoxShadow(color: _Brand.orange.withOpacity(0.10), blurRadius: 12, offset: const Offset(0, 6))],
+        boxShadow: [BoxShadow(color: _Brand.orange.withValues(alpha: 0.10), blurRadius: 12, offset: const Offset(0, 6))],
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
@@ -412,7 +412,7 @@ class _StayCardState extends State<_StayCard> {
                               gradient: LinearGradient(
                                 begin: Alignment.topCenter,
                                 end: Alignment.bottomCenter,
-                                colors: [Colors.transparent, Colors.black.withOpacity(0.25)],
+                                colors: [Colors.transparent, Colors.black.withValues(alpha: 0.25)],
                               ),
                             ),
                           ),
@@ -426,7 +426,7 @@ class _StayCardState extends State<_StayCard> {
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.92),
+                              color: Colors.white.withValues(alpha: 0.92),
                               borderRadius: BorderRadius.circular(22),
                               boxShadow: const [BoxShadow(color: Color(0x14000000), blurRadius: 8)],
                             ),

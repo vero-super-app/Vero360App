@@ -303,7 +303,7 @@ class _HeaderCard extends StatelessWidget {
             height: 72,
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [brand.withOpacity(.15), Colors.white],
+                colors: [brand.withValues(alpha: .15), Colors.white],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -366,7 +366,7 @@ class _EmptyCard extends StatelessWidget {
             width: 88,
             height: 88,
             decoration: BoxDecoration(
-              color: brand.withOpacity(.15),
+              color: brand.withValues(alpha: .15),
               borderRadius: BorderRadius.circular(24),
             ),
             child: const Icon(
@@ -434,11 +434,7 @@ class _AddressCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: isDefault
-                ? brand.withOpacity(.35)
-                : const Color(0x11000000),
-          ),
+          border: Border.all(color: isDefault ? brand.withValues(alpha: .35) : const Color(0x11000000)),
           boxShadow: const [
             BoxShadow(
               blurRadius: 18,
@@ -454,11 +450,8 @@ class _AddressCard extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 24,
-                backgroundColor: brand.withOpacity(.12),
-                child: Icon(
-                  _iconForType(address.addressType),
-                  color: brand,
-                ),
+                backgroundColor: brand.withValues(alpha: .12),
+                child: Icon(_iconForType(address.addressType), color: brand),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -481,7 +474,7 @@ class _AddressCard extends StatelessWidget {
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.blue.withOpacity(.1),
+                              color: Colors.blue.withValues(alpha: .1),
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
@@ -499,7 +492,7 @@ class _AddressCard extends StatelessWidget {
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: brand.withOpacity(.15),
+                              color: brand.withValues(alpha: .15),
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
@@ -777,7 +770,7 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
                 height: 140,
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [brand.withOpacity(.15), Colors.white],
+                    colors: [brand.withValues(alpha: .15), Colors.white],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -883,12 +876,8 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
                 child: OutlinedButton(
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.black87,
-                    side: BorderSide(
-                      color: Colors.black12.withOpacity(.4),
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
+                    side: BorderSide(color: Colors.black12.withValues(alpha: .4)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                   onPressed:
                       _saving ? null : () => Navigator.pop(context),
@@ -1043,7 +1032,7 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: brand.withOpacity(.06),
+        color: brand.withValues(alpha: .06),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(

@@ -201,7 +201,7 @@ class _ProfileQrPageState extends State<ProfileQrPage> {
                   height: 72,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [_brand.withOpacity(.15), Colors.white],
+                      colors: [_brand.withValues(alpha: .15), Colors.white],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),

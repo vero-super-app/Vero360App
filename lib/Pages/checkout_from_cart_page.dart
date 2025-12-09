@@ -145,42 +145,93 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Checkout'), 
-        centerTitle: true,
-        backgroundColor: const Color(0xFFFF8A00),
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: widget.items.isEmpty
-                ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.shopping_cart_outlined, size: 80, color: Colors.grey),
-                        SizedBox(height: 16),
-                        Text('Your cart is empty', style: TextStyle(fontSize: 18, color: Colors.grey)),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: widget.items.length,
-                    itemBuilder: (_, i) {
-                      final item = widget.items[i];
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 0),
-                        elevation: 1,
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          leading: Container(
-                            width: 50,
-                            height: 50,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[200],
-                              borderRadius: BorderRadius.circular(8),
+    final canPay = !_submitting && _loggedIn && _defaultAddr != null;
+
+    return Theme(
+      data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Checkout'),
+          backgroundColor: _brandOrange,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          children: [
+            // Trust banner (same as main)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: _brandSoft,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.lock, size: 18),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('Secure checkout — review your address and payment details.')),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Items summary with thumbnails
+            Card(
+              elevation: 6,
+              shadowColor: Colors.black12,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              clipBehavior: Clip.antiAlias,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Your Items',
+                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    ListView.separated(
+                      itemCount: widget.items.length,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      separatorBuilder: (_, __) => const Divider(height: 14),
+                      itemBuilder: (_, i) {
+                        final it = widget.items[i];
+                        final lineTotal = it.price * it.quantity;
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: SizedBox(
+                                width: 64, height: 64,
+                                child: (it.image.isNotEmpty)
+                                    ? Image.network(
+                                        it.image,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => const _ImgFallback(),
+                                      )
+                                    : const _ImgFallback(),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(it.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w700, fontSize: 15)),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${_mwk(it.price)}  •  Qty: ${it.quantity}',
+                                    style: TextStyle(color: Colors.grey.shade700),
+                                  ),
+                                ],
+                              ),
                             ),
                             child: const Icon(Icons.shopping_bag, color: Colors.grey),
                           ),

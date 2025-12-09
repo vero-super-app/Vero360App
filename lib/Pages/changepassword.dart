@@ -132,7 +132,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
                   height: 72,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [_brand.withOpacity(.15), Colors.white],
+                      colors: [_brand.withValues(alpha: .15), Colors.white],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
@@ -289,7 +289,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
                       child: OutlinedButton(
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.black87,
-                          side: BorderSide(color: Colors.black12.withOpacity(.4)),
+                          side: BorderSide(color: Colors.black12.withValues(alpha: .4)),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
                           ),

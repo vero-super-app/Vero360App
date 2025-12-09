@@ -9,9 +9,9 @@ class ApiConfig {
   /// When you have a real backup, add it here:
 
   static const List<String> _prodServers = [
-    'https://unimatherapyapplication.com/vero',
+    'https://heflexitservice.co.za/vero',
+    'https://unimatherapyapplication.com/vero',  //BACKUP SERVER
   
-    // 'https://backup.unimatherapyapplication.com/vero', // <- REAL backup later
   ];
 
   static const String _prefsKeyBase = 'api_base';

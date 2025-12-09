@@ -4,21 +4,25 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart' show sha256;
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import 'package:vero360_app/services/api_client.dart';
-import 'package:vero360_app/services/api_exception.dart';
 import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/services/api_exception.dart';
 import 'package:vero360_app/toasthelper.dart';
 
 class AuthService {
   static const Duration _reqTimeoutWarm = Duration(seconds: 18);
 
   final GoogleSignIn _google = GoogleSignIn(scopes: ['email', 'profile']);
+  final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   void _toast(BuildContext ctx, String msg, {bool ok = true}) {
     ToastHelper.showCustomToast(
@@ -29,17 +33,231 @@ class AuthService {
     );
   }
 
-  // ---------- Email/Phone + Password ----------
+  bool _looksLikeServerDown(Object e) {
+    final msg = e.toString().toLowerCase();
+    return msg.contains('service unavailable') ||
+        msg.contains('service is temporarily unavailable') ||
+        msg.contains('503') ||
+        msg.contains('socketexception') ||
+        msg.contains('failed host lookup') ||
+        msg.contains('connection refused') ||
+        msg.contains('network is unreachable') ||
+        msg.contains('timed out');
+  }
+
+  // ---------- Backend normaliser ----------
+
+  Map<String, dynamic> _normalizeBackendAuthResponse(
+      Map<String, dynamic> data) {
+    final token = data['access_token'] ?? data['token'] ?? data['jwt'];
+
+    final rawUser = data['user'] ?? data;
+    Map<String, dynamic> user;
+    if (rawUser is Map<String, dynamic>) {
+      user = Map<String, dynamic>.from(rawUser);
+    } else {
+      user = {'raw': rawUser};
+    }
+
+    final role =
+        (user['role'] ?? user['userRole'] ?? 'customer').toString().toLowerCase();
+    user['role'] = role;
+
+    return {
+      'authProvider': 'backend',
+      'token': token?.toString(),
+      'user': user,
+    };
+  }
+
+  Map<String, dynamic> _normalizeAuthResponse(Map<String, dynamic> data) =>
+      _normalizeBackendAuthResponse(data);
+
+  // ---------- Firebase helpers ----------
+
+  Future<void> _saveFirebaseProfile(
+    User user, {
+    String? name,
+    String? phone,
+    String? role,
+  }) async {
+    try {
+      final doc = _firestore.collection('users').doc(user.uid);
+      final data = <String, dynamic>{
+        'email': user.email,
+        if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+        if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
+        if (role != null && role.trim().isNotEmpty)
+          'role': role.toLowerCase(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      await doc.set(data, SetOptions(merge: true));
+    } catch (_) {
+      // never block auth on profile write
+    }
+  }
+
+  Future<Map<String, dynamic>> _buildFirebaseAuthResult(
+    User user, {
+    String? fallbackName,
+    String? fallbackPhone,
+    String? fallbackRole,
+  }) async {
+    Map<String, dynamic> profile = {};
+    try {
+      final snap = await _firestore.collection('users').doc(user.uid).get();
+      if (snap.exists && snap.data() != null) {
+        profile = Map<String, dynamic>.from(snap.data()!);
+      }
+    } catch (_) {}
+
+    final name = (profile['name'] ?? fallbackName ?? user.displayName ?? '')
+        .toString();
+    final phone = (profile['phone'] ?? fallbackPhone ?? '').toString();
+    final role = (profile['role'] ?? fallbackRole ?? 'customer')
+        .toString()
+        .toLowerCase();
+
+    final token = await user.getIdToken();
+
+    final userMap = <String, dynamic>{
+      'id': user.uid,
+      'firebaseUid': user.uid,
+      'email': user.email ?? '',
+      'phone': phone,
+      'name': name,
+      'role': role,
+    };
+
+    return {
+      'authProvider': 'firebase',
+      'token': token,
+      'user': userMap,
+    };
+  }
+
+  Future<Map<String, dynamic>> _normalizeFirebaseUser(
+    User user, {
+    String? name,
+    String? phone,
+    String? role,
+  }) async {
+    await _saveFirebaseProfile(user, name: name, phone: phone, role: role);
+    return _buildFirebaseAuthResult(
+      user,
+      fallbackName: name,
+      fallbackPhone: phone,
+      fallbackRole: role,
+    );
+  }
+
+  Future<Map<String, dynamic>?> _loginWithFirebaseEmailPassword(
+    String email,
+    String password,
+    BuildContext context, {
+    String? onFailMessage,
+  }) async {
+    try {
+      final cred = await _firebaseAuth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final user = cred.user;
+      if (user == null) {
+        _toast(
+          context,
+          onFailMessage ?? 'Backup login failed (no user).',
+          ok: false,
+        );
+        return null;
+      }
+
+      _toast(context, 'Signed in (backup account)', ok: true);
+      return await _buildFirebaseAuthResult(user, fallbackRole: 'customer');
+    } on FirebaseAuthException catch (e) {
+      _toast(
+        context,
+        onFailMessage ?? (e.message ?? 'Backup login failed.'),
+        ok: false,
+      );
+      return null;
+    } catch (_) {
+      _toast(
+        context,
+        onFailMessage ?? 'Backup login failed.',
+        ok: false,
+      );
+      return null;
+    }
+  }
+
+  Future<void> _ensureFirebaseMirrorForBackendUser({
+    required String email,
+    required String password,
+    Map<String, dynamic>? backendUser,
+  }) async {
+    try {
+      final current = _firebaseAuth.currentUser;
+      if (current != null && current.email == email) {
+        await _saveFirebaseProfile(
+          current,
+          name: backendUser?['name']?.toString(),
+          phone: backendUser?['phone']?.toString(),
+          role:
+              (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
+        );
+        return;
+      }
+
+      try {
+        final cred = await _firebaseAuth.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+        await _saveFirebaseProfile(
+          cred.user!,
+          name: backendUser?['name']?.toString(),
+          phone: backendUser?['phone']?.toString(),
+          role:
+              (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
+        );
+      } on FirebaseAuthException catch (e) {
+        if (e.code == 'user-not-found') {
+          final cred = await _firebaseAuth.createUserWithEmailAndPassword(
+            email: email,
+            password: password,
+          );
+          await _saveFirebaseProfile(
+            cred.user!,
+            name: backendUser?['name']?.toString(),
+            phone: backendUser?['phone']?.toString(),
+            role:
+                (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
+          );
+        } else {
+          // ignore other firebase errors here
+        }
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  // ---------- Email/Phone + Password login (backend + Firebase fallback) ----------
+
   Future<Map<String, dynamic>?> loginWithIdentifier(
     String identifier,
     String password,
     BuildContext context,
   ) async {
+    final trimmedId = identifier.trim();
+
+    // 1) Try NestJS backend first
     try {
       final res = await ApiClient.post(
         '/auth/login',
         body: jsonEncode({
-          'identifier': identifier,
+          'identifier': trimmedId,
           'password': password,
         }),
         timeout: _reqTimeoutWarm,
@@ -47,17 +265,56 @@ class AuthService {
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       _toast(context, 'Signed in');
-      return _normalizeAuthResponse(data);
+      final normalized = _normalizeBackendAuthResponse(data);
+
+      // Best-effort: mirror to Firebase if email login
+      if (trimmedId.contains('@')) {
+        _ensureFirebaseMirrorForBackendUser(
+          email: trimmedId,
+          password: password,
+          backendUser: normalized['user'] as Map<String, dynamic>?,
+        );
+      }
+
+      return normalized;
     } on ApiException catch (e) {
+      // Backend rejected. If identifier is email, still try Firebase backup.
+      if (trimmedId.contains('@')) {
+        final fbResult = await _loginWithFirebaseEmailPassword(
+          trimmedId,
+          password,
+          context,
+          onFailMessage: e.message,
+        );
+        if (fbResult != null) return fbResult;
+      }
+
       _toast(context, e.message, ok: false);
       return null;
-    } catch (_) {
-      _toast(context, 'Something went wrong. Please try again.', ok: false);
+    } catch (e) {
+      // Network/server down → prefer Firebase backup for email logins
+      if (trimmedId.contains('@')) {
+        final fbResult = await _loginWithFirebaseEmailPassword(
+          trimmedId,
+          password,
+          context,
+        );
+        if (fbResult != null) return fbResult;
+      }
+
+      _toast(
+        context,
+        'Something went wrong. Please try again.',
+        ok: false,
+      );
       return null;
     }
   }
 
   // ---------- OTP (register flow) ----------
+
+  /// NOTE: If Nest is down, this will now still return `true` so the UI
+  /// can continue and we’ll rely on Firebase-only registration.
   Future<bool> requestOtp({
     required String channel, // 'email' | 'phone'
     String? email,
@@ -78,11 +335,21 @@ class AuthService {
       _toast(context, 'Verification code sent');
       return true;
     } on ApiException catch (e) {
-      _toast(context, e.message, ok: false);
-      return false;
-    } catch (_) {
-      _toast(context, 'Something went wrong. Please try again.', ok: false);
-      return false;
+      // Backend responded with an error (rate-limit, etc.)
+      _toast(
+        context,
+        'OTP failed: ${e.message}. You can still continue — we will create a backup account.',
+        ok: false,
+      );
+      return true; // allow flow to continue
+    } catch (e) {
+      // Network/server completely down
+      _toast(
+        context,
+        'Server not reachable for OTP. You can still continue — we will create a backup account.',
+        ok: false,
+      );
+      return true; // allow flow to continue
     }
   }
 
@@ -119,10 +386,17 @@ class AuthService {
       _toast(context, e.message, ok: false);
       return null;
     } catch (_) {
-      _toast(context, 'Something went wrong. Please try again.', ok: false);
+      // When this fails (server down), we’ll fall back to Firebase only.
+      _toast(
+        context,
+        'Could not verify code (server issue). We can still create a backup account.',
+        ok: false,
+      );
       return null;
     }
   }
+
+  // ---------- Register (backend first, Firebase fallback) ----------
 
   Future<Map<String, dynamic>?> registerUser({
     required String name,
@@ -135,35 +409,159 @@ class AuthService {
     required String verificationTicket,
     required BuildContext context,
   }) async {
+    final normalizedRole = role.toLowerCase();
+
+    // 1) Try backend registration if we have a ticket
+    if (verificationTicket.isNotEmpty) {
+      try {
+        final res = await ApiClient.post(
+          '/auth/register',
+          body: jsonEncode({
+            'name': name,
+            'email': email,
+            'phone': phone,
+            'password': password,
+            'role': normalizedRole,
+            'profilepicture': profilePicture,
+            'preferredVerification': preferredVerification,
+            'verificationTicket': verificationTicket,
+          }),
+          timeout: _reqTimeoutWarm,
+        );
+
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        _toast(context, 'Account created');
+
+        final backendAuth = _normalizeBackendAuthResponse(data);
+
+        // Mirror this user into Firebase as backup (best-effort)
+        if (email.trim().isNotEmpty) {
+          await _ensureFirebaseMirrorForBackendUser(
+            email: email.trim(),
+            password: password,
+            backendUser: backendAuth['user'] as Map<String, dynamic>?,
+          );
+        }
+
+        return backendAuth;
+      } on ApiException catch (e) {
+        _toast(
+          context,
+          'Backend signup failed: ${e.message}. Using backup account.',
+          ok: false,
+        );
+        // fall through to Firebase backup
+      } catch (e) {
+        if (_looksLikeServerDown(e)) {
+          _toast(
+            context,
+            'Server unavailable. Creating backup account.',
+            ok: false,
+          );
+        } else {
+          _toast(
+            context,
+            'Signup error: $e. Trying backup account.',
+            ok: false,
+          );
+        }
+        // fall through to Firebase backup
+      }
+    }
+
+    // 2) Fallback: pure Firebase registration (NO OTP required here)
+    if (email.trim().isEmpty) {
+      _toast(
+        context,
+        'Email is required for backup sign-up.',
+        ok: false,
+      );
+      return null;
+    }
+
     try {
-      final res = await ApiClient.post(
-        '/auth/register',
-        body: jsonEncode({
-          'name': name,
-          'email': email,
-          'phone': phone,
-          'password': password,
-          'role': role,
-          'profilepicture': profilePicture,
-          'preferredVerification': preferredVerification,
-          'verificationTicket': verificationTicket,
-        }),
-        timeout: _reqTimeoutWarm,
+      final cred = await _firebaseAuth.createUserWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
+      );
+      final user = cred.user;
+      if (user == null) {
+        _toast(context, 'Backup signup failed (no user).', ok: false);
+        return null;
+      }
+
+      final auth = await _normalizeFirebaseUser(
+        user,
+        name: name,
+        phone: phone,
+        role: normalizedRole,
       );
 
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      _toast(context, 'Account created');
-      return _normalizeAuthResponse(data);
-    } on ApiException catch (e) {
-      _toast(context, e.message, ok: false);
+      _toast(
+        context,
+        'Account created (backup)',
+        ok: true,
+      );
+      return auth;
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'email-already-in-use') {
+        // Already exists in Firebase → sign in instead
+        try {
+          final cred = await _firebaseAuth.signInWithEmailAndPassword(
+            email: email.trim(),
+            password: password,
+          );
+          final user = cred.user;
+          if (user == null) {
+            _toast(
+              context,
+              'Backup account exists but could not sign in.',
+              ok: false,
+            );
+            return null;
+          }
+
+          final auth = await _buildFirebaseAuthResult(
+            user,
+            fallbackName: name,
+            fallbackPhone: phone,
+            fallbackRole: normalizedRole,
+          );
+
+          _toast(
+            context,
+            'Signed in to existing backup account',
+            ok: true,
+          );
+          return auth;
+        } catch (e2) {
+          _toast(
+            context,
+            e2.toString(),
+            ok: false,
+          );
+          return null;
+        }
+      }
+
+      _toast(
+        context,
+        e.message ?? 'Backup signup failed.',
+        ok: false,
+      );
       return null;
     } catch (_) {
-      _toast(context, 'Something went wrong. Please try again.', ok: false);
+      _toast(
+        context,
+        'Signup failed. Please try again later.',
+        ok: false,
+      );
       return null;
     }
   }
 
   // ---------- Logout ----------
+
   Future<bool> logout({BuildContext? context}) async {
     String? token;
     try {
@@ -192,6 +590,10 @@ class AuthService {
       await _google.disconnect();
     } catch (_) {}
 
+    try {
+      await _firebaseAuth.signOut();
+    } catch (_) {}
+
     final ok = await _clearLocalSession();
     if (context != null) {
       _toast(
@@ -214,6 +616,7 @@ class AuthService {
         'prefill_login_identifier',
         'prefill_login_role',
         'merchant_review_pending',
+        'auth_provider',
       ]) {
         await sp.remove(k);
       }
@@ -223,7 +626,8 @@ class AuthService {
     }
   }
 
-  // ---------- Social: Google ----------
+  // ---------- Social: Google (unchanged backend flow) ----------
+
   Future<Map<String, dynamic>?> continueWithGoogle(
     BuildContext context,
   ) async {
@@ -246,7 +650,7 @@ class AuthService {
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       _toast(context, 'Signed in with Google');
-      return _normalizeAuthResponse(data);
+      return _normalizeBackendAuthResponse(data);
     } on ApiException catch (e) {
       _toast(context, e.message, ok: false);
       return null;
@@ -256,7 +660,8 @@ class AuthService {
     }
   }
 
-  // ---------- Social: Apple ----------
+  // ---------- Social: Apple (unchanged backend flow) ----------
+
   Future<Map<String, dynamic>?> continueWithApple(
     BuildContext context,
   ) async {
@@ -304,7 +709,7 @@ class AuthService {
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       _toast(context, 'Signed in with Apple');
-      return _normalizeAuthResponse(data);
+      return _normalizeBackendAuthResponse(data);
     } on ApiException catch (e) {
       _toast(context, e.message, ok: false);
       return null;
@@ -312,15 +717,6 @@ class AuthService {
       _toast(context, 'Apple sign-in failed. Please try again.', ok: false);
       return null;
     }
-  }
-
-  // ---------- misc ----------
-  Map<String, dynamic> _normalizeAuthResponse(Map<String, dynamic> data) {
-    final token = data['access_token'] ?? data['token'] ?? data['jwt'];
-    return {
-      'token': token?.toString(),
-      'user': data['user'] ?? data,
-    };
   }
 
   String _randomNonce([int length = 32]) {

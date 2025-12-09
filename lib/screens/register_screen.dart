@@ -9,7 +9,6 @@ import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/merchantbottomnavbar.dart';
 import 'package:vero360_app/widget/oauth_buttons.dart';
 
-
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
   static const title = Color(0xFF101010);
@@ -56,8 +55,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void dispose() {
     _resendTimer?.cancel();
-    _name.dispose(); _email.dispose(); _phone.dispose();
-    _password.dispose(); _confirm.dispose(); _code.dispose();
+    _name.dispose();
+    _email.dispose();
+    _phone.dispose();
+    _password.dispose();
+    _confirm.dispose();
+    _code.dispose();
     super.dispose();
   }
 
@@ -78,7 +81,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final digits = s.replaceAll(RegExp(r'\D'), '');
     final isLocal = RegExp(r'^(08|09)\d{8}$').hasMatch(digits);
     final isE164  = RegExp(r'^\+265[89]\d{8}$').hasMatch(s);
-    if (!isLocal && !isE164) return 'Use 08/09xxxxxxxx or +2659xxxxxxxx';
+    if (!isLocal && !isE164) {
+      return 'Use 08/09xxxxxxxx or +2659xxxxxxxx';
+    }
     return null;
   }
 
@@ -99,7 +104,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool _isValidPhoneForOtp(String s) {
     final d = s.replaceAll(RegExp(r'\D'), '');
-    return RegExp(r'^(08|09)\d{8}$').hasMatch(d) || RegExp(r'^\+265[89]\d{8}$').hasMatch(s.trim());
+    return RegExp(r'^(08|09)\d{8}$').hasMatch(d) ||
+        RegExp(r'^\+265[89]\d{8}$').hasMatch(s.trim());
   }
 
   void _startCooldown() {
@@ -116,23 +122,99 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
   }
 
+  // ---------- Shared handler for both backend & Firebase auth ----------
+  Future<void> _handleAuthResult(Map<String, dynamic>? resp) async {
+    if (resp == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+
+    // Who authenticated the user: 'backend' or 'firebase'
+    final authProvider =
+        (resp['authProvider'] ?? 'backend').toString().toLowerCase();
+    await prefs.setString('auth_provider', authProvider);
+
+    final token = resp['token']?.toString();
+    if (token == null || token.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'No token received from $authProvider signup',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    // Keep these for the rest of the app (cart, profile, etc.)
+    await prefs.setString('token', token);
+    await prefs.setString('jwt_token', token);
+
+    // Normalise user payload a bit defensively
+    Map<String, dynamic> user = {};
+    final rawUser = resp['user'];
+    if (rawUser is Map<String, dynamic>) {
+      user = Map<String, dynamic>.from(rawUser);
+    }
+
+    final displayId = user['email']?.toString() ??
+        user['phone']?.toString() ??
+        _email.text.trim() ??
+        _phone.text.trim();
+    if (displayId.isNotEmpty) {
+      await prefs.setString('email', displayId);
+    }
+
+    final role =
+        (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
+
+    if (!mounted) return;
+
+    if (role == 'merchant') {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => MerchantBottomnavbar(email: displayId),
+        ),
+        (_) => false,
+      );
+    } else {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => Bottomnavbar(email: displayId),
+        ),
+        (_) => false,
+      );
+    }
+  }
+
   // ---------- OTP flow ----------
   Future<void> _sendCode() async {
     if (_method == VerifyMethod.email) {
       final err = _validateEmail(_email.text);
       if (err != null) {
-        ToastHelper.showCustomToast(context, err, isSuccess: false, errorMessage: '');
+        ToastHelper.showCustomToast(
+          context,
+          err,
+          isSuccess: false,
+          errorMessage: '',
+        );
         return;
       }
     } else {
       final err = _validatePhone(_phone.text);
       if (err != null) {
-        ToastHelper.showCustomToast(context, err, isSuccess: false, errorMessage: '');
+        ToastHelper.showCustomToast(
+          context,
+          err,
+          isSuccess: false,
+          errorMessage: '',
+        );
         return;
       }
     }
 
-    setState(() { _sending = true; _otpSent = false; });
+    setState(() {
+      _sending = true;
+      _otpSent = false;
+    });
 
     try {
       final method = _method == VerifyMethod.email ? 'email' : 'phone';
@@ -146,41 +228,56 @@ class _RegisterScreenState extends State<RegisterScreen> {
         setState(() => _otpSent = true);
         _startCooldown();
       }
-    } finally { if (mounted) setState(() => _sending = false); }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
+  // ---------- Register (OTP is now OPTIONAL; Firebase backup always used) ----------
   Future<void> _verifyAndRegister() async {
     if (!_agree) {
-      ToastHelper.showCustomToast(context, 'Please agree to the Terms & Privacy', isSuccess: false, errorMessage: '');
+      ToastHelper.showCustomToast(
+        context,
+        'Please agree to the Terms & Privacy',
+        isSuccess: false,
+        errorMessage: '',
+      );
       return;
     }
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    if (!_otpSent) {
-      ToastHelper.showCustomToast(context, 'Please request a code first', isSuccess: false, errorMessage: '');
-      return;
-    }
-    if (_code.text.trim().isEmpty) {
-      ToastHelper.showCustomToast(context, 'Enter the verification code', isSuccess: false, errorMessage: '');
-      return;
-    }
+    final preferred =
+        _method == VerifyMethod.email ? 'email' : 'phone';
+    final identifier =
+        preferred == 'email' ? _email.text.trim() : _phone.text.trim();
 
-    final preferred = _method == VerifyMethod.email ? 'email' : 'phone';
-    final identifier = preferred == 'email' ? _email.text.trim() : _phone.text.trim();
-
-    setState(() => _verifying = true);
-    String? ticket;
-    try {
-      ticket = await AuthService().verifyOtpGetTicket(
-        identifier: identifier,
-        code: _code.text.trim(),
-        context: context,
-      );
-    } finally { if (mounted) setState(() => _verifying = false); }
-    if (ticket == null) return;
+    // ✅ OTP is now OPTIONAL.
+    // If a code was requested AND entered, we try to verify to get a ticket.
+    // If it fails (server down, invalid code, etc.) we'll continue with
+    // an empty ticket and AuthService.registerUser will fall back to
+    // Firebase-only signup.
+    String ticket = '';
+    if (_otpSent && _code.text.trim().isNotEmpty) {
+      setState(() => _verifying = true);
+      try {
+        final t = await AuthService().verifyOtpGetTicket(
+          identifier: identifier,
+          code: _code.text.trim(),
+          context: context,
+        );
+        if (t != null && t.isNotEmpty) {
+          ticket = t;
+        }
+      } finally {
+        if (mounted) setState(() => _verifying = false);
+      }
+    }
 
     setState(() => _registering = true);
     try {
+      // This method now:
+      // - uses NestJS backend when `ticket` is non-empty (and mirrors user to Firebase)
+      // - OR falls back to pure Firebase signup when backend is down / ticket is empty
       final resp = await AuthService().registerUser(
         name: _name.text.trim(),
         email: _email.text.trim(),
@@ -192,10 +289,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         verificationTicket: ticket,
         context: context,
       );
-      if (!mounted) return;
 
-      await _routeFromAuthResponse(resp);
-    } finally { if (mounted) setState(() => _registering = false); }
+      if (!mounted) return;
+      await _handleAuthResult(resp);
+    } finally {
+      if (mounted) setState(() => _registering = false);
+    }
   }
 
   // ---------- Social (logo-only) ----------
@@ -203,8 +302,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _socialLoading = true);
     try {
       final resp = await AuthService().continueWithGoogle(context);
-      await _routeFromAuthResponse(resp);
-    } finally { if (mounted) setState(() => _socialLoading = false); }
+      await _handleAuthResult(resp);
+    } finally {
+      if (mounted) setState(() => _socialLoading = false);
+    }
   }
 
   Future<void> _apple() async {
@@ -212,36 +313,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _socialLoading = true);
     try {
       final resp = await AuthService().continueWithApple(context);
-      await _routeFromAuthResponse(resp);
-    } finally { if (mounted) setState(() => _socialLoading = false); }
-  }
-
-  Future<void> _routeFromAuthResponse(Map<String, dynamic>? resp) async {
-    if (resp == null) return;
-    final prefs = await SharedPreferences.getInstance();
-
-    final token = resp['token']?.toString();
-    final user = Map<String, dynamic>.from(resp['user'] ?? {});
-    if (token != null && token.isNotEmpty) {
-      await prefs.setString('token', token);
-      await prefs.setString('jwt_token', token);
-      final displayId = user['email']?.toString() ?? user['phone']?.toString() ?? '';
-      if (displayId.isNotEmpty) await prefs.setString('email', displayId);
-    }
-
-    final role = (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
-
-    if (!mounted) return;
-    if (role == 'merchant') {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => MerchantBottomnavbar(email: user['email']?.toString() ?? '')),
-        (_) => false,
-      );
-    } else {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => Bottomnavbar(email: user['email']?.toString() ?? '')),
-        (_) => false,
-      );
+      await _handleAuthResult(resp);
+    } finally {
+      if (mounted) setState(() => _socialLoading = false);
     }
   }
 
@@ -258,11 +332,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       suffixIcon: trailing,
       filled: true,
       fillColor: AppColors.fieldFill,
-      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+      contentPadding:
+          const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: AppColors.brandOrange, width: 1.2),
+        borderSide: const BorderSide(
+          color: AppColors.brandOrange,
+          width: 1.2,
+        ),
       ),
     );
   }
@@ -272,14 +353,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final canSend = _method == VerifyMethod.email
         ? _isValidEmailForOtp(_email.text)
         : _isValidPhoneForOtp(_phone.text);
-    final sendBtnDisabled = _sending || _verifying || _registering || !canSend || _resendSecs > 0;
+    final sendBtnDisabled =
+        _sending || _verifying || _registering || !canSend || _resendSecs > 0;
 
     return Scaffold(
       body: Stack(children: [
         Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              begin: Alignment(0, -1), end: Alignment(0, 1),
+              begin: Alignment(0, -1),
+              end: Alignment(0, 1),
               colors: [Color(0xFFFFF4E9), Colors.white],
             ),
           ),
@@ -287,7 +370,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
                 child: Column(
@@ -297,7 +381,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     Container(
                       padding: const EdgeInsets.all(3),
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(colors: [AppColors.brandOrange, Color(0xFFFFB85C)]),
+                        gradient: const LinearGradient(
+                          colors: [
+                            AppColors.brandOrange,
+                            Color(0xFFFFB85C),
+                          ],
+                        ),
                         shape: BoxShape.circle,
                         boxShadow: [BoxShadow(color: AppColors.brandOrange.withValues(alpha: 0.25), blurRadius: 20, offset: const Offset(0, 10))],
                       ),
@@ -307,22 +396,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         child: ClipOval(
                           child: Image.asset(
                             'assets/logo_mark.png',
-                            width: 72, height: 72, fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(Icons.eco, size: 42, color: AppColors.brandOrange),
+                            width: 72,
+                            height: 72,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.eco,
+                              size: 42,
+                              color: AppColors.brandOrange,
+                            ),
                           ),
                         ),
                       ),
                     ),
                     const SizedBox(height: 18),
-                    const Text('Create your account',
+                    const Text(
+                      'Create your account',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.title, fontSize: 26, fontWeight: FontWeight.w800)),
+                      style: TextStyle(
+                        color: AppColors.title,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                     const SizedBox(height: 10),
 
                     // Logo-only socials
                     OAuthButtonsRow(
                       onGoogle: _socialLoading ? null : _google,
-                      onApple:  _socialLoading ? null : _apple,
+                      onApple: _socialLoading ? null : _apple,
                     ),
                     const SizedBox(height: 18),
 
@@ -344,13 +445,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ChoiceChip(
                                   label: const Text('Customer'),
                                   selected: _role == UserRole.customer,
-                                  onSelected: (_) => setState(() => _role = UserRole.customer),
+                                  onSelected: (_) => setState(
+                                    () => _role = UserRole.customer,
+                                  ),
                                 ),
                                 const SizedBox(width: 8),
                                 ChoiceChip(
                                   label: const Text('Merchant'),
                                   selected: _role == UserRole.merchant,
-                                  onSelected: (_) => setState(() => _role = UserRole.merchant),
+                                  onSelected: (_) => setState(
+                                    () => _role = UserRole.merchant,
+                                  ),
                                 ),
                               ],
                             ),
@@ -385,7 +490,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               textInputAction: TextInputAction.next,
                               decoration: _dec(
                                 label: 'Mobile number',
-                                hint: '08xxxxxxxx, 09xxxxxxxx or +2659xxxxxxxx',
+                                hint:
+                                    '08xxxxxxxx, 09xxxxxxxx or +2659xxxxxxxx',
                                 icon: Icons.phone_iphone,
                               ),
                               validator: _validatePhone,
@@ -401,8 +507,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 icon: Icons.lock_outline,
                                 trailing: IconButton(
                                   tooltip: _obscure1 ? 'Show' : 'Hide',
-                                  icon: Icon(_obscure1 ? Icons.visibility : Icons.visibility_off),
-                                  onPressed: () => setState(() => _obscure1 = !_obscure1),
+                                  icon: Icon(
+                                    _obscure1
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                  ),
+                                  onPressed: () => setState(
+                                    () => _obscure1 = !_obscure1,
+                                  ),
                                 ),
                               ),
                               validator: _validatePassword,
@@ -418,8 +530,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 icon: Icons.lock_outline,
                                 trailing: IconButton(
                                   tooltip: _obscure2 ? 'Show' : 'Hide',
-                                  icon: Icon(_obscure2 ? Icons.visibility : Icons.visibility_off),
-                                  onPressed: () => setState(() => _obscure2 = !_obscure2),
+                                  icon: Icon(
+                                    _obscure2
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                  ),
+                                  onPressed: () => setState(
+                                    () => _obscure2 = !_obscure2,
+                                  ),
                                 ),
                               ),
                               validator: _validateConfirm,
@@ -428,10 +546,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                             Row(
                               children: [
-                                Checkbox(value: _agree, onChanged: (v) => setState(() => _agree = v ?? false)),
+                                Checkbox(
+                                  value: _agree,
+                                  onChanged: (v) =>
+                                      setState(() => _agree = v ?? false),
+                                ),
                                 const Expanded(
-                                  child: Text('I agree to the Terms & Privacy Policy',
-                                    style: TextStyle(color: AppColors.body, fontWeight: FontWeight.w600)),
+                                  child: Text(
+                                    'I agree to the Terms & Privacy Policy',
+                                    style: TextStyle(
+                                      color: AppColors.body,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
@@ -442,19 +569,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ChoiceChip(
                                   label: const Text('Email'),
                                   selected: _method == VerifyMethod.email,
-                                  onSelected: (_) => setState(() { _method = VerifyMethod.email; _code.clear(); _otpSent = false; }),
+                                  onSelected: (_) => setState(() {
+                                    _method = VerifyMethod.email;
+                                    _code.clear();
+                                    _otpSent = false;
+                                  }),
                                 ),
                                 const SizedBox(width: 8),
                                 ChoiceChip(
                                   label: const Text('Phone'),
                                   selected: _method == VerifyMethod.phone,
-                                  onSelected: (_) => setState(() { _method = VerifyMethod.phone; _code.clear(); _otpSent = false; }),
+                                  onSelected: (_) => setState(() {
+                                    _method = VerifyMethod.phone;
+                                    _code.clear();
+                                    _otpSent = false;
+                                  }),
                                 ),
                                 const Spacer(),
                                 OutlinedButton.icon(
-                                  onPressed: sendBtnDisabled ? null : _sendCode,
-                                  icon: const Icon(Icons.sms_outlined, size: 18),
-                                  label: Text(_sending ? 'Sending…' : (_resendSecs > 0 ? 'Resend ${_resendSecs}s' : 'Send code')),
+                                  onPressed:
+                                      sendBtnDisabled ? null : _sendCode,
+                                  icon: const Icon(
+                                    Icons.sms_outlined,
+                                    size: 18,
+                                  ),
+                                  label: Text(
+                                    _sending
+                                        ? 'Sending…'
+                                        : (_resendSecs > 0
+                                            ? 'Resend ${_resendSecs}s'
+                                            : 'Send code'),
+                                  ),
                                 ),
                               ],
                             ),
@@ -474,16 +619,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                             const SizedBox(height: 14),
                             SizedBox(
-                              width: double.infinity, height: 50,
+                              width: double.infinity,
+                              height: 50,
                               child: ElevatedButton(
-                                onPressed: (_registering || _verifying) ? null : _verifyAndRegister,
+                                onPressed: (_registering || _verifying)
+                                    ? null
+                                    : _verifyAndRegister,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: AppColors.brandOrange,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
                                 ),
                                 child: Text(
-                                  _registering ? 'Creating account…' : _verifying ? 'Verifying…' : 'Verify & Create account',
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                                  _registering
+                                      ? 'Creating account…'
+                                      : _verifying
+                                          ? 'Verifying…'
+                                          : 'Verify & Create account',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 16,
+                                  ),
                                 ),
                               ),
                             ),
@@ -495,8 +653,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     const SizedBox(height: 14),
                     TextButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Already have an account? Sign in',
-                        style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
+                      child: const Text(
+                        'Already have an account? Sign in',
+                        style: TextStyle(
+                          color: AppColors.brandOrange,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                     ),
                   ],
                 ),

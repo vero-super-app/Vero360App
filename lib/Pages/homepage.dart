@@ -60,20 +60,20 @@ const List<Mini> kQuickServices = [
   Mini('airport_pickup', 'Airport pickup', Icons.flight_takeoff_rounded),
   Mini('courier', 'Vero courier', Icons.local_shipping_rounded),
   Mini('vero_bike', 'Vero bike', Icons.pedal_bike_rounded),
-  Mini('car_hire', 'Car hire', Icons.car_rental_rounded),
+//  Mini('car_hire', 'Car hire', Icons.car_rental_rounded),
 
   // Money & info
   Mini('fx', 'Exchange rates', Icons.currency_exchange_rounded),
 
   // Lifestyle
-  Mini('hair', 'Hair salon', Icons.cut_rounded),
+ // Mini('hair', 'Hair salon', Icons.cut_rounded),
   Mini('food', 'Food', Icons.fastfood_rounded),
-  Mini('fitness', 'Fitness', Icons.fitness_center_rounded),
+ // Mini('fitness', 'Fitness', Icons.fitness_center_rounded),
 
   // Other
   Mini('jobs', 'Jobs', Icons.business_center_rounded),
   Mini('accommodation', 'Accomodation', Icons.hotel_rounded),
-  Mini('more', 'More', Icons.more_horiz_rounded),
+ // Mini('more', 'More', Icons.more_horiz_rounded),
 ];
 
 /* ───────────────────────────────────────────
@@ -154,9 +154,9 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
 
   final List<_Promo> _promos = const [
     _Promo(
-      title: 'Save 30% OFF',
-      subtitle: 'first 2 Orders',
-      code: 'Use code FOOD30',
+      title: 'Marketplace',
+      subtitle: 'order anything',
+      code: '',
       image: 'assets/happy.jpg',
       bg: Color(0xFFFDF2E9),
       tint: AppColors.brandOrange,
@@ -195,7 +195,7 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
     ),
   ];
   
-final cartService = CartService('https://unimatherapyapplication.com/vero/', apiPrefix: 'vero');
+final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
 
   @override
   void initState() {
@@ -375,16 +375,16 @@ final cartService = CartService('https://unimatherapyapplication.com/vero/', api
         page = MorePage();
         break;
 
-      case 'hair':
-        page = Hairsalonpage();
-        break;
+      // case 'hair':
+      //   page = Hairsalonpage();
+      //   break;
 
-      case 'fitness':
-        page = Fitnespage();
-        break;
+      // case 'fitness':
+      //   page = Fitnespage();
+      //   break;
 
       case 'jobs':
-        page = Jobspage();
+        page = JobsPage();
         break;
 
       case 'courier':
@@ -392,7 +392,7 @@ final cartService = CartService('https://unimatherapyapplication.com/vero/', api
         break;
 
       case 'vero_bike':
-        page = const BikePage();
+        page = const VeroRidePage();
         break;
 
       case 'airport_pickup':
@@ -432,7 +432,7 @@ final cartService = CartService('https://unimatherapyapplication.com/vero/', api
         break;
 
       default:
-        page = const MorePage();
+         page = const MorePage();
     }
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }
@@ -479,11 +479,11 @@ class _BrandBar extends StatelessWidget {
           icon: const Icon(Icons.notifications_active_outlined, color: AppColors.title),
         ),
         const SizedBox(width: 4),
-        const CircleAvatar(
-          radius: 14,
-          backgroundColor: AppColors.brandOrangePale,
-          child: Icon(Icons.person_outline, size: 18, color: AppColors.brandOrange),
-        ),
+        // const CircleAvatar(
+        //   radius: 14,
+        //   backgroundColor: AppColors.brandOrangePale,
+        //   child: Icon(Icons.person_outline, size: 18, color: AppColors.brandOrange),
+        // ),
       ],
     );
   }
@@ -687,7 +687,7 @@ class _PromoCarousel extends StatelessWidget {
                         style: const TextStyle(
                           color: AppColors.title,
                           fontWeight: FontWeight.w900,
-                          fontSize: 16,
+                          fontSize: 12,
                         ),
                       ),
                       const SizedBox(height: 6),

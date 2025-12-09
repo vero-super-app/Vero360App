@@ -2,63 +2,50 @@
     package="com.vero.vero360">
 
     <!-- Permissions -->
-    <!-- Location and camera for map picker and QR code scanning -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.CAMERA"/>
 
-
-    <!-- Networking -->
-  
-
-    <!-- Saving images to gallery (QR export):
-         Android 13+ uses READ_MEDIA_IMAGES.
-         Older versions fall back to READ/WRITE_EXTERNAL_STORAGE with maxSdkVersion caps. -->
-<uses-permission android:name="android.permission.INTERNET"/>
-<uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
-<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
-
+    <!-- Storage permissions -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
 
     <application
-        android:label="Vero360"
         android:name="${applicationName}"
+        android:label="Vero360"
         android:icon="@mipmap/ic_launcher">
-
+        
         <activity
-               android:name="com.vero.vero360.MainActivity"
-    android:exported="true"
-    android:launchMode="singleTop"
-    android:theme="@style/LaunchTheme"
-    android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-    android:hardwareAccelerated="true"
-    android:windowSoftInputMode="adjustResize">
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
 
-            <!-- Flutter normal theme while engine boots -->
+            <!-- Flutter normal theme -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
-            <!-- Launcher intent -->
+            <!-- Launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
-
-                <action android:name="android.intent.action.VIEW" />
-  <category android:name="android.intent.category.DEFAULT" />
-  <category android:name="android.intent.category.BROWSABLE" />
-  <data android:scheme="vero360" android:host="users" android:pathPrefix="/me" />
             </intent-filter>
 
-            <!-- Deep link for QR: vero360://users/me -->
+            <!-- Deep link -->
             <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
                 <data
                     android:scheme="vero360"
                     android:host="users"
-                    android:pathPrefix="/me" />
+                    android:pathPrefix="/me"/>
             </intent-filter>
         </activity>
 
@@ -67,15 +54,12 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- Google Maps API key (needed for map picker / map features) -->
+        <!-- Google Maps key -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="YOUR_GOOGLE_MAPS_API_KEY" />
-            <!-- Alternatively:
-            android:value="@string/google_maps_api_key" and put the key in res/values/strings.xml -->
+            android:value="YOUR_GOOGLE_MAPS_API_KEY"/>
     </application>
 
-    <!-- Package visibility for PROCESS_TEXT (keep from your original) -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>

@@ -1,18 +1,15 @@
-// lib/Pages/checkout_from_cart_page.dart
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import 'dart:async';
+import 'dart:math';
+import 'dart:io'; // Add this import
 
-import 'package:vero360_app/Pages/address.dart';
-import 'package:vero360_app/Pages/payment_webview.dart';
-import 'package:vero360_app/models/address_model.dart';
-import 'package:vero360_app/services/address_service.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/models/cart_model.dart';
-import 'package:vero360_app/services/paychangu_service.dart';
 import 'package:vero360_app/toasthelper.dart';
-
-enum PaymentMethod { mobile, card, cod }
 
 class CheckoutFromCartPage extends StatefulWidget {
   final List<CartModel> items;
@@ -23,317 +20,129 @@ class CheckoutFromCartPage extends StatefulWidget {
 }
 
 class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
-  // ► Brand (match main checkout)
-  static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandSoft   = Color(0xFFFFE8CC);
-
-  // ► Mobile money providers
-  static const String _kAirtel = 'AirtelMoney';
-  static const String _kMpamba = 'Mpamba';
-
-  final _phoneCtrl = TextEditingController();
-  PaymentMethod _method = PaymentMethod.mobile;
-  String _provider = _kAirtel;
-
-  bool _submitting = false;
-  String? _phoneError;
-
-  // Address state
-  final _addrSvc = AddressService();
-  Address? _defaultAddr;
-  bool _loadingAddr = true;
-  bool _loggedIn = false;
+  bool _paying = false;
 
   double get _subtotal =>
-      widget.items.fold(0.0, (s, it) => s + (it.price * it.quantity));
-  double get _delivery => 0;
-  double get _total => _subtotal + _delivery;
+      widget.items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
+  double get _deliveryFee => widget.items.isEmpty ? 0.0 : 20.0;
+  double get _total => max(0.0, _subtotal + _deliveryFee);
+  String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
 
-  @override
-  void initState() {
-    super.initState();
-    _initAuthAndAddress();
-  }
-
-  @override
-  void dispose() {
-    _phoneCtrl.dispose();
-    super.dispose();
-  }
-
-  // ── Shared UI helpers to mirror main checkout ────────────────────────────
-  InputDecoration _inputDecoration({
-    String? label,
-    String? hint,
-    Widget? prefixIcon,
-    String? helper,
-    String? error,
-  }) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      helperText: helper,
-      errorText: error,
-      filled: true,
-      fillColor: Colors.white,
-      prefixIcon: prefixIcon,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      enabledBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: Colors.black, width: 1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: _brandOrange, width: 2),
-        borderRadius: BorderRadius.circular(12),
-      ),
-    );
-  }
-
-  ButtonStyle _filledBtnStyle() => FilledButton.styleFrom(
-        backgroundColor: _brandOrange,
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        textStyle: const TextStyle(fontWeight: FontWeight.w700),
+  Future<void> _startPayChanguPayment() async {
+    if (widget.items.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Your cart is empty.',
+        isSuccess: false,
+        errorMessage: 'Empty cart',
       );
-
-  OutlinedButtonThemeData get _outlinedTheme => OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.black87,
-          side: const BorderSide(color: Colors.black, width: 1),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          textStyle: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-      );
-
-  // ── Provider helpers ─────────────────────────────────────────────────────
-  String get _providerLabel => _provider == _kAirtel ? 'Airtel Money' : 'TNM Mpamba';
-  String get _providerHint  => _provider == _kAirtel ? '09xxxxxxxx'   : '08xxxxxxxx';
-  IconData get _providerIcon => _provider == _kAirtel
-      ? Icons.phone_android_rounded
-      : Icons.phone_iphone_rounded;
-
-  String? _validatePhoneForSelectedProvider(String raw) {
-    final p = raw.replaceAll(RegExp(r'\D'), '');
-    if (p.length != 10) return 'Phone must be exactly 10 digits';
-    if (_provider == _kAirtel && !PaymentsService.validateAirtel(p)) {
-      return 'Airtel numbers must start with 09…';
-    }
-    if (_provider == _kMpamba && !PaymentsService.validateMpamba(p)) {
-      return 'Mpamba numbers must start with 08…';
-    }
-    return null;
-  }
-
-  // ── Auth + Address bootstrap ─────────────────────────────────────────────
-  Future<String?> _readAuthToken() async {
-    final sp = await SharedPreferences.getInstance();
-    for (final k in const ['token', 'jwt_token', 'jwt']) {
-      final v = sp.getString(k);
-      if (v != null && v.isNotEmpty) return v;
-    }
-    return null;
-  }
-
-  Future<void> _initAuthAndAddress() async {
-    setState(() {
-      _loadingAddr = true;
-      _defaultAddr = null;
-      _loggedIn = false;
-    });
-
-    final token = await _readAuthToken();
-    if (!mounted) return;
-
-    if (token == null) {
-      setState(() {
-        _loggedIn = false;
-        _loadingAddr = false;
-      });
       return;
     }
 
+    setState(() => _paying = true);
+
     try {
-      final list = await _addrSvc.getMyAddresses();
-      Address? def;
-      if (list.isNotEmpty) {
-        def = list.firstWhere(
-          (a) => a.isDefault,
-          orElse: () => list.first,
-        );
+      final prefs = await SharedPreferences.getInstance();
+      final email = prefs.getString('email') ?? 'customer@example.com';
+      final name = prefs.getString('name') ?? 'Customer';
+      final phone = prefs.getString('phone') ?? '+265888000000';
+      
+      final parts = name.split(' ');
+      final firstName = parts.isNotEmpty ? parts.first : 'Customer';
+      final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+
+      final txRef = 'vero-${DateTime.now().millisecondsSinceEpoch}';
+
+      // First, test if we can resolve the hostname
+      try {
+        final lookup = await InternetAddress.lookup('api.paychangu.com');
+        print('DNS lookup successful: ${lookup.first.address}');
+      } on SocketException catch (e) {
+        print('DNS lookup failed: $e');
+        throw Exception('Cannot connect to payment service. Please check your internet connection.');
       }
-      setState(() {
-        _loggedIn = true;
-        _defaultAddr = (def != null && def.isDefault) ? def : null;
-        _loadingAddr = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _loggedIn = true; // token existed
-        _defaultAddr = null;
-        _loadingAddr = false;
-      });
-    }
-  }
 
-  Future<bool> _ensureDefaultAddress() async {
-    if (!_loggedIn) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please log in to continue.',
-        isSuccess: false,
-        errorMessage: 'Auth required',
-      );
-      return false;
-    }
-    if (_defaultAddr != null) return true;
+      // PayChangu API call
+      final response = await http.post(
+        Uri.parse('https://api.paychangu.com/payment'),
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
+        },
+        body: json.encode({
+          'tx_ref': txRef,
+          'first_name': firstName,
+          'last_name': lastName,
+          'email': email,
+          'phone_number': phone,
+          'currency': 'MWK',
+          'amount': _total.round().toString(),
+          'payment_methods': ['card', 'mobile_money', 'bank'],
+          'callback_url': 'https://webhook.site/your-webhook',
+          'return_url': 'https://your-app.com/payment-success',
+          'customization': {
+            'title': 'Vero 360 Payment',
+            'description': 'Order checkout',
+          },
+        }),
+      ).timeout(const Duration(seconds: 30));
 
-    final go = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Delivery address required'),
-        content: const Text('You need to set a default address before checkout.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Set address')),
-        ],
-      ),
-    );
+      print('API Response: ${response.statusCode}');
+      print('Response Body: ${response.body}');
 
-    if (go == true) {
-      await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
-      await _initAuthAndAddress();
-      return _defaultAddr != null;
-    }
-    return false;
-  }
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final Map<String, dynamic> responseJson = json.decode(response.body);
+        
+        if (responseJson['status'] == 'success' || responseJson['status'] == 'Success') {
+          final checkoutUrl = responseJson['data']['checkout_url'] as String;
+          print('Opening checkout URL: $checkoutUrl');
 
-  // ── Pay routing ─────────────────────────────────────────────────────────
-  Future<void> _onPayPressed() async {
-    if (!await _ensureDefaultAddress()) return;
-
-    switch (_method) {
-      case PaymentMethod.mobile:
-        await _payMobile();
-        break;
-      case PaymentMethod.card:
-        await _payCard();
-        break;
-      case PaymentMethod.cod:
-        await _placeCOD();
-        break;
-    }
-  }
-
-  Future<void> _payMobile() async {
-    final err = _validatePhoneForSelectedProvider(_phoneCtrl.text);
-    if (err != null) {
-      setState(() => _phoneError = err);
-      ToastHelper.showCustomToast(context, err, isSuccess: false, errorMessage: 'Invalid phone');
-      return;
-    }
-    setState(() => _phoneError = null);
-
-    final itemsStr = widget.items.map((e) => '${e.name} x${e.quantity}').join(', ');
-    setState(() => _submitting = true);
-    try {
-      final resp = await PaymentsService.pay(
-        amount: _total,
-        currency: 'MWK',
-        phoneNumber: _phoneCtrl.text.replaceAll(RegExp(r'\D'), ''),
-        relatedType: 'ORDER',
-        description: 'Cart: $itemsStr • $_providerLabel • Deliver to: ${_defaultAddr?.city ?? '-'}',
-      );
-
-      if (resp.checkoutUrl != null && resp.checkoutUrl!.isNotEmpty) {
-        if (!mounted) return;
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => PaymentWebView(checkoutUrl: resp.checkoutUrl!)),
-        );
+          if (!mounted) return;
+          
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => InAppPaymentPage(
+              checkoutUrl: checkoutUrl,
+              txRef: txRef,
+              totalAmount: _total,
+              rootContext: context,
+            ),
+          ));
+        } else {
+          throw Exception(responseJson['message'] ?? 'Payment failed');
+        }
       } else {
-        ToastHelper.showCustomToast(
-          context,
-          resp.message ?? resp.status ?? 'Payment initiated',
-          isSuccess: true,
-          errorMessage: 'OK',
-        );
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
-      if (mounted) Navigator.pop(context); // back to cart
-    } catch (e) {
+    } on SocketException catch (e) {
+      print('Network Error: $e');
       ToastHelper.showCustomToast(
         context,
-        'Payment error: $e',
+        'Network error. Please check your internet connection.',
         isSuccess: false,
-        errorMessage: 'Payment failed',
+        errorMessage: e.message,
+      );
+    } on TimeoutException catch (e) {
+      print('Timeout Error: $e');
+      ToastHelper.showCustomToast(
+        context,
+        'Connection timeout. Please try again.',
+        isSuccess: false,
+        errorMessage: 'Request timed out',
+      );
+    } catch (e) {
+      print('Payment Error: $e');
+      ToastHelper.showCustomToast(
+        context,
+        'Payment initialization failed',
+        isSuccess: false,
+        errorMessage: e.toString(),
       );
     } finally {
-      if (mounted) setState(() => _submitting = false);
+      if (mounted) setState(() => _paying = false);
     }
   }
 
-  Future<void> _payCard() async {
-    final itemsStr = widget.items.map((e) => '${e.name} x${e.quantity}').join(', ');
-    setState(() => _submitting = true);
-    try {
-      final resp = await PaymentsService.pay(
-        amount: _total,
-        currency: 'MWK',
-        phoneNumber: null,
-        relatedType: 'ORDER',
-        description: 'Cart (card): $itemsStr • Deliver to: ${_defaultAddr?.city ?? '-'}',
-      );
-
-      if (resp.checkoutUrl != null && resp.checkoutUrl!.isNotEmpty) {
-        if (!mounted) return;
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => PaymentWebView(checkoutUrl: resp.checkoutUrl!)),
-        );
-      } else {
-        ToastHelper.showCustomToast(
-          context,
-          resp.message ?? resp.status ?? 'Payment initiated',
-          isSuccess: true,
-          errorMessage: 'OK',
-        );
-      }
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      ToastHelper.showCustomToast(
-        context,
-        'Payment error: $e',
-        isSuccess: false,
-        errorMessage: 'Payment failed',
-      );
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  Future<void> _placeCOD() async {
-    ToastHelper.showCustomToast(
-      context,
-      'Order placed • COD',
-      isSuccess: true,
-      errorMessage: 'OK',
-    );
-    if (mounted) Navigator.pop(context);
-  }
-
-  String _methodLabel(PaymentMethod m) {
-    switch (m) {
-      case PaymentMethod.mobile: return 'Pay Now';
-      case PaymentMethod.card:   return 'Pay Now';
-      case PaymentMethod.cod:    return 'Place Order';
-    }
-  }
-
-  String _mwk(num n) => 'MWK ${n.toStringAsFixed(0)}';
-
-  // ── UI ───────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final canPay = !_submitting && _loggedIn && _defaultAddr != null;
@@ -424,286 +233,316 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                                 ],
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: _brandSoft,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: _brandOrange),
-                              ),
-                              child: Text(
-                                _mwk(lineTotal),
-                                style: const TextStyle(fontWeight: FontWeight.w700),
-                              ),
+                            child: const Icon(Icons.shopping_bag, color: Colors.grey),
+                          ),
+                          title: Text(
+                            item.name,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                          subtitle: Text('Quantity: ${item.quantity}'),
+                          trailing: Text(
+                            _mwk(item.price * item.quantity),
+                            style: const TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
                             ),
-                          ],
-                        );
-                      },
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 10,
+                  spreadRadius: 1,
+                  offset: const Offset(0, -2),
+                ),
+              ],
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Order Summary',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _row('Subtotal', _mwk(_subtotal)),
+                _row('Delivery Fee', _mwk(_deliveryFee)),
+                const SizedBox(height: 8),
+                const Divider(thickness: 1),
+                const SizedBox(height: 8),
+                _row('Total', _mwk(_total), bold: true, green: true),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _paying || widget.items.isEmpty ? null : _startPayChanguPayment,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF8A00),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 3,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (_paying)
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        else
+                          const Icon(Icons.payment, color: Colors.white),
+                        const SizedBox(width: 10),
+                        Text(
+                          _paying ? 'Processing...' : 'Pay Now',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(String label, String value, {bool bold = false, bool green = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+              color: Colors.grey[700],
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
+              color: green ? const Color(0xFF2E7D32) : Colors.black,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ────────────────────── SIMPLIFIED IN-APP PAYMENT PAGE ──────────────────────
+class InAppPaymentPage extends StatefulWidget {
+  final String checkoutUrl;
+  final String txRef;
+  final double totalAmount;
+  final BuildContext rootContext;
+
+  const InAppPaymentPage({
+    Key? key,
+    required this.checkoutUrl,
+    required this.txRef,
+    required this.totalAmount,
+    required this.rootContext,
+  }) : super(key: key);
+
+  @override
+  State<InAppPaymentPage> createState() => _InAppPaymentPageState();
+}
+
+class _InAppPaymentPageState extends State<InAppPaymentPage> {
+  late final WebViewController _controller;
+  Timer? _pollTimer;
+  bool _isLoading = true;
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    print('Opening PayChangu URL: ${widget.checkoutUrl}');
+    _initializeWebView();
+    _startStatusPolling();
+  }
+
+  void _initializeWebView() {
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.white)
+      ..setNavigationDelegate(NavigationDelegate(
+        onProgress: (int progress) {
+          setState(() {
+            _isLoading = progress < 100;
+          });
+        },
+        onPageStarted: (String url) {
+          setState(() {
+            _isLoading = true;
+            _hasError = false;
+          });
+        },
+        onPageFinished: (String url) {
+          setState(() => _isLoading = false);
+        },
+        onWebResourceError: (WebResourceError error) {
+          setState(() {
+            _hasError = true;
+            _isLoading = false;
+          });
+        },
+      ))
+      ..loadRequest(Uri.parse(widget.checkoutUrl));
+  }
+
+  void _startStatusPolling() {
+    _pollTimer = Timer.periodic(const Duration(seconds: 7), (timer) async {
+      await _checkPaymentStatus();
+    });
+  }
+
+  Future<void> _checkPaymentStatus() async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://api.paychangu.com/transaction/verify/${widget.txRef}'),
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
+        },
+      );
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final status = (data['data']?['status'] as String?)?.toLowerCase();
+        
+        if (status == 'successful' || status == 'success') {
+          _handlePaymentSuccess();
+        } else if (status == 'failed' || status == 'cancelled') {
+          _handlePaymentFailure();
+        }
+      }
+    } catch (e) {
+      // Silently fail for polling
+    }
+  }
+
+  void _handlePaymentSuccess() {
+    _pollTimer?.cancel();
+    ToastHelper.showCustomToast(
+      widget.rootContext,
+      'Payment Successful!',
+      isSuccess: true,
+      errorMessage: '',
+    );
+    if (mounted) {
+      Navigator.of(context).pop();
+      Navigator.of(widget.rootContext).pop(true);
+    }
+  }
+
+  void _handlePaymentFailure() {
+    _pollTimer?.cancel();
+    ToastHelper.showCustomToast(
+      widget.rootContext,
+      'Payment Failed or Cancelled',
+      isSuccess: false,
+      errorMessage: 'Payment was not completed',
+    );
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Complete Payment'),
+        backgroundColor: const Color(0xFFFF8A00),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Cancel Payment?'),
+                content: const Text('Are you sure you want to cancel this payment?'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Continue Payment'),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      _handlePaymentFailure();
+                    },
+                    child: const Text('Cancel', style: TextStyle(color: Colors.red)),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+      body: Stack(
+        children: [
+          WebViewWidget(controller: _controller),
+          if (_isLoading)
+            Container(
+              color: Colors.white,
+              child: const Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00)),
+                    ),
+                    SizedBox(height: 20),
+                    Text(
+                      'Loading payment gateway...',
+                      style: TextStyle(fontSize: 16, color: Colors.grey),
                     ),
                   ],
                 ),
               ),
             ),
-
-            const SizedBox(height: 12),
-
-            // Delivery Address (same style as main)
-            _DeliveryAddressCard(
-              loading: _loadingAddr,
-              loggedIn: _loggedIn,
-              address: _defaultAddr,
-              onManage: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
-                await _initAuthAndAddress();
-              },
-            ),
-
-            const SizedBox(height: 12),
-
-            // Payment method selector with inline Mobile Money fields
-            Card(
-              elevation: 6,
-              shadowColor: Colors.black12,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      RadioListTile<PaymentMethod>(
-                        value: PaymentMethod.mobile,
-                        groupValue: _method,
-                        onChanged: (v) => setState(() => _method = v!),
-                        title: const Text('Mobile Money'),
-                        secondary: const Icon(Icons.phone_iphone_rounded),
-                      ),
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        switchInCurve: Curves.easeOut,
-                        switchOutCurve: Curves.easeIn,
-                        child: _method == PaymentMethod.mobile
-                            ? Padding(
-                                key: const ValueKey('mobile-fields'),
-                                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                                child: _mobileFields(),
-                              )
-                            : const SizedBox.shrink(key: ValueKey('mobile-empty')),
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 1),
-                  RadioListTile<PaymentMethod>(
-                    value: PaymentMethod.card,
-                    groupValue: _method,
-                    onChanged: (v) => setState(() => _method = v!),
-                    title: const Text('Card'),
-                    secondary: const Icon(Icons.credit_card_rounded),
-                  ),
-                  const Divider(height: 1),
-                  RadioListTile<PaymentMethod>(
-                    value: PaymentMethod.cod,
-                    groupValue: _method,
-                    onChanged: (v) => setState(() => _method = v!),
-                    title: const Text('Cash on Delivery'),
-                    secondary: const Icon(Icons.delivery_dining_rounded),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // Summary (styled)
-            Card(
-              elevation: 6,
-              shadowColor: Colors.black12,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              clipBehavior: Clip.antiAlias,
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(children: [
-                  _rowLine('Subtotal', _mwk(_subtotal)),
-                  const SizedBox(height: 6),
-                  _rowLine('Delivery', _mwk(_delivery)),
-                  const Divider(height: 18),
-                  _rowLine('Total', _mwk(_total), bold: true),
-                ]),
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Action button (same style as main)
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                style: _filledBtnStyle(),
-                onPressed: canPay ? _onPayPressed : null,
-                icon: _submitting
-                    ? const SizedBox(width: 18, height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.lock),
-                label: Text(_submitting ? 'Processing…' : _methodLabel(_method)),
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
-  }
-
-  // Inline Mobile Money fields (styled)
-  Widget _mobileFields() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        DropdownButtonFormField<String>(
-          value: _provider,
-          icon: const Icon(Icons.arrow_drop_down),
-          decoration: _inputDecoration(label: 'Provider'),
-          items: const [
-            DropdownMenuItem(value: _kAirtel, child: Text('Airtel Money')),
-            DropdownMenuItem(value: _kMpamba, child: Text('TNM Mpamba')),
-          ],
-          onChanged: (v) {
-            if (v == null) return;
-            setState(() {
-              _provider = v;
-              _phoneError = null;
-            });
-          },
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _phoneCtrl,
-          keyboardType: TextInputType.number,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(10),
-          ],
-          onChanged: (_) {
-            if (_phoneError != null) setState(() => _phoneError = null);
-          },
-          decoration: _inputDecoration(
-            label: 'Phone number ($_providerLabel)',
-            hint: _providerHint,
-            prefixIcon: Icon(_providerIcon),
-            helper: '10 digits only',
-            error: _phoneError,
-          ),
-        ),
-      ],
-    );
-  }
-
-  // Small helpers
-  Widget _rowLine(String left, String right, {bool bold = false}) {
-    final style = TextStyle(
-      fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
-      fontSize: bold ? 16 : 14,
-    );
-    return Row(
-      children: [
-        Expanded(child: Text(left, style: style)),
-        Text(right, style: style),
-      ],
-    );
-  }
-}
-
-class _ImgFallback extends StatelessWidget {
-  const _ImgFallback();
-
-  @override
-  Widget build(BuildContext context) {
-    return const ColoredBox(
-      color: Color(0xFFEAEAEA),
-      child: Center(child: Icon(Icons.image_not_supported, size: 24)),
-    );
-  }
-}
-
-// Delivery Address card (same style as main checkout)
-class _DeliveryAddressCard extends StatelessWidget {
-  const _DeliveryAddressCard({
-    required this.loading,
-    required this.loggedIn,
-    required this.address,
-    required this.onManage,
-  });
-
-  final bool loading;
-  final bool loggedIn;
-  final Address? address;
-  final VoidCallback onManage;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 6,
-      shadowColor: Colors.black12,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Delivery Address',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-            const SizedBox(height: 8),
-            if (loading)
-              const SizedBox(
-                height: 40,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              )
-            else if (!loggedIn)
-              _line('Not logged in', 'Please log in to select address')
-            else if (address == null)
-              _line('No default address', 'Set your default delivery address')
-            else
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _line(_label(address!.addressType), address!.city),
-                  if (address!.description.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(address!.description, style: TextStyle(color: Colors.grey.shade700)),
-                  ],
-                ],
-              ),
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: onManage,
-                icon: const Icon(Icons.location_pin),
-                label: Text(address == null ? 'Set address' : 'Change'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  static Widget _line(String a, String b) {
-    return Row(
-      children: [
-        Expanded(child: Text(a, style: const TextStyle(fontWeight: FontWeight.w700))),
-        Text(b, style: const TextStyle(color: Colors.black87)),
-      ],
-    );
-  }
-
-  static String _label(AddressType t) {
-    switch (t) {
-      case AddressType.home: return 'Home';
-      case AddressType.work: return 'Office';
-      case AddressType.business: return 'Business';
-      case AddressType.other: return 'Other';
-    }
   }
 }

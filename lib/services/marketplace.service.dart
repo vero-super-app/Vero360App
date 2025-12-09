@@ -24,8 +24,10 @@ class MarketplaceService {
         prefs.getString('jwt');
   }
 
-  Map<String, String> _authHeaders(String? token,
-          {Map<String, String>? extra}) =>
+  Map<String, String> _authHeaders(
+    String? token, {
+    Map<String, String>? extra,
+  }) =>
       {
         if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
         ...?extra,
@@ -36,6 +38,12 @@ class MarketplaceService {
   dynamic _decodeOrThrowMultipart(http.Response r) {
     if (r.statusCode < 200 || r.statusCode >= 300) {
       String msg = 'Request failed. Please try again.';
+
+      if (kDebugMode) {
+        debugPrint('Multipart error status: ${r.statusCode}');
+        debugPrint('Multipart error body: ${r.body}');
+      }
+
       try {
         final body = jsonDecode(r.body);
         if (body is Map && body['message'] != null) {
@@ -49,6 +57,7 @@ class MarketplaceService {
       } catch (_) {}
       throw ApiException(message: msg, statusCode: r.statusCode);
     }
+
     if (r.body.isEmpty) return const {};
     try {
       return jsonDecode(r.body);
@@ -71,7 +80,7 @@ class MarketplaceService {
   // ========= UPLOADS =========
 
   /// Upload from BYTES (works for HEIC and temp files that disappear).
-  /// Uses rootEndpoint(/uploads) so it’s not tied to /vero prefix.
+  /// Uses API endpoint (/vero/uploads) so it hits Nest, not bare root.
   Future<String> uploadBytes(
     Uint8List bytes, {
     required String filename,
@@ -84,11 +93,19 @@ class MarketplaceService {
       );
     }
 
-    final uri = ApiConfig.rootEndpoint('/uploads');
+    // IMPORTANT: go through API base (e.g. https://domain/vero/uploads)
+    final uri = ApiConfig.endpoint('/uploads');
+
     final detectedMime =
         mimeType ?? lookupMimeType(filename, headerBytes: bytes);
-    final safeName =
-        filename.isNotEmpty ? filename : _safeDefaultNameFromMime(detectedMime ?? '');
+    final safeName = filename.isNotEmpty
+        ? filename
+        : _safeDefaultNameFromMime(detectedMime ?? '');
+
+    if (kDebugMode) {
+      debugPrint('Uploading bytes -> $uri');
+      debugPrint('Filename: $safeName, mime: $detectedMime');
+    }
 
     final req = http.MultipartRequest('POST', uri)
       ..headers.addAll(_authHeaders(token, extra: {
@@ -104,6 +121,11 @@ class MarketplaceService {
 
     final streamed = await req.send();
     final resp = await http.Response.fromStream(streamed);
+
+    if (kDebugMode) {
+      debugPrint('UploadBytes status: ${resp.statusCode}');
+    }
+
     final body = _decodeOrThrowMultipart(resp);
     final url = body is Map ? body['url']?.toString() : null;
 
@@ -127,7 +149,13 @@ class MarketplaceService {
       );
     }
 
-    final uri = ApiConfig.rootEndpoint('/uploads');
+    // IMPORTANT: use API base so it reaches /vero/uploads
+    final uri = ApiConfig.endpoint('/uploads');
+
+    if (kDebugMode) {
+      debugPrint('Uploading file -> $uri');
+      debugPrint('Path: ${imageFile.path}, filename: $filename');
+    }
 
     final req = http.MultipartRequest('POST', uri)
       ..headers.addAll(_authHeaders(token, extra: {
@@ -142,6 +170,11 @@ class MarketplaceService {
 
     final streamed = await req.send();
     final resp = await http.Response.fromStream(streamed);
+
+    if (kDebugMode) {
+      debugPrint('UploadImageFile status: ${resp.statusCode}');
+    }
+
     final body = _decodeOrThrowMultipart(resp);
     final url = body is Map ? body['url']?.toString() : null;
 
@@ -182,7 +215,8 @@ class MarketplaceService {
     } catch (e) {
       if (kDebugMode) debugPrint('createItem error: $e');
       throw const ApiException(
-        message: 'Could not create item. Please check your details and try again.',
+        message:
+            'Could not create item. Please check your details and try again.',
       );
     }
   }

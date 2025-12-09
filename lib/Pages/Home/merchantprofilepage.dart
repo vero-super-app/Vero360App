@@ -1,4 +1,3 @@
-// lib/Pages/profile_page.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -33,6 +32,8 @@ import 'package:vero360_app/services/auth_service.dart';
 import 'package:vero360_app/services/latest_Services.dart';
 import 'package:vero360_app/toasthelper.dart';
 import 'package:vero360_app/Pages/MerchantApplicationForm.dart';
+import 'package:vero360_app/Pages/wallet/merchant_wallet_page.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class MerchantProfilePage extends StatefulWidget {
   const MerchantProfilePage({Key? key}) : super(key: key);
@@ -51,6 +52,7 @@ class _ProfilePageState extends State<MerchantProfilePage> {
   String phone = "No Phone";
   String address = "No Address";
   String profileUrl = "";
+  String userId = ""; // Add this to store Firebase user ID
 
   bool _loading = false;
   bool _offline = false; // show graceful banner if users/me fails (DNS/offline)
@@ -65,6 +67,34 @@ class _ProfilePageState extends State<MerchantProfilePage> {
     super.initState();
     _loadUserData();
     _fetchCurrentUser();
+    _getFirebaseUserId(); // Get Firebase user ID on init
+  }
+
+  Future<void> _getFirebaseUserId() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null && mounted) {
+        setState(() {
+          userId = user.uid;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error getting Firebase user ID: $e');
+    }
+  }
+
+  // Updated method to get current user ID
+  Future<String> _getCurrentUserId() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        return '';
+      }
+      return user.uid;
+    } catch (e) {
+      debugPrint('Error in _getCurrentUserId: $e');
+      return '';
+    }
   }
 
   Future<void> _loadUserData() async {
@@ -228,13 +258,13 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
           ),
           if (profileUrl.isNotEmpty)
             ListTile(
-  leading: const Icon(Icons.remove_circle_outline),
-  title: const Text('Remove current photo'),
-  onTap: () async {
-    Navigator.pop(context);
-    await _deleteProfilePicture(); // ← calls backend & clears local
-  },
-),
+              leading: const Icon(Icons.remove_circle_outline),
+              title: const Text('Remove current photo'),
+              onTap: () async {
+                Navigator.pop(context);
+                await _deleteProfilePicture(); // ← calls backend & clears local
+              },
+            ),
 
         ]),
       ),
@@ -366,33 +396,33 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
   }
 
   Future<void> _deleteProfilePicture() async {
-  final token = await _getAuthToken();
-  if (token.isEmpty) {
-    if (!mounted) return;
-    ToastHelper.showCustomToast(context, 'Please log in first', isSuccess: false, errorMessage: '');
-    return;
-  }
-  try {
-    setState(() => _loading = true);
-    final base = await ApiConfig.readBase();
-    final resp = await http.delete(
-      Uri.parse('$base/users/me/profile-picture'),
-      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-    );
-    if (resp.statusCode >= 200 && resp.statusCode < 300) {
-      setState(() => profileUrl = '');
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('profilepicture', '');
-      ToastHelper.showCustomToast(context, 'Profile picture removed', isSuccess: true, errorMessage: '');
-    } else {
-      ToastHelper.showCustomToast(context, 'Failed to remove', isSuccess: false, errorMessage: resp.body);
+    final token = await _getAuthToken();
+    if (token.isEmpty) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(context, 'Please log in first', isSuccess: false, errorMessage: '');
+      return;
     }
-  } catch (e) {
-    ToastHelper.showCustomToast(context, 'Failed to remove', isSuccess: false, errorMessage: e.toString());
-  } finally {
-    if (mounted) setState(() => _loading = false);
+    try {
+      setState(() => _loading = true);
+      final base = await ApiConfig.readBase();
+      final resp = await http.delete(
+        Uri.parse('$base/users/me/profile-picture'),
+        headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+      );
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        setState(() => profileUrl = '');
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('profilepicture', '');
+        ToastHelper.showCustomToast(context, 'Profile picture removed', isSuccess: true, errorMessage: '');
+      } else {
+        ToastHelper.showCustomToast(context, 'Failed to remove', isSuccess: false, errorMessage: resp.body);
+      }
+    } catch (e) {
+      ToastHelper.showCustomToast(context, 'Failed to remove', isSuccess: false, errorMessage: e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
-}
 
 
   Future<void> _logout() async {
@@ -460,70 +490,68 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
   }
 
   Widget _reviewBanner() {
-  // Hide entirely if verified/approved
-  if (isVerified || applicationStatus == 'approved') return const SizedBox.shrink();
+    // Hide entirely if verified/approved
+    if (isVerified || applicationStatus == 'approved') return const SizedBox.shrink();
 
-  final bool underReview = _isUnderReviewStatus(applicationStatus, kycStatus, isVerified);
+    final bool underReview = _isUnderReviewStatus(applicationStatus, kycStatus, isVerified);
 
-  final String message = underReview
-      ? 'Your application is under review'
-      : 'start your KYC to become a verified merchant';
+    final String message = underReview
+        ? 'Your application is under review'
+        : 'start your KYC to become a verified merchant';
 
-  final Widget cta = underReview
-      ? const SizedBox.shrink()
-      : TextButton(
-          onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => MerchantApplicationForm(
-                  onFinished: () async {
-                    if (!mounted) return;
-                    // ✅ switch UI immediately, then refresh from server
-                    await _optimisticallyMarkUnderReview();
-                    ToastHelper.showCustomToast(
-                      context,
-                      'Application submitted',
-                      isSuccess: true,
-                      errorMessage: '',
-                    );
-                    await _fetchCurrentUser();
-                    Navigator.of(context).pop();
-                  },
+    final Widget cta = underReview
+        ? const SizedBox.shrink()
+        : TextButton(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => MerchantApplicationForm(
+                    onFinished: () async {
+                      if (!mounted) return;
+                      // ✅ switch UI immediately, then refresh from server
+                      await _optimisticallyMarkUnderReview();
+                      ToastHelper.showCustomToast(
+                        context,
+                        'Application submitted',
+                        isSuccess: true,
+                        errorMessage: '',
+                      );
+                      await _fetchCurrentUser();
+                      Navigator.of(context).pop();
+                    },
+                  ),
                 ),
-              ),
-            );
-          },
-          child: const Text('Start KYC'),
-        );
+              );
+            },
+            child: const Text('Start KYC'),
+          );
 
-  return Container(
-    margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: const Color(0xFFFFF3E5),
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: const Color(0xFFFFD9B3)),
-    ),
-    child: Row(
-      children: [
-        const Icon(Icons.info_outline, color: Color(0xFFB86E00)),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            message,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3E5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFFD9B3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline, color: Color(0xFFB86E00)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-        ),
-        if (!underReview) const SizedBox(width: 8),
-        cta,
-      ],
-    ),
-  );
-}
-
-  
+          if (!underReview) const SizedBox(width: 8),
+          cta,
+        ],
+      ),
+    );
+  }
 
   // --- Header card: safe layout (no negative heights, no short Stack) ---
   Widget _topProfileCard() {
@@ -703,23 +731,48 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
 
   Widget _otherDetailsGrid() {
     final items = <_DetailItem>[
-           _DetailItem('My Shop', Icons.shopping_bag_rounded, () { _openBottomSheet(const ServiceProviderCrudPage()); }),
-    _DetailItem('Marketplace', Icons.storefront, () {
-  _openBottomSheet(const MarketplaceCrudPage());
-}),
-_DetailItem('Promotions', Icons.local_offer, () {
-  _openBottomSheet(const PromotionsCrudPage());
-}),
-_DetailItem('Latest Arrivals', Icons.rocket_launch, () {
-  _openBottomSheet(const LatestArrivalsCrudPage());
-}),
-
-
-         _DetailItem('My Address', Icons.location_on, () { _openBottomSheet(const AddressPage()); }),
-       _DetailItem('My transactions', Icons.history, _logout),
-
-
+      _DetailItem('My Shop', Icons.shopping_bag_rounded, () { 
+        _openBottomSheet(const ServiceProviderCrudPage()); 
+      }),
+      _DetailItem('Marketplace', Icons.storefront, () {
+        _openBottomSheet(const MarketplaceCrudPage());
+      }),
+      _DetailItem('Promotions', Icons.local_offer, () {
+        _openBottomSheet(const PromotionsCrudPage());
+      }),
+      _DetailItem('Latest Arrivals', Icons.rocket_launch, () {
+        _openBottomSheet(const LatestArrivalsCrudPage());
+      }),
+      _DetailItem('My Address', Icons.location_on, () { 
+        _openBottomSheet(const AddressPage()); 
+      }),
+   
+      
+      _DetailItem('My Wallet', Icons.account_balance_wallet, () async {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user == null || user.uid.isEmpty) {
+          ToastHelper.showCustomToast(
+            context,
+            'Please login to access wallet',
+            isSuccess: false,
+            errorMessage: '',
+          );
+          return;
+        }
+        
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => MerchantWalletPage(
+              merchantId: user.uid,
+              merchantName: name,
+            ),
+          ),
+        );
+      }),
     ];
+
+
+
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -809,8 +862,12 @@ class _DetailItem {
   final String label;
   final IconData icon;
   final Future<void> Function() onTap;
+  
   _DetailItem(this.label, this.icon, FutureOr<void> Function() handler)
-      : onTap = (() { final result = handler(); return result is Future ? result : Future.value(); });
+      : onTap = (() { 
+          final result = handler(); 
+          return result is Future ? result : Future.value(); 
+        });
 }
 
 class _QuickAction {

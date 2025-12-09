@@ -50,6 +50,9 @@ dependencies:
   firebase_auth_web: ^5.9.0
   cloud_firestore: ^5.6.0
   firebase_storage: ^12.4.1
+  geocoding: ^4.0.0
+  paychangu_flutter: ^0.0.1
+
 
   # WebView support
   webview_flutter: ^4.10.0 
@@ -70,7 +73,7 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icons/playstore.png"
+  image_path: "assets/icons/logo_mark.png"
 
 dependency_overrides:
   firebase_storage_web: ^3.6.22

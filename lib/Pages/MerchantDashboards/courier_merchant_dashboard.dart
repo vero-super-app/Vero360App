@@ -8,9 +8,11 @@ import 'package:vero360_app/services/merchant_service_helper.dart';
 import 'package:vero360_app/Pages/marketPlace.dart';
 import 'package:vero360_app/Pages/Home/Profilepage.dart';
 import 'package:vero360_app/screens/chat_list_page.dart';
+import 'package:vero360_app/Pages/cartpage.dart';
 import 'package:vero360_app/services/cart_services.dart';
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/merchant_wallet.dart';
+import 'package:vero360_app/Pages/homepage.dart';
 
 class CourierMerchantDashboard extends StatefulWidget {
   final String email;
@@ -31,6 +33,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
   List<dynamic> _couriers = [];
   List<dynamic> _vehicles = [];
   bool _isLoading = true;
+  bool _initialLoadComplete = false;
   String _uid = '';
   String _businessName = '';
   double _walletBalance = 0;
@@ -46,23 +49,12 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
 
   // Navigation State
   int _selectedIndex = 0;
-  late List<Widget> _merchantPages;
 
   @override
   void initState() {
     super.initState();
-    _setupPages();
     _loadMerchantData();
     _startPeriodicUpdates();
-  }
-
-  void _setupPages() {
-    _merchantPages = [
-      _buildDashboardContent(),
-      MarketPage(cartService: _cartService),
-      ChatListPage(),
-      ProfilePage(),
-    ];
   }
 
   void _startPeriodicUpdates() {
@@ -74,9 +66,9 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
   }
 
   Future<void> _loadMerchantData() async {
-    if (mounted) {
-      setState(() => _isLoading = true);
-    }
+    if (!mounted) return;
+    
+    setState(() => _isLoading = true);
     
     final prefs = await SharedPreferences.getInstance();
     _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? '';
@@ -87,17 +79,15 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
         final dashboardData = await _helper.getMerchantDashboardData(_uid, 'courier');
         
         if (!dashboardData.containsKey('error')) {
-          if (mounted) {
-            setState(() {
-              _merchantData = dashboardData['merchant'];
-              _recentDeliveries = dashboardData['recentOrders'] ?? [];
-              _totalDeliveries = dashboardData['totalOrders'] ?? 0;
-              _completedDeliveries = dashboardData['completedOrders'] ?? 0;
-              _totalEarnings = dashboardData['totalRevenue'] ?? 0;
-              _rating = dashboardData['merchant']?['rating'] ?? 0.0;
-              _status = dashboardData['merchant']?['status'] ?? 'pending';
-            });
-          }
+          setState(() {
+            _merchantData = dashboardData['merchant'];
+            _recentDeliveries = dashboardData['recentOrders'] ?? [];
+            _totalDeliveries = dashboardData['totalOrders'] ?? 0;
+            _completedDeliveries = dashboardData['completedOrders'] ?? 0;
+            _totalEarnings = dashboardData['totalRevenue'] ?? 0;
+            _rating = dashboardData['merchant']?['rating'] ?? 0.0;
+            _status = dashboardData['merchant']?['status'] ?? 'pending';
+          });
         }
 
         await _loadCouriers();
@@ -112,7 +102,10 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
     }
     
     if (mounted) {
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _initialLoadComplete = true;
+      });
     }
   }
 
@@ -299,64 +292,94 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _merchantPages[_selectedIndex],
+      appBar: _selectedIndex == 0 ? _buildDashboardAppBar() : null,
+      body: _getCurrentPage(),
       bottomNavigationBar: _buildMerchantNavBar(),
     );
   }
 
+  AppBar _buildDashboardAppBar() {
+    return AppBar(
+      title: Text(_initialLoadComplete ? '$_businessName Dashboard' : 'Loading...'),
+      backgroundColor: Colors.teal,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.switch_account),
+          tooltip: 'Switch to Customer View',
+          onPressed: () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(
+                builder: (_) => Bottomnavbar(email: widget.email),
+              ),
+              (_) => false,
+            );
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.account_balance_wallet),
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MerchantWalletPage(
+                  merchantId: _uid,
+                  merchantName: _businessName,
+                  serviceType: 'courier',
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _getCurrentPage() {
+    switch (_selectedIndex) {
+      case 0: // Dashboard
+        return _buildDashboardContent();
+      case 1: // Home/Marketplace
+        return Vero360Homepage(email: widget.email);
+      case 2: // Cart
+        return CartPage(cartService: _cartService);
+      case 3: // Messages
+        return ChatListPage();
+      case 4: // Profile
+        return ProfilePage();
+      default:
+        return _buildDashboardContent();
+    }
+  }
+
   Widget _buildDashboardContent() {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_isLoading ? 'Loading...' : '$_businessName Dashboard'),
-        backgroundColor: Colors.teal,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.switch_account),
-            tooltip: 'Switch to Customer View',
-            onPressed: () {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => Bottomnavbar(email: widget.email),
-                ),
-                (_) => false,
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.account_balance_wallet),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => MerchantWalletPage(
-                    merchantId: _uid,
-                    merchantName: _businessName,
-                    serviceType: 'courier',
-                  ),
-                ),
-              );
-            },
-          ),
+    if (_isLoading) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 20),
+            Text('Loading dashboard...'),
+          ],
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildWelcomeSection(),
+          _buildStatsSection(),
+          _buildQuickActions(),
+          _buildWalletSummary(),
+          _buildRecentDeliveries(),
+          _buildCouriersSection(),
+          _buildVehiclesSection(),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildWelcomeSection(),
-                  _buildStatsSection(),
-                  _buildQuickActions(),
-                  _buildWalletSummary(),
-                  _buildRecentDeliveries(),
-                  _buildCouriersSection(),
-                  _buildVehiclesSection(),
-                ],
-              ),
-            ),
     );
   }
 
@@ -819,9 +842,10 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildNavItem(Icons.dashboard, 'Dashboard', 0),
-              _buildNavItem(Icons.store, 'Marketplace', 1),
-              _buildNavItem(Icons.message, 'Messages', 2),
-              _buildNavItem(Icons.person, 'Profile', 3),
+              _buildNavItem(Icons.home, 'Home', 1),
+              _buildNavItem(Icons.shopping_cart, 'Cart', 2),
+              _buildNavItem(Icons.message, 'Messages', 3),
+              _buildNavItem(Icons.person, 'Profile', 4),
             ],
           ),
         ),

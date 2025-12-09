@@ -2,11 +2,18 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:vero360_app/services/auth_service.dart';
 import 'package:vero360_app/toasthelper.dart';
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/merchantbottomnavbar.dart';
+// Import merchant dashboards
+import 'package:vero360_app/Pages/MerchantDashboards/food_merchant_dashboard.dart';
+import 'package:vero360_app/Pages/MerchantDashboards/taxi_merchant_dashboard.dart';
+import 'package:vero360_app/Pages/MerchantDashboards/accommodation_merchant_dashboard.dart';
+import 'package:vero360_app/Pages/MerchantDashboards/courier_merchant_dashboard.dart';
 import 'package:vero360_app/widget/oauth_buttons.dart';
 
 class AppColors {
@@ -19,6 +26,73 @@ class AppColors {
 enum VerifyMethod { email, phone }
 enum UserRole { customer, merchant }
 
+// Merchant service types - should match with kQuickServices keys
+class MerchantService {
+  final String key;
+  final String name;
+  final IconData icon;
+
+  const MerchantService({
+    required this.key,
+    required this.name,
+    required this.icon,
+  });
+}
+
+// List of merchant services
+const List<MerchantService> kMerchantServices = [
+  MerchantService(
+    key: 'taxi',
+    name: 'Vero Ride/Taxi',
+    icon: Icons.local_taxi_rounded,
+  ),
+  MerchantService(
+    key: 'food',
+    name: 'Food & Restaurants',
+    icon: Icons.restaurant_rounded,
+  ),
+  MerchantService(
+    key: 'accommodation',
+    name: 'Accommodation',
+    icon: Icons.hotel_rounded,
+  ),
+  MerchantService(
+    key: 'courier',
+    name: 'Vero Courier',
+    icon: Icons.local_shipping_rounded,
+  ),
+  MerchantService(
+    key: 'vero_bike',
+    name: 'Vero Bike',
+    icon: Icons.pedal_bike_rounded,
+  ),
+  MerchantService(
+    key: 'airport_pickup',
+    name: 'Airport Pickup',
+    icon: Icons.flight_takeoff_rounded,
+  ),
+  MerchantService(
+    key: 'car_hire',
+    name: 'Car Hire',
+    icon: Icons.car_rental_rounded,
+  ),
+  MerchantService(
+    key: 'hair',
+    name: 'Hair Salon',
+    icon: Icons.cut_rounded,
+  ),
+  MerchantService(
+    key: 'fitness',
+    name: 'Fitness Center',
+    icon: Icons.fitness_center_rounded,
+  ),
+  MerchantService(
+    key: 'mobile_money',
+    name: 'Mobile Money',
+    icon: Icons.money_rounded,
+  ),
+];
+
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
   @override
@@ -27,13 +101,17 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  final _name     = TextEditingController();
-  final _email    = TextEditingController();
-  final _phone    = TextEditingController();
+  final _name = TextEditingController();
+  final _email = TextEditingController();
+  final _phone = TextEditingController();
   final _password = TextEditingController();
-  final _confirm  = TextEditingController();
-  final _code     = TextEditingController();
+  final _confirm = TextEditingController();
+  final _businessName = TextEditingController();
+  final _businessAddress = TextEditingController();
+  final _code = TextEditingController();
 
   bool _obscure1 = true;
   bool _obscure2 = true;
@@ -41,6 +119,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   VerifyMethod _method = VerifyMethod.email;
   UserRole _role = UserRole.customer;
+  MerchantService? _selectedMerchantService;
 
   bool _sending = false;
   bool _otpSent = false;
@@ -61,12 +140,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _password.dispose();
     _confirm.dispose();
     _code.dispose();
+    _businessName.dispose();
+    _businessAddress.dispose();
     super.dispose();
   }
 
   // ---------- validators ----------
   String? _validateName(String? v) =>
       (v == null || v.trim().isEmpty) ? 'Name is required' : null;
+
+  String? _validateBusinessName(String? v) {
+    if (_role == UserRole.merchant && (v == null || v.trim().isEmpty)) {
+      return 'Business name is required';
+    }
+    return null;
+  }
+
+  String? _validateBusinessAddress(String? v) {
+    if (_role == UserRole.merchant && (v == null || v.trim().isEmpty)) {
+      return 'Business address is required';
+    }
+    return null;
+  }
 
   String? _validateEmail(String? v) {
     final s = v?.trim() ?? '';
@@ -80,7 +175,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (s.isEmpty) return 'Mobile number is required';
     final digits = s.replaceAll(RegExp(r'\D'), '');
     final isLocal = RegExp(r'^(08|09)\d{8}$').hasMatch(digits);
-    final isE164  = RegExp(r'^\+265[89]\d{8}$').hasMatch(s);
+    final isE164 = RegExp(r'^\+265[89]\d{8}$').hasMatch(s);
     if (!isLocal && !isE164) {
       return 'Use 08/09xxxxxxxx or +2659xxxxxxxx';
     }
@@ -96,6 +191,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _validateConfirm(String? v) {
     if (v == null || v.isEmpty) return 'Please confirm your password';
     if (v != _password.text) return 'Passwords do not match';
+    return null;
+  }
+
+  String? _validateMerchantService(MerchantService? v) {
+    if (_role == UserRole.merchant && v == null) {
+      return 'Please select a service you provide';
+    }
     return null;
   }
 
@@ -163,18 +265,47 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await prefs.setString('email', displayId);
     }
 
+    // Store merchant service if available (from response or local selection)
+    final merchantService = user['merchantService']?.toString() ??
+        user['serviceType']?.toString() ??
+        _selectedMerchantService?.key;
+    if (merchantService != null && merchantService.isNotEmpty) {
+      await prefs.setString('merchant_service', merchantService);
+      
+      // Also store business info for merchants
+      if (_role == UserRole.merchant) {
+        await prefs.setString('business_name', _businessName.text.trim());
+        await prefs.setString('business_address', _businessAddress.text.trim());
+      }
+    }
+
     final role =
         (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
 
     if (!mounted) return;
 
+    // Redirect to appropriate dashboard based on role and service
     if (role == 'merchant') {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => MerchantBottomnavbar(email: displayId),
-        ),
-        (_) => false,
-      );
+      // Get the merchant service from user data or local selection
+      final serviceKey = merchantService ?? _selectedMerchantService?.key;
+      
+      if (serviceKey != null) {
+        // Navigate to specific merchant dashboard based on service
+        Widget merchantDashboard = _getMerchantDashboard(serviceKey, displayId);
+        
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => merchantDashboard),
+          (_) => false,
+        );
+      } else {
+        // Fallback to generic merchant dashboard
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => MerchantBottomnavbar(email: displayId),
+          ),
+          (_) => false,
+        );
+      }
     } else {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
@@ -182,6 +313,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         (_) => false,
       );
+    }
+  }
+
+  // Helper method to get the appropriate merchant dashboard
+  Widget _getMerchantDashboard(String serviceKey, String email) {
+    switch (serviceKey) {
+      case 'food':
+        return FoodMerchantDashboard(email: email);
+      case 'taxi':
+        return TaxiMerchantDashboard(email: email);
+      case 'accommodation':
+        return AccommodationMerchantDashboard(email: email);
+      case 'courier':
+        return CourierMerchantDashboard(email: email);
+      // Add more cases for other services
+      default:
+        return MerchantBottomnavbar(email: email);
     }
   }
 
@@ -233,7 +381,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  // ---------- Register (OTP is now OPTIONAL; Firebase backup always used) ----------
+  // ---------- Register (NestJS + Firebase backup) ----------
   Future<void> _verifyAndRegister() async {
     if (!_agree) {
       ToastHelper.showCustomToast(
@@ -244,6 +392,43 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
       return;
     }
+    
+    // Validate merchant-specific fields
+    if (_role == UserRole.merchant) {
+      final serviceErr = _validateMerchantService(_selectedMerchantService);
+      if (serviceErr != null) {
+        ToastHelper.showCustomToast(
+          context,
+          serviceErr,
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+      
+      final businessNameErr = _validateBusinessName(_businessName.text);
+      if (businessNameErr != null) {
+        ToastHelper.showCustomToast(
+          context,
+          businessNameErr,
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+      
+      final businessAddressErr = _validateBusinessAddress(_businessAddress.text);
+      if (businessAddressErr != null) {
+        ToastHelper.showCustomToast(
+          context,
+          businessAddressErr,
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+    }
+    
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     final preferred =
@@ -251,11 +436,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final identifier =
         preferred == 'email' ? _email.text.trim() : _phone.text.trim();
 
-    // ✅ OTP is now OPTIONAL.
-    // If a code was requested AND entered, we try to verify to get a ticket.
-    // If it fails (server down, invalid code, etc.) we'll continue with
-    // an empty ticket and AuthService.registerUser will fall back to
-    // Firebase-only signup.
+    // ✅ OTP is OPTIONAL (Firebase backup will be used if OTP fails)
     String ticket = '';
     if (_otpSent && _code.text.trim().isNotEmpty) {
       setState(() => _verifying = true);
@@ -275,9 +456,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() => _registering = true);
     try {
-      // This method now:
-      // - uses NestJS backend when `ticket` is non-empty (and mirrors user to Firebase)
-      // - OR falls back to pure Firebase signup when backend is down / ticket is empty
+      // Prepare merchant-specific data
+      Map<String, dynamic> merchantData = {};
+      if (_role == UserRole.merchant) {
+        merchantData = {
+          'merchantService': _selectedMerchantService!.key,
+          'businessName': _businessName.text.trim(),
+          'businessAddress': _businessAddress.text.trim(),
+        };
+      }
+
+      // Try NestJS registration first (with or without ticket)
       final resp = await AuthService().registerUser(
         name: _name.text.trim(),
         email: _email.text.trim(),
@@ -287,13 +476,221 @@ class _RegisterScreenState extends State<RegisterScreen> {
         profilePicture: '',
         preferredVerification: preferred,
         verificationTicket: ticket,
+        merchantData: merchantData,
         context: context,
       );
 
       if (!mounted) return;
-      await _handleAuthResult(resp);
+      
+      if (resp != null) {
+        // NestJS registration succeeded
+        await _handleAuthResult(resp);
+        
+        // Also create Firebase account as backup mirror
+        await _createFirebaseBackupAccount(resp['user']);
+      } else {
+        // NestJS failed - try Firebase-only registration
+        await _registerWithFirebaseOnly();
+      }
     } finally {
       if (mounted) setState(() => _registering = false);
+    }
+  }
+
+  // Create Firebase backup account for NestJS-registered users
+  Future<void> _createFirebaseBackupAccount(Map<String, dynamic>? userData) async {
+    try {
+      // Only create Firebase account if we have valid credentials
+      final email = _email.text.trim();
+      final password = _password.text;
+      
+      if (email.isNotEmpty && password.isNotEmpty) {
+        UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+
+        final firebaseUser = userCredential.user;
+        if (firebaseUser != null) {
+          // Prepare user data for Firestore
+          final userDataForFirestore = {
+            'uid': firebaseUser.uid,
+            'email': email,
+            'name': _name.text.trim(),
+            'phone': _phone.text.trim(),
+            'role': _role == UserRole.merchant ? 'merchant' : 'customer',
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+            'authProvider': 'nestjs_mirrored', // Mark as mirrored from NestJS
+          };
+
+          // Add merchant-specific data if merchant
+          if (_role == UserRole.merchant) {
+            userDataForFirestore['merchantService'] = _selectedMerchantService!.key;
+            userDataForFirestore['businessName'] = _businessName.text.trim();
+            userDataForFirestore['businessAddress'] = _businessAddress.text.trim();
+            userDataForFirestore['status'] = 'pending';
+            userDataForFirestore['isActive'] = false;
+            
+            // Create merchant profile in service-specific collection
+            final merchantProfile = {
+              'uid': firebaseUser.uid,
+              'email': email,
+              'name': _name.text.trim(),
+              'phone': _phone.text.trim(),
+              'businessName': _businessName.text.trim(),
+              'businessAddress': _businessAddress.text.trim(),
+              'serviceType': _selectedMerchantService!.key,
+              'status': 'pending',
+              'isActive': false,
+              'createdAt': FieldValue.serverTimestamp(),
+              'updatedAt': FieldValue.serverTimestamp(),
+              'rating': 0.0,
+              'totalRatings': 0,
+              'completedOrders': 0,
+            };
+            
+            // Store in both users collection
+            await _firestore.collection('users').doc(firebaseUser.uid).set(userDataForFirestore);
+            
+            // Determine collection name based on service type
+            final collectionName = '${_selectedMerchantService!.key}_merchants';
+            await _firestore
+                .collection(collectionName)
+                .doc(firebaseUser.uid)
+                .set(merchantProfile);
+          } else {
+            // For customers, just store in users collection
+            await _firestore.collection('users').doc(firebaseUser.uid).set(userDataForFirestore);
+          }
+        }
+      }
+    } catch (e) {
+      // Silent fail - Firebase is just a backup
+      print('Firebase backup account creation failed: $e');
+    }
+  }
+
+  // Firebase-only registration (when NestJS fails)
+  Future<void> _registerWithFirebaseOnly() async {
+    try {
+      UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+        email: _email.text.trim(),
+        password: _password.text,
+      );
+
+      final user = userCredential.user;
+      if (user == null) throw Exception('Firebase user creation failed');
+
+      // Prepare user data for Firestore
+      final userData = {
+        'uid': user.uid,
+        'email': _email.text.trim(),
+        'name': _name.text.trim(),
+        'phone': _phone.text.trim(),
+        'role': _role == UserRole.merchant ? 'merchant' : 'customer',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'authProvider': 'firebase_only', // Mark as Firebase-only registration
+      };
+
+      // Add merchant-specific data if merchant
+      if (_role == UserRole.merchant) {
+        userData['merchantService'] = _selectedMerchantService!.key;
+        userData['businessName'] = _businessName.text.trim();
+        userData['businessAddress'] = _businessAddress.text.trim();
+        userData['status'] = 'pending';
+        userData['isActive'] = false;
+        
+        // Create merchant profile in service-specific collection
+        final merchantProfile = {
+          'uid': user.uid,
+          'email': _email.text.trim(),
+          'name': _name.text.trim(),
+          'phone': _phone.text.trim(),
+          'businessName': _businessName.text.trim(),
+          'businessAddress': _businessAddress.text.trim(),
+          'serviceType': _selectedMerchantService!.key,
+          'status': 'pending',
+          'isActive': false,
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+          'rating': 0.0,
+          'totalRatings': 0,
+          'completedOrders': 0,
+        };
+        
+        // Determine collection name based on service type
+        final collectionName = '${_selectedMerchantService!.key}_merchants';
+        
+        // Store in both users collection and service-specific collection
+        await _firestore.collection('users').doc(user.uid).set(userData);
+        await _firestore
+            .collection(collectionName)
+            .doc(user.uid)
+            .set(merchantProfile);
+      } else {
+        // For customers, just store in users collection
+        await _firestore.collection('users').doc(user.uid).set(userData);
+      }
+
+      // Store in SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('uid', user.uid);
+      await prefs.setString('email', _email.text.trim());
+      await prefs.setString('name', _name.text.trim());
+      await prefs.setString('role', _role == UserRole.merchant ? 'merchant' : 'customer');
+      await prefs.setString('auth_provider', 'firebase_only');
+      
+      if (_role == UserRole.merchant) {
+        await prefs.setString('merchant_service', _selectedMerchantService!.key);
+        await prefs.setString('business_name', _businessName.text.trim());
+        await prefs.setString('business_address', _businessAddress.text.trim());
+      }
+
+      // Create a response map similar to NestJS response
+      final firebaseResponse = {
+        'token': await user.getIdToken(),
+        'user': {
+          'uid': user.uid,
+          'email': _email.text.trim(),
+          'name': _name.text.trim(),
+          'phone': _phone.text.trim(),
+          'role': _role == UserRole.merchant ? 'merchant' : 'customer',
+          'merchantService': _role == UserRole.merchant ? _selectedMerchantService!.key : null,
+          'businessName': _role == UserRole.merchant ? _businessName.text.trim() : null,
+          'businessAddress': _role == UserRole.merchant ? _businessAddress.text.trim() : null,
+        },
+        'authProvider': 'firebase_only',
+      };
+
+      // Navigate to appropriate dashboard
+      if (!mounted) return;
+      await _handleAuthResult(firebaseResponse);
+
+    } on FirebaseAuthException catch (e) {
+      String errorMessage = 'Registration failed';
+      if (e.code == 'email-already-in-use') {
+        errorMessage = 'Email already registered. Please sign in.';
+      } else if (e.code == 'weak-password') {
+        errorMessage = 'Password is too weak. Use a stronger password.';
+      } else if (e.code == 'invalid-email') {
+        errorMessage = 'Invalid email address.';
+      }
+      
+      ToastHelper.showCustomToast(
+        context,
+        errorMessage,
+        isSuccess: false,
+        errorMessage: e.message ?? '',
+      );
+    } catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Firebase registration failed. Please try again.',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
     }
   }
 
@@ -303,6 +700,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
     try {
       final resp = await AuthService().continueWithGoogle(context);
       await _handleAuthResult(resp);
+      
+      // If social login successful, ask for additional merchant info if needed
+      final prefs = await SharedPreferences.getInstance();
+      final role = prefs.getString('role');
+      final merchantService = prefs.getString('merchant_service');
+      
+      if (role == 'merchant' && (merchantService == null || merchantService.isEmpty)) {
+        await _askForMerchantServiceAfterSocialLogin();
+      }
     } finally {
       if (mounted) setState(() => _socialLoading = false);
     }
@@ -314,9 +720,156 @@ class _RegisterScreenState extends State<RegisterScreen> {
     try {
       final resp = await AuthService().continueWithApple(context);
       await _handleAuthResult(resp);
+      
+      // If social login successful, ask for additional merchant info if needed
+      final prefs = await SharedPreferences.getInstance();
+      final role = prefs.getString('role');
+      final merchantService = prefs.getString('merchant_service');
+      
+      if (role == 'merchant' && (merchantService == null || merchantService.isEmpty)) {
+        await _askForMerchantServiceAfterSocialLogin();
+      }
     } finally {
       if (mounted) setState(() => _socialLoading = false);
     }
+  }
+
+  Future<void> _askForMerchantServiceAfterSocialLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    final uid = prefs.getString('uid');
+    final email = prefs.getString('email');
+    
+    if (uid == null || email == null) return;
+    
+    final businessNameController = TextEditingController();
+    final businessAddressController = TextEditingController();
+    MerchantService? selectedService;
+    
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('Complete Merchant Profile'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<MerchantService>(
+                    value: selectedService,
+                    decoration: const InputDecoration(
+                      labelText: 'Service You Provide',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: kMerchantServices.map((service) {
+                      return DropdownMenuItem<MerchantService>(
+                        value: service,
+                        child: Row(
+                          children: [
+                            Icon(service.icon, size: 20),
+                            const SizedBox(width: 10),
+                            Text(service.name),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) => setState(() => selectedService = value),
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: businessNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Business Name',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: businessAddressController,
+                    decoration: const InputDecoration(
+                      labelText: 'Business Address',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Skip'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (selectedService == null || 
+                      businessNameController.text.trim().isEmpty || 
+                      businessAddressController.text.trim().isEmpty) {
+                    ToastHelper.showCustomToast(
+                      context,
+                      'Please fill all merchant fields',
+                      isSuccess: false,
+                      errorMessage: '',
+                    );
+                    return;
+                  }
+                  
+                  // Use a local variable to avoid repeated ! operator
+                  final MerchantService service = selectedService!;
+                  
+                  // Update Firebase with merchant info
+                  await _firestore.collection('users').doc(uid).update({
+                    'merchantService': service.key,
+                    'businessName': businessNameController.text.trim(),
+                    'businessAddress': businessAddressController.text.trim(),
+                    'updatedAt': FieldValue.serverTimestamp(),
+                  });
+                  
+                  // Create merchant profile
+                  final merchantProfile = {
+                    'uid': uid,
+                    'email': email,
+                    'name': prefs.getString('name') ?? '',
+                    'phone': prefs.getString('phone') ?? '',
+                    'businessName': businessNameController.text.trim(),
+                    'businessAddress': businessAddressController.text.trim(),
+                    'serviceType': service.key,
+                    'status': 'pending',
+                    'isActive': false,
+                    'createdAt': FieldValue.serverTimestamp(),
+                    'updatedAt': FieldValue.serverTimestamp(),
+                    'rating': 0.0,
+                    'totalRatings': 0,
+                    'completedOrders': 0,
+                  };
+                  
+                  final collectionName = '${service.key}_merchants';
+                  await _firestore
+                      .collection(collectionName)
+                      .doc(uid)
+                      .set(merchantProfile);
+                  
+                  // Update SharedPreferences
+                  await prefs.setString('merchant_service', service.key);
+                  await prefs.setString('business_name', businessNameController.text.trim());
+                  await prefs.setString('business_address', businessAddressController.text.trim());
+                  
+                  Navigator.pop(context);
+                  
+                  // Navigate to merchant dashboard
+                  Widget merchantDashboard = _getMerchantDashboard(service.key, email);
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => merchantDashboard),
+                    (_) => false,
+                  );
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   InputDecoration _dec({
@@ -459,7 +1012,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   label: const Text('Customer'),
                                   selected: _role == UserRole.customer,
                                   onSelected: (_) => setState(
-                                    () => _role = UserRole.customer,
+                                    () {
+                                      _role = UserRole.customer;
+                                      // Clear merchant-specific fields
+                                      _businessName.clear();
+                                      _businessAddress.clear();
+                                      _selectedMerchantService = null;
+                                    },
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -485,6 +1044,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               validator: _validateName,
                             ),
                             const SizedBox(height: 14),
+                            
+                            // Business Name (for merchants)
+                            if (_role == UserRole.merchant) ...[
+                              TextFormField(
+                                controller: _businessName,
+                                textInputAction: TextInputAction.next,
+                                decoration: _dec(
+                                  label: 'Business Name',
+                                  hint: 'Your business name',
+                                  icon: Icons.business_rounded,
+                                ),
+                                validator: _validateBusinessName,
+                              ),
+                              const SizedBox(height: 14),
+                            ],
+                            
                             TextFormField(
                               controller: _email,
                               keyboardType: TextInputType.emailAddress,
@@ -510,6 +1085,53 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               validator: _validatePhone,
                             ),
                             const SizedBox(height: 14),
+                            
+                            // Business Address (for merchants)
+                            if (_role == UserRole.merchant) ...[
+                              TextFormField(
+                                controller: _businessAddress,
+                                textInputAction: TextInputAction.next,
+                                decoration: _dec(
+                                  label: 'Business Address',
+                                  hint: 'Your business location',
+                                  icon: Icons.location_on_rounded,
+                                ),
+                                validator: _validateBusinessAddress,
+                              ),
+                              const SizedBox(height: 14),
+                            ],
+                            
+                            // Merchant Service Selection (for merchants)
+                            if (_role == UserRole.merchant) ...[
+                              DropdownButtonFormField<MerchantService>(
+                                value: _selectedMerchantService,
+                                decoration: _dec(
+                                  label: 'Service You Provide',
+                                  hint: 'Select your service',
+                                  icon: Icons.work_outline,
+                                ),
+                                validator: (value) => _validateMerchantService(value),
+                                items: kMerchantServices.map((service) {
+                                  return DropdownMenuItem<MerchantService>(
+                                    value: service,
+                                    child: Row(
+                                      children: [
+                                        Icon(service.icon, size: 20, color: AppColors.brandOrange),
+                                        const SizedBox(width: 12),
+                                        Text(service.name),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                                onChanged: (MerchantService? newValue) {
+                                  setState(() {
+                                    _selectedMerchantService = newValue;
+                                  });
+                                },
+                              ),
+                              const SizedBox(height: 14),
+                            ],
+                            
                             TextFormField(
                               controller: _password,
                               obscureText: _obscure1,

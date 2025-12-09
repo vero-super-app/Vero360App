@@ -80,6 +80,7 @@ class AuthService {
     String? name,
     String? phone,
     String? role,
+    Map<String, dynamic>? merchantData,
   }) async {
     try {
       final doc = _firestore.collection('users').doc(user.uid);
@@ -91,6 +92,13 @@ class AuthService {
           'role': role.toLowerCase(),
         'updatedAt': FieldValue.serverTimestamp(),
       };
+      
+      // Add merchant data if available - FIXED LINE 504
+      if (merchantData != null && role == 'merchant') {
+        // Convert all values to strings to match Map<String, String> type
+        data.addAll(merchantData.map((key, value) => MapEntry(key, value.toString())));
+      }
+      
       await doc.set(data, SetOptions(merge: true));
     } catch (_) {
       // never block auth on profile write
@@ -102,6 +110,7 @@ class AuthService {
     String? fallbackName,
     String? fallbackPhone,
     String? fallbackRole,
+    Map<String, dynamic>? merchantData,
   }) async {
     Map<String, dynamic> profile = {};
     try {
@@ -128,6 +137,11 @@ class AuthService {
       'name': name,
       'role': role,
     };
+    
+    // Add merchant data if available
+    if (merchantData != null && role == 'merchant') {
+      userMap.addAll(merchantData);
+    }
 
     return {
       'authProvider': 'firebase',
@@ -141,13 +155,21 @@ class AuthService {
     String? name,
     String? phone,
     String? role,
+    Map<String, dynamic>? merchantData,
   }) async {
-    await _saveFirebaseProfile(user, name: name, phone: phone, role: role);
+    await _saveFirebaseProfile(
+      user, 
+      name: name, 
+      phone: phone, 
+      role: role,
+      merchantData: merchantData,
+    );
     return _buildFirebaseAuthResult(
       user,
       fallbackName: name,
       fallbackPhone: phone,
       fallbackRole: role,
+      merchantData: merchantData,
     );
   }
 
@@ -195,6 +217,7 @@ class AuthService {
     required String email,
     required String password,
     Map<String, dynamic>? backendUser,
+    Map<String, dynamic>? merchantData,
   }) async {
     try {
       final current = _firebaseAuth.currentUser;
@@ -203,8 +226,8 @@ class AuthService {
           current,
           name: backendUser?['name']?.toString(),
           phone: backendUser?['phone']?.toString(),
-          role:
-              (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
+          role: (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
+          merchantData: merchantData,
         );
         return;
       }
@@ -218,8 +241,8 @@ class AuthService {
           cred.user!,
           name: backendUser?['name']?.toString(),
           phone: backendUser?['phone']?.toString(),
-          role:
-              (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
+          role: (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
+          merchantData: merchantData,
         );
       } on FirebaseAuthException catch (e) {
         if (e.code == 'user-not-found') {
@@ -231,9 +254,37 @@ class AuthService {
             cred.user!,
             name: backendUser?['name']?.toString(),
             phone: backendUser?['phone']?.toString(),
-            role:
-                (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
+            role: (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
+            merchantData: merchantData,
           );
+          
+          // Create merchant profile in service-specific collection if merchant
+          if (backendUser?['role'] == 'merchant' && merchantData != null) {
+            // FIXED LINE 910 - added null safety
+            final serviceKey = merchantData['merchantService']?.toString() ?? '';
+            if (serviceKey.isNotEmpty) {
+              final merchantProfile = {
+                'uid': cred.user!.uid,
+                'email': email,
+                'name': backendUser?['name']?.toString() ?? '',
+                'phone': backendUser?['phone']?.toString() ?? '',
+                ...merchantData,
+                'status': 'pending',
+                'isActive': false,
+                'createdAt': FieldValue.serverTimestamp(),
+                'updatedAt': FieldValue.serverTimestamp(),
+                'rating': 0.0,
+                'totalRatings': 0,
+                'completedOrders': 0,
+              };
+              
+              final collectionName = '${serviceKey}_merchants';
+              await _firestore
+                  .collection(collectionName)
+                  .doc(cred.user!.uid)
+                  .set(merchantProfile);
+            }
+          }
         } else {
           // ignore other firebase errors here
         }
@@ -269,10 +320,22 @@ class AuthService {
 
       // Best-effort: mirror to Firebase if email login
       if (trimmedId.contains('@')) {
+        // Extract merchant data if available
+        Map<String, dynamic>? merchantData;
+        final user = normalized['user'] as Map<String, dynamic>?;
+        if (user?['role'] == 'merchant') {
+          merchantData = {
+            'merchantService': user?['merchantService'],
+            'businessName': user?['businessName'],
+            'businessAddress': user?['businessAddress'],
+          };
+        }
+        
         _ensureFirebaseMirrorForBackendUser(
           email: trimmedId,
           password: password,
-          backendUser: normalized['user'] as Map<String, dynamic>?,
+          backendUser: user,
+          merchantData: merchantData,
         );
       }
 
@@ -314,7 +377,7 @@ class AuthService {
   // ---------- OTP (register flow) ----------
 
   /// NOTE: If Nest is down, this will now still return `true` so the UI
-  /// can continue and we’ll rely on Firebase-only registration.
+  /// can continue and we'll rely on Firebase-only registration.
   Future<bool> requestOtp({
     required String channel, // 'email' | 'phone'
     String? email,
@@ -386,7 +449,7 @@ class AuthService {
       _toast(context, e.message, ok: false);
       return null;
     } catch (_) {
-      // When this fails (server down), we’ll fall back to Firebase only.
+      // When this fails (server down), we'll fall back to Firebase only.
       _toast(
         context,
         'Could not verify code (server issue). We can still create a backup account.',
@@ -407,25 +470,46 @@ class AuthService {
     required String profilePicture,
     required String preferredVerification,
     required String verificationTicket,
+    Map<String, dynamic>? merchantData, // Add merchant data parameter
     required BuildContext context,
   }) async {
     final normalizedRole = role.toLowerCase();
 
+    // Prepare merchant data for Firebase if merchant
+    Map<String, dynamic>? firebaseMerchantData;
+    if (normalizedRole == 'merchant' && merchantData != null) {
+      firebaseMerchantData = {
+        'merchantService': merchantData['merchantService'],
+        'businessName': merchantData['businessName'],
+        'businessAddress': merchantData['businessAddress'],
+        'status': 'pending',
+        'isActive': false,
+      };
+    }
+
     // 1) Try backend registration if we have a ticket
     if (verificationTicket.isNotEmpty) {
       try {
+        final body = {
+          'name': name,
+          'email': email,
+          'phone': phone,
+          'password': password,
+          'role': normalizedRole,
+          'profilepicture': profilePicture,
+          'preferredVerification': preferredVerification,
+          'verificationTicket': verificationTicket,
+        };
+        
+        // Add merchant data to request if available
+        if (merchantData != null && normalizedRole == 'merchant') {
+          // FIXED: Convert all values to strings
+          body.addAll(merchantData.map((key, value) => MapEntry(key, value.toString())));
+        }
+
         final res = await ApiClient.post(
           '/auth/register',
-          body: jsonEncode({
-            'name': name,
-            'email': email,
-            'phone': phone,
-            'password': password,
-            'role': normalizedRole,
-            'profilepicture': profilePicture,
-            'preferredVerification': preferredVerification,
-            'verificationTicket': verificationTicket,
-          }),
+          body: jsonEncode(body),
           timeout: _reqTimeoutWarm,
         );
 
@@ -440,6 +524,7 @@ class AuthService {
             email: email.trim(),
             password: password,
             backendUser: backendAuth['user'] as Map<String, dynamic>?,
+            merchantData: firebaseMerchantData,
           );
         }
 
@@ -490,11 +575,37 @@ class AuthService {
         return null;
       }
 
+      // Create merchant profile in service-specific collection if merchant
+      if (normalizedRole == 'merchant' && firebaseMerchantData != null) {
+        final serviceKey = firebaseMerchantData['merchantService']?.toString() ?? '';
+        if (serviceKey.isNotEmpty) {
+          final merchantProfile = {
+            'uid': user.uid,
+            'email': email,
+            'name': name,
+            'phone': phone,
+            ...firebaseMerchantData,
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+            'rating': 0.0,
+            'totalRatings': 0,
+            'completedOrders': 0,
+          };
+          
+          final collectionName = '${serviceKey}_merchants';
+          await _firestore
+              .collection(collectionName)
+              .doc(user.uid)
+              .set(merchantProfile);
+        }
+      }
+
       final auth = await _normalizeFirebaseUser(
         user,
         name: name,
         phone: phone,
         role: normalizedRole,
+        merchantData: firebaseMerchantData,
       );
 
       _toast(
@@ -521,11 +632,42 @@ class AuthService {
             return null;
           }
 
+          // Update existing user with merchant data if needed
+          if (normalizedRole == 'merchant' && firebaseMerchantData != null) {
+            await _saveFirebaseProfile(
+              user,
+              name: name,
+              phone: phone,
+              role: normalizedRole,
+              merchantData: firebaseMerchantData,
+            );
+            
+            // Also update/create merchant profile in service-specific collection
+            final serviceKey = firebaseMerchantData['merchantService']?.toString() ?? '';
+            if (serviceKey.isNotEmpty) {
+              final merchantProfile = {
+                'uid': user.uid,
+                'email': email,
+                'name': name,
+                'phone': phone,
+                ...firebaseMerchantData,
+                'updatedAt': FieldValue.serverTimestamp(),
+              };
+              
+              final collectionName = '${serviceKey}_merchants';
+              await _firestore
+                  .collection(collectionName)
+                  .doc(user.uid)
+                  .set(merchantProfile, SetOptions(merge: true));
+            }
+          }
+
           final auth = await _buildFirebaseAuthResult(
             user,
             fallbackName: name,
             fallbackPhone: phone,
             fallbackRole: normalizedRole,
+            merchantData: firebaseMerchantData,
           );
 
           _toast(
@@ -617,6 +759,10 @@ class AuthService {
         'prefill_login_role',
         'merchant_review_pending',
         'auth_provider',
+        'merchant_service',
+        'business_name',
+        'business_address',
+        'uid',
       ]) {
         await sp.remove(k);
       }
@@ -733,6 +879,55 @@ class AuthService {
     final bytes = utf8.encode(input);
     final digest = sha256.convert(bytes);
     return digest.toString();
+  }
+
+  /// Get merchant status from Firebase
+  Future<String> getMerchantStatus(String uid) async {
+    try {
+      final doc = await _firestore.collection('users').doc(uid).get();
+      if (doc.exists) {
+        return doc.data()?['status'] ?? 'pending';
+      }
+      return 'pending';
+    } catch (e) {
+      return 'pending';
+    }
+  }
+
+  /// Update merchant profile
+  Future<bool> updateMerchantProfile({
+    required String uid,
+    required Map<String, dynamic> updates,
+  }) async {
+    try {
+      await _firestore.collection('users').doc(uid).update({
+        ...updates,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      // Also update service-specific collection if merchant
+      final userDoc = await _firestore.collection('users').doc(uid).get();
+      final userData = userDoc.data();
+      
+      if (userData?['role'] == 'merchant' && userData?['merchantService'] != null) {
+        final serviceKey = userData?['merchantService']?.toString() ?? '';
+        if (serviceKey.isNotEmpty) {
+          final collectionName = '${serviceKey}_merchants';
+          
+          await _firestore
+              .collection(collectionName)
+              .doc(uid)
+              .update({
+                ...updates,
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+        }
+      }
+      
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   /// Optional: call once at app start to pre-warm backend.

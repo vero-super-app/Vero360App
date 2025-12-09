@@ -1,9 +1,16 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/merchantbottomnavbar.dart';
+// Import merchant dashboards
+import 'package:vero360_app/Pages/MerchantDashboards/food_merchant_dashboard.dart';
+import 'package:vero360_app/Pages/MerchantDashboards/taxi_merchant_dashboard.dart';
+import 'package:vero360_app/Pages/MerchantDashboards/accommodation_merchant_dashboard.dart';
+import 'package:vero360_app/Pages/MerchantDashboards/courier_merchant_dashboard.dart';
 import 'package:vero360_app/screens/register_screen.dart';
 import 'package:vero360_app/services/auth_service.dart';
 import 'package:vero360_app/toasthelper.dart';
@@ -24,6 +31,9 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  
   final _identifier = TextEditingController();
   final _password = TextEditingController();
   bool _obscure = true;
@@ -37,18 +47,34 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  /// Handles both backend auth and Firebase fallback auth.
+  // Helper method to get the appropriate merchant dashboard
+  Widget _getMerchantDashboard(String serviceKey, String email) {
+    switch (serviceKey) {
+      case 'food':
+        return FoodMerchantDashboard(email: email);
+      case 'taxi':
+        return TaxiMerchantDashboard(email: email);
+      case 'accommodation':
+        return AccommodationMerchantDashboard(email: email);
+      case 'courier':
+        return CourierMerchantDashboard(email: email);
+      // Add more cases for other services
+      default:
+        return MerchantBottomnavbar(email: email);
+    }
+  }
+
+  // Update the _handleAuthResult method
   Future<void> _handleAuthResult(Map<String, dynamic>? result) async {
     if (result == null) return;
 
     final prefs = await SharedPreferences.getInstance();
-
-    // Which provider did AuthService use?
-    final authProvider =
-        (result['authProvider'] ?? 'backend').toString().toLowerCase();
+    
+    // Store auth provider
+    final authProvider = (result['authProvider'] ?? 'backend').toString().toLowerCase();
     await prefs.setString('auth_provider', authProvider);
 
-    // Token: backend = Nest JWT, firebase = Firebase ID token
+    // Store token
     final token = result['token']?.toString();
     if (token == null || token.isEmpty) {
       ToastHelper.showCustomToast(
@@ -60,12 +86,10 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // For now, keep writing to token/jwt_token so the rest of the app
-    // can still treat the user as "logged in".
     await prefs.setString('token', token);
     await prefs.setString('jwt_token', token);
 
-    // Normalise user payload a bit defensively
+    // Get user data
     Map<String, dynamic> user = {};
     final rawUser = result['user'];
     if (rawUser is Map<String, dynamic>) {
@@ -77,20 +101,71 @@ class _LoginScreenState extends State<LoginScreen> {
         _identifier.text.trim();
     await prefs.setString('email', displayId);
 
-    // Role from backend; Firebase sessions may not have this → default customer
-    final role =
-        (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
+    // Get role
+    final role = (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
+    await prefs.setString('role', role);
+
+    // Store user ID
+    final uid = user['uid']?.toString() ?? user['id']?.toString() ?? user['firebaseUid']?.toString();
+    if (uid != null && uid.isNotEmpty) {
+      await prefs.setString('uid', uid);
+    }
+
+    // For merchants, store service and business info
+    if (role == 'merchant') {
+      // Get merchant service from multiple possible sources
+      String? merchantService = user['merchantService']?.toString() ??
+          user['serviceType']?.toString() ??
+          user['merchant_service']?.toString();
+
+      // If not in user data, try to fetch from Firebase
+      if (merchantService == null || merchantService.isEmpty) {
+        if (uid != null) {
+          merchantService = await _fetchMerchantServiceFromFirebase(uid);
+        }
+      }
+
+      if (merchantService != null && merchantService.isNotEmpty) {
+        await prefs.setString('merchant_service', merchantService);
+      }
+
+      // Store business info
+      final businessName = user['businessName']?.toString();
+      if (businessName != null && businessName.isNotEmpty) {
+        await prefs.setString('business_name', businessName);
+      }
+
+      final businessAddress = user['businessAddress']?.toString();
+      if (businessAddress != null && businessAddress.isNotEmpty) {
+        await prefs.setString('business_address', businessAddress);
+      }
+    }
 
     if (!mounted) return;
 
+    // Redirect based on role
     if (role == 'merchant') {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => MerchantBottomnavbar(email: displayId),
-        ),
-        (_) => false,
-      );
+      final merchantService = prefs.getString('merchant_service');
+      
+      if (merchantService != null && merchantService.isNotEmpty) {
+        // Navigate to specific merchant dashboard
+        Widget merchantDashboard = _getMerchantDashboard(merchantService, displayId);
+        
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => merchantDashboard),
+          (_) => false,
+        );
+      } else {
+        // No specific service found, go to generic merchant dashboard
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => MerchantBottomnavbar(email: displayId),
+          ),
+          (_) => false,
+        );
+      }
     } else {
+      // For customers, go to customer bottom navbar
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => Bottomnavbar(email: displayId),
@@ -98,6 +173,33 @@ class _LoginScreenState extends State<LoginScreen> {
         (_) => false,
       );
     }
+  }
+
+  // Fetch merchant service from Firebase
+  Future<String?> _fetchMerchantServiceFromFirebase(String uid) async {
+    try {
+      final userDoc = await _firestore.collection('users').doc(uid).get();
+      if (userDoc.exists) {
+        final userData = userDoc.data();
+        return userData?['merchantService']?.toString() ??
+               userData?['merchant_service']?.toString();
+      }
+      
+      // Also try to find in service-specific collections
+      final services = ['food', 'taxi', 'accommodation', 'courier'];
+      for (final service in services) {
+        final merchantDoc = await _firestore
+            .collection('${service}_merchants')
+            .doc(uid)
+            .get();
+        if (merchantDoc.exists) {
+          return service;
+        }
+      }
+    } catch (e) {
+      print('Error fetching merchant service from Firebase: $e');
+    }
+    return null;
   }
 
   Future<void> _submit() async {
@@ -127,7 +229,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _apple() async {
-    // We allow the button to show everywhere, but only iOS actually runs the flow.
     if (!Platform.isIOS) return;
     setState(() => _socialLoading = true);
     try {
@@ -151,16 +252,14 @@ class _LoginScreenState extends State<LoginScreen> {
       suffixIcon: trailing,
       filled: true,
       fillColor: AppColors.fieldFill,
-      contentPadding:
-          const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide:
-            const BorderSide(color: AppColors.brandOrange, width: 1.2),
+        borderSide: const BorderSide(color: AppColors.brandOrange, width: 1.2),
       ),
     );
   }
@@ -181,8 +280,7 @@ class _LoginScreenState extends State<LoginScreen> {
         SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
                 child: Column(
@@ -252,20 +350,13 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               validator: (v) {
                                 final val = v?.trim() ?? '';
-                                if (val.isEmpty) {
-                                  return 'Email or phone is required';
-                                }
+                                if (val.isEmpty) return 'Email or phone is required';
                                 final isEmail = RegExp(
                                   r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$',
                                 ).hasMatch(val);
-                                final digits =
-                                    val.replaceAll(RegExp(r'\D'), '');
-                                final isLocal = RegExp(
-                                  r'^(08|09)\d{8}$',
-                                ).hasMatch(digits);
-                                final isE164 = RegExp(
-                                  r'^\+265[89]\d{8}$',
-                                ).hasMatch(val);
+                                final digits = val.replaceAll(RegExp(r'\D'), '');
+                                final isLocal = RegExp(r'^(08|09)\d{8}$').hasMatch(digits);
+                                final isE164 = RegExp(r'^\+265[89]\d{8}$').hasMatch(val);
                                 if (!isEmail && !isLocal && !isE164) {
                                   return 'Use email or phone (08/09… or +265…)';
                                 }
@@ -285,22 +376,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                 trailing: IconButton(
                                   tooltip: _obscure ? 'Show' : 'Hide',
                                   icon: Icon(
-                                    _obscure
-                                        ? Icons.visibility
-                                        : Icons.visibility_off,
+                                    _obscure ? Icons.visibility : Icons.visibility_off,
                                   ),
-                                  onPressed: () => setState(
-                                    () => _obscure = !_obscure,
-                                  ),
+                                  onPressed: () => setState(() => _obscure = !_obscure),
                                 ),
                               ),
                               validator: (v) {
-                                if (v == null || v.isEmpty) {
-                                  return 'Password is required';
-                                }
-                                if (v.length < 6) {
-                                  return 'Must be at least 6 characters';
-                                }
+                                if (v == null || v.isEmpty) return 'Password is required';
+                                if (v.length < 6) return 'Must be at least 6 characters';
                                 return null;
                               },
                             ),
@@ -344,16 +427,13 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(width: 6),
                         TextButton(
-                          onPressed: _loading
-                              ? null
-                              : () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          const RegisterScreen(),
-                                    ),
-                                  );
-                                },
+                          onPressed: _loading ? null : () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const RegisterScreen(),
+                              ),
+                            );
+                          },
                           child: const Text(
                             'Create one',
                             style: TextStyle(

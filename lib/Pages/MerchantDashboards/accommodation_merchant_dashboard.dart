@@ -4,10 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
+import 'package:vero360_app/services/merchant_service_helper.dart';
+import 'package:vero360_app/Pages/marketPlace.dart';
+import 'package:vero360_app/Pages/Home/Profilepage.dart';
+import 'package:vero360_app/screens/chat_list_page.dart';
+import 'package:vero360_app/Pages/cartpage.dart';
+import 'package:vero360_app/services/cart_services.dart';
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/merchant_wallet.dart';
-import 'package:vero360_app/services/merchant_service_helper.dart';
+import 'package:vero360_app/Pages/homepage.dart';
 
 class AccommodationMerchantDashboard extends StatefulWidget {
   final String email;
@@ -21,12 +26,14 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final MerchantServiceHelper _helper = MerchantServiceHelper();
+  final CartService _cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
 
   Map<String, dynamic>? _merchantData;
   List<dynamic> _recentBookings = [];
   List<dynamic> _rooms = [];
   List<dynamic> _reviews = [];
   bool _isLoading = true;
+  bool _initialLoadComplete = false;
   String _uid = '';
   String _businessName = '';
   double _walletBalance = 0;
@@ -39,6 +46,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   double _rating = 0.0;
   String _status = 'pending';
   int _availableRooms = 0;
+
+  // Navigation State
+  int _selectedIndex = 0;
 
   @override
   void initState() {
@@ -56,6 +66,8 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   }
 
   Future<void> _loadMerchantData() async {
+    if (!mounted) return;
+    
     setState(() => _isLoading = true);
     
     final prefs = await SharedPreferences.getInstance();
@@ -89,7 +101,12 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       }
     }
     
-    setState(() => _isLoading = false);
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        _initialLoadComplete = true;
+      });
+    }
   }
 
   Future<void> _loadRooms() async {
@@ -99,15 +116,17 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           .where('merchantId', isEqualTo: _uid)
           .get();
       
-      _rooms = snapshot.docs.map((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        return {
-          'id': doc.id,
-          ...data,
-        };
-      }).toList();
-      
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {
+          _rooms = snapshot.docs.map((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return {
+              'id': doc.id,
+              ...data,
+            };
+          }).toList();
+        });
+      }
     } catch (e) {
       print('Error loading rooms: $e');
     }
@@ -120,7 +139,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           .doc(_uid)
           .get();
       
-      if (walletDoc.exists) {
+      if (walletDoc.exists && mounted) {
         setState(() {
           _walletBalance = (walletDoc.data()?['balance'] ?? 0).toDouble();
         });
@@ -139,8 +158,11 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           .limit(5)
           .get();
       
-      _reviews = snapshot.docs.map((doc) => doc.data()).toList();
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {
+          _reviews = snapshot.docs.map((doc) => doc.data()).toList();
+        });
+      }
     } catch (e) {
       print('Error loading reviews: $e');
     }
@@ -154,9 +176,11 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           .where('status', whereIn: ['confirmed', 'checked_in'])
           .get();
       
-      setState(() {
-        _activeBookings = snapshot.size;
-      });
+      if (mounted) {
+        setState(() {
+          _activeBookings = snapshot.size;
+        });
+      }
     } catch (e) {
       print('Error calculating active bookings: $e');
     }
@@ -169,9 +193,11 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         return roomMap['isAvailable'] == true;
       }).length;
       
-      setState(() {
-        _availableRooms = availableRooms;
-      });
+      if (mounted) {
+        setState(() {
+          _availableRooms = availableRooms;
+        });
+      }
     } catch (e) {
       print('Error calculating available rooms: $e');
     }
@@ -193,7 +219,6 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     }
   }
 
-  // ADD THIS METHOD TO FIX THE _StatCard ERROR
   Widget _StatCard({
     required String title,
     required String value,
@@ -243,71 +268,103 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     );
   }
 
+  void _onItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Accommodation Dashboard'),
-        backgroundColor: Colors.purple,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.hotel),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => Bottomnavbar(email: widget.email),
+      appBar: _selectedIndex == 0 ? _buildDashboardAppBar() : null,
+      body: _getCurrentPage(),
+      bottomNavigationBar: _buildMerchantNavBar(),
+    );
+  }
+
+  AppBar _buildDashboardAppBar() {
+    return AppBar(
+      title: Text(_initialLoadComplete ? '$_businessName Dashboard' : 'Loading...'),
+      backgroundColor: Colors.purple,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.switch_account),
+          tooltip: 'Switch to Customer View',
+          onPressed: () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(
+                builder: (_) => Bottomnavbar(email: widget.email),
+              ),
+              (_) => false,
+            );
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.account_balance_wallet),
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MerchantWalletPage(
+                  merchantId: _uid,
+                  merchantName: _businessName,
+                  serviceType: 'accommodation',
                 ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.account_balance_wallet),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => MerchantWalletPage(
-                    merchantId: _uid, 
-                    merchantName: _businessName, 
-                    serviceType: 'accommodation',
-                  ),
-                ),
-              );
-            },
-          ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _getCurrentPage() {
+    switch (_selectedIndex) {
+      case 0: // Dashboard
+        return _buildDashboardContent();
+      case 1: // Home
+        return Vero360Homepage(email: widget.email);
+      case 2: // Cart
+        return CartPage(cartService: _cartService);
+      case 3: // Messages
+        return ChatListPage();
+      case 4: // Profile
+        return ProfilePage();
+      default:
+        return _buildDashboardContent();
+    }
+  }
+
+  Widget _buildDashboardContent() {
+    if (_isLoading) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 20),
+            Text('Loading accommodation dashboard...'),
+          ],
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildWelcomeSection(),
+          _buildStatsSection(),
+          _buildQuickActions(),
+          _buildWalletSummary(),
+          _buildRecentBookings(),
+          _buildRoomsSection(),
+          _buildRecentReviews(),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Welcome Section
-                  _buildWelcomeSection(),
-                  
-                  // Stats Overview
-                  _buildStatsSection(),
-                  
-                  // Quick Actions
-                  _buildQuickActions(),
-                  
-                  // Wallet Summary
-                  _buildWalletSummary(),
-                  
-                  // Recent Bookings
-                  _buildRecentBookings(),
-                  
-                  // Rooms
-                  _buildRoomsSection(),
-                  
-                  // Recent Reviews
-                  _buildRecentReviews(),
-                ],
-              ),
-            ),
     );
   }
 
@@ -758,6 +815,72 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
             );
           }).toList(),
       ],
+    );
+  }
+
+  Widget _buildMerchantNavBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.3),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+        border: Border(top: BorderSide(color: Colors.grey[200]!)),
+      ),
+      child: SafeArea(
+        child: SizedBox(
+          height: 70,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildNavItem(Icons.dashboard, 'Dashboard', 0),
+              _buildNavItem(Icons.home, 'Home', 1),
+              _buildNavItem(Icons.shopping_cart, 'Cart', 2),
+              _buildNavItem(Icons.message, 'Messages', 3),
+              _buildNavItem(Icons.person, 'Profile', 4),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavItem(IconData icon, String label, int index) {
+    bool isSelected = _selectedIndex == index;
+    
+    return GestureDetector(
+      onTap: () => _onItemTapped(index),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.purple.withOpacity(0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? Colors.purple : Colors.grey[600],
+              size: 24,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: isSelected ? Colors.purple : Colors.grey[600],
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

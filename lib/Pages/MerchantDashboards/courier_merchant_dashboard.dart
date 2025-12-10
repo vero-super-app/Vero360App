@@ -341,11 +341,13 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
         return _buildDashboardContent();
       case 1: // Home/Marketplace
         return Vero360Homepage(email: widget.email);
-      case 2: // Cart
+      case 2: 
+        return MarketPage(email:widget.email);
+      case 3: // Cart
         return CartPage(cartService: _cartService);
-      case 3: // Messages
+      case 4: // Messages
         return ChatListPage();
-      case 4: // Profile
+      case 5: // Profile
         return ProfilePage();
       default:
         return _buildDashboardContent();

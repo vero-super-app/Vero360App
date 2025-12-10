@@ -275,18 +275,20 @@ class _MarketPageState extends State<MarketPage> {
 
   // ---------- Cart ----------
   Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
-    try {
-      final token = await _readAuthToken();
-      if (token == null || token.isEmpty) {
-        ToastHelper.showCustomToast(
-          context,
-          'Please log in to add items to cart.',
-          isSuccess: false,
-          errorMessage: 'Not logged in',
-        );
-        return;
-      }
+    final token = await _readAuthToken();
+    if (token == null || token.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please log in to add items to cart.',
+        isSuccess: false,
+        errorMessage: 'Not logged in',
+      );
+      return;
+    }
 
+    _showLoadingDialog();
+
+    try {
       // Prefer numeric id from backend if available, otherwise derive from doc.id
       final int numericItemId = item.hasValidSqlItemId
           ? item.sqlItemId!
@@ -325,7 +327,54 @@ class _MarketPageState extends State<MarketPage> {
         isSuccess: false,
         errorMessage: 'Add to cart failed',
       );
+    } finally {
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
     }
+  }
+
+  void _showLoadingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  "Adding to cart...",
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   // ---------- Search handlers ----------
@@ -941,3 +990,4 @@ class _MarketPageState extends State<MarketPage> {
   String _titleCase(String s) =>
       s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
 }
+

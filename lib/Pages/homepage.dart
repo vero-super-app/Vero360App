@@ -19,6 +19,7 @@ import 'package:vero360_app/Pages/Quickservices/fitness.dart';
 import 'package:vero360_app/Pages/Quickservices/food.dart';
 import 'package:vero360_app/Pages/Quickservices/jobs.dart';
 import 'package:vero360_app/Pages/Quickservices/verocourier.dart';
+import 'package:vero360_app/Pages/car_rental/merchant/my_cars_page.dart';
 import 'package:vero360_app/services/api_config.dart';
 import '../services/cart_services.dart';
 
@@ -400,7 +401,7 @@ final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'ver
         break;
 
       case 'taxi':
-        page = const TaxiPage();
+        page = const MyCarsPage();
         break;
 
       case 'car_hire':

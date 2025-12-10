@@ -145,114 +145,106 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
   @override
   Widget build(BuildContext context) {
-    final canPay = !_submitting && _loggedIn && _defaultAddr != null;
-
-    return Theme(
-      data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Checkout'),
-          backgroundColor: _brandOrange,
-          foregroundColor: Colors.white,
-          elevation: 0,
-        ),
-        body: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-          children: [
-            // Trust banner (same as main)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: _brandSoft,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.lock, size: 18),
-                  SizedBox(width: 8),
-                  Expanded(child: Text('Secure checkout — review your address and payment details.')),
-                ],
-              ),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Checkout'),
+        backgroundColor: const Color(0xFFFF8A00),
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+        children: [
+          // Trust banner
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF3E0),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFF8A00).withValues(alpha: 0.35)),
             ),
-            const SizedBox(height: 12),
+            child: const Row(
+              children: [
+                Icon(Icons.lock, size: 18),
+                SizedBox(width: 8),
+                Expanded(child: Text('Secure checkout — review your address and payment details.')),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
 
-            // Items summary with thumbnails
-            Card(
-              elevation: 6,
-              shadowColor: Colors.black12,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              clipBehavior: Clip.antiAlias,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Your Items',
-                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                    const SizedBox(height: 8),
-                    ListView.separated(
-                      itemCount: widget.items.length,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      separatorBuilder: (_, __) => const Divider(height: 14),
-                      itemBuilder: (_, i) {
-                        final it = widget.items[i];
-                        final lineTotal = it.price * it.quantity;
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: SizedBox(
-                                width: 64, height: 64,
-                                child: (it.image.isNotEmpty)
-                                    ? Image.network(
-                                        it.image,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) => const _ImgFallback(),
-                                      )
-                                    : const _ImgFallback(),
-                              ),
+          // Items summary with thumbnails
+          Card(
+            elevation: 6,
+            shadowColor: Colors.black12,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Your Items',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                  const SizedBox(height: 8),
+                  ListView.separated(
+                    itemCount: widget.items.length,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    separatorBuilder: (_, __) => const Divider(height: 14),
+                    itemBuilder: (_, i) {
+                      final it = widget.items[i];
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: SizedBox(
+                              width: 64, height: 64,
+                              child: (it.image.isNotEmpty)
+                                  ? Image.network(
+                                      it.image,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => const _ImgFallback(),
+                                    )
+                                  : const _ImgFallback(),
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(it.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w700, fontSize: 15)),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${_mwk(it.price)}  •  Qty: ${it.quantity}',
-                                    style: TextStyle(color: Colors.grey.shade700),
-                                  ),
-                                ],
-                              ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(it.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w700, fontSize: 15)),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${_mwk(it.price)}  •  Qty: ${it.quantity}',
+                                  style: TextStyle(color: Colors.grey.shade700),
+                                ),
+                              ],
                             ),
-                            child: const Icon(Icons.shopping_bag, color: Colors.grey),
                           ),
-                          title: Text(
-                            item.name,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                          ),
-                          subtitle: Text('Quantity: ${item.quantity}'),
-                          trailing: Text(
-                            _mwk(item.price * item.quantity),
+                          Text(
+                            _mwk(it.price * it.quantity),
                             style: const TextStyle(
                               color: Colors.green,
                               fontWeight: FontWeight.bold,
-                              fontSize: 16,
+                              fontSize: 14,
                             ),
                           ),
-                        ),
+                        ],
                       );
                     },
                   ),
+                ],
+              ),
+            ),
           ),
+          const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -359,6 +351,18 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ImgFallback extends StatelessWidget {
+  const _ImgFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.grey.shade200,
+      child: const Icon(Icons.image_not_supported, color: Colors.grey),
     );
   }
 }

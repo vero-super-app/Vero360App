@@ -292,7 +292,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: _selectedIndex == 0 ? _buildDashboardAppBar() : null,
+      appBar: _selectedIndex == 4 ? _buildDashboardAppBar() : null, // Dashboard is at index 4
       body: _getCurrentPage(),
       bottomNavigationBar: _buildMerchantNavBar(),
     );
@@ -337,20 +337,18 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
 
   Widget _getCurrentPage() {
     switch (_selectedIndex) {
-      case 0: // Dashboard
-        return _buildDashboardContent();
-      case 1: // Home/Marketplace
+      case 0: // Home (First position)
         return Vero360Homepage(email: widget.email);
-      case 2: 
-        return MarketPage(email:widget.email);
-      case 3: // Cart
+      case 1: // Marketplace (Second position)
+        return MarketPage(cartService: _cartService);
+      case 2: // Cart (Third position)
         return CartPage(cartService: _cartService);
-      case 4: // Messages
+      case 3: // Messages (Fourth position)
         return ChatListPage();
-      case 5: // Profile
-        return ProfilePage();
-      default:
+      case 4: // Dashboard (Fifth/last position)
         return _buildDashboardContent();
+      default:
+        return Vero360Homepage(email: widget.email);
     }
   }
 
@@ -843,11 +841,11 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildNavItem(Icons.dashboard, 'Dashboard', 0),
-              _buildNavItem(Icons.home, 'Home', 1),
+              _buildNavItem(Icons.home, 'Home', 0),
+              _buildNavItem(Icons.store, 'Marketplace', 1),
               _buildNavItem(Icons.shopping_cart, 'Cart', 2),
               _buildNavItem(Icons.message, 'Messages', 3),
-              _buildNavItem(Icons.person, 'Profile', 4),
+              _buildNavItem(Icons.dashboard, 'Dashboard', 4),
             ],
           ),
         ),

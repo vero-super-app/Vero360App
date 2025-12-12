@@ -18,7 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/merchantbottomnavbar.dart';
 import 'package:vero360_app/Pages/cartpage.dart';
-import 'package:vero360_app/pages/profile_from_link_page.dart';
+import 'package:vero360_app/Pages/profile_from_link_page.dart';
 import 'package:vero360_app/screens/login_screen.dart';
 import 'package:vero360_app/screens/register_screen.dart';
 import 'package:vero360_app/services/auth_guard.dart';
@@ -45,13 +45,13 @@ Future<void> main() async {
     );
   } catch (_) {}
 
-   await ApiConfig.useProd();
+  await ApiConfig.useProd();
 
   runApp(const MyApp());
 }
 
 class MyApp extends StatefulWidget {
-  const MyApp({Key? key}) : super(key: key);
+  const MyApp({super.key});
   @override
   State<MyApp> createState() => _MyAppState();
 }
@@ -61,7 +61,8 @@ class _MyAppState extends State<MyApp> {
   StreamSubscription<Uri>? _sub;
 
   // Which shell we’re currently showing (purely for nav correctness)
-  String _currentShell = 'customer'; // customer home is the default (Bottomnavbar)
+  String _currentShell =
+      'customer'; // customer home is the default (Bottomnavbar)
 
   @override
   void initState() {
@@ -79,9 +80,9 @@ class _MyAppState extends State<MyApp> {
   Future<void> _initDeepLinks() async {
     _appLinks = AppLinks();
     _sub = _appLinks.uriLinkStream.listen((uri) {
-      if (uri == null) return;
       if (uri.scheme == 'vero360' && uri.host == 'users' && uri.path == '/me') {
-        navKey.currentState?.push(MaterialPageRoute(builder: (_) => const ProfileFromLinkPage()));
+        navKey.currentState?.push(
+            MaterialPageRoute(builder: (_) => const ProfileFromLinkPage()));
       }
     }, onError: (_) {});
   }
@@ -110,15 +111,18 @@ class _MyAppState extends State<MyApp> {
 
     final base = await ApiConfig.readBase();
     try {
-      final resp = await http
-          .get(Uri.parse('$base/users/me'), headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'})
-          .timeout(const Duration(seconds: 6));
+      final resp = await http.get(Uri.parse('$base/users/me'), headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json'
+      }).timeout(const Duration(seconds: 6));
 
       if (resp.statusCode == 200) {
         final decoded = json.decode(resp.body);
         final user = (decoded is Map && decoded['data'] is Map)
             ? Map<String, dynamic>.from(decoded['data'])
-            : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
+            : (decoded is Map
+                ? Map<String, dynamic>.from(decoded)
+                : <String, dynamic>{});
 
         await _persistUserToPrefs(prefs, user);
         final merchant = _isMerchant(user);
@@ -135,7 +139,9 @@ class _MyAppState extends State<MyApp> {
   }
 
   String? _readToken(SharedPreferences p) =>
-      p.getString('jwt_token') ?? p.getString('token') ?? p.getString('authToken');
+      p.getString('jwt_token') ??
+      p.getString('token') ??
+      p.getString('authToken');
 
   bool _isMerchant(Map<String, dynamic> u) {
     final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
@@ -147,19 +153,25 @@ class _MyAppState extends State<MyApp> {
       'merchant': u['merchant'] == true,
       'merchantId': (u['merchantId'] ?? '').toString().isNotEmpty,
     };
-    return role == 'merchant' || roles.contains('merchant') || flags.values.any((v) => v == true);
+    return role == 'merchant' ||
+        roles.contains('merchant') ||
+        flags.values.any((v) => v == true);
   }
 
-  Future<void> _persistUserToPrefs(SharedPreferences prefs, Map<String, dynamic> u) async {
+  Future<void> _persistUserToPrefs(
+      SharedPreferences prefs, Map<String, dynamic> u) async {
     String _join(String? a, String? b) {
-      final parts = [a, b].where((x) => x != null && x!.trim().isNotEmpty).map((x) => x!.trim()).toList();
+      final parts = [a, b]
+          .where((x) => x != null && x!.trim().isNotEmpty)
+          .map((x) => x!.trim())
+          .toList();
       return parts.isEmpty ? '' : parts.join(' ');
     }
 
     final name = (u['name'] ?? _join(u['firstName'], u['lastName'])).toString();
     final email = (u['email'] ?? u['userEmail'] ?? '').toString();
     final phone = (u['phone'] ?? '').toString();
-    final pic   = (u['profilepicture'] ?? u['profilePicture'] ?? '').toString();
+    final pic = (u['profilepicture'] ?? u['profilePicture'] ?? '').toString();
 
     await prefs.setString('fullName', name.isEmpty ? 'Guest User' : name);
     await prefs.setString('name', name.isEmpty ? 'Guest User' : name);
@@ -213,14 +225,17 @@ class _MyAppState extends State<MyApp> {
       navigatorKey: navKey,
       debugShowCheckedModeBanner: false,
       title: 'Vero360',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFFFF8A00)),
+      theme: ThemeData(
+          useMaterial3: true, colorSchemeSeed: const Color(0xFFFF8A00)),
       home: const Bottomnavbar(email: ''), // ✅ default home (no login gate)
       routes: {
         '/marketplace': (context) => const Bottomnavbar(email: ''),
         '/signup': (context) => const RegisterScreen(),
         '/login': (context) => const LoginScreen(),
-        '/cartpage': (context) =>
-            AuthGuard(child: CartPage(cartService: CartService('https://vero-backend.onrender.com', apiPrefix: ''))),
+        '/cartpage': (context) => AuthGuard(
+            child: CartPage(
+                cartService: CartService('https://vero-backend.onrender.com',
+                    apiPrefix: ''))),
       },
     );
   }
@@ -237,13 +252,18 @@ class AuthFlow {
     try {
       final resp = await http.get(
         Uri.parse('$base/users/me'),
-        headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json'
+        },
       );
       if (resp.statusCode == 200) {
         final decoded = json.decode(resp.body);
         final user = (decoded is Map && decoded['data'] is Map)
             ? Map<String, dynamic>.from(decoded['data'])
-            : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
+            : (decoded is Map
+                ? Map<String, dynamic>.from(decoded)
+                : <String, dynamic>{});
 
         // persist minimal user + role
         final role = _isMerchant(user) ? 'merchant' : 'customer';
@@ -253,7 +273,9 @@ class AuthFlow {
         // route to correct shell
         if (role == 'merchant') {
           navKey.currentState?.pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => MerchantBottomnavbar(email: (user['email'] ?? '').toString())),
+            MaterialPageRoute(
+                builder: (_) => MerchantBottomnavbar(
+                    email: (user['email'] ?? '').toString())),
             (route) => false,
           );
         } else {
@@ -301,6 +323,8 @@ class AuthFlow {
       'merchant': u['merchant'] == true,
       'merchantId': (u['merchantId'] ?? '').toString().isNotEmpty,
     };
-    return role == 'merchant' || roles.contains('merchant') || flags.values.any((v) => v == true);
+    return role == 'merchant' ||
+        roles.contains('merchant') ||
+        flags.values.any((v) => v == true);
   }
 }

@@ -131,7 +131,7 @@ class _MiniIconsGrid extends StatelessWidget {
                         BoxShadow(
                           blurRadius: 6,
                           offset: const Offset(0, 2),
-                          color: Colors.black.withOpacity(0.07),
+                          color: Colors.black.withValues(alpha: 0.07),
                         ),
                       ],
                     ),
@@ -161,5 +161,5 @@ class _MiniIconsGrid extends StatelessWidget {
 
 class _MoreCircle {
   static const iconColor = Color(0xFFFF8A00);
-  static Color get borderColor => const Color(0xFFFF8A00).withOpacity(0.25);
+  static Color get borderColor => const Color(0xFFFF8A00).withValues(alpha: 0.25);
 }

@@ -327,7 +327,7 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
                   decoration: BoxDecoration(
                     color: _brandSoft,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _brandOrange.withOpacity(0.35)),
+                    border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
                   ),
                   child: const Text(
                     'Add a clear logo and accurate opening hours so customers can trust your shop.',
@@ -639,7 +639,7 @@ class _ServiceCard extends StatelessWidget {
     return FilledButton.tonalIcon(
       onPressed: onPressed,
       style: FilledButton.styleFrom(
-        backgroundColor: Colors.white.withOpacity(0.92),
+        backgroundColor: Colors.white.withValues(alpha: 0.92),
         foregroundColor: danger ? Colors.red.shade700 : Colors.blueGrey.shade700,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),

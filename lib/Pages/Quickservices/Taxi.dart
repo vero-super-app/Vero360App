@@ -143,7 +143,7 @@ class _TaxiPageState extends State<TaxiPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
-      barrierColor: Colors.black.withOpacity(0.25),
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -248,7 +248,7 @@ class _TaxiPageState extends State<TaxiPage> {
                                 onSelected: (_) => setState(() => _mixRide = false),
                                 label: const Text('Solo ride'),
                                 avatar: const Icon(Icons.person_rounded, size: 18),
-                                selectedColor: _brandOrange.withOpacity(.15),
+                                selectedColor: _brandOrange.withValues(alpha: .15),
                                 side: const BorderSide(color: Colors.black87, width: 1),
                               ),
                             ),
@@ -259,7 +259,7 @@ class _TaxiPageState extends State<TaxiPage> {
                                 onSelected: (_) => setState(() => _mixRide = true),
                                 label: const Text('Mix ride'),
                                 avatar: const Icon(Icons.groups_rounded, size: 18),
-                                selectedColor: _brandOrange.withOpacity(.15),
+                                selectedColor: _brandOrange.withValues(alpha: .15),
                                 side: const BorderSide(color: Colors.black87, width: 1),
                               ),
                             ),
@@ -340,7 +340,7 @@ class _TaxiPageState extends State<TaxiPage> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF101010).withOpacity(0.03),
+                    color: const Color(0xFF101010).withValues(alpha: 0.03),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Row(
@@ -542,7 +542,7 @@ class _RideSearchSheetState extends State<RideSearchSheet> with TickerProviderSt
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: widget.brandOrange.withOpacity(.12),
+            color: widget.brandOrange.withValues(alpha: .12),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: Colors.black87, width: 1),
           ),
@@ -680,7 +680,7 @@ class _RideSearchSheetState extends State<RideSearchSheet> with TickerProviderSt
             children: [
               CircleAvatar(
                 radius: 22,
-                backgroundColor: widget.brandOrange.withOpacity(.15),
+                backgroundColor: widget.brandOrange.withValues(alpha: .15),
                 child: const Icon(Icons.person_rounded),
               ),
               const SizedBox(width: 12),
@@ -858,7 +858,7 @@ class _RideSearchSheetState extends State<RideSearchSheet> with TickerProviderSt
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: widget.brandOrange.withOpacity(.07),
+        color: widget.brandOrange.withValues(alpha: .07),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.black87, width: 1),
       ),

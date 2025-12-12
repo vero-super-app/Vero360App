@@ -19,6 +19,7 @@ import 'package:vero360_app/Pages/Quickservices/fitness.dart';
 import 'package:vero360_app/Pages/Quickservices/food.dart';
 import 'package:vero360_app/Pages/Quickservices/jobs.dart';
 import 'package:vero360_app/Pages/Quickservices/verocourier.dart';
+import 'package:vero360_app/Pages/car_rental/merchant/my_cars_page.dart';
 import 'package:vero360_app/services/api_config.dart';
 import '../services/cart_services.dart';
 
@@ -400,11 +401,11 @@ final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'ver
         break;
 
       case 'taxi':
-        page = const TaxiPage();
+        page = const MyCarsPage();
         break;
 
       case 'car_hire':
-        page = const carhirepage();
+        page = const CarHirePage();
         break;
 
       case 'send_money':
@@ -804,7 +805,7 @@ class _SectionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.brandOrangeSoft.withOpacity(0.55)),
+        border: Border.all(color: AppColors.brandOrangeSoft.withValues(alpha: 0.55)),
         boxShadow: const [
           BoxShadow(color: Color(0x14000000), blurRadius: 8, offset: Offset(0, 2)),
         ],

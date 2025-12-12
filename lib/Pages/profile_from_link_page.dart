@@ -93,7 +93,7 @@ class _ProfileFromLinkPageState extends State<ProfileFromLinkPage> {
                               width: 64,
                               height: 64,
                               decoration: BoxDecoration(
-                                color: brand.withOpacity(.12),
+                                color: brand.withValues(alpha: .12),
                                 borderRadius: BorderRadius.circular(16),
                               ),
                               child: const Icon(Icons.person_outline,
@@ -275,7 +275,7 @@ class _EmptyState extends StatelessWidget {
               width: 72,
               height: 72,
               decoration: BoxDecoration(
-                color: brand.withOpacity(.12),
+                color: brand.withValues(alpha: .12),
                 borderRadius: BorderRadius.circular(18),
               ),
               child: const Icon(Icons.person_search_outlined,

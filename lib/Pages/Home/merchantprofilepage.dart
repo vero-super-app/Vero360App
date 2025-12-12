@@ -602,7 +602,7 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
             decoration: BoxDecoration(
               color: _cardBg,
               borderRadius: BorderRadius.circular(16),
-              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 6))],
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 12, offset: const Offset(0, 6))],
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -672,7 +672,7 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
       decoration: BoxDecoration(
         color: _cardBg,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 6))],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 12, offset: const Offset(0, 6))],
       ),
       child: LayoutBuilder(
         builder: (context, c) {
@@ -746,9 +746,8 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
       _DetailItem('My Address', Icons.location_on, () { 
         _openBottomSheet(const AddressPage()); 
       }),
-      _DetailItem('My transactions', Icons.history, () { 
-        /* TODO: implement */ 
-      }),
+   
+      
       _DetailItem('My Wallet', Icons.account_balance_wallet, () async {
         final user = FirebaseAuth.instance.currentUser;
         if (user == null || user.uid.isEmpty) {
@@ -772,13 +771,16 @@ Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
       }),
     ];
 
+
+
+
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       decoration: BoxDecoration(
         color: _cardBg,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 6))],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 12, offset: const Offset(0, 6))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

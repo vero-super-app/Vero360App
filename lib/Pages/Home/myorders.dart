@@ -80,14 +80,14 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: c.withOpacity(.12),
+        color: c.withValues(alpha: .12),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: c.withOpacity(.35)),
+        border: Border.all(color: c.withValues(alpha: .35)),
       ),
       child: Text(
         text,
         style: TextStyle(
-          color: c.withOpacity(.95),
+          color: c.withValues(alpha: .95),
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -262,7 +262,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.black87,
-                        side: BorderSide(color: Colors.black12.withOpacity(.4)),
+                        side: BorderSide(color: Colors.black12.withValues(alpha: .4)),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                       onPressed: () => _reloadCurrent(),

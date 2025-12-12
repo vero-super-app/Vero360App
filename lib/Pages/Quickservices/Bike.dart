@@ -25,7 +25,6 @@ class _VeroRidePageState extends State<VeroRidePage> {
   bool _loading = false;
   String? _error;
 
-  // simple: pick city manually here
   String _city = 'Lilongwe';
 
   @override
@@ -65,9 +64,7 @@ class _VeroRidePageState extends State<VeroRidePage> {
         _error = 'Something went wrong. Please try again.';
       });
     } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -91,7 +88,6 @@ class _VeroRidePageState extends State<VeroRidePage> {
         return 'Available now';
       case 'ONLINE_ON_TRIP':
         return 'On a trip';
-      case 'OFFLINE':
       default:
         return 'Offline';
     }
@@ -100,10 +96,9 @@ class _VeroRidePageState extends State<VeroRidePage> {
   Color _statusColor(String status) {
     switch (status) {
       case 'ONLINE_AVAILABLE':
-        return const Color(0xFF1B8F3E); // green
+        return const Color(0xFF1B8F3E);
       case 'ONLINE_ON_TRIP':
-        return const Color(0xFFFFA000); // amber
-      case 'OFFLINE':
+        return const Color(0xFFFFA000);
       default:
         return Colors.grey;
     }
@@ -118,21 +113,14 @@ class _VeroRidePageState extends State<VeroRidePage> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
-          // simple city selector
           PopupMenuButton<String>(
             onSelected: (value) {
               setState(() => _city = value);
               _load();
             },
             itemBuilder: (_) => const [
-              PopupMenuItem(
-                value: 'Lilongwe',
-                child: Text('Lilongwe'),
-              ),
-              PopupMenuItem(
-                value: 'Blantyre',
-                child: Text('Blantyre'),
-              ),
+              PopupMenuItem(value: 'Lilongwe', child: Text('Lilongwe')),
+              PopupMenuItem(value: 'Blantyre', child: Text('Blantyre')),
             ],
             icon: const Icon(Icons.location_city),
           ),
@@ -147,9 +135,7 @@ class _VeroRidePageState extends State<VeroRidePage> {
 
   Widget _buildBody() {
     if (_loading && _drivers.isEmpty && _error == null) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_error != null && _drivers.isEmpty) {
@@ -159,11 +145,7 @@ class _VeroRidePageState extends State<VeroRidePage> {
           const SizedBox(height: 60),
           Icon(Icons.error_outline, size: 48, color: Colors.red.shade400),
           const SizedBox(height: 12),
-          Text(
-            _error!,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 14),
-          ),
+          Text(_error!, textAlign: TextAlign.center),
           const SizedBox(height: 16),
           Center(
             child: FilledButton(
@@ -217,19 +199,13 @@ class _VeroRidePageState extends State<VeroRidePage> {
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
-                // Avatar
-                _DriverAvatar(
-                  name: d.name,
-                  photoUrl: d.photoUrl,
-                ),
+                _DriverAvatar(name: d.name, photoUrl: d.photoUrl),
                 const SizedBox(width: 12),
 
-                // Info
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Name + status chip
                       Row(
                         children: [
                           Expanded(
@@ -245,9 +221,7 @@ class _VeroRidePageState extends State<VeroRidePage> {
                           const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
+                                horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
                               color: statusColor.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(20),
@@ -264,7 +238,9 @@ class _VeroRidePageState extends State<VeroRidePage> {
                           ),
                         ],
                       ),
+
                       const SizedBox(height: 4),
+
                       Row(
                         children: [
                           const Icon(Icons.location_on,
@@ -282,7 +258,9 @@ class _VeroRidePageState extends State<VeroRidePage> {
                           ),
                         ],
                       ),
+
                       const SizedBox(height: 4),
+
                       Row(
                         children: [
                           const Icon(Icons.phone,
@@ -297,34 +275,37 @@ class _VeroRidePageState extends State<VeroRidePage> {
                           ),
                         ],
                       ),
+
                       const SizedBox(height: 8),
 
-                      // Call button
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: _brandOrange,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF101010).withOpacity(0.03),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: const [
+                            Icon(Icons.info_outline_rounded, size: 18),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Safe • Fast • Affordable — perfect for quick errands.',
+                                style: TextStyle(fontSize: 12.5),
+                              ),
                             ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30),
-                            ),
-                            textStyle: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          onPressed: () => _callNumber(d.phone),
-                          icon: const Icon(Icons.call, size: 18),
-                          label: const Text('Call bike now'),
+                          ],
                         ),
                       ),
                     ],
                   ),
+                ),
+
+                const SizedBox(width: 12),
+
+                IconButton(
+                  icon: const Icon(Icons.call, color: Colors.green, size: 28),
+                  onPressed: () => _callNumber(d.phone),
                 ),
               ],
             ),
@@ -346,7 +327,8 @@ class _DriverAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final initial = name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
+    final initial =
+        name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
 
     if (photoUrl != null && photoUrl!.trim().isNotEmpty) {
       return CircleAvatar(

@@ -6,8 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/models/Airport_pickup.models.dart';
 
-import 'package:vero360_app/models/airport_pickup.models.dart';
 import 'package:vero360_app/services/airport_pickup_service.dart';
 import 'package:vero360_app/services/api_exception.dart';
 
@@ -64,8 +64,8 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
 
   // Map + state
   GoogleMapController? _map;
-  static final CameraPosition _initialCamera =
-      const CameraPosition(target: LatLng(-14.3, 34.3), zoom: 6.8); // Malawi fallback
+  static final CameraPosition _initialCamera = const CameraPosition(
+      target: LatLng(-14.3, 34.3), zoom: 6.8); // Malawi fallback
 
   LatLng? _myLatLng;
   String? _serviceCity; // Lilongwe / Blantyre / null
@@ -398,7 +398,7 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.6),
+                        color: Colors.black.withValues(alpha: 0.6),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: const Text(
@@ -479,7 +479,6 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                           ),
                         ),
                         const SizedBox(height: 12),
-
                         _Labeled(
                           label: 'Pickup Airport',
                           child: DropdownButtonFormField<_Airport>(
@@ -499,7 +498,6 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                           ),
                         ),
                         const SizedBox(height: 12),
-
                         _Labeled(
                           label: 'Destination on Map (Drop-off)',
                           child: Row(
@@ -523,7 +521,7 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                                     _dropoff == null
                                         ? 'Tap "Pick on Map" above, then tap on the map'
                                         : 'Lat: ${_dropoff!.latitude.toStringAsFixed(5)}, '
-                                          'Lng: ${_dropoff!.longitude.toStringAsFixed(5)}',
+                                            'Lng: ${_dropoff!.longitude.toStringAsFixed(5)}',
                                     style: TextStyle(
                                       color: _dropoff == null
                                           ? Colors.black54
@@ -555,7 +553,6 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                           ),
                         ),
                         const SizedBox(height: 12),
-
                         _Labeled(
                           label: 'Your Name',
                           child: TextFormField(
@@ -563,17 +560,14 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                             decoration: _inputDecoration().copyWith(
                               hintText: 'Who should the driver ask for?',
                               suffixText: '*',
-                              suffixStyle:
-                                  const TextStyle(color: Colors.red),
+                              suffixStyle: const TextStyle(color: Colors.red),
                             ),
-                            validator: (v) =>
-                                (v == null || v.trim().isEmpty)
-                                    ? 'Name is required'
-                                    : null,
+                            validator: (v) => (v == null || v.trim().isEmpty)
+                                ? 'Name is required'
+                                : null,
                           ),
                         ),
                         const SizedBox(height: 12),
-
                         _Labeled(
                           label: 'Your Phone Number',
                           child: TextFormField(
@@ -582,8 +576,7 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                             decoration: _inputDecoration().copyWith(
                               hintText: 'e.g. +265 99 123 4567',
                               suffixText: '*',
-                              suffixStyle:
-                                  const TextStyle(color: Colors.red),
+                              suffixStyle: const TextStyle(color: Colors.red),
                             ),
                             validator: (v) {
                               final t = v?.trim() ?? '';
@@ -596,7 +589,6 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                           ),
                         ),
                         const SizedBox(height: 12),
-
                         _Labeled(
                           label: 'Destination Address (required details)',
                           child: TextFormField(
@@ -605,20 +597,17 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                               hintText:
                                   'Street / area, landmarks, gate color, etc.',
                               suffixText: '*',
-                              suffixStyle:
-                                  const TextStyle(color: Colors.red),
+                              suffixStyle: const TextStyle(color: Colors.red),
                             ),
                             maxLines: 2,
                             autovalidateMode:
                                 AutovalidateMode.onUserInteraction,
-                            validator: (v) =>
-                                (v == null || v.trim().isEmpty)
-                                    ? 'This field is required'
-                                    : null,
+                            validator: (v) => (v == null || v.trim().isEmpty)
+                                ? 'This field is required'
+                                : null,
                           ),
                         ),
                         const SizedBox(height: 12),
-
                         _Labeled(
                           label: 'Vehicle',
                           child: Wrap(
@@ -642,9 +631,7 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                                           : Colors.black,
                                       width: 1,
                                     ),
-                                    color: selected
-                                        ? _brandSoft
-                                        : Colors.white,
+                                    color: selected ? _brandSoft : Colors.white,
                                   ),
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
@@ -674,7 +661,6 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                           ),
                         ),
                         const SizedBox(height: 12),
-
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(12),
@@ -701,7 +687,6 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                           ),
                         ),
                         const SizedBox(height: 14),
-
                         SizedBox(
                           width: double.infinity,
                           child: FilledButton(
@@ -726,8 +711,7 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                                     width: 20,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      valueColor:
-                                          AlwaysStoppedAnimation<Color>(
+                                      valueColor: AlwaysStoppedAnimation<Color>(
                                         Colors.white,
                                       ),
                                     ),

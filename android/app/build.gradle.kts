@@ -12,7 +12,9 @@ plugins {
 // Load key.properties
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
-if (keystorePropertiesFile.exists()) {
+val hasKeystore = keystorePropertiesFile.exists()
+
+if (hasKeystore) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
@@ -22,16 +24,16 @@ android {
 
     defaultConfig {
         applicationId = "com.vero.vero360"
-        minSdk = 23
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = 10001
         versionName = "1.0.1"
         multiDexEnabled = true
     }
 
-    // 🔐 SIGNING CONFIG UPDATED
+    // 🔐 SIGNING CONFIG
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
+        if (hasKeystore) {
             create("release") {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
@@ -39,6 +41,7 @@ android {
                 storePassword = keystoreProperties["storePassword"] as String
             }
         }
+        // (optional) debug config stays default
     }
 
     buildTypes {
@@ -49,16 +52,20 @@ android {
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+
+            // ✅ Only reference "release" signingConfig if it actually exists
+            if (hasKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            // else: Gradle will keep the default signing (usually debug) for local builds
         }
     }
 
-    // ✅ FIX JVM Target mismatch (1.8 vs 21 error)
+    // ✅ JVM target
     kotlinOptions {
         jvmTarget = "1.8"
     }
 
-    // In case Java compile also needs alignment
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8

@@ -1,5 +1,4 @@
 // lib/Pages/marketPlace.dart
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -16,7 +15,7 @@ import 'package:vero360_app/services/cart_services.dart';
 import 'package:vero360_app/toasthelper.dart';
 
 /// --------------------
-/// Local marketplace model (Firestore)
+/// Local marketplace model (Firestore) - UPDATED WITH MERCHANT FIELDS
 /// --------------------
 class MarketplaceDetailModel {
   final String id;              // Firestore document id
@@ -30,6 +29,10 @@ class MarketplaceDetailModel {
   final String? location;
   final bool isActive;
   final DateTime? createdAt;
+  // NEW: Merchant fields for wallet integration
+  final String? merchantId;
+  final String? merchantName;
+  final String? serviceType;
 
   MarketplaceDetailModel({
     required this.id,
@@ -43,10 +46,22 @@ class MarketplaceDetailModel {
     this.location,
     this.isActive = true,
     this.createdAt,
+    this.merchantId,      // NEW
+    this.merchantName,    // NEW
+    this.serviceType,     // NEW
   });
 
   /// True only if there is a valid numeric backend id
   bool get hasValidSqlItemId => sqlItemId != null && sqlItemId! > 0;
+
+  /// NEW: Check if this item has valid merchant info for wallet payments
+  bool get hasValidMerchantInfo => 
+      merchantId != null && 
+      merchantId!.isNotEmpty && 
+      merchantId != 'unknown' &&
+      merchantName != null &&
+      merchantName!.isNotEmpty &&
+      merchantName != 'Unknown Merchant';
 
   factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
     final data = (doc.data() as Map<String, dynamic>?) ?? {};
@@ -109,6 +124,10 @@ class MarketplaceDetailModel {
       isActive: data['isActive'] is bool ? data['isActive'] as bool : true,
       createdAt: created,
       sqlItemId: sqlId,
+      // NEW: Extract merchant fields from Firestore
+      merchantId: (data['merchantId'] ?? '').toString(),
+      merchantName: (data['merchantName'] ?? '').toString(),
+      serviceType: (data['serviceType'] ?? 'marketplace').toString(),
     );
   }
 }
@@ -273,6 +292,13 @@ class _MarketPageState extends State<MarketPage> {
 
   Future<bool> _isLoggedIn() async => (await _readAuthToken()) != null;
 
+  // Get current user ID (email) for cart
+  Future<String?> _getCurrentUserId() async {
+    final sp = await SharedPreferences.getInstance();
+    final email = sp.getString('email');
+    return email;
+  }
+
   // ---------- Cart ----------
   Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     final token = await _readAuthToken();
@@ -286,33 +312,46 @@ class _MarketPageState extends State<MarketPage> {
       return;
     }
 
+    // NEW: Check if item has valid merchant info for wallet payments
+    if (!item.hasValidMerchantInfo) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item cannot be added to cart: Missing merchant information.',
+        isSuccess: false,
+        errorMessage: 'Invalid merchant info',
+      );
+      return;
+    }
+
     _showLoadingDialog();
 
     try {
+      final userId = await _getCurrentUserId() ?? 'unknown';
+      
       // Prefer numeric id from backend if available, otherwise derive from doc.id
       final int numericItemId = item.hasValidSqlItemId
           ? item.sqlItemId!
           : _stablePositiveIdFromString(item.id);
 
-     // In marketPlace.dart around line 297
-final cartItem = CartModel(
-  userId: userId,
-  item: item.id,
-  quantity: 1,
-  image: item.image,
-  name: item.name,
-  price: item.price,
-  description: item.description ?? '',
-  merchantId: item.merchantId ?? 'unknown',
-  merchantName: item.merchantName ?? 'Unknown Merchant',
-  serviceType: item.serviceType ?? 'marketplace',
-);
+      // UPDATED: Create CartModel with merchant information
+      final cartItem = CartModel(
+        userId: userId,
+        item: numericItemId,
+        quantity: 1,
+        image: item.image,
+        name: item.name,
+        price: item.price,
+        description: item.description ?? '',
+        merchantId: item.merchantId ?? 'unknown',
+        merchantName: item.merchantName ?? 'Unknown Merchant',
+        serviceType: item.serviceType ?? 'marketplace',
+      );
 
       await widget.cartService.addToCart(cartItem);
 
       ToastHelper.showCustomToast(
         context,
-        '${item.name} added to cart!',
+        '${item.name} added to cart!\nFunds will go to ${item.merchantName}',
         isSuccess: true,
         errorMessage: 'OK',
       );
@@ -534,6 +573,35 @@ final cartItem = CartModel(
                       color: Colors.green,
                     ),
                   ),
+                  
+                  // NEW: Merchant badge
+                  if (item.merchantName != null && item.merchantName!.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.orange[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange.shade100),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.store, size: 16, color: Colors.orange[800]),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Merchant: ${item.merchantName}',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.orange[800],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  
                   const SizedBox(height: 8),
                   if (item.location != null &&
                       item.location!.trim().isNotEmpty)
@@ -573,6 +641,34 @@ final cartItem = CartModel(
                         fontSize: 14,
                       ),
                     ),
+                  
+                  // NEW: Wallet payment info note
+                  Container(
+                    margin: const EdgeInsets.symmetric(vertical: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.shade100),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.account_balance_wallet, 
+                            size: 20, color: Colors.blue[700]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Payment for this item will go to ${item.merchantName ?? "the merchant"}\'s wallet.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.blue[800],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
                   const SizedBox(height: 16),
                   Row(
                     children: [
@@ -886,6 +982,30 @@ final cartItem = CartModel(
                       visualDensity: VisualDensity.compact,
                     ),
                   ),
+                // NEW: Merchant badge on image
+                if (item.merchantName != null && item.merchantName!.isNotEmpty)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        item.merchantName!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -993,4 +1113,3 @@ final cartItem = CartModel(
   String _titleCase(String s) =>
       s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
 }
-

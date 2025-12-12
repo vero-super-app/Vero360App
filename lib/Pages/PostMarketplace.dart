@@ -144,17 +144,12 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   Future<void> _checkShop() async {
     setState(() => _checkingShop = true);
     try {
-      final sp = await _spService.fetchMine();
+      // Use getMerchantInfo() instead of fetchMine() to get Map directly
+      final sp = await _spService.getMerchantInfo();
       // if this works, backend already knows you're logged in
       if (sp != null) {
         _hasShop = true;
-        // NEW: Store shop details for merchant info
-                  _myShop = sp is Map<String, dynamic> ? sp : {
-                'id': sp.id?.toString() ?? 'unknown',
-                'businessName': sp.businessName ?? 'Unknown Business',
-                'status': sp.status ?? 'active',
-                'serviceType': 'marketplace',
-              };
+        _myShop = sp;
         
         // Debug: Print merchant info
         print('Merchant Info Loaded:');
@@ -792,7 +787,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             ),
             child: Row(
               children: [
-                Icon(Icons.account_circle, color: Colors.green),
+                const Icon(Icons.account_circle, color: Colors.green),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -823,7 +818,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                     ],
                   ),
                 ),
-                Icon(Icons.check_circle, color: Colors.green[700]),
+                const Icon(Icons.check_circle, color: Colors.green),
               ],
             ),
           )
@@ -1074,7 +1069,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   decoration: BoxDecoration(
                     color: Colors.blue[50],
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue[100]),
+                    border: Border.all(color: Colors.blue.shade100),
                   ),
                   child: Row(
                     children: [
@@ -1181,7 +1176,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             ],
           );
         },
-      );
+      ),
     );
   }
 
@@ -1249,7 +1244,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             ],
           );
         },
-      );
+      ),
     );
   }
 

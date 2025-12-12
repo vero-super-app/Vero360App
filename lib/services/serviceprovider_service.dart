@@ -243,7 +243,7 @@ class ServiceproviderService {
     if (shop == null) return null;
     
     // Convert ServiceProvider to a Map with all required fields
-    return shop.toJson();
+    return _convertServiceProviderToMap(shop);
   }
 
   Future<ServiceProvider?> fetchByNumber(String spNumber) {
@@ -297,8 +297,18 @@ class ServiceproviderService {
   }
 
   // ---------------------------------------------------------------------------
-  // NEW HELPER METHODS FOR MERCHANT WALLET INTEGRATION
+  // HELPER METHODS
   // ---------------------------------------------------------------------------
+
+  /// Convert ServiceProvider object to Map
+  Map<String, dynamic> _convertServiceProviderToMap(ServiceProvider shop) {
+    return {
+      'id': shop.id?.toString() ?? 'unknown',
+      'businessName': shop.businessName ?? 'Unknown Business',
+      'status': shop.status ?? 'active',
+      'serviceType': 'marketplace', // Fixed for marketplace items
+    };
+  }
 
   /// Check if the current user has a valid shop for marketplace posting
   Future<bool> hasValidShop() async {
@@ -318,12 +328,7 @@ class ServiceproviderService {
       final shop = await fetchMine();
       if (shop == null) return null;
       
-      return {
-        'id': shop.id?.toString() ?? 'unknown',
-        'businessName': shop.businessName ?? 'Unknown Merchant',
-        'serviceType': 'marketplace', // Fixed for marketplace items
-        'isActive': shop.status == 'active',
-      };
+      return _convertServiceProviderToMap(shop);
     } catch (e) {
       debugPrint('Error getting merchant info: $e');
       return null;

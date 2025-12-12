@@ -78,6 +78,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   // shop check
   bool _checkingShop = true;
   bool _hasShop = false;
+  Map<String, dynamic>? _myShop; // NEW: Store shop details
 
   // Firestore only (no Firebase Auth, no Storage)
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -145,9 +146,24 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     try {
       final sp = await _spService.fetchMine();
       // if this works, backend already knows you're logged in
-      _hasShop = sp != null;
-    } catch (_) {
+      if (sp != null) {
+        _hasShop = true;
+        // NEW: Store shop details for merchant info
+        _myShop = sp is Map<String, dynamic> ? sp : sp.toJson();
+        
+        // Debug: Print merchant info
+        print('Merchant Info Loaded:');
+        print('  Merchant ID: ${_myShop?['id']}');
+        print('  Business Name: ${_myShop?['businessName']}');
+        print('  Service Type: marketplace');
+      } else {
+        _hasShop = false;
+        _myShop = null;
+      }
+    } catch (e) {
       _hasShop = false;
+      _myShop = null;
+      print('Error fetching shop: $e');
     } finally {
       if (mounted) setState(() => _checkingShop = false);
     }
@@ -264,6 +280,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       videos: (item['videos'] as List<dynamic>?)?.cast<String>() ??
           const [],
       sellerUserId: item['sellerUserId'] as String?,
+      merchantId: item['merchantId'] as String?, // NEW
+      merchantName: item['merchantName'] as String?, // NEW
+      serviceType: item['serviceType'] as String?, // NEW
       // isActive / createdAt are NOT part of the constructor in this model
     );
   }
@@ -395,6 +414,17 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       return;
     }
 
+    // NEW: Validate merchant info
+    if (_myShop == null || _myShop!['id'] == null || _myShop!['businessName'] == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Unable to identify merchant information. Please check your shop profile.',
+        isSuccess: false,
+        errorMessage: 'Missing merchant info',
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
 
     try {
@@ -420,7 +450,17 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         return;
       }
 
-      // 3️⃣ Create marketplace item in Firestore
+      // 3️⃣ Get merchant information from shop
+      final merchantId = _myShop!['id'].toString();
+      final merchantName = _myShop!['businessName'].toString();
+      final serviceType = 'marketplace'; // Fixed for marketplace items
+
+      print('Creating item with merchant info:');
+      print('  Merchant ID: $merchantId');
+      print('  Merchant Name: $merchantName');
+      print('  Service Type: $serviceType');
+
+      // 4️⃣ Create marketplace item in Firestore WITH MERCHANT INFO
       final data = {
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? 0,
@@ -435,13 +475,20 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         'createdAt': FieldValue.serverTimestamp(),
         // if sellerId is null we still allow posting
         'sellerUserId': sellerId ?? 'unknown',
+        // NEW: Merchant information for wallet payments
+        'merchantId': merchantId,
+        'merchantName': merchantName,
+        'serviceType': serviceType,
       };
 
-      await _db.collection('marketplace_items').add(data);
+      final docRef = await _db.collection('marketplace_items').add(data);
+      
+      print('Item created with ID: ${docRef.id}');
+      print('Full data: $data');
 
       ToastHelper.showCustomToast(
         context,
-        'Item Posted Successfully!',
+        'Item Posted Successfully!\nFunds will go to your merchant wallet.',
         isSuccess: true,
         errorMessage: 'Created',
       );
@@ -634,7 +681,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
-    final canCreate = !_submitting && _cover != null && _hasShop;
+    final canCreate = !_submitting && _cover != null && _hasShop && _myShop != null;
 
     return Scaffold(
       appBar: AppBar(
@@ -728,6 +775,55 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       );
     }
 
+    // NEW: Show merchant info banner
+    final merchantInfo = _myShop != null 
+        ? Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.green[50],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.green[100]),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.account_circle, color: Colors.green[700]),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Merchant: ${_myShop!['businessName']}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green[800],
+                        ),
+                      ),
+                      Text(
+                        'Service: Marketplace',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.green[600],
+                        ),
+                      ),
+                      if (_myShop?['id'] != null)
+                        Text(
+                          'ID: ${_myShop!['id']}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.check_circle, color: Colors.green[700]),
+              ],
+            ),
+          )
+        : Container();
+
     // Normal form when a shop exists
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -743,6 +839,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Merchant info banner
+                merchantInfo,
+
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -765,7 +864,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                       Expanded(
                         child: Text(
                           'Add clear photos, set the right category, location and price. '
-                          'Images are automatically compressed and stored safely.',
+                          'Images are automatically compressed and stored safely.\n'
+                          'NOTE: Payments for this item will go to your merchant wallet.',
                           style: TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),
@@ -884,7 +984,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
                   ],
-                  decoration: _inputDecoration(label: 'Price (MK)'),
+                  decoration: _inputDecoration(label: 'Price (MWK)'),
                   validator: (v) {
                     final pv = double.tryParse(v?.trim() ?? '');
                     if (pv == null || pv <= 0) {
@@ -962,6 +1062,33 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   contentPadding: EdgeInsets.zero,
                 ),
                 const SizedBox(height: 8),
+
+                // NEW: Payment info note
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue[100]),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.account_balance_wallet, 
+                          size: 20, color: Colors.blue[700]),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Payments for this item will be credited to your merchant wallet automatically.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.blue[800],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
 
                 FilledButton.icon(
                   style: _filledBtnStyle(),
@@ -1049,7 +1176,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             ],
           );
         },
-      ),
+      );
     );
   }
 
@@ -1117,7 +1244,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             ],
           );
         },
-      ),
+      );
     );
   }
 
@@ -1247,6 +1374,30 @@ class _ManageCard extends StatelessWidget {
                   ],
                 ),
               ),
+              // NEW: Merchant badge
+              if (item['merchantName'] != null)
+                Positioned(
+                  left: 6,
+                  bottom: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      item['merchantName'].toString(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
           Padding(
@@ -1289,7 +1440,7 @@ class _ManageCard extends StatelessWidget {
                     ),
                   ),
                   child: Text(
-                    'MK ${price.toStringAsFixed(0)}',
+                    'MWK ${price.toStringAsFixed(0)}',
                     style: const TextStyle(
                       fontWeight: FontWeight.w700,
                     ),
@@ -1309,6 +1460,41 @@ class _ManageCard extends StatelessWidget {
               ],
             ),
           ),
+          // NEW: Merchant info footer
+          if (item['merchantId'] != null)
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 6,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                border: Border(
+                  top: BorderSide(
+                    color: Colors.grey[200]!,
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.account_balance_wallet,
+                    size: 12,
+                    color: Colors.green[700],
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Merchant Item',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.green[700],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );

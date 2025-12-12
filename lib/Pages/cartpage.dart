@@ -1,10 +1,12 @@
 // lib/Pages/cartpage.dart
 import 'dart:async';
-import 'dart:convert'; // for base64 image support
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:io';
 
-import 'package:cloud_firestore/cloud_firestore.dart'; // FIREBASE BACKUP
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // NEW
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -26,77 +28,43 @@ class _CartPageState extends State<CartPage> {
   final List<CartModel> _items = [];
   String? _error;
   bool _loading = false;
-
-  // --- Firebase ---
+  
+  // NEW: Firebase services
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-
+  final FirebaseAuth _auth = FirebaseAuth.instance; // NEW
+  
   @override
   void initState() {
     super.initState();
     _cartFuture = _fetch();
   }
 
-  /// "True login" = has a backend token (needed for real API calls / checkout).
-  Future<bool> _hasToken() async {
-    final sp = await SharedPreferences.getInstance();
-    final t =
-        sp.getString('token') ?? sp.getString('jwt_token') ?? sp.getString('jwt');
-    return t != null && t.isNotEmpty;
-  }
-
-  /// "Session" = either a backend token **or** at least an email (Firebase-only user).
-  /// We use this to decide whether the user may use the cart UI (including Firestore-only mode).
+  /// Check if user has a valid session
   Future<bool> _hasSession() async {
     final sp = await SharedPreferences.getInstance();
-    final t =
-        sp.getString('token') ?? sp.getString('jwt_token') ?? sp.getString('jwt');
+    final t = sp.getString('token') ?? sp.getString('jwt_token') ?? sp.getString('jwt');
     final email = sp.getString('email');
-    return (t != null && t.isNotEmpty) || (email != null && email.isNotEmpty);
+    final uid = _auth.currentUser?.uid;
+    return (t != null && t.isNotEmpty) || 
+           (email != null && email.isNotEmpty) ||
+           (uid != null && uid.isNotEmpty);
   }
 
-  /// Firestore document id for the current user (we use saved email).
-  Future<String?> _userCartDocId() async {
+  /// Get current user ID for Firestore
+  Future<String?> _getCurrentUserId() async {
+    final user = _auth.currentUser;
+    if (user != null) return user.uid;
+    
     final sp = await SharedPreferences.getInstance();
     final email = sp.getString('email');
-    if (email != null && email.isNotEmpty) return email;
-    return null;
+    return email;
   }
 
-  bool _looksLikeServiceUnavailable(Object e) {
-    final msg = e.toString().toLowerCase();
-
-    return
-        // explicit “service temporarily unavailable”
-        msg.contains('service is temporarily unavailable') ||
-
-        // 5xx / gateway style issues
-        msg.contains('502') ||
-        msg.contains('bad gateway') ||
-        msg.contains('503') ||
-        msg.contains('504') ||
-        msg.contains('gateway') ||
-        msg.contains('internal server error') ||
-        msg.contains('server error') ||
-
-        // network-ish errors
-        msg.contains('socketexception') ||
-        msg.contains('failed host lookup') ||
-        msg.contains('connection refused') ||
-        msg.contains('network is unreachable') ||
-
-        // your ApiClient generic message: “We couldn’t process your request…”
-        msg.contains('couldn') ||
-
-        // treat unauthorized as “API not usable” for cart
-        msg.contains('unauthorized') ||
-        msg.contains('401');
-  }
-
-  // -------- FIREBASE BACKUP HELPERS --------
+  // -------- FIREBASE BACKUP HELPERS (UPDATED) --------
 
   Future<void> _saveCartToFirestore(List<CartModel> items) async {
     try {
-      final userId = await _userCartDocId();
+      final userId = await _getCurrentUserId();
       if (userId == null || userId.isEmpty) return;
 
       final col = _firestore
@@ -106,46 +74,51 @@ class _CartPageState extends State<CartPage> {
 
       final batch = _firestore.batch();
 
-      // clear existing
+      // Clear existing
       final existing = await col.get();
       for (final doc in existing.docs) {
         batch.delete(doc.reference);
       }
 
-      // write fresh
-      for (final it in items) {
-        final docRef = col.doc(it.item.toString());
+      // Write fresh with merchant info
+      for (final item in items) {
+        final docRef = col.doc('${item.item}_${item.merchantId}'); // Include merchant ID
         batch.set(docRef, {
-          'itemId': it.item,
-          'name': it.name,
-          'image': it.image,
-          'price': it.price,
-          'quantity': it.quantity,
-          'description': it.description,
-          'comment': it.comment,
+          'itemId': item.item,
+          'name': item.name,
+          'image': item.image,
+          'price': item.price,
+          'quantity': item.quantity,
+          'description': item.description,
+          'comment': item.comment,
+          'merchantId': item.merchantId,          // NEW
+          'merchantName': item.merchantName,      // NEW
+          'serviceType': item.serviceType,        // NEW
           'updatedAt': FieldValue.serverTimestamp(),
         });
       }
 
       await batch.commit();
-    } catch (_) {
-      // backup errors should never crash the UI
+    } catch (e) {
+      print('Error saving cart to Firestore: $e');
     }
   }
 
   Future<List<CartModel>> _loadCartFromFirestore() async {
     try {
-      final userId = await _userCartDocId();
+      final userId = await _getCurrentUserId();
       if (userId == null || userId.isEmpty) return [];
 
       final snapshot = await _firestore
           .collection('backup_carts')
           .doc(userId)
           .collection('items')
+          .orderBy('updatedAt', descending: true)
           .get();
 
-      return snapshot.docs.map((d) {
-        final data = d.data();
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+        
         final rawItemId = data['itemId'] ?? data['item'];
         final itemId = rawItemId is num
             ? rawItemId.toInt()
@@ -170,23 +143,27 @@ class _CartPageState extends State<CartPage> {
           price: price,
           description: (data['description'] ?? '').toString(),
           comment: (data['comment'] ?? '').toString(),
+          merchantId: (data['merchantId'] ?? '').toString(),    // NEW
+          merchantName: (data['merchantName'] ?? '').toString(), // NEW
+          serviceType: (data['serviceType'] ?? 'marketplace').toString(), // NEW
         );
       }).toList();
-    } catch (_) {
+    } catch (e) {
+      print('Error loading cart from Firestore: $e');
       return [];
     }
   }
 
   Future<void> _upsertCartItemInFirestore(CartModel item) async {
     try {
-      final userId = await _userCartDocId();
+      final userId = await _getCurrentUserId();
       if (userId == null || userId.isEmpty) return;
 
       final doc = _firestore
           .collection('backup_carts')
           .doc(userId)
           .collection('items')
-          .doc(item.item.toString());
+          .doc('${item.item}_${item.merchantId}'); // Include merchant ID
 
       await doc.set({
         'itemId': item.item,
@@ -196,44 +173,33 @@ class _CartPageState extends State<CartPage> {
         'quantity': item.quantity,
         'description': item.description,
         'comment': item.comment,
+        'merchantId': item.merchantId,          // NEW
+        'merchantName': item.merchantName,      // NEW
+        'serviceType': item.serviceType,        // NEW
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-    } catch (_) {}
+    } catch (e) {
+      print('Error upserting cart item: $e');
+    }
   }
 
   Future<void> _removeFromFirestore(CartModel item) async {
     try {
-      final userId = await _userCartDocId();
+      final userId = await _getCurrentUserId();
       if (userId == null || userId.isEmpty) return;
 
       final doc = _firestore
           .collection('backup_carts')
           .doc(userId)
           .collection('items')
-          .doc(item.item.toString());
+          .doc('${item.item}_${item.merchantId}'); // Include merchant ID
       await doc.delete();
-    } catch (_) {}
+    } catch (e) {
+      print('Error removing from Firestore: $e');
+    }
   }
 
-  Future<void> _clearCartInFirestore() async {
-    try {
-      final userId = await _userCartDocId();
-      if (userId == null || userId.isEmpty) return;
-
-      final col = _firestore
-          .collection('backup_carts')
-          .doc(userId)
-          .collection('items');
-      final snap = await col.get();
-      final batch = _firestore.batch();
-      for (final doc in snap.docs) {
-        batch.delete(doc.reference);
-      }
-      await batch.commit();
-    } catch (_) {}
-  }
-
-  // -------- MAIN FETCH (API + FIREBASE FALLBACK) --------
+  // -------- MAIN FETCH (UPDATED FOR MERCHANT INFO) --------
   Future<List<CartModel>> _fetch() async {
     setState(() {
       _loading = true;
@@ -241,7 +207,6 @@ class _CartPageState extends State<CartPage> {
     });
 
     try {
-      // Allow either NestJS token OR Firebase-only session.
       if (!await _hasSession()) {
         _items.clear();
         ToastHelper.showCustomToast(
@@ -256,57 +221,36 @@ class _CartPageState extends State<CartPage> {
       try {
         // 1) Try main backend (NestJS)
         final data = await widget.cartService.fetchCartItems();
+        
+        // Validate merchant info
+        final validatedItems = data.where((item) => item.hasValidMerchant).toList();
+        
+        if (validatedItems.length != data.length) {
+          print('Warning: Some items missing merchant info');
+        }
+        
         _items
           ..clear()
-          ..addAll(data);
+          ..addAll(validatedItems);
 
         // 2) Mirror to Firebase backup
         await _saveCartToFirestore(_items);
 
         return _items;
       } catch (e) {
-        final msg = e.toString();
-
-        // 2a) Backend down / unauthorized → FALL BACK to Firebase
-        if (_looksLikeServiceUnavailable(e)) {
-          final backup = await _loadCartFromFirestore();
-          _items
-            ..clear()
-            ..addAll(backup);
-
-          if (backup.isEmpty) {
-            _error =
-                'Backend is down and no cart backup is available yet in Firebase.';
-          }
-
-          ToastHelper.showCustomToast(
-            context,
-            'Service unavailable. Showing your last saved cart from backup.',
-            isSuccess: backup.isNotEmpty,
-            errorMessage: backup.isEmpty ? 'No backup' : '',
-          );
-          return _items;
-        }
-
-        // 2b) Explicit “no items” case
-        if (msg.contains('404') ||
-            msg.toLowerCase().contains('no items in cart')) {
-          _items.clear();
-          return _items;
-        }
-
-        // 2c) Any other error: still NEVER rethrow, just try Firebase
+        // Fallback to Firebase backup
         final backup = await _loadCartFromFirestore();
         _items
           ..clear()
           ..addAll(backup);
 
-        _error = msg;
         ToastHelper.showCustomToast(
           context,
-          'Problem loading live cart. Showing backup if available.',
+          backup.isEmpty 
+            ? 'Unable to load cart. Please check your connection.'
+            : 'Showing your last saved cart from backup.',
           isSuccess: backup.isNotEmpty,
-          errorMessage: msg,
+          errorMessage: backup.isEmpty ? 'No backup available' : '',
         );
         return _items;
       }
@@ -315,16 +259,8 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
-  Future<void> _refresh() async {
-    setState(() => _cartFuture = _fetch());
-    await _cartFuture;
-  }
-
-  double get _subtotal =>
-      _items.fold(0.0, (sum, it) => sum + (it.price * it.quantity));
-
-  String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
-
+  // -------- CART OPERATIONS (UPDATED) --------
+  
   Future<void> _remove(CartModel item) async {
     if (item.item <= 0) {
       ToastHelper.showCustomToast(
@@ -336,66 +272,41 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
-    final idx = _items.indexWhere((x) => x.item == item.item);
+    final idx = _items.indexWhere((x) => 
+        x.item == item.item && x.merchantId == item.merchantId);
     if (idx == -1) return;
+    
     final backup = _items[idx];
-
     setState(() => _items.removeAt(idx));
 
     try {
       await widget.cartService.removeFromCart(item.item);
-      await _removeFromFirestore(backup); // keep backup clean
-      if (mounted) {
-        ToastHelper.showCustomToast(
-          context,
-          'Removed ${item.name}',
-          isSuccess: true,
-          errorMessage: 'OK',
-        );
-      }
+      await _removeFromFirestore(backup);
+      
+      ToastHelper.showCustomToast(
+        context,
+        'Removed ${item.name}',
+        isSuccess: true,
+        errorMessage: 'OK',
+      );
     } catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        // Server offline/unauthorized: keep local removal + update backup only
-        await _removeFromFirestore(backup);
-        if (mounted) {
-          ToastHelper.showCustomToast(
-            context,
-            'Server offline. Removed from local backup only.',
-            isSuccess: true,
-            errorMessage: '',
-          );
-        }
-      } else {
-        // real error → restore item
-        setState(() => _items.insert(idx, backup));
-        if (mounted) {
-          ToastHelper.showCustomToast(
-            context,
-            'Failed to remove item',
-            isSuccess: false,
-            errorMessage: e.toString(),
-          );
-        }
-      }
+      // Restore item on error
+      setState(() => _items.insert(idx, backup));
+      ToastHelper.showCustomToast(
+        context,
+        'Failed to remove item',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
     }
   }
 
   Future<void> _changeQty(CartModel item, int newQty) async {
-    newQty = max(0, min(99, newQty));
+    newQty = max(1, min(99, newQty));
     if (newQty == item.quantity) return;
-    if (newQty == 0) return _remove(item);
 
-    if (item.item <= 0) {
-      ToastHelper.showCustomToast(
-        context,
-        'Invalid cart item id.',
-        isSuccess: false,
-        errorMessage: 'item <= 0',
-      );
-      return;
-    }
-
-    final idx = _items.indexWhere((x) => x.item == item.item);
+    final idx = _items.indexWhere((x) => 
+        x.item == item.item && x.merchantId == item.merchantId);
     if (idx == -1) return;
 
     final old = _items[idx];
@@ -404,109 +315,23 @@ class _CartPageState extends State<CartPage> {
     setState(() => _items[idx] = updated);
 
     try {
-      // Server upserts on POST /cart (NestJS).
-      await widget.cartService.addToCart(
-        CartModel(
-          userId: old.userId,
-          item: item.item,
-          quantity: newQty,
-          name: item.name,
-          image: item.image,
-          price: item.price,
-          description: item.description,
-          comment: item.comment,
-        ),
-      );
+      await widget.cartService.addToCart(updated);
       await _upsertCartItemInFirestore(updated);
     } catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        // Server offline/unauthorized → Firebase-only update
-        await _upsertCartItemInFirestore(updated);
-        if (mounted) {
-          ToastHelper.showCustomToast(
-            context,
-            'Server offline. Quantity updated in local backup only.',
-            isSuccess: true,
-            errorMessage: '',
-          );
-        }
-      } else {
-        setState(() => _items[idx] = old);
-        if (mounted) {
-          ToastHelper.showCustomToast(
-            context,
-            'Failed to update quantity',
-            isSuccess: false,
-            errorMessage: e.toString(),
-          );
-        }
-      }
-    }
-  }
-
-  Future<void> _clearCart() async {
-    if (_items.isEmpty) return;
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Clear cart?'),
-        content: const Text('Remove all items from your cart.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Clear'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-
-    final backupItems = List<CartModel>.from(_items);
-    setState(() => _items.clear());
-
-    try {
-      await widget.cartService.clearCart();
-      await _clearCartInFirestore();
+      setState(() => _items[idx] = old);
       ToastHelper.showCustomToast(
         context,
-        'Cart cleared',
-        isSuccess: true,
-        errorMessage: 'OK',
+        'Failed to update quantity',
+        isSuccess: false,
+        errorMessage: e.toString(),
       );
-    } catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        await _clearCartInFirestore();
-        ToastHelper.showCustomToast(
-          context,
-          'Server offline. Cleared local backup cart only.',
-          isSuccess: true,
-          errorMessage: '',
-        );
-      } else {
-        // restore items
-        setState(() {
-          _items
-            ..clear()
-            ..addAll(backupItems);
-        });
-        ToastHelper.showCustomToast(
-          context,
-          'Failed to clear cart',
-          isSuccess: false,
-          errorMessage: e.toString(),
-        );
-      }
     }
   }
 
+  // -------- CHECKOUT VALIDATION --------
   Future<void> _proceedToCheckout() async {
-    // Checkout still requires a real backend token (NestJS) for payments.
-    if (!await _hasToken()) {
+    // 1. Check authentication
+    if (!await _hasSession()) {
       ToastHelper.showCustomToast(
         context,
         'Please log in to checkout.',
@@ -515,6 +340,8 @@ class _CartPageState extends State<CartPage> {
       );
       return;
     }
+    
+    // 2. Check if cart is empty
     if (_items.isEmpty) {
       ToastHelper.showCustomToast(
         context,
@@ -524,7 +351,42 @@ class _CartPageState extends State<CartPage> {
       );
       return;
     }
+    
+    // 3. Check if all items have valid merchant info
+    final invalidItems = _items.where((item) => !item.hasValidMerchant).toList();
+    if (invalidItems.isNotEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Some items are missing merchant information. Please remove them.',
+        isSuccess: false,
+        errorMessage: 'Invalid merchant info',
+      );
+      return;
+    }
 
+    // 4. Check for duplicates (same item from same merchant)
+    final itemKeys = <String>{};
+    final duplicates = <CartModel>[];
+    
+    for (final item in _items) {
+      final key = '${item.item}_${item.merchantId}';
+      if (itemKeys.contains(key)) {
+        duplicates.add(item);
+      }
+      itemKeys.add(key);
+    }
+    
+    if (duplicates.isNotEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Duplicate items found. Please update your cart.',
+        isSuccess: false,
+        errorMessage: 'Duplicate items',
+      );
+      return;
+    }
+
+    // 5. Proceed to checkout
     final itemsForCheckout = List<CartModel>.from(_items);
 
     await Navigator.push(
@@ -537,11 +399,36 @@ class _CartPageState extends State<CartPage> {
     if (mounted) _refresh();
   }
 
+  Future<void> _refresh() async {
+    setState(() => _cartFuture = _fetch());
+    await _cartFuture;
+  }
+
+  // Helper to calculate totals
+  double get _subtotal =>
+      _items.fold(0.0, (sum, it) => sum + (it.price * it.quantity));
+
+  // Helper to group items by merchant (for display)
+  Map<String, List<CartModel>> get _itemsByMerchant {
+    final Map<String, List<CartModel>> groups = {};
+    
+    for (final item in _items) {
+      if (!groups.containsKey(item.merchantId)) {
+        groups[item.merchantId] = [];
+      }
+      groups[item.merchantId]!.add(item);
+    }
+    
+    return groups;
+  }
+
   @override
   Widget build(BuildContext context) {
     final deliveryFee = _items.isEmpty ? 0.0 : 20.0;
     final discount = 0.0;
     final total = _subtotal + deliveryFee + discount;
+    
+    final merchantGroups = _itemsByMerchant;
 
     return Scaffold(
       appBar: AppBar(
@@ -549,9 +436,9 @@ class _CartPageState extends State<CartPage> {
         centerTitle: true,
         actions: [
           IconButton(
-            tooltip: 'Clear cart',
-            onPressed: _items.isEmpty ? null : _clearCart,
-            icon: const Icon(Icons.delete_sweep),
+            tooltip: 'Refresh cart',
+            onPressed: _refresh,
+            icon: const Icon(Icons.refresh),
           ),
         ],
       ),
@@ -565,31 +452,6 @@ class _CartPageState extends State<CartPage> {
               return const Center(child: CircularProgressIndicator());
             }
 
-            // Since we now swallow errors in _fetch(), snapshot.hasError
-            // should rarely be true – but we keep this block just in case.
-            if (snapshot.hasError && _items.isEmpty) {
-              return ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  const SizedBox(height: 120),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      'Error loading cart:\n${_error ?? snapshot.error}',
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Center(
-                    child: ElevatedButton(
-                      onPressed: _refresh,
-                      child: const Text('Retry'),
-                    ),
-                  ),
-                ],
-              );
-            }
-
             if (_items.isEmpty) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -598,7 +460,7 @@ class _CartPageState extends State<CartPage> {
                   Center(
                     child: Text(
                       'Your cart is empty',
-                      style: TextStyle(color: Colors.red),
+                      style: TextStyle(fontSize: 18, color: Colors.grey),
                     ),
                   ),
                 ],
@@ -607,26 +469,56 @@ class _CartPageState extends State<CartPage> {
 
             return Column(
               children: [
-                Expanded(
-                  child: ListView.separated(
-                    itemCount: _items.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 4),
-                    itemBuilder: (context, i) => _CartItemTile(
-                      item: _items[i],
-                      onInc: () =>
-                          _changeQty(_items[i], _items[i].quantity + 1),
-                      onDec: () =>
-                          _changeQty(_items[i], _items[i].quantity - 1),
-                      onRemove: () => _remove(_items[i]),
+                // Merchant Groups Header
+                if (merchantGroups.length > 1)
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.store, size: 20, color: Colors.orange),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Items from ${merchantGroups.length} merchants',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.orange[800],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
+
+                Expanded(
+                  child: ListView(
+                    children: [
+                      // Display items grouped by merchant
+                      for (final merchantId in merchantGroups.keys)
+                        _MerchantGroupSection(
+                          merchantName: merchantGroups[merchantId]!.first.merchantName,
+                          items: merchantGroups[merchantId]!,
+                          onInc: (item) => _changeQty(item, item.quantity + 1),
+                          onDec: (item) => _changeQty(item, item.quantity - 1),
+                          onRemove: _remove,
+                        ),
+                    ],
+                  ),
                 ),
+                
                 _CartSummary(
                   subtotal: _subtotal,
                   deliveryFee: deliveryFee,
                   discount: discount,
                   total: total,
                   loading: _loading,
+                  merchantCount: merchantGroups.length,
                   onCheckout: _proceedToCheckout,
                 ),
               ],
@@ -638,6 +530,73 @@ class _CartPageState extends State<CartPage> {
   }
 }
 
+// NEW: Merchant Group Section Widget
+class _MerchantGroupSection extends StatelessWidget {
+  final String merchantName;
+  final List<CartModel> items;
+  final Function(CartModel) onInc;
+  final Function(CartModel) onDec;
+  final Function(CartModel) onRemove;
+
+  const _MerchantGroupSection({
+    required this.merchantName,
+    required this.items,
+    required this.onInc,
+    required this.onDec,
+    required this.onRemove,
+  });
+
+  double get merchantTotal => items.fold(
+      0.0, (sum, item) => sum + (item.price * item.quantity));
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Merchant Header
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: Row(
+            children: [
+              Icon(Icons.store, size: 16, color: Colors.grey[600]),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  merchantName,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: Colors.grey[700],
+                  ),
+                ),
+              ),
+              Text(
+                'MWK ${merchantTotal.toStringAsFixed(2)}',
+                style:  TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: Colors.green,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Items for this merchant
+        ...items.map((item) => _CartItemTile(
+              item: item,
+              onInc: () => onInc(item),
+              onDec: () => onDec(item),
+              onRemove: () => onRemove(item),
+            )),
+        
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+// Updated CartItemTile (keeps your existing image logic)
 class _CartItemTile extends StatelessWidget {
   const _CartItemTile({
     required this.item,
@@ -653,57 +612,36 @@ class _CartItemTile extends StatelessWidget {
 
   String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
 
+  // ... (keep your existing image decoding methods)
   void _debugLogImage() {
     if (item.image.isEmpty) {
-      // ignore: avoid_print
-      print('[CartPage] image EMPTY for "${item.name}" (itemId=${item.item})');
+      print('[CartPage] image EMPTY for "${item.name}"');
     } else {
-      final short =
-          item.image.length > 80 ? item.image.substring(0, 80) : item.image;
-      // ignore: avoid_print
-      print(
-          '[CartPage] image for "${item.name}" (itemId=${item.item}) len=${item.image.length}: $short...');
+      final short = item.image.length > 80 ? item.image.substring(0, 80) : item.image;
+      print('[CartPage] image for "${item.name}" len=${item.image.length}: $short...');
     }
   }
 
-  /// Decode base64 image (supports raw base64 and data URLs).
-  /// Fixes missing padding to avoid FormatException.
   Uint8List? _decodeBase64Image(String v) {
     if (v.isEmpty) return null;
-
-    // If it looks like a normal URL, skip base64 and let Image.network handle it.
     final lower = v.toLowerCase();
     if (lower.startsWith('http://') || lower.startsWith('https://')) {
       return null;
     }
-
     try {
-      // Remove whitespace/newlines
       var cleaned = v.trim().replaceAll(RegExp(r'\s+'), '');
-
-      // If it is a data URL: data:image/jpeg;base64,XXXX
       final commaIndex = cleaned.indexOf(',');
       if (cleaned.startsWith('data:image') && commaIndex != -1) {
         cleaned = cleaned.substring(commaIndex + 1);
       }
-
-      // base64 length must be a multiple of 4
       final mod = cleaned.length % 4;
       if (mod != 0) {
         cleaned = cleaned.padRight(cleaned.length + (4 - mod), '=');
       }
-
       final bytes = base64Decode(cleaned);
       if (bytes.isEmpty) return null;
-
-      // Debug length only, no "too small" filter.
-      // ignore: avoid_print
-      print(
-          '[CartPage] decoded base64 for "${item.name}" -> ${bytes.length} bytes');
-
       return bytes;
     } catch (e) {
-      // ignore: avoid_print
       print('[CartPage] base64 decode failed for "${item.name}": $e');
       return null;
     }
@@ -726,8 +664,7 @@ class _CartItemTile extends StatelessWidget {
       imageWidget = _placeholder();
     } else {
       final lower = item.image.toLowerCase();
-      final isUrl =
-          lower.startsWith('http://') || lower.startsWith('https://');
+      final isUrl = lower.startsWith('http://') || lower.startsWith('https://');
 
       if (isUrl) {
         imageWidget = Image.network(
@@ -737,22 +674,14 @@ class _CartItemTile extends StatelessWidget {
         );
       } else {
         final bytes = _decodeBase64Image(item.image);
-
-        if (bytes != null) {
-          imageWidget = Image.memory(
-            bytes,
-            fit: BoxFit.cover,
-            // If the bytes are still not a valid image, fall back gracefully
-            errorBuilder: (_, __, ___) => _placeholder(),
-          );
-        } else {
-          imageWidget = _placeholder();
-        }
+        imageWidget = bytes != null 
+            ? Image.memory(bytes, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _placeholder())
+            : _placeholder();
       }
     }
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -766,7 +695,7 @@ class _CartItemTile extends StatelessWidget {
         ],
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
@@ -778,54 +707,66 @@ class _CartItemTile extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 80),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _mwk(item.price),
-                    style: const TextStyle(
-                      color: Colors.green,
-                      fontWeight: FontWeight.w600,
-                    ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _mwk(item.price),
+                  style: const TextStyle(
+                    color: Colors.green,
+                    fontWeight: FontWeight.w600,
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      _IconBtn(icon: Icons.remove, onTap: onDec),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        child: Text(
-                          '${item.quantity}',
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    _IconBtn(icon: Icons.remove, onTap: onDec),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(
+                        '${item.quantity}',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                      _IconBtn(icon: Icons.add, onTap: onInc),
-                      const Spacer(),
-                      IconButton(
-                        onPressed: onRemove,
-                        icon: const Icon(Icons.delete_outline,
-                            color: Colors.red),
-                        tooltip: 'Remove',
-                      ),
-                    ],
+                    ),
+                    _IconBtn(icon: Icons.add, onTap: onInc),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: onRemove,
+                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                      tooltip: 'Remove',
+                    ),
+                  ],
+                ),
+                // Merchant info badge
+                Container(
+                  margin: const EdgeInsets.only(top: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(4),
                   ),
-                ],
-              ),
+                  child: Text(
+                    'Merchant: ${item.merchantName}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -856,22 +797,25 @@ class _IconBtn extends StatelessWidget {
   }
 }
 
+// Updated Cart Summary
 class _CartSummary extends StatelessWidget {
+  final double subtotal;
+  final double deliveryFee;
+  final double discount;
+  final double total;
+  final bool loading;
+  final int merchantCount;
+  final VoidCallback onCheckout;
+
   const _CartSummary({
     required this.subtotal,
     required this.deliveryFee,
     required this.discount,
     required this.total,
     required this.loading,
+    required this.merchantCount,
     required this.onCheckout,
   });
-
-  final double subtotal;
-  final double deliveryFee;
-  final double discount;
-  final double total;
-  final bool loading;
-  final VoidCallback onCheckout;
 
   String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
 
@@ -880,13 +824,39 @@ class _CartSummary extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         decoration: const BoxDecoration(
           color: Colors.white,
           boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
         ),
         child: Column(
           children: [
+            // Merchant count info
+            if (merchantCount > 1)
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: Colors.orange[800]),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Payment will be split between $merchantCount merchants',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange[800],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
             _row('Subtotal', _mwk(subtotal)),
             _row('Delivery Fee', _mwk(deliveryFee)),
             const Divider(height: 16),
@@ -904,10 +874,19 @@ class _CartSummary extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                child: Text(
-                  loading ? 'Please wait…' : 'Checkout',
-                  style: const TextStyle(fontSize: 16),
-                ),
+                child: loading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : const Text(
+                        'Checkout',
+                        style: TextStyle(fontSize: 16),
+                      ),
               ),
             ),
           ],

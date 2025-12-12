@@ -1,7 +1,7 @@
 // lib/services/cart_services.dart
 import 'dart:convert';
 
-import 'package:cloud_firestore/cloud_firestore.dart';      // 👈 FIREBASE
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/services/api_client.dart';
 import 'package:vero360_app/services/api_config.dart';
@@ -14,7 +14,6 @@ const _kFirstTimeout = Duration(seconds: 60);
 class CartService {
   static bool _warmedUp = false;
 
-  // Keep signature for compatibility (we ignore the params).
   CartService(String unused, {required String apiPrefix});
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -28,7 +27,6 @@ class CartService {
     return null;
   }
 
-  /// We use saved email as the Firestore cart owner id.
   Future<String?> _getUserEmail() async {
     final p = await SharedPreferences.getInstance();
     final email = p.getString('email');
@@ -51,9 +49,7 @@ class CartService {
     try {
       await ApiConfig.ensureBackendUp(timeout: _kFirstTimeout);
       _warmedUp = true;
-    } catch (_) {
-      // ignore warmup failures; real requests handle errors via ApiClient
-    }
+    } catch (_) {}
   }
 
   Map<String, String> _headers({String? token}) => {
@@ -65,7 +61,7 @@ class CartService {
       };
 
   // ---------------------------------------------------------------------------
-  // FIRESTORE BACKUP HELPERS
+  // FIRESTORE BACKUP HELPERS - UPDATED WITH MERCHANT FIELDS
   // Schema: backup_carts/{userEmail}/items/{itemId}
   // ---------------------------------------------------------------------------
 
@@ -94,6 +90,10 @@ class CartService {
           'quantity': it.quantity,
           'description': it.description,
           'comment': it.comment,
+          // NEW: Merchant fields for wallet integration
+          'merchantId': it.merchantId,
+          'merchantName': it.merchantName,
+          'serviceType': it.serviceType,
           'updatedAt': FieldValue.serverTimestamp(),
         });
       }
@@ -142,6 +142,10 @@ class CartService {
           price: price,
           description: (data['description'] ?? '').toString(),
           comment: (data['comment'] ?? '').toString(),
+          // NEW: Load merchant fields from Firestore
+          merchantId: (data['merchantId'] ?? '').toString(),
+          merchantName: (data['merchantName'] ?? '').toString(),
+          serviceType: (data['serviceType'] ?? 'marketplace').toString(),
         );
       }).toList();
     } catch (_) {
@@ -168,6 +172,10 @@ class CartService {
         'quantity': item.quantity,
         'description': item.description,
         'comment': item.comment,
+        // NEW: Merchant fields for wallet integration
+        'merchantId': item.merchantId,
+        'merchantName': item.merchantName,
+        'serviceType': item.serviceType,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (_) {}
@@ -206,7 +214,7 @@ class CartService {
   }
 
   // ---------------------------------------------------------------------------
-  // API + FIREBASE BACKUP METHODS
+  // API + FIREBASE BACKUP METHODS - UPDATED WITH MERCHANT FIELDS
   // ---------------------------------------------------------------------------
 
   /// POST /cart (server identifies user from Bearer token)
@@ -221,6 +229,7 @@ class CartService {
     }
 
     try {
+      // UPDATED: Include merchant fields in API request
       await ApiClient.post(
         '/cart',
         headers: _headers(token: token),
@@ -231,15 +240,20 @@ class CartService {
           'name': cartItem.name,
           'price': cartItem.price,
           'description': cartItem.description,
+          // NEW: Merchant fields for wallet integration
+          'merchantId': cartItem.merchantId,
+          'merchantName': cartItem.merchantName,
+          'serviceType': cartItem.serviceType,
+          if (cartItem.comment != null) 'comment': cartItem.comment,
         }),
         timeout: _kFirstTimeout,
       );
 
-      // Mirror to Firebase when API works
+      // Mirror to Firebase when API works (now includes merchant fields)
       await _upsertCartItemInFirestore(cartItem);
     } on ApiException catch (e) {
       if (_looksLikeServiceUnavailable(e)) {
-        // Backend down → save to Firebase only (offline backup)
+        // Backend down → save to Firebase only (offline backup with merchant fields)
         await _upsertCartItemInFirestore(cartItem);
         return;
       }
@@ -253,7 +267,7 @@ class CartService {
     }
   }
 
-  /// GET /cart  (returns current user's cart; 404 => empty)
+  /// GET /cart (returns current user's cart; 404 => empty)
   /// Falls back to Firebase backup if server is unavailable.
   Future<List<CartModel>> fetchCartItems() async {
     await warmup();
@@ -285,15 +299,16 @@ class CartService {
               ? decoded['data']
               : <dynamic>[]);
 
+      // UPDATED: CartModel.fromJson now handles merchant fields automatically
       final items =
           list.map<CartModel>((e) => CartModel.fromJson(e)).toList();
 
-      // Keep Firebase backup synced
+      // Keep Firebase backup synced (now includes merchant fields)
       await _saveCartListToFirestore(items);
       return items;
     } on ApiException catch (e) {
       if (_looksLikeServiceUnavailable(e)) {
-        // Use last known Firebase backup
+        // Use last known Firebase backup (now includes merchant fields)
         return await _loadCartFromFirestore();
       }
       rethrow;
@@ -370,6 +385,72 @@ class CartService {
         return;
       }
       rethrow;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // NEW HELPER METHODS FOR MERCHANT WALLET INTEGRATION
+  // ---------------------------------------------------------------------------
+
+  /// Helper to validate cart items have merchant info for wallet payments
+  Future<bool> validateCartForCheckout() async {
+    try {
+      final items = await fetchCartItems();
+      if (items.isEmpty) return false;
+
+      // Check if all items have valid merchant information
+      for (final item in items) {
+        if (!item.hasValidMerchant) {
+          print('Cart validation failed: Item "${item.name}" missing valid merchant info');
+          return false;
+        }
+      }
+
+      // Check for duplicate items from same merchant
+      final itemKeys = <String>{};
+      for (final item in items) {
+        final key = '${item.item}_${item.merchantId}';
+        if (itemKeys.contains(key)) {
+          print('Cart validation failed: Duplicate item $key');
+          return false;
+        }
+        itemKeys.add(key);
+      }
+
+      return true;
+    } catch (e) {
+      print('Cart validation error: $e');
+      return false;
+    }
+  }
+
+  /// Helper to get cart total for checkout
+  Future<double> getCartTotal() async {
+    try {
+      final items = await fetchCartItems();
+      return items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
+    } catch (e) {
+      return 0.0;
+    }
+  }
+
+  /// Helper to group items by merchant for wallet payments
+  Future<Map<String, List<CartModel>>> getItemsByMerchant() async {
+    try {
+      final items = await fetchCartItems();
+      final Map<String, List<CartModel>> merchantGroups = {};
+
+      for (final item in items) {
+        final merchantKey = '${item.merchantId}_${item.serviceType}';
+        if (!merchantGroups.containsKey(merchantKey)) {
+          merchantGroups[merchantKey] = [];
+        }
+        merchantGroups[merchantKey]!.add(item);
+      }
+
+      return merchantGroups;
+    } catch (e) {
+      return {};
     }
   }
 }

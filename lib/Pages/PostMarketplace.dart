@@ -149,7 +149,12 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       if (sp != null) {
         _hasShop = true;
         // NEW: Store shop details for merchant info
-        _myShop = sp is Map<String, dynamic> ? sp : sp.toJson();
+                  _myShop = sp is Map<String, dynamic> ? sp : {
+                'id': sp.id?.toString() ?? 'unknown',
+                'businessName': sp.businessName ?? 'Unknown Business',
+                'status': sp.status ?? 'active',
+                'serviceType': 'marketplace',
+              };
         
         // Debug: Print merchant info
         print('Merchant Info Loaded:');
@@ -783,11 +788,11 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             decoration: BoxDecoration(
               color: Colors.green[50],
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.green[100]),
+              border: Border.all(color: Colors.green),
             ),
             child: Row(
               children: [
-                Icon(Icons.account_circle, color: Colors.green[700]),
+                Icon(Icons.account_circle, color: Colors.green),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(

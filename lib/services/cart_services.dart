@@ -423,16 +423,18 @@ class CartService {
       return false;
     }
   }
-
-  /// Helper to get cart total for checkout
-  Future<double> getCartTotal() async {
-    try {
-      final items = await fetchCartItems();
-      return items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
-    } catch (e) {
-      return 0.0;
+Future<double> getCartTotal() async {
+  try {
+    final items = await fetchCartItems();
+    double total = 0.0;
+    for (final item in items) {
+      total += item.price * item.quantity;
     }
+    return total;
+  } catch (e) {
+    return 0.0;
   }
+}
 
   /// Helper to group items by merchant for wallet payments
   Future<Map<String, List<CartModel>>> getItemsByMerchant() async {

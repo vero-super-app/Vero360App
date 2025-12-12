@@ -294,16 +294,19 @@ class _MarketPageState extends State<MarketPage> {
           ? item.sqlItemId!
           : _stablePositiveIdFromString(item.id);
 
-      final cartItem = CartModel(
-        userId: '0',
-        item: numericItemId, // always positive
-        quantity: 1,
-        name: item.name,
-        image: item.image,
-        price: item.price,
-        description: item.description ?? '',
-        comment: note ?? '',
-      );
+     // In marketPlace.dart around line 297
+final cartItem = CartModel(
+  userId: userId,
+  item: item.id,
+  quantity: 1,
+  image: item.image,
+  name: item.name,
+  price: item.price,
+  description: item.description ?? '',
+  merchantId: item.merchantId ?? 'unknown',
+  merchantName: item.merchantName ?? 'Unknown Merchant',
+  serviceType: item.serviceType ?? 'marketplace',
+);
 
       await widget.cartService.addToCart(cartItem);
 

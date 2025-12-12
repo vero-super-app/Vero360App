@@ -236,6 +236,16 @@ class ServiceproviderService {
     return ServiceProviderServicess.fetchMine();
   }
 
+  /// Get shop data as Map for easy access in marketplace pages
+  /// This is used by MarketplaceCrudPage to get merchant info
+  Future<Map<String, dynamic>?> fetchMyShopAsMap() async {
+    final shop = await fetchMine();
+    if (shop == null) return null;
+    
+    // Convert ServiceProvider to a Map with all required fields
+    return shop.toJson();
+  }
+
   Future<ServiceProvider?> fetchByNumber(String spNumber) {
     return ServiceProviderServicess.fetchByNumber(spNumber);
   }
@@ -284,5 +294,49 @@ class ServiceproviderService {
 
   Future<void> deleteById(int id) {
     return ServiceProviderServicess.deleteById(id);
+  }
+
+  // ---------------------------------------------------------------------------
+  // NEW HELPER METHODS FOR MERCHANT WALLET INTEGRATION
+  // ---------------------------------------------------------------------------
+
+  /// Check if the current user has a valid shop for marketplace posting
+  Future<bool> hasValidShop() async {
+    try {
+      final shop = await fetchMine();
+      return shop != null && shop.id != null && shop.businessName != null;
+    } catch (e) {
+      debugPrint('Error checking shop: $e');
+      return false;
+    }
+  }
+
+  /// Get merchant info for wallet integration
+  /// Returns: {id, businessName, serviceType: 'marketplace'}
+  Future<Map<String, dynamic>?> getMerchantInfo() async {
+    try {
+      final shop = await fetchMine();
+      if (shop == null) return null;
+      
+      return {
+        'id': shop.id?.toString() ?? 'unknown',
+        'businessName': shop.businessName ?? 'Unknown Merchant',
+        'serviceType': 'marketplace', // Fixed for marketplace items
+        'isActive': shop.status == 'active',
+      };
+    } catch (e) {
+      debugPrint('Error getting merchant info: $e');
+      return null;
+    }
+  }
+
+  /// Validate merchant info for wallet payments
+  bool validateMerchantInfo(Map<String, dynamic> merchantInfo) {
+    return merchantInfo['id'] != null &&
+           merchantInfo['id'].toString().isNotEmpty &&
+           merchantInfo['id'] != 'unknown' &&
+           merchantInfo['businessName'] != null &&
+           merchantInfo['businessName'].toString().isNotEmpty &&
+           merchantInfo['businessName'] != 'Unknown Merchant';
   }
 }

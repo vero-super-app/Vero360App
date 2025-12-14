@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -12,13 +13,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/Pages/checkout_page.dart';
 import 'package:vero360_app/models/marketplace.model.dart'
-    as core; // 👈 alias to avoid name clash
+    as core;
 
 import 'package:vero360_app/models/cart_model.dart';
 import 'package:vero360_app/services/cart_services.dart';
 import 'package:vero360_app/toasthelper.dart';
 
-// 🔹 Chat + seller info
 import 'package:vero360_app/Pages/Home/Messages.dart';
 import 'package:vero360_app/services/chat_service.dart';
 import 'package:vero360_app/services/serviceprovider_service.dart';
@@ -28,29 +28,25 @@ import 'package:vero360_app/models/serviceprovider_model.dart';
 /// Local marketplace model (Firestore) - UPDATED WITH MERCHANT FIELDS
 /// --------------------
 class MarketplaceDetailModel {
-  final String id; // Firestore document id
-  final int? sqlItemId; // Optional numeric backend id for Nest/SQL
+  final String id;
+  final int? sqlItemId;
 
   final String name;
   final String category;
   final double price;
-
-  /// raw string from Firestore (base64 or URL)
   final String image;
-
-  /// decoded image if base64
   final Uint8List? imageBytes;
 
   final String? description;
   final String? location;
   final bool isActive;
   final DateTime? createdAt;
-  // NEW: Merchant fields for wallet integration
+  
+  // Merchant fields for wallet integration
   final String? merchantId;
   final String? merchantName;
   final String? serviceType;
 
-  // 🔹 Optional gallery & seller metadata (for richer UI + chat)
   final List<String> gallery;
 
   final String? sellerBusinessName;
@@ -83,12 +79,13 @@ class MarketplaceDetailModel {
     this.sellerLogoUrl,
     this.serviceProviderId,
     this.sellerUserId,
+    this.merchantId,
+    this.merchantName,
+    this.serviceType = 'marketplace',
   });
 
-  /// True only if there is a valid numeric backend id
   bool get hasValidSqlItemId => sqlItemId != null && sqlItemId! > 0;
 
-  /// NEW: Check if this item has valid merchant info for wallet payments
   bool get hasValidMerchantInfo => 
       merchantId != null && 
       merchantId!.isNotEmpty && 
@@ -100,18 +97,16 @@ class MarketplaceDetailModel {
   factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
     final data = (doc.data() as Map<String, dynamic>?) ?? {};
 
-    // --- image: base64 → bytes (if applicable) ---
     final rawImage = (data['image'] ?? '').toString();
     Uint8List? bytes;
     if (rawImage.isNotEmpty) {
       try {
         bytes = base64Decode(rawImage);
       } catch (_) {
-        bytes = null; // if it's actually a URL, decoding will fail
+        bytes = null;
       }
     }
 
-    // --- createdAt: Timestamp → DateTime ---
     DateTime? created;
     final createdRaw = data['createdAt'];
     if (createdRaw is Timestamp) {
@@ -120,7 +115,6 @@ class MarketplaceDetailModel {
       created = createdRaw;
     }
 
-    // --- price: number ---
     double price = 0;
     final p = data['price'];
     if (p is num) {
@@ -129,7 +123,6 @@ class MarketplaceDetailModel {
       price = double.tryParse(p.toString()) ?? 0;
     }
 
-    // --- helper to parse any int-like field ---
     int? _parseInt(dynamic v) {
       if (v == null) return null;
       if (v is num) return v.toInt();
@@ -138,21 +131,18 @@ class MarketplaceDetailModel {
       );
     }
 
-    // Try multiple keys in case your docs use different names
     final rawSql =
         data['sqlItemId'] ?? data['backendId'] ?? data['itemId'] ?? data['id'];
     final sqlId = _parseInt(rawSql);
 
     final cat = (data['category'] ?? '').toString().toLowerCase();
 
-    // --- optional gallery (urls) ---
     List<String> gallery = const [];
     final galleryRaw = data['gallery'];
     if (galleryRaw is List) {
       gallery = galleryRaw.map((e) => e.toString()).toList();
     }
 
-    // --- seller info (optional) ---
     double? sellerRating;
     final r = data['sellerRating'];
     if (r is num) {
@@ -184,13 +174,13 @@ class MarketplaceDetailModel {
       sellerLogoUrl: data['sellerLogoUrl']?.toString(),
       serviceProviderId: data['serviceProviderId']?.toString(),
       sellerUserId: data['sellerUserId']?.toString(),
+      merchantId: data['merchantId']?.toString(),
+      merchantName: data['merchantName']?.toString(),
+      serviceType: data['serviceType']?.toString() ?? 'marketplace',
     );
   }
 }
 
-/// --------------------
-/// Seller info helper
-/// --------------------
 class _SellerInfo {
   String? businessName, openingHours, status, description, logoUrl;
   double? rating;
@@ -350,7 +340,7 @@ class _MarketPageState extends State<MarketPage> {
     'shoes',
     'other'
   ];
-  String? _selectedCategory; // null = all
+  String? _selectedCategory;
 
   Timer? _debounce;
   String _lastQuery = '';
@@ -374,59 +364,90 @@ class _MarketPageState extends State<MarketPage> {
     super.dispose();
   }
 
-  // ---------- Helper: time ago ----------
-String _formatTimeAgo(DateTime time) {
-  final now = DateTime.now();
-  final diff = now.difference(time);
-
-  if (diff.inSeconds < 60) return 'Just now';
-
-  if (diff.inMinutes < 60) {
-    final m = diff.inMinutes;
-    final unit = m == 1 ? 'min' : 'mins';
-    return '$m $unit ago'; // 1 min ago / 2 mins ago
+  // Helper Methods
+  void _showLoadingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Loading...'),
+            ],
+          ),
+        );
+      },
+    );
   }
 
-  if (diff.inHours < 24) {
-    final h = diff.inHours;
-    final unit = h == 1 ? 'hr' : 'hrs';
-    return '$h $unit ago'; // 1 hr ago / 3 hrs ago
+  Future<String?> _getCurrentUserId() async {
+    try {
+      final FirebaseAuth auth = FirebaseAuth.instance;
+      final User? user = auth.currentUser;
+      if (user != null) return user.uid;
+      
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      return prefs.getString('uid');
+    } catch (e) {
+      return null;
+    }
   }
 
-  if (diff.inDays < 7) {
-    final d = diff.inDays;
-    final unit = d == 1 ? 'day' : 'days';
-    return '$d $unit ago'; // 1 day ago / 4 days ago
+  String _formatTimeAgo(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+
+    if (diff.inSeconds < 60) return 'Just now';
+
+    if (diff.inMinutes < 60) {
+      final m = diff.inMinutes;
+      final unit = m == 1 ? 'min' : 'mins';
+      return '$m $unit ago';
+    }
+
+    if (diff.inHours < 24) {
+      final h = diff.inHours;
+      final unit = h == 1 ? 'hr' : 'hrs';
+      return '$h $unit ago';
+    }
+
+    if (diff.inDays < 7) {
+      final d = diff.inDays;
+      final unit = d == 1 ? 'day' : 'days';
+      return '$d $unit ago';
+    }
+
+    final weeks = (diff.inDays / 7).floor();
+    if (weeks < 4) {
+      final unit = weeks == 1 ? 'week' : 'weeks';
+      return '$weeks $unit ago';
+    }
+
+    final months = (diff.inDays / 30).floor();
+    if (months < 12) {
+      final unit = months == 1 ? 'month' : 'months';
+      return '$months $unit ago';
+    }
+
+    final years = (diff.inDays / 365).floor();
+    final unit = years == 1 ? 'year' : 'years';
+    return '$years $unit ago';
   }
 
-  final weeks = (diff.inDays / 7).floor();
-  if (weeks < 4) {
-    final unit = weeks == 1 ? 'week' : 'weeks';
-    return '$weeks $unit ago'; // 1 week ago / 3 weeks ago
-  }
-
-  final months = (diff.inDays / 30).floor();
-  if (months < 12) {
-    final unit = months == 1 ? 'month' : 'months';
-    return '$months $unit ago'; // 1 month ago / 6 months ago
-  }
-
-  final years = (diff.inDays / 365).floor();
-  final unit = years == 1 ? 'year' : 'years';
-  return '$years $unit ago'; // 1 year ago / 2 years ago
-}
-
-  // Stable positive int from a string (Firestore doc id)
   int _stablePositiveIdFromString(String s) {
     int hash = 0;
     for (final code in s.codeUnits) {
-      hash = (hash * 31 + code) & 0x7fffffff; // keep it positive
+      hash = (hash * 31 + code) & 0x7fffffff;
     }
-    if (hash == 0) hash = 1; // ensure > 0
+    if (hash == 0) hash = 1;
     return hash;
   }
 
-  // ---------- Data loaders (Firestore) ----------
+  // Data Loaders
   Future<List<MarketplaceDetailModel>> _loadAll({String? category}) async {
     setState(() {
       _loading = true;
@@ -499,7 +520,7 @@ String _formatTimeAgo(DateTime time) {
     }
   }
 
-  // ---------- Auth helpers ----------
+  // Auth Helpers
   Future<String?> _readAuthToken() async {
     final sp = await SharedPreferences.getInstance();
     for (final k in const ['token', 'jwt_token', 'jwt']) {
@@ -525,7 +546,7 @@ String _formatTimeAgo(DateTime time) {
     return ok;
   }
 
-  // ---------- Cart ----------
+  // Cart Functionality
   Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     final token = await _readAuthToken();
     if (token == null || token.isEmpty) {
@@ -538,7 +559,6 @@ String _formatTimeAgo(DateTime time) {
       return;
     }
 
-    // NEW: Check if item has valid merchant info for wallet payments
     if (!item.hasValidMerchantInfo) {
       ToastHelper.showCustomToast(
         context,
@@ -554,12 +574,10 @@ String _formatTimeAgo(DateTime time) {
     try {
       final userId = await _getCurrentUserId() ?? 'unknown';
       
-      // Prefer numeric id from backend if available, otherwise derive from doc.id
       final int numericItemId = item.hasValidSqlItemId
           ? item.sqlItemId!
           : _stablePositiveIdFromString(item.id);
 
-      // UPDATED: Create CartModel with merchant information
       final cartItem = CartModel(
         userId: userId,
         item: numericItemId,
@@ -602,7 +620,7 @@ String _formatTimeAgo(DateTime time) {
     }
   }
 
-  // ---------- Chat ----------
+  // Chat Functionality
   Future<void> _openChatWithMerchant(MarketplaceDetailModel item) async {
     if (!await _requireLoginForChat()) return;
 
@@ -644,16 +662,14 @@ String _formatTimeAgo(DateTime time) {
     );
   }
 
-  // ---------- Checkout from bottom sheet ----------
+  // Checkout
   Future<void> _goToCheckoutFromBottomSheet(
       MarketplaceDetailModel item) async {
   
     if (!mounted) return;
 
-    // 🔹 Convert local Firestore item -> core model item
     final core.MarketplaceDetailModel checkoutItem =
         core.MarketplaceDetailModel(
-      // ⚠️ Make sure these match your core model constructor
       id: item.hasValidSqlItemId
           ? item.sqlItemId!
           : _stablePositiveIdFromString(item.id),
@@ -672,12 +688,11 @@ String _formatTimeAgo(DateTime time) {
       sellerLogoUrl: item.sellerLogoUrl,
       serviceProviderId: item.serviceProviderId,
       sellerUserId: item.sellerUserId,
-      //createdAt: item.createdAt,
-      // If your core model also has `isActive`, `videos`, etc.,
-      // you can pass them here as well.
+      merchantId: item.merchantId,
+      merchantName: item.merchantName,
+      serviceType: item.serviceType,
     );
 
-    // 🔹 Now push to CheckoutPage with the *core* model
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -686,7 +701,7 @@ String _formatTimeAgo(DateTime time) {
     );
   }
 
-  // ---------- Search handlers ----------
+  // Search Handlers
   void _onSearchChanged() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
@@ -780,14 +795,12 @@ String _formatTimeAgo(DateTime time) {
     await _future;
   }
 
-  // ---------- Details bottom sheet (RICH VERSION) ----------
+  // Details Bottom Sheet
   Future<void> _showDetailsBottomSheet(MarketplaceDetailModel item) async {
     if (!mounted) return;
 
-    // Load seller info once
     final Future<_SellerInfo> sellerFuture = _loadSellerForItem(item);
 
-    // Build media list: we support 1 main image + optional gallery URLs
     final List<String> mediaUrls = [];
     if (item.image.isNotEmpty && item.image.startsWith('http')) {
       mediaUrls.add(item.image);
@@ -834,7 +847,6 @@ String _formatTimeAgo(DateTime time) {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Drag handle
                           Center(
                             child: Container(
                               width: 40,
@@ -847,7 +859,7 @@ String _formatTimeAgo(DateTime time) {
                             ),
                           ),
 
-                          // ----- MEDIA AREA -----
+                          // Media Area
                           AspectRatio(
                             aspectRatio: 16 / 9,
                             child: Stack(
@@ -980,7 +992,7 @@ String _formatTimeAgo(DateTime time) {
 
                           const SizedBox(height: 16),
 
-                          // ----- TITLE + PRICE + CHAT -----
+                          // Title + Price + Chat
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -1081,7 +1093,7 @@ String _formatTimeAgo(DateTime time) {
 
                           const SizedBox(height: 16),
 
-                          // ----- SELLER CARD -----
+                          // Seller Card
                           Card(
                             elevation: 4,
                             shadowColor: Colors.black12,
@@ -1165,7 +1177,7 @@ String _formatTimeAgo(DateTime time) {
 
                           const SizedBox(height: 20),
 
-                          // ----- ACTION BUTTON -----
+                          // Action Button
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton.icon(
@@ -1207,195 +1219,7 @@ String _formatTimeAgo(DateTime time) {
     });
   }
 
-  // ---------- UI ----------
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[200],
-      appBar: AppBar(
-        title: const Text(
-          "Market Place",
-          style:
-              TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Colors.white,
-        elevation: 2,
-        iconTheme: const IconThemeData(color: Colors.black),
-      ),
-      body: Column(
-        children: [
-          // Search bar
-          Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: TextField(
-              controller: _searchCtrl,
-              textInputAction: TextInputAction.search,
-              onSubmitted: _onSubmit,
-              decoration: InputDecoration(
-                hintText: "Search items...",
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_searchCtrl.text.isNotEmpty)
-                      IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchCtrl.clear();
-                          _onSubmit('');
-                        },
-                      ),
-                    IconButton(
-                      icon: const Icon(Icons.camera_alt),
-                      onPressed: _showPhotoPickerSheet,
-                      tooltip: 'Search by Photo',
-                    ),
-                  ],
-                ),
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(30),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                    vertical: 12, horizontal: 16),
-              ),
-            ),
-          ),
-
-          // Category chips
-          SizedBox(
-            height: 44,
-            child: ListView(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8),
-              scrollDirection: Axis.horizontal,
-              children: [
-                _buildCategoryChip(
-                  "All Products",
-                  isSelected:
-                      _selectedCategory == null && !_photoMode,
-                  onTap: () => _setCategory(null),
-                ),
-                const SizedBox(width: 6),
-                for (final c in _kCategories) ...[
-                  _buildCategoryChip(
-                    _titleCase(c),
-                    isSelected: _selectedCategory == c,
-                    onTap: () => _setCategory(c),
-                  ),
-                  const SizedBox(width: 6),
-                ],
-              ],
-            ),
-          ),
-
-          if (_photoMode)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-              child: Row(
-                children: const [
-                  Icon(Icons.image_search, size: 16),
-                  SizedBox(width: 6),
-                  Text("Showing results from photo search"),
-                ],
-              ),
-            ),
-
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _refresh,
-              child: FutureBuilder<
-                  List<MarketplaceDetailModel>>(
-                future: _future,
-                builder: (context, snapshot) {
-                  if (_loading &&
-                      snapshot.connectionState ==
-                          ConnectionState.waiting) {
-                    return const Center(
-                        child: CircularProgressIndicator());
-                  }
-
-                  if (snapshot.hasError) {
-                    return ListView(
-                      physics:
-                          const AlwaysScrollableScrollPhysics(),
-                      children: const [
-                        SizedBox(height: 120),
-                        Center(
-                          child: Text(
-                            "Failed to load items",
-                            style: TextStyle(color: Colors.red),
-                          ),
-                        ),
-                      ],
-                    );
-                  }
-
-                  final items = snapshot.data ??
-                      const <MarketplaceDetailModel>[];
-                  if (items.isEmpty) {
-                    return ListView(
-                      physics:
-                          const AlwaysScrollableScrollPhysics(),
-                      children: [
-                        const SizedBox(height: 120),
-                        Center(
-                          child: Text(
-                            _photoMode
-                                ? "No visually similar items found"
-                                : "No items available",
-                            style: const TextStyle(
-                                color: Colors.red),
-                          ),
-                        ),
-                      ],
-                    );
-                  }
-
-                  return Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final isWide =
-                            constraints.maxWidth >= 700;
-                        final crossAxisCount =
-                            isWide ? 3 : 2;
-                        final childAspectRatio =
-                            isWide ? 0.70 : 0.68;
-
-                        return GridView.builder(
-                          itemCount: items.length,
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: crossAxisCount,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                            childAspectRatio: childAspectRatio,
-                          ),
-                          itemBuilder: (context, i) {
-                            final item = items[i];
-                            return GestureDetector(
-                              onTap: () =>
-                                  _showDetailsBottomSheet(item),
-                              child: _buildMarketItem(item),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ---------- Widgets ----------
+  // UI Widgets
   Widget _buildCategoryChip(String title,
       {required bool isSelected,
       required VoidCallback onTap}) {
@@ -1500,7 +1324,6 @@ String _formatTimeAgo(DateTime time) {
                       visualDensity: VisualDensity.compact,
                     ),
                   ),
-                // NEW: Merchant badge on image
                 if (item.merchantName != null && item.merchantName!.isNotEmpty)
                   Positioned(
                     right: 8,
@@ -1658,4 +1481,189 @@ String _formatTimeAgo(DateTime time) {
 
   String _titleCase(String s) =>
       s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[200],
+      appBar: AppBar(
+        title: const Text(
+          "Market Place",
+          style:
+              TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: Colors.white,
+        elevation: 2,
+        iconTheme: const IconThemeData(color: Colors.black),
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: TextField(
+              controller: _searchCtrl,
+              textInputAction: TextInputAction.search,
+              onSubmitted: _onSubmit,
+              decoration: InputDecoration(
+                hintText: "Search items...",
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_searchCtrl.text.isNotEmpty)
+                      IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          _onSubmit('');
+                        },
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.camera_alt),
+                      onPressed: _showPhotoPickerSheet,
+                      tooltip: 'Search by Photo',
+                    ),
+                  ],
+                ),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(30),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                    vertical: 12, horizontal: 16),
+              ),
+            ),
+          ),
+
+          SizedBox(
+            height: 44,
+            child: ListView(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8),
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildCategoryChip(
+                  "All Products",
+                  isSelected:
+                      _selectedCategory == null && !_photoMode,
+                  onTap: () => _setCategory(null),
+                ),
+                const SizedBox(width: 6),
+                for (final c in _kCategories) ...[
+                  _buildCategoryChip(
+                    _titleCase(c),
+                    isSelected: _selectedCategory == c,
+                    onTap: () => _setCategory(c),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+              ],
+            ),
+          ),
+
+          if (_photoMode)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+              child: Row(
+                children: const [
+                  Icon(Icons.image_search, size: 16),
+                  SizedBox(width: 6),
+                  Text("Showing results from photo search"),
+                ],
+              ),
+            ),
+
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: FutureBuilder<
+                  List<MarketplaceDetailModel>>(
+                future: _future,
+                builder: (context, snapshot) {
+                  if (_loading &&
+                      snapshot.connectionState ==
+                          ConnectionState.waiting) {
+                    return const Center(
+                        child: CircularProgressIndicator());
+                  }
+
+                  if (snapshot.hasError) {
+                    return ListView(
+                      physics:
+                          const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        SizedBox(height: 120),
+                        Center(
+                          child: Text(
+                            "Failed to load items",
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+
+                  final items = snapshot.data ??
+                      const <MarketplaceDetailModel>[];
+                  if (items.isEmpty) {
+                    return ListView(
+                      physics:
+                          const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        const SizedBox(height: 120),
+                        Center(
+                          child: Text(
+                            _photoMode
+                                ? "No visually similar items found"
+                                : "No items available",
+                            style: const TextStyle(
+                                color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isWide =
+                            constraints.maxWidth >= 700;
+                        final crossAxisCount =
+                            isWide ? 3 : 2;
+                        final childAspectRatio =
+                            isWide ? 0.70 : 0.68;
+
+                        return GridView.builder(
+                          itemCount: items.length,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: crossAxisCount,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                            childAspectRatio: childAspectRatio,
+                          ),
+                          itemBuilder: (context, i) {
+                            final item = items[i];
+                            return GestureDetector(
+                              onTap: () =>
+                                  _showDetailsBottomSheet(item),
+                              child: _buildMarketItem(item),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -7,6 +7,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
     // Flutter plugin must come after Android & Kotlin
     id("dev.flutter.flutter-gradle-plugin")
+    // Add Google services plugin if using Firebase
+    id("com.google.gms.google-services") version "4.4.0" apply false
 }
 
 // Load key.properties
@@ -20,12 +22,12 @@ if (hasKeystore) {
 
 android {
     namespace = "com.vero.vero360"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 35  // Use explicit value instead of flutter.compileSdkVersion
 
     defaultConfig {
         applicationId = "com.vero.vero360"
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        minSdk = 23
+        targetSdk = 35
         versionCode = 10001
         versionName = "1.0.1"
         multiDexEnabled = true
@@ -48,10 +50,13 @@ android {
         getByName("debug") {
             isMinifyEnabled = false
             isShrinkResources = false
+            // REMOVE this line or fix it:
+            // signingConfig = signingConfigs.findByName("debug") ?: signingConfigs.getAt(0)
         }
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro")
 
             // ✅ Only reference "release" signingConfig if it actually exists
             if (hasKeystore) {
@@ -61,14 +66,19 @@ android {
         }
     }
 
-    // ✅ JVM target
-    kotlinOptions {
-        jvmTarget = "1.8"
+    // ✅ Fix Java version warnings - update to Java 11
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+    kotlinOptions {
+        jvmTarget = "11"  // Updated from "1.8" to "11"
+    }
+
+    // Add buildFeatures if needed
+    buildFeatures {
+        buildConfig = true
     }
 }
 
@@ -79,4 +89,12 @@ flutter {
 
 dependencies {
     implementation("androidx.multidex:multidex:2.0.1")
+    
+    // Add Firebase BoM if using Firebase
+    // implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
+    // implementation("com.google.firebase:firebase-auth")
+    
+    // Core AndroidX dependencies
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
 }

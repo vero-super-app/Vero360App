@@ -10,6 +10,7 @@ import 'package:vero360_app/toasthelper.dart';
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/merchantbottomnavbar.dart';
 // Import merchant dashboards
+import 'package:vero360_app/Pages/MerchantDashboards/marketplace_merchant_dashboard.dart'; // Add this
 import 'package:vero360_app/Pages/MerchantDashboards/food_merchant_dashboard.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/taxi_merchant_dashboard.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/accommodation_merchant_dashboard.dart';
@@ -39,8 +40,13 @@ class MerchantService {
   });
 }
 
-// List of merchant services
+// List of merchant services - ADD MARKETPLACE HERE
 const List<MerchantService> kMerchantServices = [
+  MerchantService(
+    key: 'marketplace',  // New marketplace service
+    name: 'Marketplace Seller',
+    icon: Icons.store_rounded,
+  ),
   MerchantService(
     key: 'taxi',
     name: 'Vero Ride/Taxi',
@@ -316,9 +322,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  // Helper method to get the appropriate merchant dashboard
+  // Helper method to get the appropriate merchant dashboard - ADD MARKETPLACE CASE
   Widget _getMerchantDashboard(String serviceKey, String email) {
     switch (serviceKey) {
+      case 'marketplace':  // Add marketplace case
+        return MarketplaceMerchantDashboard(email: email);
       case 'food':
         return FoodMerchantDashboard(email: email);
       case 'taxi':
@@ -553,8 +561,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
             // Store in both users collection
             await _firestore.collection('users').doc(firebaseUser.uid).set(userDataForFirestore);
             
-            // Determine collection name based on service type
-            final collectionName = '${_selectedMerchantService!.key}_merchants';
+            // Determine collection name based on service type - SPECIAL HANDLING FOR MARKETPLACE
+            final collectionName = _selectedMerchantService!.key == 'marketplace' 
+                ? 'marketplace_merchants'
+                : '${_selectedMerchantService!.key}_merchants';
             await _firestore
                 .collection(collectionName)
                 .doc(firebaseUser.uid)
@@ -620,8 +630,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'completedOrders': 0,
         };
         
-        // Determine collection name based on service type
-        final collectionName = '${_selectedMerchantService!.key}_merchants';
+        // Determine collection name based on service type - SPECIAL HANDLING FOR MARKETPLACE
+        final collectionName = _selectedMerchantService!.key == 'marketplace' 
+            ? 'marketplace_merchants'
+            : '${_selectedMerchantService!.key}_merchants';
         
         // Store in both users collection and service-specific collection
         await _firestore.collection('users').doc(user.uid).set(userData);
@@ -843,7 +855,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     'completedOrders': 0,
                   };
                   
-                  final collectionName = '${service.key}_merchants';
+                  // Determine collection name based on service type - SPECIAL HANDLING FOR MARKETPLACE
+                  final collectionName = service.key == 'marketplace' 
+                      ? 'marketplace_merchants'
+                      : '${service.key}_merchants';
+                  
                   await _firestore
                       .collection(collectionName)
                       .doc(uid)

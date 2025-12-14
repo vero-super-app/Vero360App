@@ -11,6 +11,7 @@ import '../Pages/cartpage.dart';
 import '../Pages/Home/Profilepage.dart';
 import '../services/cart_services.dart';
 // Add these imports after the existing ones:
+import 'package:vero360_app/Pages/MerchantDashboards/marketplace_merchant_dashboard.dart'; // Add this
 import 'package:vero360_app/Pages/MerchantDashboards/food_merchant_dashboard.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/taxi_merchant_dashboard.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/accommodation_merchant_dashboard.dart';
@@ -99,6 +100,9 @@ class _BottomnavbarState extends State<Bottomnavbar> {
     Widget merchantDashboard;
     
     switch (merchantService) {
+      case 'marketplace':  // Add marketplace case
+        merchantDashboard = MarketplaceMerchantDashboard(email: email);
+        break;
       case 'food':
         merchantDashboard = FoodMerchantDashboard(email: email);
         break;

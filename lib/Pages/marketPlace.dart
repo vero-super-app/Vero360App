@@ -290,7 +290,7 @@ Widget _infoRow(String label, String? value, {IconData? icon}) {
           ),
         ),
       ],
-    ),
+    );
   );
 }
 
@@ -520,22 +520,47 @@ class _MarketPageState extends State<MarketPage> {
     }
   }
 
-  // Auth Helpers
-  Future<String?> _readAuthToken() async {
-    final sp = await SharedPreferences.getInstance();
-    for (final k in const ['token', 'jwt_token', 'jwt']) {
-      final v = sp.getString(k);
-      if (v != null && v.isNotEmpty) return v;
+  // Auth Helpers - FIXED: Updated to check for Firebase auth as well
+  Future<bool> _isUserLoggedIn() async {
+    // Check Firebase Auth first
+    final FirebaseAuth auth = FirebaseAuth.instance;
+    final User? firebaseUser = auth.currentUser;
+    if (firebaseUser != null) {
+      return true;
     }
-    return null;
+    
+    // Check SharedPreferences for tokens
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final String? token = prefs.getString('token');
+    final String? jwtToken = prefs.getString('jwt_token');
+    final String? uid = prefs.getString('uid');
+    
+    // Also check if we have user role or email
+    final String? email = prefs.getString('email');
+    final String? role = prefs.getString('role');
+    
+    return (token != null && token.isNotEmpty) || 
+           (jwtToken != null && jwtToken.isNotEmpty) ||
+           (uid != null && uid.isNotEmpty) ||
+           (email != null && email.isNotEmpty);
   }
 
-  Future<bool> _isLoggedIn() async => (await _readAuthToken()) != null;
+  Future<bool> _requireLoginForCart() async {
+    final isLoggedIn = await _isUserLoggedIn();
+    if (!isLoggedIn && mounted) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please log in to add items to cart.',
+        isSuccess: false,
+        errorMessage: 'Not logged in',
+      );
+    }
+    return isLoggedIn;
+  }
 
   Future<bool> _requireLoginForChat() async {
-    final t = await _readAuthToken();
-    final ok = t != null && t.isNotEmpty;
-    if (!ok && mounted) {
+    final isLoggedIn = await _isUserLoggedIn();
+    if (!isLoggedIn && mounted) {
       ToastHelper.showCustomToast(
         context,
         'Please log in to chat with merchant.',
@@ -543,21 +568,13 @@ class _MarketPageState extends State<MarketPage> {
         errorMessage: 'Not logged in',
       );
     }
-    return ok;
+    return isLoggedIn;
   }
 
-  // Cart Functionality
+  // Cart Functionality - FIXED: Updated to handle Firebase users
   Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
-    final token = await _readAuthToken();
-    if (token == null || token.isEmpty) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please log in to add items to cart.',
-        isSuccess: false,
-        errorMessage: 'Not logged in',
-      );
-      return;
-    }
+    final isLoggedIn = await _requireLoginForCart();
+    if (!isLoggedIn) return;
 
     if (!item.hasValidMerchantInfo) {
       ToastHelper.showCustomToast(

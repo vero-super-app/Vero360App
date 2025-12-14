@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/merchantbottomnavbar.dart';
 // Import merchant dashboards
+import 'package:vero360_app/Pages/MerchantDashboards/marketplace_merchant_dashboard.dart'; // Add this
 import 'package:vero360_app/Pages/MerchantDashboards/food_merchant_dashboard.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/taxi_merchant_dashboard.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/accommodation_merchant_dashboard.dart';
@@ -47,9 +48,11 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // Helper method to get the appropriate merchant dashboard
+  // Helper method to get the appropriate merchant dashboard - ADD MARKETPLACE CASE
   Widget _getMerchantDashboard(String serviceKey, String email) {
     switch (serviceKey) {
+      case 'marketplace':  // Add marketplace case
+        return MarketplaceMerchantDashboard(email: email);
       case 'food':
         return FoodMerchantDashboard(email: email);
       case 'taxi':
@@ -58,7 +61,7 @@ class _LoginScreenState extends State<LoginScreen> {
         return AccommodationMerchantDashboard(email: email);
       case 'courier':
         return CourierMerchantDashboard(email: email);
-      // Add more cases for other services
+      // Add more cases for other services as needed
       default:
         return MerchantBottomnavbar(email: email);
     }
@@ -175,21 +178,27 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // Fetch merchant service from Firebase
+  // Fetch merchant service from Firebase - UPDATE FOR MARKETPLACE
   Future<String?> _fetchMerchantServiceFromFirebase(String uid) async {
     try {
       final userDoc = await _firestore.collection('users').doc(uid).get();
       if (userDoc.exists) {
         final userData = userDoc.data();
         return userData?['merchantService']?.toString() ??
-               userData?['merchant_service']?.toString();
+               userData?['merchant_service']?.toString() ??
+               userData?['serviceType']?.toString();
       }
       
-      // Also try to find in service-specific collections
-      final services = ['food', 'taxi', 'accommodation', 'courier'];
+      // Also try to find in service-specific collections - ADD MARKETPLACE
+      final services = ['marketplace', 'food', 'taxi', 'accommodation', 'courier'];
       for (final service in services) {
+        // Special handling for marketplace collection name
+        final collectionName = service == 'marketplace' 
+            ? 'marketplace_merchants'
+            : '${service}_merchants';
+            
         final merchantDoc = await _firestore
-            .collection('${service}_merchants')
+            .collection(collectionName)
             .doc(uid)
             .get();
         if (merchantDoc.exists) {

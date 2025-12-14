@@ -114,7 +114,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   @override
   void initState() {
     super.initState();
-    _marketplaceTabs = TabController(length: 2, vsync: this);
+    _marketplaceTabs = TabController(length: 3, vsync: this); // Changed to 3 tabs
     _loadMerchantData();
     _loadItems();
     _startPeriodicUpdates();
@@ -248,6 +248,53 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       if (rawId == null) return null;
       return rawId.toString();
     } catch (_) {
+      return null;
+    }
+  }
+
+  // FIXED: Get merchant info from Firebase instead of ServiceproviderService
+  Future<Map<String, dynamic>?> _getMerchantInfoFromFirebase() async {
+    try {
+      // First try marketplace_merchants collection
+      final marketplaceDoc = await _firestore
+          .collection('marketplace_merchants')
+          .doc(_uid)
+          .get();
+      
+      if (marketplaceDoc.exists) {
+        final data = marketplaceDoc.data();
+        return {
+          'id': _uid,
+          'businessName': data?['businessName'] ?? 'Marketplace Merchant',
+          'serviceType': 'marketplace',
+        };
+      }
+      
+      // If not found, try users collection
+      final userDoc = await _firestore
+          .collection('users')
+          .doc(_uid)
+          .get();
+      
+      if (userDoc.exists) {
+        final data = userDoc.data();
+        return {
+          'id': _uid,
+          'businessName': data?['businessName'] ?? 'Marketplace Merchant',
+          'serviceType': data?['merchantService'] ?? 'marketplace',
+        };
+      }
+      
+      // Last resort: use SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      return {
+        'id': _uid,
+        'businessName': prefs.getString('business_name') ?? 'Marketplace Merchant',
+        'serviceType': 'marketplace',
+      };
+      
+    } catch (e) {
+      print('Error getting merchant info from Firebase: $e');
       return null;
     }
   }
@@ -388,12 +435,14 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
     try {
       final sellerId = await _getNestUserId();
-      final merchantInfo = await _spService.getMerchantInfo();
+      
+      // FIXED: Use Firebase merchant info instead of ServiceproviderService
+      final merchantInfo = await _getMerchantInfoFromFirebase();
 
       if (merchantInfo == null) {
         ToastHelper.showCustomToast(
           context,
-          'Unable to identify merchant information.',
+          'Unable to identify merchant information. Please ensure your merchant profile is complete.',
           isSuccess: false,
           errorMessage: 'Missing merchant info',
         );
@@ -417,8 +466,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         'videos': [],
         'createdAt': FieldValue.serverTimestamp(),
         'sellerUserId': sellerId ?? 'unknown',
-        'merchantId': merchantInfo['id'],
-        'merchantName': merchantInfo['businessName'],
+        'merchantId': merchantInfo['id'] ?? _uid,
+        'merchantName': merchantInfo['businessName'] ?? _businessName,
         'serviceType': 'marketplace',
       };
 
@@ -445,7 +494,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       setState(() {});
       await _loadItems();
       await _loadMerchantData();
-      _marketplaceTabs.animateTo(1);
+      _marketplaceTabs.animateTo(2); // Navigate to "My Items" tab
 
     } catch (e) {
       ToastHelper.showCustomToast(
@@ -717,7 +766,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     }
 
     return DefaultTabController(
-      length: 2,
+      length: 3, // Changed to 3 tabs
       child: Column(
         children: [
           TabBar(
@@ -727,7 +776,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
             indicatorColor: _brandOrange,
             tabs: const [
               Tab(text: 'Dashboard'),
-              Tab(text: 'Manage Items'),
+              Tab(text: 'Add Item'), // Changed from 'Manage Items'
+              Tab(text: 'My Items'), // New tab
             ],
           ),
           Expanded(
@@ -749,8 +799,10 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                     ],
                   ),
                 ),
-                // Manage Items Tab
-                _buildManageTab(),
+                // Add Item Tab - FIXED: Now just the form, no items list
+                _buildAddItemTab(),
+                // My Items Tab - FIXED: Just the items grid
+                _buildMyItemsTab(),
               ],
             ),
           ),
@@ -876,7 +928,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               avatar: const Icon(Icons.add, size: 20),
               label: const Text('Add Item'),
               onPressed: () {
-                _marketplaceTabs.animateTo(1);
+                _marketplaceTabs.animateTo(1); // Navigate to Add Item tab
               },
             ),
             ActionChip(
@@ -911,7 +963,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               avatar: const Icon(Icons.inventory, size: 20),
               label: const Text('Inventory'),
               onPressed: () {
-                // Inventory
+                _marketplaceTabs.animateTo(2); // Navigate to My Items tab
               },
             ),
           ],
@@ -1074,170 +1126,184 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     );
   }
 
-  Widget _buildManageTab() {
-    return Column(
-      children: [
-        // Add Item Form
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Card(
-                  elevation: 4,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Add New Item',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 16),
-                        
-                        // Cover Image
-                        const Text('Cover Image', style: TextStyle(fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: _cover == null
-                              ? Container(
-                                  height: 150,
-                                  color: Colors.grey[100],
-                                  child: Center(
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        const Icon(Icons.image, size: 40, color: Colors.grey),
-                                        const SizedBox(height: 8),
-                                        ElevatedButton.icon(
-                                          onPressed: () => _pickCover(ImageSource.gallery),
-                                          icon: const Icon(Icons.photo_library),
-                                          label: const Text('Select Image'),
-                                        ),
-                                      ],
-                                    ),
+  // FIXED: New method for Add Item tab - just the form
+  Widget _buildAddItemTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Card(
+            elevation: 4,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Add New Item',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Cover Image
+                  const Text('Cover Image', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: _cover == null
+                        ? Container(
+                            height: 150,
+                            color: Colors.grey[100],
+                            child: Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.image, size: 40, color: Colors.grey),
+                                  const SizedBox(height: 8),
+                                  ElevatedButton.icon(
+                                    onPressed: () => _pickCover(ImageSource.gallery),
+                                    icon: const Icon(Icons.photo_library),
+                                    label: const Text('Select Image'),
                                   ),
-                                )
-                              : Stack(
-                                  children: [
-                                    Image.memory(
-                                      _cover!.bytes,
-                                      height: 150,
-                                      width: double.infinity,
-                                      fit: BoxFit.cover,
-                                    ),
-                                    Positioned(
-                                      top: 8,
-                                      right: 8,
-                                      child: IconButton(
-                                        icon: const Icon(Icons.close, color: Colors.white),
-                                        onPressed: _clearCover,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                        ),
-                        
-                        const SizedBox(height: 16),
-                        
-                        // Form Fields
-                        TextField(
-                          controller: _name,
-                          decoration: _inputDecoration(label: 'Item Name'),
-                        ),
-                        const SizedBox(height: 12),
-                        
-                        TextField(
-                          controller: _price,
-                          keyboardType: TextInputType.number,
-                          decoration: _inputDecoration(label: 'Price (MWK)'),
-                        ),
-                        const SizedBox(height: 12),
-                        
-                        TextField(
-                          controller: _location,
-                          decoration: _inputDecoration(label: 'Location').copyWith(
-                            suffixIcon: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.my_location),
-                                  onPressed: _getCurrentLocation,
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.map),
-                                  onPressed: _openGoogleMap,
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
+                          )
+                        : Stack(
+                            children: [
+                              Image.memory(
+                                _cover!.bytes,
+                                height: 150,
+                                width: double.infinity,
+                                fit: BoxFit.cover,
+                              ),
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: IconButton(
+                                  icon: const Icon(Icons.close, color: Colors.white),
+                                  onPressed: _clearCover,
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        
-                        DropdownButtonFormField<String>(
-                          value: _category,
-                          items: _kCategories.map((c) => DropdownMenuItem(
-                            value: c,
-                            child: Text(c[0].toUpperCase() + c.substring(1)),
-                          )).toList(),
-                          onChanged: (v) => setState(() => _category = v),
-                          decoration: _inputDecoration(label: 'Category'),
-                        ),
-                        const SizedBox(height: 12),
-                        
-                        TextField(
-                          controller: _desc,
-                          minLines: 3,
-                          maxLines: 5,
-                          decoration: _inputDecoration(label: 'Description (optional)'),
-                        ),
-                        const SizedBox(height: 12),
-                        
-                        // Gallery
-                        const Text('Gallery Images (optional)', style: TextStyle(fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 8),
-                        _buildGalleryPreview(),
-                        const SizedBox(height: 12),
-                        
-                        Row(
-                          children: [
-                            Switch(
-                              value: _isActive,
-                              onChanged: (v) => setState(() => _isActive = v),
-                            ),
-                            const Text('Active'),
-                            const Spacer(),
-                            FilledButton.icon(
-                              style: _filledBtnStyle(),
-                              onPressed: _submitting ? null : _create,
-                              icon: _submitting
-                                  ? const SizedBox(
-                                      height: 18,
-                                      width: 18,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                    )
-                                  : const Icon(Icons.save),
-                              label: const Text('Post Item'),
-                            ),
-                          ],
-                        ),
-                      ],
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Form Fields
+                  TextField(
+                    controller: _name,
+                    decoration: _inputDecoration(label: 'Item Name'),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  TextField(
+                    controller: _price,
+                    keyboardType: TextInputType.number,
+                    decoration: _inputDecoration(label: 'Price (MWK)'),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  TextField(
+                    controller: _location,
+                    decoration: _inputDecoration(label: 'Location').copyWith(
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.my_location),
+                            onPressed: _getCurrentLocation,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.map),
+                            onPressed: _openGoogleMap,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                
-                // My Items List
-                const SizedBox(height: 20),
-                const Text(
-                  'My Items',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 10),
-              ],
+                  const SizedBox(height: 12),
+                  
+                  DropdownButtonFormField<String>(
+                    value: _category,
+                    items: _kCategories.map((c) => DropdownMenuItem(
+                      value: c,
+                      child: Text(c[0].toUpperCase() + c.substring(1)),
+                    )).toList(),
+                    onChanged: (v) => setState(() => _category = v),
+                    decoration: _inputDecoration(label: 'Category'),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  TextField(
+                    controller: _desc,
+                    minLines: 3,
+                    maxLines: 5,
+                    decoration: _inputDecoration(label: 'Description (optional)'),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  // Gallery
+                  const Text('Gallery Images (optional)', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  _buildGalleryPreview(),
+                  const SizedBox(height: 12),
+                  
+                  Row(
+                    children: [
+                      Switch(
+                        value: _isActive,
+                        onChanged: (v) => setState(() => _isActive = v),
+                      ),
+                      const Text('Active'),
+                      const Spacer(),
+                      FilledButton.icon(
+                        style: _filledBtnStyle(),
+                        onPressed: _submitting ? null : _create,
+                        icon: _submitting
+                            ? const SizedBox(
+                                height: 18,
+                                width: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.save),
+                        label: const Text('Post Item'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // FIXED: New method for My Items tab - just the items grid
+  Widget _buildMyItemsTab() {
+    return Column(
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'My Items',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  _marketplaceTabs.animateTo(1); // Go to Add Item tab
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Add New Item'),
+              ),
+            ],
           ),
         ),
         
@@ -1246,7 +1312,26 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
           child: _loadingItems
               ? const Center(child: CircularProgressIndicator())
               : _items.isEmpty
-                  ? const Center(child: Text('No items yet. Add your first product!'))
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.inventory, size: 60, color: Colors.grey),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'No items yet',
+                            style: TextStyle(fontSize: 16, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 8),
+                          TextButton(
+                            onPressed: () {
+                              _marketplaceTabs.animateTo(1); // Go to Add Item tab
+                            },
+                            child: const Text('Add your first item'),
+                          ),
+                        ],
+                      ),
+                    )
                   : GridView.builder(
                       padding: const EdgeInsets.all(16),
                       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -1481,6 +1566,28 @@ class _ItemCard extends StatelessWidget {
                         color: Colors.grey[600],
                       ),
                     ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.location_on,
+                          size: 12,
+                          color: Colors.grey[600],
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            item['location'] ?? '',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey[600],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -1494,12 +1601,39 @@ class _ItemCard extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
-                  icon: const Icon(Icons.delete, size: 18),
-                  color: Colors.red,
-                  onPressed: busy ? null : onDelete,
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.delete, size: 18),
+                    color: Colors.red,
+                    onPressed: busy ? null : onDelete,
+                  ),
                 ),
               ],
+            ),
+          ),
+          
+          // Status badge
+          Positioned(
+            top: 8,
+            left: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: (item['isActive'] == true) ? Colors.green : Colors.red,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                (item['isActive'] == true) ? 'Active' : 'Inactive',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ),
         ],

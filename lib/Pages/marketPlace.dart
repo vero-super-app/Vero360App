@@ -290,7 +290,7 @@ Widget _infoRow(String label, String? value, {IconData? icon}) {
           ),
         ),
       ],
-    );
+    ),
   );
 }
 
@@ -397,6 +397,41 @@ class _MarketPageState extends State<MarketPage> {
     }
   }
 
+  // Get proper authentication token
+  Future<String?> _getAuthToken() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // Try backend JWT tokens first
+      final token = prefs.getString('token') ?? prefs.getString('jwt_token');
+      if (token != null && token.isNotEmpty) {
+        return token;
+      }
+      
+      // If no backend token, try Firebase token
+      final firebaseUser = FirebaseAuth.instance.currentUser;
+      if (firebaseUser != null) {
+        final firebaseToken = await firebaseUser.getIdToken();
+        if (firebaseToken != null && firebaseToken.isNotEmpty) {
+          // Store it for future use
+          await prefs.setString('firebase_token', firebaseToken);
+          return firebaseToken;
+        }
+      }
+      
+      // Try stored Firebase token
+      final storedFirebaseToken = prefs.getString('firebase_token');
+      if (storedFirebaseToken != null && storedFirebaseToken.isNotEmpty) {
+        return storedFirebaseToken;
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error getting auth token: $e');
+      return null;
+    }
+  }
+
   String _formatTimeAgo(DateTime time) {
     final now = DateTime.now();
     final diff = now.difference(time);
@@ -447,7 +482,22 @@ class _MarketPageState extends State<MarketPage> {
     return hash;
   }
 
-  // Data Loaders
+  // Connectivity Check Helper (Optional - requires connectivity_plus package)
+  Future<bool> _checkConnectivity() async {
+    try {
+      // Option 1: If you have connectivity_plus package (uncomment and add to pubspec.yaml)
+      // final connectivityResult = await (Connectivity().checkConnectivity());
+      // return connectivityResult != ConnectivityResult.none;
+      
+      // Option 2: Simple network check (less reliable but works without extra packages)
+      final result = await InternetAddress.lookup('google.com');
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } on SocketException catch (_) {
+      return false;
+    }
+  }
+
+  // Data Loaders - FIXED WITH OFFLINE SUPPORT
   Future<List<MarketplaceDetailModel>> _loadAll({String? category}) async {
     setState(() {
       _loading = true;
@@ -456,25 +506,79 @@ class _MarketPageState extends State<MarketPage> {
     });
 
     try {
-      final snapshot = await _firestore
-          .collection('marketplace_items')
-          .orderBy('createdAt', descending: true)
-          .get();
+      QuerySnapshot? snapshot;
+      
+      // FIRST: Try to read from CACHE
+      try {
+        snapshot = await _firestore
+            .collection('marketplace_items')
+            .orderBy('createdAt', descending: true)
+            .get(const GetOptions(source: Source.cache));
+        
+        if (snapshot.docs.isNotEmpty) {
+          // We have cached data, process it
+          final all = snapshot.docs
+              .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
+              .where((item) => item.isActive)
+              .toList();
 
-      final all = snapshot.docs
-          .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
-          .where((item) => item.isActive)
-          .toList();
+          if (category == null || category.isEmpty) {
+            return all;
+          }
 
-      if (category == null || category.isEmpty) {
-        return all;
+          final c = category.toLowerCase();
+          return all.where((item) => item.category.toLowerCase() == c).toList();
+        }
+      } catch (cacheError) {
+        // Cache is empty or inaccessible, we'll try server next
+        print('Cache read failed: $cacheError');
       }
 
-      final c = category.toLowerCase();
-      return all.where((item) => item.category.toLowerCase() == c).toList();
+      // SECOND: Try to fetch from SERVER (if online)
+      try {
+        snapshot = await _firestore
+            .collection('marketplace_items')
+            .orderBy('createdAt', descending: true)
+            .get(const GetOptions(source: Source.server));
+
+        final all = snapshot.docs
+            .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
+            .where((item) => item.isActive)
+            .toList();
+
+        if (category == null || category.isEmpty) {
+          return all;
+        }
+
+        final c = category.toLowerCase();
+        return all.where((item) => item.category.toLowerCase() == c).toList();
+      } catch (serverError) {
+        // Server failed, check if this is a connectivity issue
+        final errorStr = serverError.toString().toLowerCase();
+        final isNetworkError = errorStr.contains('unavailable') || 
+                              errorStr.contains('network') ||
+                              errorStr.contains('offline');
+        
+        if (isNetworkError && mounted) {
+          // Show user-friendly message about being offline
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('You are offline. Showing cached items if available.'),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        
+        // Return empty list - we tried both cache and server
+        return [];
+      }
+
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+    
+    return [];
   }
 
   Future<List<MarketplaceDetailModel>> _searchByName(String raw) async {
@@ -489,8 +593,11 @@ class _MarketPageState extends State<MarketPage> {
     });
 
     try {
+      // First load all items with offline support
       final all = await _loadAll(category: _selectedCategory);
       final lower = q.toLowerCase();
+      
+      // Then filter locally
       return all
           .where((item) => item.name.toLowerCase().contains(lower))
           .toList();
@@ -520,7 +627,7 @@ class _MarketPageState extends State<MarketPage> {
     }
   }
 
-  // Auth Helpers - FIXED: Updated to check for Firebase auth as well
+  // Auth Helpers
   Future<bool> _isUserLoggedIn() async {
     // Check Firebase Auth first
     final FirebaseAuth auth = FirebaseAuth.instance;
@@ -571,7 +678,7 @@ class _MarketPageState extends State<MarketPage> {
     return isLoggedIn;
   }
 
-  // Cart Functionality - FIXED: Updated to handle Firebase users
+  // Cart Functionality
   Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     final isLoggedIn = await _requireLoginForCart();
     if (!isLoggedIn) return;
@@ -589,6 +696,19 @@ class _MarketPageState extends State<MarketPage> {
     _showLoadingDialog();
 
     try {
+      // Get fresh auth token before adding to cart
+      final token = await _getAuthToken();
+      if (token == null || token.isEmpty) {
+        ToastHelper.showCustomToast(
+          context,
+          'Authentication failed. Please log in again.',
+          isSuccess: false,
+          errorMessage: 'No auth token',
+        );
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
       final userId = await _getCurrentUserId() ?? 'unknown';
       
       final int numericItemId = item.hasValidSqlItemId
@@ -624,12 +744,33 @@ class _MarketPageState extends State<MarketPage> {
         errorMessage: 'Timeout',
       );
     } catch (e) {
-      ToastHelper.showCustomToast(
-        context,
-        'Failed to add item: $e',
-        isSuccess: false,
-        errorMessage: 'Add to cart failed',
-      );
+      // Check if it's an authentication error
+      if (e.toString().contains('401') || e.toString().contains('Unauthorized')) {
+        ToastHelper.showCustomToast(
+          context,
+          'Session expired. Please log in again.',
+          isSuccess: false,
+          errorMessage: 'Auth failed',
+        );
+        
+        // Clear invalid tokens
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('token');
+        await prefs.remove('jwt_token');
+        await prefs.remove('firebase_token');
+        
+        // Optionally, redirect to login
+        // if (mounted) {
+        //   Navigator.pushNamed(context, '/login');
+        // }
+      } else {
+        ToastHelper.showCustomToast(
+          context,
+          'Failed to add item: $e',
+          isSuccess: false,
+          errorMessage: 'Add to cart failed',
+        );
+      }
     } finally {
       if (mounted) {
         Navigator.of(context).pop();

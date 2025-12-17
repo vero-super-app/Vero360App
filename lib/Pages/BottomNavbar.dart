@@ -1,106 +1,158 @@
-// lib/Pages/bottom_navbar.dart
 import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/screens/chat_list_page.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:vero360_app/settings/Settings.dart';
 
 import 'homepage.dart';
 import '../Pages/marketPlace.dart';
 import '../Pages/cartpage.dart';
-import '../Pages/Home/Profilepage.dart';
+import 'package:vero360_app/screens/chat_list_page.dart';
+
 import '../services/cart_services.dart';
-// Add these imports after the existing ones:
-import 'package:vero360_app/Pages/MerchantDashboards/marketplace_merchant_dashboard.dart'; // Add this
+
+
+// Merchant dashboards
+import 'package:vero360_app/Pages/MerchantDashboards/marketplace_merchant_dashboard.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/food_merchant_dashboard.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/taxi_merchant_dashboard.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/courier_merchant_dashboard.dart';
-import 'package:vero360_app/Pages/merchantbottomnavbar.dart';
 
 class Bottomnavbar extends StatefulWidget {
   const Bottomnavbar({super.key, required this.email});
-
   final String email;
 
   @override
   State<Bottomnavbar> createState() => _BottomnavbarState();
 }
 
-class _BottomnavbarState extends State<Bottomnavbar> {
+class _BottomnavbarState extends State<Bottomnavbar> with WidgetsBindingObserver {
   int _selectedIndex = 0;
-  late List<Widget> _pages = [];
-  bool _isInitialized = false;
-  bool _isMerchant = false;
+
   bool _isLoading = true;
+  bool _isMerchant = false;
+  bool _isLoggedIn = false;
 
-  final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
+  late List<Widget> _pages;
 
-  // ====== Brand (ORANGE) ======
-  static const Color _brandOrange = Color(0xFFFF8A00); // primary
-  static const Color _brandOrangeDark = Color(0xFFE07000); // deeper shade
-  static const Color _brandOrangeGlow = Color(0xFFFFE2BF); // soft glow
+  final cartService =
+      CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
+
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandOrangeDark = Color(0xFFE07000);
+  static const Color _brandOrangeGlow = Color(0xFFFFE2BF);
 
   @override
   void initState() {
     super.initState();
-    _initializeApp();
+    WidgetsBinding.instance.addObserver(this);
+
+    // React immediately when Firebase sign-in/out happens
+    FirebaseAuth.instance.authStateChanges().listen((_) => _refreshAuthState());
+
+    _initialize();
   }
 
-  Future<void> _initializeApp() async {
-    // Check user role and set up appropriate pages
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // If user logs out in another page, refresh when app resumes
+    if (state == AppLifecycleState.resumed) {
+      _refreshAuthState();
+    }
+  }
+
+  bool _tabIsProtected(int index) => index == 2 || index == 3 || index == 4;
+
+  String _featureName(int index) {
+    switch (index) {
+      case 2:
+        return 'Messages';
+      case 3:
+        return 'Cart';
+      case 4:
+        return 'Dashboard';
+      default:
+        return 'this feature';
+    }
+  }
+
+  String? _readToken(SharedPreferences p) {
+    return p.getString('jwt_token') ??
+        p.getString('token') ??
+        p.getString('authToken') ??
+        p.getString('jwt');
+  }
+
+  Future<void> _initialize() async {
+    await _refreshAuthState();
     await _checkUserRoleAndSetup();
-    
-    setState(() {
-      _isLoading = false;
-      _isInitialized = true;
-    });
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  Future<void> _refreshAuthState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = _readToken(prefs);
+    final fbUser = FirebaseAuth.instance.currentUser;
+
+    final loggedIn =
+        (token != null && token.trim().isNotEmpty) || (fbUser != null);
+
+    if (!mounted) return;
+    setState(() => _isLoggedIn = loggedIn);
+
+    // If user logged out while on protected tab, force Home
+    if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
+      setState(() => _selectedIndex = 0);
+    }
   }
 
   Future<void> _checkUserRoleAndSetup() async {
     final prefs = await SharedPreferences.getInstance();
-    final role = prefs.getString('role') ?? '';
-    final merchantService = prefs.getString('merchant_service') ?? '';
-    
-    setState(() {
-      _isMerchant = role == 'merchant';
-    });
+
+    // If not logged in, do NOT treat as merchant (prevents wrong redirect)
+    final role = _isLoggedIn
+        ? ((prefs.getString('role') ?? prefs.getString('user_role') ?? '')
+            .toLowerCase())
+        : '';
+
+    setState(() => _isMerchant = role == 'merchant');
+
+    _pages = [
+      Vero360Homepage(email: widget.email),
+      MarketPage(cartService: cartService),
+
+      // protected tabs
+      const ChatListPage(),
+      CartPage(cartService: cartService),
+      SettingsPage(
+        onBackToHomeTab: () => setState(() => _selectedIndex = 0),
+      ),
+    ];
 
     if (_isMerchant) {
-      // Merchant should be redirected, but set up placeholder pages for safety
-      _pages = [
-        Vero360Homepage(email: widget.email),
-        MarketPage(cartService: cartService),
-        ChatListPage(),
-        CartPage(cartService: cartService),
-        ProfilePage(),
-      ];
-      
-      // If merchant is here by mistake, redirect them
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _redirectMerchantToServiceDashboard(prefs);
       });
-    } else {
-      // Customer: Set up normal customer pages
-      _pages = [
-        Vero360Homepage(email: widget.email),
-        MarketPage(cartService: cartService),
-        ChatListPage(),
-        CartPage(cartService: cartService),
-        ProfilePage(),
-      ];
     }
   }
 
-  void _redirectMerchantToServiceDashboard(SharedPreferences prefs) async {
-    final merchantService = prefs.getString('merchant_service') ?? '';
+  void _redirectMerchantToServiceDashboard(SharedPreferences prefs) {
+    final merchantService =
+        (prefs.getString('merchant_service') ?? '').toLowerCase();
     final email = prefs.getString('email') ?? widget.email;
-    
-    // Import merchant dashboards
+
     Widget merchantDashboard;
-    
     switch (merchantService) {
-      case 'marketplace':  // Add marketplace case
+      case 'marketplace':
         merchantDashboard = MarketplaceMerchantDashboard(email: email);
         break;
       case 'food':
@@ -116,32 +168,43 @@ class _BottomnavbarState extends State<Bottomnavbar> {
         merchantDashboard = CourierMerchantDashboard(email: email);
         break;
       default:
-        merchantDashboard = MerchantBottomnavbar(email: email);
+        merchantDashboard = MarketplaceMerchantDashboard(email: email);
     }
-    
-    // Navigate to merchant dashboard
-    if (mounted) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => merchantDashboard),
-        (_) => false,
-      );
+
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => merchantDashboard),
+      (_) => false,
+    );
+  }
+
+  Future<bool> _onWillPop() async {
+    // ✅ Android back should go to Home tab first
+    if (_selectedIndex != 0) {
+      setState(() => _selectedIndex = 0);
+      return false;
     }
+    return true; // now allow app to close
   }
 
   void _onItemTapped(int index) async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('jwt_token');
-    final role = prefs.getString('role') ?? '';
+    // Always re-check auth state right before decision (fixes “still access after logout”)
+    await _refreshAuthState();
 
-    // If user is merchant, redirect them
+    final prefs = await SharedPreferences.getInstance();
+    final role = _isLoggedIn
+        ? ((prefs.getString('role') ?? prefs.getString('user_role') ?? '')
+            .toLowerCase())
+        : '';
+
     if (role == 'merchant') {
       _redirectMerchantToServiceDashboard(prefs);
       return;
     }
 
-    // Protected indices: 2 (Messages), 3 (Cart), 4 (Dashboard)
-    if (token == null && index >= 2) {
-      _showAuthDialog(index);
+    // ✅ block protected tabs when logged out
+    if (!_isLoggedIn && _tabIsProtected(index)) {
+      _showAuthDialog(_featureName(index));
       return;
     }
 
@@ -149,121 +212,93 @@ class _BottomnavbarState extends State<Bottomnavbar> {
     setState(() => _selectedIndex = index);
   }
 
-  void _showAuthDialog(int index) {
-    String featureName = "";
-    switch (index) {
-      case 2:
-        featureName = "Messages";
-        break;
-      case 3:
-        featureName = "Cart";
-        break;
-      case 4:
-        featureName = "Dashboard";
-        break;
-    }
-
+  void _showAuthDialog(String feature) {
     showDialog(
       context: context,
+      barrierDismissible: true,
       builder: (context) => AlertDialog(
         title: const Text("Login Required"),
-        content: Text("You need to log in or sign up to access $featureName."),
+        content: Text("You need to log in or sign up to access $feature."),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text("Cancel"),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pushNamed(context, '/login'),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/login');
+            },
             child: const Text("Login"),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/signup');
+            },
+            child: const Text("Sign Up"),
           ),
         ],
       ),
     );
   }
 
+  Widget _guardedBody() {
+    // merchant should never stay here
+    if (_isMerchant) {
+      return const Center(child: CircularProgressIndicator(color: _brandOrange));
+    }
+
+    // second line of defense (deep links / weird state)
+    if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _showAuthDialog(_featureName(_selectedIndex));
+          setState(() => _selectedIndex = 0);
+        }
+      });
+      return _pages[0];
+    }
+
+    return _pages[_selectedIndex];
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Show loading while checking role
     if (_isLoading) {
-      return Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(color: _brandOrange),
-              const SizedBox(height: 20),
-              Text(
-                _isMerchant 
-                  ? 'Redirecting to merchant dashboard...'
-                  : 'Loading...',
-                style: const TextStyle(
-                  color: Color(0xFF666666),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(color: _brandOrange)),
       );
     }
 
-    // If merchant is somehow still here (should have been redirected), show message
-    if (_isMerchant) {
-      return Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(
-                Icons.swap_horiz,
-                size: 60,
-                color: _brandOrange,
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Scaffold(
+        body: _guardedBody(),
+        bottomNavigationBar: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: _GlassPillNavBar(
+              selectedIndex: _selectedIndex,
+              onTap: _onItemTapped,
+              items: const [
+                _NavItemData(icon: Icons.home_rounded, label: "Home"),
+                _NavItemData(icon: Icons.store_rounded, label: "Market"),
+                _NavItemData(icon: Icons.message_rounded, label: "Messages"),
+                _NavItemData(icon: Icons.shopping_cart_rounded, label: "Cart"),
+                _NavItemData(icon: Icons.dashboard_rounded, label: "Dashboard"),
+              ],
+              selectedGradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [_brandOrange, _brandOrangeDark],
               ),
-              const SizedBox(height: 20),
-              const Text(
-                'Redirecting to Merchant Dashboard...',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: _brandOrange,
-                ),
-              ),
-              const SizedBox(height: 10),
-              const CircularProgressIndicator(color: _brandOrange),
-            ],
-          ),
-        ),
-      );
-    }
-
-    // For customers, show the normal bottom navbar
-    return Scaffold(
-      body: _pages[_selectedIndex],
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          child: _GlassPillNavBar(
-            selectedIndex: _selectedIndex,
-            onTap: _onItemTapped,
-            items: const [
-              _NavItemData(icon: Icons.home_rounded, label: "Home"),
-              _NavItemData(icon: Icons.store_rounded, label: "Market"),
-              _NavItemData(icon: Icons.message_rounded, label: "Messages"),
-              _NavItemData(icon: Icons.shopping_cart_rounded, label: "Cart"),
-              _NavItemData(icon: Icons.dashboard_rounded, label: "Dashboard"),
-            ],
-            // ORANGE selected pill
-            selectedGradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [_brandOrange, _brandOrangeDark],
+              glowColor: _brandOrangeGlow,
+              selectedIconColor: Colors.white,
+              unselectedIconColor: Colors.black87,
+              unselectedLabelColor: Colors.black54,
             ),
-            glowColor: _brandOrangeGlow,
-            selectedIconColor: Colors.white,
-            unselectedIconColor: Colors.black87,
-            unselectedLabelColor: Colors.black54,
           ),
         ),
       ),
@@ -300,19 +335,19 @@ class _GlassPillNavBar extends StatelessWidget {
       borderRadius: BorderRadius.circular(20),
       child: Stack(
         children: [
-          // Glass blur
           BackdropFilter(
             filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
             child: Container(
               height: 74,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.55),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.65), width: 1),
+                color: Colors.white.withOpacity(0.55),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.65),
+                  width: 1,
+                ),
               ),
             ),
           ),
-
-          // Subtle gradient + shadow (kept neutral so pill pops)
           Container(
             height: 74,
             decoration: BoxDecoration(
@@ -320,11 +355,14 @@ class _GlassPillNavBar extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Colors.white.withValues(alpha: 0.55), Colors.white.withValues(alpha: 0.34)],
+                colors: [
+                  Colors.white.withOpacity(0.55),
+                  Colors.white.withOpacity(0.34),
+                ],
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
+                  color: Colors.black.withOpacity(0.06),
                   blurRadius: 20,
                   offset: const Offset(0, 8),
                 ),
@@ -400,7 +438,7 @@ class _AnimatedNavButton extends StatelessWidget {
                 boxShadow: selected
                     ? [
                         BoxShadow(
-                          color: glowColor.withValues(alpha: 0.55),
+                          color: glowColor.withOpacity(0.55),
                           blurRadius: 18,
                           spreadRadius: 1,
                           offset: const Offset(0, 6),
@@ -412,7 +450,6 @@ class _AnimatedNavButton extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Icon bounce
                   TweenAnimationBuilder<double>(
                     tween: Tween(begin: 1.0, end: selected ? 1.18 : 1.0),
                     duration: const Duration(milliseconds: 220),
@@ -426,31 +463,8 @@ class _AnimatedNavButton extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Label
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    child: canShowLabel
-                        ? Padding(
-                            key: const ValueKey('label'),
-                            padding: const EdgeInsets.only(left: 8),
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(maxWidth: w - 40),
-                              child: const Text(
-                                '',
-                              ),
-                            ),
-                          )
-                        : const SizedBox(
-                            key: ValueKey('nolabel'),
-                            width: 0,
-                            height: 0,
-                          ),
-                  ),
-                  if (canShowLabel)
+                  if (canShowLabel) ...[
                     const SizedBox(width: 8),
-                  if (canShowLabel)
                     ConstrainedBox(
                       constraints: BoxConstraints(maxWidth: w - 40),
                       child: Text(
@@ -466,6 +480,7 @@ class _AnimatedNavButton extends StatelessWidget {
                         ),
                       ),
                     ),
+                  ],
                 ],
               ),
             ),

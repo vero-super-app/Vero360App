@@ -1,60 +1,119 @@
+// lib/services/auth_guard.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:vero360_app/Pages/BottomNavbar.dart';
+
 import 'package:vero360_app/screens/login_screen.dart';
 import 'package:vero360_app/screens/register_screen.dart';
 
 class AuthGuard extends StatefulWidget {
   final Widget child;
 
-  const AuthGuard({Key? key, required this.child}) : super(key: key);
+  /// Optional label used in the dialog message
+  final String featureName;
+
+  /// If true: user can view the page but it will be DISABLED until login (dialog shown)
+  /// This matches your old behavior but prevents real access.
+  final bool showChildBehindDialog;
+
+  const AuthGuard({
+    Key? key,
+    required this.child,
+    this.featureName = 'this feature',
+    this.showChildBehindDialog = true,
+  }) : super(key: key);
 
   @override
   State<AuthGuard> createState() => _AuthGuardState();
 }
 
-class _AuthGuardState extends State<AuthGuard> {
+class _AuthGuardState extends State<AuthGuard> with WidgetsBindingObserver {
   bool _isLoggedIn = false;
   bool _loading = true;
+
+  bool _dialogShown = false;
+  StreamSubscription<User?>? _authSub;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
+    // React to Firebase sign-out / sign-in
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((_) {
+      _checkAuthStatus();
+    });
+
     _checkAuthStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _authSub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkAuthStatus();
+    }
+  }
+
+  String? _readToken(SharedPreferences prefs) {
+    return prefs.getString("jwt_token") ??
+        prefs.getString("token") ??
+        prefs.getString("authToken");
   }
 
   Future<void> _checkAuthStatus() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString("token");
+    final token = _readToken(prefs);
+    final fbUser = FirebaseAuth.instance.currentUser;
 
-    if (token != null && token.isNotEmpty) {
-      // 🔹 Optional: Validate token with backend
-      // final response = await http.get(
-      //   Uri.parse("http://your-backend.com/api/verify"),
-      //   headers: {"Authorization": "Bearer $token"},
-      // );
-      // setState(() => _isLoggedIn = response.statusCode == 200);
+    final loggedIn =
+        (token != null && token.trim().isNotEmpty) || (fbUser != null);
 
-      setState(() => _isLoggedIn = true); // trust local token
-    } else {
-      setState(() => _isLoggedIn = false);
+    if (!mounted) return;
+
+    setState(() {
+      _isLoggedIn = loggedIn;
+      _loading = false;
+    });
+
+    // Same behavior as your original: pop dialog when not logged in
+    if (!_isLoggedIn && !_dialogShown) {
+      _dialogShown = true;
+      Future.delayed(Duration.zero, () => _showAuthDialog(context));
     }
+  }
 
-    setState(() => _loading = false);
+  void _goHome() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
+      (_) => false,
+    );
   }
 
   void _showAuthDialog(BuildContext context) {
     showDialog(
       context: context,
-      barrierDismissible: true, // Allow user to cancel
+      barrierDismissible: true, // ✅ keep your old behavior
       builder: (context) => AlertDialog(
         title: const Text("Login Required"),
-        content: const Text(
-          "You need to log in or sign up to continue. "
-          "Only quick services can be accessed without logging in.",
+        content: Text(
+          "You need to log in or sign up to access ${widget.featureName}.\n\n"
+          "Only public pages can be accessed without logging in.",
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              Navigator.pop(context);
+              _goHome(); // ✅ don’t leave them stuck on protected screen
+            },
             child: const Text("Cancel"),
           ),
           TextButton(
@@ -79,7 +138,13 @@ class _AuthGuardState extends State<AuthGuard> {
           ),
         ],
       ),
-    );
+    ).then((_) {
+      // If still logged out after closing dialog, keep blocking
+      if (mounted && !_isLoggedIn) {
+        // allow dialog to show again if they come back later
+        _dialogShown = false;
+      }
+    });
   }
 
   @override
@@ -88,10 +153,46 @@ class _AuthGuardState extends State<AuthGuard> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (!_isLoggedIn) {
-      Future.delayed(Duration.zero, () => _showAuthDialog(context));
+    if (_isLoggedIn) return widget.child;
+
+    // ✅ Key fix: keep “old feel” (child visible) BUT block interaction
+    if (widget.showChildBehindDialog) {
+      return Stack(
+        children: [
+          AbsorbPointer(absorbing: true, child: widget.child),
+          // subtle lock overlay
+          Positioned.fill(
+            child: Container(
+              color: Colors.white.withOpacity(0.04),
+              alignment: Alignment.center,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.92),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: const [
+                    BoxShadow(blurRadius: 18, offset: Offset(0, 8), color: Colors.black12),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.lock_outline),
+                    const SizedBox(width: 10),
+                    Text(
+                      "Login to continue",
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
     }
 
-    return widget.child;
+    // Or, if you ever want full block screen:
+    return const SizedBox.shrink();
   }
 }

@@ -1,31 +1,57 @@
 // lib/Pages/MerchantDashboards/marketplace_merchant_dashboard.dart
+//
+// ✅ Adds:
+// 1) Pull-to-refresh (Dashboard tab)
+// 2) Search + filter chips (My Items tab)
+// 3) Edit item (modern bottom-sheet)
+// 4) Skeleton loaders (no spinners)
+// 5) Business name FIX: resolves from Auth → Firestore → API → Prefs (and can backfill Auth displayName)
+// 6) Business overview cards are compact (not big)
+//
+// ✅ Add to pubspec.yaml if missing:
+// firebase_storage: ^11.6.0
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
+
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:http/http.dart' as http;
+import 'package:vero360_app/services/api_config.dart';
+
 import 'package:vero360_app/services/merchant_service_helper.dart';
-import 'package:vero360_app/Pages/marketPlace.dart';
-import 'package:vero360_app/Pages/Home/Profilepage.dart';
-import 'package:vero360_app/screens/chat_list_page.dart';
-import 'package:vero360_app/Pages/cartpage.dart';
 import 'package:vero360_app/services/cart_services.dart';
+import 'package:vero360_app/services/api_exception.dart';
+import 'package:vero360_app/settings/Settings.dart';
+import 'package:vero360_app/toasthelper.dart';
+
+import 'package:vero360_app/Pages/homepage.dart';
+import 'package:vero360_app/Pages/marketPlace.dart';
+import 'package:vero360_app/Pages/cartpage.dart';
+import 'package:vero360_app/screens/chat_list_page.dart';
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/merchant_wallet.dart';
-import 'package:vero360_app/Pages/homepage.dart';
-import 'package:vero360_app/services/serviceprovider_service.dart';
-import 'package:vero360_app/models/marketplace.model.dart';
-import 'package:vero360_app/services/api_exception.dart';
-import 'package:vero360_app/toasthelper.dart';
+
+import 'package:vero360_app/Pages/Home/myorders.dart';
+import 'package:vero360_app/Pages/ToRefund.dart';
+import 'package:vero360_app/Pages/Toreceive.dart';
+import 'package:vero360_app/Pages/Toship.dart';
+import 'package:vero360_app/Pages/myaccomodation.dart';
 
 class LocalMedia {
   final Uint8List bytes;
@@ -45,37 +71,36 @@ class MarketplaceMerchantDashboard extends StatefulWidget {
   const MarketplaceMerchantDashboard({super.key, required this.email});
 
   @override
-  State<MarketplaceMerchantDashboard> createState() => _MarketplaceMerchantDashboardState();
+  State<MarketplaceMerchantDashboard> createState() =>
+      _MarketplaceMerchantDashboardState();
 }
 
 class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashboard>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final MerchantServiceHelper _helper = MerchantServiceHelper();
-  final CartService _cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
-  final ServiceproviderService _spService = ServiceproviderService();
+
+  // ✅ keep constructor exactly as you use elsewhere
+  final CartService _cartService =
+      CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
+
   final _picker = ImagePicker();
-  
-  // Marketplace form controllers
+
+  // Form controllers (create)
   final _name = TextEditingController();
   final _price = TextEditingController();
   final _location = TextEditingController();
   final _desc = TextEditingController();
-  
-  // Tab controller for marketplace tabs
+
   late TabController _marketplaceTabs;
-  
-  // Marketplace state
+
+  // Create form state
   bool _isActive = true;
   bool _submitting = false;
   LocalMedia? _cover;
   final List<LocalMedia> _gallery = <LocalMedia>[];
-  final List<LocalMedia> _videos = <LocalMedia>[];
-  List<Map<String, dynamic>> _items = [];
-  bool _loadingItems = true;
-  bool _busyRow = false;
-  
+
   static const List<String> _kCategories = <String>[
     'food',
     'drinks',
@@ -85,17 +110,26 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     'other',
   ];
   String? _category = 'other';
-  
+
+  // Items
+  List<Map<String, dynamic>> _items = [];
+  bool _loadingItems = true;
+  bool _busyRow = false;
+
+  // Filters (My Items)
+  String _searchQuery = '';
+  String _filterCategory = 'all'; // all | food | ...
+  String _filterStatus = 'all'; // all | active | inactive
+
   // Dashboard state
-  Map<String, dynamic>? _merchantData;
   List<dynamic> _recentSales = [];
-  List<dynamic> _topItems = [];
   bool _isLoading = true;
   bool _initialLoadComplete = false;
+
   String _uid = '';
-  String _businessName = '';
+  String _businessName = ''; // resolved name for UI
   double _walletBalance = 0;
-  
+
   // Stats
   int _totalItems = 0;
   int _activeItems = 0;
@@ -104,63 +138,333 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   double _rating = 0.0;
   String _status = 'pending';
 
-  // Navigation State
-  int _selectedIndex = 0;
+  // Merchant profile details
+  String _merchantEmail = 'No Email';
+  String _merchantPhone = 'No Phone';
+  String _merchantProfileUrl = '';
 
-  // Brand colors
+  bool _meOffline = false;
+  bool _loadingMe = false;
+  bool _profileUploading = false;
+
+  Timer? _ticker;
+
+  // Brand
   static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandSoft = Color(0xFFFFE8CC);
+  static const Color _brandNavy = Color(0xFF16284C);
 
   @override
   void initState() {
     super.initState();
-    _marketplaceTabs = TabController(length: 3, vsync: this); // Changed to 3 tabs
-    _loadMerchantData();
-    _loadItems();
+    _marketplaceTabs = TabController(length: 3, vsync: this);
+
+    _uid = _auth.currentUser?.uid ?? '';
+
+    _loadMerchantProfileFromPrefs();
+    _hydrateFromFirebaseAuth();
+    _ensureBusinessName(); // ✅ FIX business name
+
+    _fetchCurrentUserMe(); // ✅ API /users/me
+
+    _loadMerchantData(); // ✅ API dashboard stats
+    _loadItems(); // ✅ Firestore items counts + list
     _startPeriodicUpdates();
   }
 
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    _marketplaceTabs.dispose();
+    _name.dispose();
+    _price.dispose();
+    _location.dispose();
+    _desc.dispose();
+    super.dispose();
+  }
+
   void _startPeriodicUpdates() {
-    Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (mounted) {
-        _loadMerchantData();
-        _loadItems();
-      }
+    _ticker?.cancel();
+    _ticker = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted) return;
+      _hydrateFromFirebaseAuth();
+      _ensureBusinessName();
+      _fetchCurrentUserMe();
+      _loadMerchantData();
+      _loadItems();
     });
   }
 
+  // ----------------- Business name FIX (Auth → Firestore → API → Prefs) -----------------
+  void _hydrateFromFirebaseAuth() {
+    final u = _auth.currentUser;
+    if (u == null) return;
+
+    _uid = u.uid;
+
+    final email = (u.email ?? '').trim();
+    final phone = (u.phoneNumber ?? '').trim();
+    final photo = (u.photoURL ?? '').trim();
+
+    if (mounted) {
+      setState(() {
+        if (email.isNotEmpty) _merchantEmail = email;
+        if (phone.isNotEmpty) _merchantPhone = phone;
+        if (photo.isNotEmpty) _merchantProfileUrl = photo;
+      });
+    }
+  }
+
+  Future<void> _ensureBusinessName() async {
+    final u = _auth.currentUser;
+    if (u == null) return;
+
+    final authDisplay = (u.displayName ?? '').trim();
+    if (authDisplay.isNotEmpty) {
+      if (mounted) setState(() => _businessName = authDisplay);
+      return;
+    }
+
+    String resolved = '';
+
+    // 1) Firestore marketplace_merchants
+    try {
+      final doc = await _firestore.collection('marketplace_merchants').doc(u.uid).get();
+      final data = doc.data();
+      if (data != null) {
+        resolved = (data['businessName'] ?? data['name'] ?? '').toString().trim();
+      }
+    } catch (_) {}
+
+    // 2) Firestore users
+    if (resolved.isEmpty) {
+      try {
+        final doc = await _firestore.collection('users').doc(u.uid).get();
+        final data = doc.data();
+        if (data != null) {
+          resolved = (data['businessName'] ??
+                  data['fullName'] ??
+                  data['name'] ??
+                  data['displayName'] ??
+                  '')
+              .toString()
+              .trim();
+        }
+      } catch (_) {}
+    }
+
+    // 3) API /users/me
+    if (resolved.isEmpty) {
+      try {
+        final bearer = await _getBearerTokenForApi();
+        if (bearer != null && bearer.isNotEmpty) {
+          final base = await ApiConfig.readBase();
+          final resp = await http.get(
+            Uri.parse('$base/users/me'),
+            headers: {'Authorization': 'Bearer $bearer', 'Accept': 'application/json'},
+          );
+          if (resp.statusCode == 200) {
+            final decoded = jsonDecode(resp.body);
+            final Map<String, dynamic> payload =
+                (decoded is Map && decoded['data'] is Map)
+                    ? Map<String, dynamic>.from(decoded['data'])
+                    : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
+            final user = (payload['user'] is Map)
+                ? Map<String, dynamic>.from(payload['user'] as Map)
+                : payload;
+
+            final business =
+                (user['businessName'] ?? user['merchantName'] ?? '').toString().trim();
+            final name =
+                (user['name'] ?? '').toString().trim();
+            final first = (user['firstName'] ?? '').toString().trim();
+            final last = (user['lastName'] ?? '').toString().trim();
+            final joined = [first, last].where((x) => x.isNotEmpty).join(' ').trim();
+
+            resolved = business.isNotEmpty ? business : (name.isNotEmpty ? name : joined);
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 4) Prefs fallback
+    if (resolved.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      resolved = (prefs.getString('business_name') ??
+              prefs.getString('fullName') ??
+              prefs.getString('name') ??
+              '')
+          .trim();
+    }
+
+    if (resolved.isEmpty) resolved = 'Marketplace Merchant';
+
+    // ✅ backfill FirebaseAuth displayName so next time it's correct
+    try {
+      if ((u.displayName ?? '').trim().isEmpty && resolved != 'Marketplace Merchant') {
+        await u.updateDisplayName(resolved);
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+    setState(() => _businessName = resolved);
+  }
+
+  String _displayBusinessName() {
+    final authName = (_auth.currentUser?.displayName ?? '').trim();
+    if (authName.isNotEmpty) return authName;
+    if (_businessName.trim().isNotEmpty) return _businessName.trim();
+    return 'Marketplace Merchant';
+  }
+
+  // ----------------- API auth: prefs token OR Firebase idToken -----------------
+  Future<String?> _getBearerTokenForApi() async {
+    final prefs = await SharedPreferences.getInstance();
+    final fromPrefs = prefs.getString('jwt_token') ??
+        prefs.getString('token') ??
+        prefs.getString('authToken') ??
+        prefs.getString('jwt');
+
+    if (fromPrefs != null && fromPrefs.trim().isNotEmpty) {
+      return fromPrefs.trim();
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+
+    try {
+      final idToken = await user.getIdToken();
+      return idToken!.trim().isEmpty ? null : idToken?.trim();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _loadMerchantProfileFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+
+    setState(() {
+      _merchantEmail = prefs.getString('email') ?? _merchantEmail;
+      _merchantPhone = prefs.getString('phone') ?? _merchantPhone;
+      _merchantProfileUrl = prefs.getString('profilepicture') ?? _merchantProfileUrl;
+    });
+  }
+
+  // ✅ /users/me for email/phone/pic/rating (keeps name from resolver)
+  Future<void> _fetchCurrentUserMe() async {
+    if (!mounted) return;
+
+    setState(() {
+      _loadingMe = true;
+      _meOffline = false;
+    });
+
+    try {
+      final bearer = await _getBearerTokenForApi();
+      if (bearer == null || bearer.isEmpty) {
+        if (mounted) setState(() => _loadingMe = false);
+        return;
+      }
+
+      final base = await ApiConfig.readBase();
+      final resp = await http.get(
+        Uri.parse('$base/users/me'),
+        headers: {'Authorization': 'Bearer $bearer', 'Accept': 'application/json'},
+      );
+
+      if (!mounted) return;
+
+      if (resp.statusCode == 200) {
+        final decoded = jsonDecode(resp.body);
+        final Map<String, dynamic> payload =
+            (decoded is Map && decoded['data'] is Map)
+                ? Map<String, dynamic>.from(decoded['data'])
+                : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
+        final user = (payload['user'] is Map)
+            ? Map<String, dynamic>.from(payload['user'] as Map)
+            : payload;
+
+        final emailVal =
+            (user['email'] ?? user['userEmail'] ?? '').toString().trim();
+        final phoneVal = (user['phone'] ?? '').toString().trim();
+        final picVal = (user['profilepicture'] ?? user['profilePicture'] ?? '').toString().trim();
+
+        final apiRating = user['rating'];
+        if (apiRating is num) _rating = apiRating.toDouble();
+
+        final prefs = await SharedPreferences.getInstance();
+        if (emailVal.isNotEmpty) await prefs.setString('email', emailVal);
+        if (phoneVal.isNotEmpty) await prefs.setString('phone', phoneVal);
+        if (picVal.isNotEmpty) await prefs.setString('profilepicture', picVal);
+
+        if (!mounted) return;
+        setState(() {
+          if (emailVal.isNotEmpty) _merchantEmail = emailVal;
+          if (phoneVal.isNotEmpty) _merchantPhone = phoneVal;
+
+          // keep auth photo if set, else use API photo
+          final authPhoto = (_auth.currentUser?.photoURL ?? '').trim();
+          if (authPhoto.isEmpty && picVal.isNotEmpty) _merchantProfileUrl = picVal;
+        });
+      } else {
+        setState(() => _meOffline = true);
+      }
+    } catch (e) {
+      setState(() => _meOffline = true);
+      debugPrint('Error fetching /users/me: $e');
+    } finally {
+      if (mounted) setState(() => _loadingMe = false);
+    }
+  }
+
+  // ----------------- Dashboard API + Wallet -----------------
   Future<void> _loadMerchantData() async {
     if (!mounted) return;
-    
+
     final prefs = await SharedPreferences.getInstance();
-    _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? '';
-    
+    _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? _uid;
+
     if (_uid.isNotEmpty) {
       try {
-        final dashboardData = await _helper.getMerchantDashboardData(_uid, 'marketplace');
-        
+        final dashboardData =
+            await _helper.getMerchantDashboardData(_uid, 'marketplace');
+
         if (!dashboardData.containsKey('error')) {
+          final merchant = dashboardData['merchant'];
+
           setState(() {
-            _merchantData = dashboardData['merchant'];
             _recentSales = dashboardData['recentOrders'] ?? [];
-            _totalItems = dashboardData['totalItems'] ?? 0;
-            _activeItems = dashboardData['activeItems'] ?? 0;
-            _soldItems = dashboardData['soldItems'] ?? 0;
-            _totalEarnings = dashboardData['totalRevenue'] ?? 0;
-            _rating = dashboardData['merchant']?['rating'] ?? 0.0;
-            _status = dashboardData['merchant']?['status'] ?? 'pending';
-            _businessName = dashboardData['merchant']?['businessName'] ?? 'Marketplace Merchant';
+
+            _totalEarnings = (dashboardData['totalRevenue'] is num)
+                ? (dashboardData['totalRevenue'] as num).toDouble()
+                : double.tryParse('${dashboardData['totalRevenue']}') ?? 0;
+
+            // some APIs might give these too
+            final ti = dashboardData['totalItems'];
+            final ai = dashboardData['activeItems'];
+            final si = dashboardData['soldItems'];
+            if (ti is int) _totalItems = ti;
+            if (ai is int) _activeItems = ai;
+            if (si is int) _soldItems = si;
+
+            if (merchant is Map) {
+              final mr = merchant['rating'];
+              if (mr is num) _rating = mr.toDouble();
+
+              final ms = merchant['status'];
+              if (ms != null && ms.toString().trim().isNotEmpty) {
+                _status = ms.toString().trim();
+              }
+            }
           });
         }
 
-        await _loadTopItems();
         await _loadWalletBalance();
-
       } catch (e) {
-        print('Error loading marketplace data: $e');
+        debugPrint('Error loading dashboard: $e');
       }
     }
-    
+
     if (mounted) {
       setState(() {
         _isLoading = false;
@@ -169,82 +473,64 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     }
   }
 
-  Future<void> _loadItems() async {
-    setState(() => _loadingItems = true);
-    try {
-      final sellerId = await _getNestUserId();
-
-      Query<Map<String, dynamic>> query =
-          _firestore.collection('marketplace_items');
-
-      if (sellerId != null) {
-        query = query.where('sellerUserId', isEqualTo: sellerId);
-      }
-
-      final snap = await query.get();
-
-      _items =
-          snap.docs.map((doc) => {...doc.data(), 'id': doc.id}).toList();
-    } catch (e) {
-      print('Error loading items: $e');
-      _items = [];
-    } finally {
-      if (mounted) setState(() => _loadingItems = false);
-    }
-  }
-
-  Future<void> _loadTopItems() async {
-    try {
-      final snapshot = await _firestore
-          .collection('marketplace_items')
-          .where('sellerUserId', isEqualTo: _uid)
-          .orderBy('createdAt', descending: true)
-          .limit(5)
-          .get();
-      
-      if (mounted) {
-        setState(() {
-          _topItems = snapshot.docs.map((doc) => doc.data()).toList();
-        });
-      }
-    } catch (e) {
-      print('Error loading top items: $e');
-    }
-  }
-
   Future<void> _loadWalletBalance() async {
     try {
-      final walletDoc = await _firestore
-          .collection('merchant_wallets')
-          .doc(_uid)
-          .get();
-      
+      final firebaseUid = _auth.currentUser?.uid ?? _uid;
+      if (firebaseUid.trim().isEmpty) return;
+
+      final walletDoc =
+          await _firestore.collection('merchant_wallets').doc(firebaseUid).get();
+
       if (walletDoc.exists && mounted) {
         setState(() {
           _walletBalance = (walletDoc.data()?['balance'] ?? 0).toDouble();
         });
       }
     } catch (e) {
-      print('Error loading wallet: $e');
+      debugPrint('Error loading wallet: $e');
     }
   }
 
-  // ---------------- Marketplace Methods ----------------
+  // ----------------- Nest/API userId (for sellerUserId filter) -----------------
   Future<String?> _getNestUserId() async {
     try {
       final sp = await SharedPreferences.getInstance();
-      final token = sp.getString('jwt') ?? sp.getString('token');
-      if (token == null || token.isEmpty) return null;
+      final token = sp.getString('jwt') ??
+          sp.getString('token') ??
+          sp.getString('jwt_token') ??
+          sp.getString('authToken');
 
-      final parts = token.split('.');
-      if (parts.length != 3) return null;
+      if (token != null && token.trim().isNotEmpty) {
+        final parts = token.split('.');
+        if (parts.length == 3) {
+          final payloadJson =
+              utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+          final payload = jsonDecode(payloadJson) as Map<String, dynamic>;
+          final rawId = payload['sub'] ?? payload['id'] ?? payload['userId'];
+          if (rawId != null) return rawId.toString();
+        }
+      }
 
-      final payloadJson = utf8.decode(
-        base64Url.decode(base64Url.normalize(parts[1])),
+      // fallback: /users/me id
+      final bearer = await _getBearerTokenForApi();
+      if (bearer == null || bearer.isEmpty) return null;
+
+      final base = await ApiConfig.readBase();
+      final resp = await http.get(
+        Uri.parse('$base/users/me'),
+        headers: {'Authorization': 'Bearer $bearer', 'Accept': 'application/json'},
       );
-      final payload = jsonDecode(payloadJson) as Map<String, dynamic>;
+      if (resp.statusCode != 200) return null;
 
-      final dynamic rawId = payload['sub'] ?? payload['id'] ?? payload['userId'];
+      final decoded = jsonDecode(resp.body);
+      final Map<String, dynamic> payload =
+          (decoded is Map && decoded['data'] is Map)
+              ? Map<String, dynamic>.from(decoded['data'])
+              : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
+      final user =
+          (payload['user'] is Map) ? payload['user'] as Map : payload;
+
+      final rawId = user['id'] ?? user['userId'] ?? user['sub'];
       if (rawId == null) return null;
       return rawId.toString();
     } catch (_) {
@@ -252,50 +538,318 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     }
   }
 
-  // FIXED: Get merchant info from Firebase instead of ServiceproviderService
-  Future<Map<String, dynamic>?> _getMerchantInfoFromFirebase() async {
+  // ----------------- Items load + counts (total/active) -----------------
+  Future<void> _loadItems() async {
+    setState(() => _loadingItems = true);
     try {
-      // First try marketplace_merchants collection
-      final marketplaceDoc = await _firestore
-          .collection('marketplace_merchants')
-          .doc(_uid)
-          .get();
-      
-      if (marketplaceDoc.exists) {
-        final data = marketplaceDoc.data();
-        return {
-          'id': _uid,
-          'businessName': data?['businessName'] ?? 'Marketplace Merchant',
-          'serviceType': 'marketplace',
-        };
+      final nestSellerId = await _getNestUserId();
+      final firebaseUid = _auth.currentUser?.uid ?? _uid;
+
+      Query<Map<String, dynamic>> query =
+          _firestore.collection('marketplace_items');
+
+      if (nestSellerId != null && nestSellerId.trim().isNotEmpty) {
+        query = query.where('sellerUserId', isEqualTo: nestSellerId.trim());
+      } else if (firebaseUid != null && firebaseUid.trim().isNotEmpty) {
+        query = query.where('merchantId', isEqualTo: firebaseUid.trim());
       }
-      
-      // If not found, try users collection
-      final userDoc = await _firestore
-          .collection('users')
-          .doc(_uid)
-          .get();
-      
-      if (userDoc.exists) {
-        final data = userDoc.data();
-        return {
-          'id': _uid,
-          'businessName': data?['businessName'] ?? 'Marketplace Merchant',
-          'serviceType': data?['merchantService'] ?? 'marketplace',
-        };
+
+      final snap = await query.get();
+      final list =
+          snap.docs.map((doc) => {...doc.data(), 'id': doc.id}).toList();
+
+      final total = list.length;
+      final active = list.where((e) => e['isActive'] == true).length;
+
+      int sold = 0;
+      for (final it in list) {
+        if (it['sold'] == true) sold += 1;
       }
-      
-      // Last resort: use SharedPreferences
+
+      if (!mounted) return;
+      setState(() {
+        _items = list;
+        _totalItems = total;
+        _activeItems = active;
+        _soldItems = sold;
+      });
+    } catch (e) {
+      debugPrint('Error loading items: $e');
+      if (!mounted) return;
+      setState(() {
+        _items = [];
+        _totalItems = 0;
+        _activeItems = 0;
+        _soldItems = 0;
+      });
+    } finally {
+      if (mounted) setState(() => _loadingItems = false);
+    }
+  }
+
+  List<Map<String, dynamic>> _filteredItems() {
+    final q = _searchQuery.trim().toLowerCase();
+    return _items.where((it) {
+      final name = (it['name'] ?? '').toString().toLowerCase();
+      final cat = (it['category'] ?? 'other').toString().toLowerCase();
+      final active = it['isActive'] == true;
+
+      final okQ = q.isEmpty || name.contains(q);
+      final okCat = (_filterCategory == 'all') || cat == _filterCategory;
+      final okStatus = (_filterStatus == 'all') ||
+          (_filterStatus == 'active' && active) ||
+          (_filterStatus == 'inactive' && !active);
+
+      return okQ && okCat && okStatus;
+    }).toList();
+  }
+
+  // ----------------- Pull-to-refresh -----------------
+  Future<void> _refreshAll() async {
+    await _ensureBusinessName();
+    await _fetchCurrentUserMe();
+    await _loadMerchantData();
+    await _loadItems();
+  }
+
+  // ----------------- Profile image helpers -----------------
+  ImageProvider? _profileImageProvider() {
+    final s = _merchantProfileUrl.trim();
+    if (s.isEmpty) return null;
+    if (s.startsWith('http')) return NetworkImage(s);
+    try {
+      final bytes = base64Decode(s);
+      return MemoryImage(bytes);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ----------------- Profile photo (Firebase Storage) -----------------
+  void _showPhotoSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+      builder: (_) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take a photo'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndUploadProfile(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from gallery'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndUploadProfile(ImageSource.gallery);
+              },
+            ),
+            if (_merchantProfileUrl.trim().isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.remove_circle_outline, color: Colors.red),
+                title: const Text('Remove current photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _removeProfilePhoto();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _viewProfilePhoto() {
+    final img = _profileImageProvider();
+    if (img == null) return;
+
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        insetPadding: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Stack(
+            children: [
+              AspectRatio(aspectRatio: 1, child: Image(image: img, fit: BoxFit.cover)),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: Material(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(999),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => Navigator.pop(context),
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Icon(Icons.close, color: Colors.white),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndUploadProfile(ImageSource src) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) {
+        ToastHelper.showCustomToast(context, 'Please login first', isSuccess: false, errorMessage: '');
+        return;
+      }
+
+      final file = await _picker.pickImage(source: src, maxWidth: 1400, imageQuality: 85);
+      if (file == null) return;
+
+      setState(() => _profileUploading = true);
+      final url = await _uploadProfileToFirebaseStorage(user.uid, file);
+
+      await user.updatePhotoURL(url);
+
+      await _firestore.collection('users').doc(user.uid).set({
+        'profilePicture': url,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
       final prefs = await SharedPreferences.getInstance();
-      return {
-        'id': _uid,
-        'businessName': prefs.getString('business_name') ?? 'Marketplace Merchant',
+      await prefs.setString('profilepicture', url);
+
+      if (!mounted) return;
+      setState(() => _merchantProfileUrl = url);
+
+      ToastHelper.showCustomToast(context, 'Profile picture updated', isSuccess: true, errorMessage: '');
+    } catch (e) {
+      debugPrint('Profile upload error: $e');
+      if (!mounted) return;
+      ToastHelper.showCustomToast(context, 'Failed to upload photo', isSuccess: false, errorMessage: e.toString());
+    } finally {
+      if (mounted) setState(() => _profileUploading = false);
+    }
+  }
+
+  Future<String> _uploadProfileToFirebaseStorage(String uid, XFile file) async {
+    final ext = (file.name.contains('.')) ? file.name.split('.').last : 'jpg';
+    final mime = lookupMimeType(file.path) ?? 'image/jpeg';
+
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('profile_photos')
+        .child(uid)
+        .child('profile_${DateTime.now().millisecondsSinceEpoch}.$ext');
+
+    final bytes = await file.readAsBytes();
+    await ref.putData(bytes, SettableMetadata(contentType: mime));
+    return await ref.getDownloadURL();
+  }
+
+  Future<void> _removeProfilePhoto() async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return;
+
+      setState(() => _profileUploading = true);
+
+      await user.updatePhotoURL(null);
+
+      await _firestore.collection('users').doc(user.uid).set({
+        'profilePicture': '',
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('profilepicture', '');
+
+      if (!mounted) return;
+      setState(() => _merchantProfileUrl = '');
+
+      ToastHelper.showCustomToast(context, 'Profile picture removed', isSuccess: true, errorMessage: '');
+    } catch (e) {
+      ToastHelper.showCustomToast(context, 'Failed to remove photo', isSuccess: false, errorMessage: e.toString());
+    } finally {
+      if (mounted) setState(() => _profileUploading = false);
+    }
+  }
+
+  // ----------------- CREATE item -----------------
+  Future<void> _create() async {
+    if (_cover == null) {
+      ToastHelper.showCustomToast(context, 'Please pick a cover photo', isSuccess: false, errorMessage: 'Photo required');
+      return;
+    }
+    if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
+      ToastHelper.showCustomToast(context, 'Please fill all required fields', isSuccess: false, errorMessage: 'Missing fields');
+      return;
+    }
+
+    setState(() => _submitting = true);
+
+    try {
+      final firebaseUid = _auth.currentUser?.uid ?? _uid;
+      if (firebaseUid.trim().isEmpty) {
+        ToastHelper.showCustomToast(context, 'Please login first', isSuccess: false, errorMessage: 'Not logged in');
+        return;
+      }
+
+      final sellerId = await _getNestUserId(); // ✅ API seller id if available
+      final coverBase64 = base64Encode(_cover!.bytes);
+
+      final galleryBase64 = <String>[];
+      for (final m in _gallery) {
+        galleryBase64.add(base64Encode(m.bytes));
+      }
+
+      final merchantDisplay = _displayBusinessName();
+
+      final data = {
+        'name': _name.text.trim(),
+        'price': double.tryParse(_price.text.trim()) ?? 0,
+        'image': coverBase64,
+        'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+        'location': _location.text.trim(),
+        'isActive': _isActive,
+        'category': _category ?? 'other',
+        'gallery': galleryBase64,
+        'createdAt': FieldValue.serverTimestamp(),
+
+        // ✅ BOTH IDs saved
+        'sellerUserId': (sellerId != null && sellerId.trim().isNotEmpty) ? sellerId.trim() : 'unknown',
+        'merchantId': firebaseUid,
+        'merchantName': merchantDisplay,
         'serviceType': 'marketplace',
       };
-      
+
+      await _firestore.collection('marketplace_items').add(data);
+
+      ToastHelper.showCustomToast(context, 'Item Posted Successfully!', isSuccess: true, errorMessage: '');
+
+      _name.clear();
+      _price.clear();
+      _location.clear();
+      _desc.clear();
+      _cover = null;
+      _gallery.clear();
+      _isActive = true;
+      _category = 'other';
+
+      setState(() {});
+      await _loadItems();
+      _marketplaceTabs.animateTo(2);
     } catch (e) {
-      print('Error getting merchant info from Firebase: $e');
-      return null;
+      ToastHelper.showCustomToast(context, 'Create failed: $e', isSuccess: false, errorMessage: 'Create failed');
+    } finally {
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -306,16 +860,10 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         title: const Text('Delete item'),
         content: Text('Delete "${item['name']}"? This cannot be undone.'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              'Delete',
-              style: TextStyle(color: Colors.red),
-            ),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -327,198 +875,209 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       final id = item['id'] as String;
       await _firestore.collection('marketplace_items').doc(id).delete();
       _items.removeWhere((e) => e['id'] == id);
-      setState(() {});
-      ToastHelper.showCustomToast(
-        context,
-        'Deleted • ${item['name']}',
-        isSuccess: true,
-        errorMessage: 'Deleted',
-      );
+
+      ToastHelper.showCustomToast(context, 'Deleted • ${item['name']}', isSuccess: true, errorMessage: '');
+
+      setState(() {
+        _totalItems = _items.length;
+        _activeItems = _items.where((e) => e['isActive'] == true).length;
+      });
     } catch (e) {
-      ToastHelper.showCustomToast(
-        context,
-        'Delete failed: $e',
-        isSuccess: false,
-        errorMessage: 'Delete failed',
-      );
+      ToastHelper.showCustomToast(context, 'Delete failed: $e', isSuccess: false, errorMessage: '');
     } finally {
       if (mounted) setState(() => _busyRow = false);
     }
   }
 
-  // Media pickers
-  Future<void> _pickCover(ImageSource src) async {
-    final x = await _picker.pickImage(
-      source: src,
-      imageQuality: 90,
-      maxWidth: 2048,
-    );
-    if (x == null) return;
-    final bytes = await x.readAsBytes();
-    setState(() {
-      _cover = LocalMedia(
-        bytes: bytes,
-        filename: x.name,
-        mime: lookupMimeType(x.name, headerBytes: bytes),
-      );
-    });
-  }
+  // ----------------- EDIT item (modern bottom sheet) -----------------
+  Future<void> _openEditItemSheet(Map<String, dynamic> item) async {
+    final id = (item['id'] ?? '').toString();
+    if (id.isEmpty) return;
 
-  Future<void> _pickGalleryMulti() async {
-    final xs = await _picker.pickMultiImage(
-      imageQuality: 90,
-      maxWidth: 2048,
-    );
-    for (final x in xs) {
-      final bytes = await x.readAsBytes();
-      _gallery.add(
-        LocalMedia(
-          bytes: bytes,
-          filename: x.name,
-          mime: lookupMimeType(x.name, headerBytes: bytes),
-        ),
-      );
-    }
-    setState(() {});
-  }
+    final nameCtrl = TextEditingController(text: (item['name'] ?? '').toString());
+    final priceCtrl = TextEditingController(text: (item['price'] ?? '').toString());
+    final locationCtrl = TextEditingController(text: (item['location'] ?? '').toString());
+    final descCtrl = TextEditingController(text: (item['description'] ?? '').toString());
+    String category = (item['category'] ?? 'other').toString();
+    bool isActive = item['isActive'] == true;
 
-  void _removeGalleryAt(int i) {
-    _gallery.removeAt(i);
-    setState(() {});
-  }
+    LocalMedia? newCover;
+    bool saving = false;
 
-  void _clearCover() {
-    _cover = null;
-    setState(() {});
-  }
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (_) {
+        final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+        return StatefulBuilder(
+          builder: (context, setSheet) {
+            Future<void> pickNewCover() async {
+              final x = await _picker.pickImage(source: ImageSource.gallery, maxWidth: 1800, imageQuality: 90);
+              if (x == null) return;
+              final bytes = await x.readAsBytes();
+              setSheet(() {
+                newCover = LocalMedia(bytes: bytes, filename: x.name, mime: lookupMimeType(x.name, headerBytes: bytes));
+              });
+            }
 
-  // Base64 encoding
-  Future<String> _encodeMediaAsBase64(LocalMedia media) async {
-    try {
-      return base64Encode(media.bytes);
-    } catch (e) {
-      throw ApiException(message: 'Encode failed: $e');
-    }
-  }
+            Future<void> save() async {
+              if (saving) return;
 
-  Future<List<String>> _encodeAll(List<LocalMedia> items) async {
-    final out = <String>[];
-    for (final m in items) {
-      out.add(await _encodeMediaAsBase64(m));
-    }
-    return out;
-  }
+              final n = nameCtrl.text.trim();
+              final p = double.tryParse(priceCtrl.text.trim()) ?? 0;
+              final loc = locationCtrl.text.trim();
 
-  Future<void> _create() async {
-    // Validate
-    if (_cover == null) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please pick a cover photo',
-        isSuccess: false,
-        errorMessage: 'Photo required',
-      );
-      return;
-    }
+              if (n.isEmpty || p <= 0 || loc.isEmpty) {
+                ToastHelper.showCustomToast(context, 'Fill name, price and location', isSuccess: false, errorMessage: '');
+                return;
+              }
 
-    if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please fill all required fields',
-        isSuccess: false,
-        errorMessage: 'Missing fields',
-      );
-      return;
-    }
+              setSheet(() => saving = true);
+              try {
+                final patch = <String, dynamic>{
+                  'name': n,
+                  'price': p,
+                  'location': loc,
+                  'category': category,
+                  'description': descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+                  'isActive': isActive,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                };
 
-    setState(() => _submitting = true);
+                if (newCover != null) {
+                  patch['image'] = base64Encode(newCover!.bytes);
+                }
 
-    try {
-      final sellerId = await _getNestUserId();
-      
-      // FIXED: Use Firebase merchant info instead of ServiceproviderService
-      final merchantInfo = await _getMerchantInfoFromFirebase();
+                await _firestore.collection('marketplace_items').doc(id).update(patch);
 
-      if (merchantInfo == null) {
-        ToastHelper.showCustomToast(
-          context,
-          'Unable to identify merchant information. Please ensure your merchant profile is complete.',
-          isSuccess: false,
-          errorMessage: 'Missing merchant info',
+                // update local list quickly
+                final idx = _items.indexWhere((e) => (e['id'] ?? '') == id);
+                if (idx != -1) {
+                  _items[idx] = {..._items[idx], ...patch};
+                }
+
+                if (mounted) {
+                  setState(() {
+                    _totalItems = _items.length;
+                    _activeItems = _items.where((e) => e['isActive'] == true).length;
+                  });
+                }
+
+                if (mounted) Navigator.pop(context);
+                ToastHelper.showCustomToast(context, 'Item updated', isSuccess: true, errorMessage: '');
+              } catch (e) {
+                ToastHelper.showCustomToast(context, 'Update failed: $e', isSuccess: false, errorMessage: '');
+              } finally {
+                setSheet(() => saving = false);
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(left: 16, right: 16, bottom: 16 + bottomInset, top: 14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(width: 42, height: 5, decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(99))),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      const Expanded(child: Text('Edit Item', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900))),
+                      IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                    ],
+                  ),
+
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: SizedBox(
+                      height: 150,
+                      width: double.infinity,
+                      child: newCover != null
+                          ? Image.memory(newCover!.bytes, fit: BoxFit.cover)
+                          : _ImageAny(item['image']),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: pickNewCover,
+                        icon: const Icon(Icons.photo),
+                        label: const Text('Change Cover'),
+                      ),
+                      const Spacer(),
+                      Switch(value: isActive, onChanged: (v) => setSheet(() => isActive = v)),
+                      Text(isActive ? 'Active' : 'Inactive', style: const TextStyle(fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+
+                  const SizedBox(height: 10),
+                  TextField(controller: nameCtrl, decoration: _inputDecoration(label: 'Item Name')),
+                  const SizedBox(height: 10),
+                  TextField(controller: priceCtrl, keyboardType: TextInputType.number, decoration: _inputDecoration(label: 'Price (MWK)')),
+                  const SizedBox(height: 10),
+                  TextField(controller: locationCtrl, decoration: _inputDecoration(label: 'Location')),
+                  const SizedBox(height: 10),
+
+                  DropdownButtonFormField<String>(
+                    value: category,
+                    items: _kCategories
+                        .map((c) => DropdownMenuItem(
+                              value: c,
+                              child: Text(c[0].toUpperCase() + c.substring(1)),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setSheet(() => category = v ?? 'other'),
+                    decoration: _inputDecoration(label: 'Category'),
+                  ),
+                  const SizedBox(height: 10),
+
+                  TextField(
+                    controller: descCtrl,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: _inputDecoration(label: 'Description (optional)'),
+                  ),
+                  const SizedBox(height: 14),
+
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _brandOrange,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      onPressed: saving ? null : save,
+                      icon: saving
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.save),
+                      label: const Text('Save Changes', style: TextStyle(fontWeight: FontWeight.w900)),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         );
-        return;
-      }
+      },
+    );
 
-      // Encode media
-      final coverBase64 = await _encodeMediaAsBase64(_cover!);
-      final galleryBase64 = await _encodeAll(_gallery);
-
-      // Create data
-      final data = {
-        'name': _name.text.trim(),
-        'price': double.tryParse(_price.text.trim()) ?? 0,
-        'image': coverBase64,
-        'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
-        'location': _location.text.trim(),
-        'isActive': _isActive,
-        'category': _category ?? 'other',
-        'gallery': galleryBase64,
-        'videos': [],
-        'createdAt': FieldValue.serverTimestamp(),
-        'sellerUserId': sellerId ?? 'unknown',
-        'merchantId': merchantInfo['id'] ?? _uid,
-        'merchantName': merchantInfo['businessName'] ?? _businessName,
-        'serviceType': 'marketplace',
-      };
-
-      await _firestore.collection('marketplace_items').add(data);
-
-      ToastHelper.showCustomToast(
-        context,
-        'Item Posted Successfully!',
-        isSuccess: true,
-        errorMessage: 'Created',
-      );
-
-      // Reset form
-      _name.clear();
-      _price.clear();
-      _location.clear();
-      _desc.clear();
-      _cover = null;
-      _gallery.clear();
-      _videos.clear();
-      _isActive = true;
-      _category = 'other';
-
-      setState(() {});
-      await _loadItems();
-      await _loadMerchantData();
-      _marketplaceTabs.animateTo(2); // Navigate to "My Items" tab
-
-    } catch (e) {
-      ToastHelper.showCustomToast(
-        context,
-        'Create failed: $e',
-        isSuccess: false,
-        errorMessage: 'Create failed',
-      );
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
+    nameCtrl.dispose();
+    priceCtrl.dispose();
+    locationCtrl.dispose();
+    descCtrl.dispose();
   }
 
-  // Location helpers
+  // ----------------- Location helpers -----------------
   Future<void> _getCurrentLocation() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        ToastHelper.showCustomToast(
-          context,
-          'Location services are disabled.',
-          isSuccess: false,
-          errorMessage: 'Location disabled',
-        );
+        ToastHelper.showCustomToast(context, 'Location services are disabled.', isSuccess: false, errorMessage: '');
         return;
       }
 
@@ -526,42 +1085,24 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          ToastHelper.showCustomToast(
-            context,
-            'Location permissions are denied.',
-            isSuccess: false,
-            errorMessage: 'Permission denied',
-          );
+          ToastHelper.showCustomToast(context, 'Location permissions are denied.', isSuccess: false, errorMessage: '');
           return;
         }
       }
 
       if (permission == LocationPermission.deniedForever) {
-        ToastHelper.showCustomToast(
-          context,
-          'Location permissions are permanently denied.',
-          isSuccess: false,
-          errorMessage: 'Permission denied',
-        );
+        ToastHelper.showCustomToast(context, 'Location permissions are permanently denied.', isSuccess: false, errorMessage: '');
         return;
       }
 
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-      final placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
+      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      final placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
+
       if (placemarks.isEmpty) {
-        ToastHelper.showCustomToast(
-          context,
-          'Could not fetch address.',
-          isSuccess: false,
-          errorMessage: 'Address fetch failed',
-        );
+        ToastHelper.showCustomToast(context, 'Could not fetch address.', isSuccess: false, errorMessage: '');
         return;
       }
+
       final place = placemarks[0];
       final address = [
         place.name,
@@ -570,27 +1111,16 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         place.administrativeArea,
         place.country,
       ].where((e) => e != null && e.isNotEmpty).join(', ');
-      setState(() {
-        _location.text = address;
-      });
+
+      setState(() => _location.text = address);
     } catch (e) {
-      ToastHelper.showCustomToast(
-        context,
-        'Failed to get location: $e',
-        isSuccess: false,
-        errorMessage: 'Location failed',
-      );
+      ToastHelper.showCustomToast(context, 'Failed to get location: $e', isSuccess: false, errorMessage: '');
     }
   }
 
   Future<void> _openGoogleMap() async {
     if (_location.text.trim().isEmpty) {
-      ToastHelper.showCustomToast(
-        context,
-        'Enter a location first.',
-        isSuccess: false,
-        errorMessage: 'No location',
-      );
+      ToastHelper.showCustomToast(context, 'Enter a location first.', isSuccess: false, errorMessage: '');
       return;
     }
     final query = Uri.encodeComponent(_location.text.trim());
@@ -598,16 +1128,11 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     } else {
-      ToastHelper.showCustomToast(
-        context,
-        'Could not open Google Maps.',
-        isSuccess: false,
-        errorMessage: 'Map failed',
-      );
+      ToastHelper.showCustomToast(context, 'Could not open Google Maps.', isSuccess: false, errorMessage: '');
     }
   }
 
-  // UI Helpers
+  // ----------------- UI helpers -----------------
   InputDecoration _inputDecoration({String? label, String? hint}) {
     return InputDecoration(
       labelText: label,
@@ -616,83 +1141,74 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       fillColor: Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       enabledBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: Colors.black, width: 1),
-        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.black12),
+        borderRadius: BorderRadius.circular(14),
       ),
       focusedBorder: OutlineInputBorder(
         borderSide: const BorderSide(color: _brandOrange, width: 2),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
       ),
     );
   }
 
   ButtonStyle _filledBtnStyle({double padV = 14}) => FilledButton.styleFrom(
-    backgroundColor: _brandOrange,
-    foregroundColor: Colors.white,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-    padding: EdgeInsets.symmetric(vertical: padV, horizontal: 14),
-    textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-  );
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        padding: EdgeInsets.symmetric(vertical: padV, horizontal: 14),
+        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+      );
 
-  // Dashboard Widgets
-  Widget _StatCard({
+  Widget _compactStatTile({
     required String title,
     required String value,
     required IconData icon,
     required Color color,
   }) {
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(icon, color: color),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ),
+                Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.black54), maxLines: 1, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 4),
+                Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-  }
+  // ----------------- NAV + Scaffold -----------------
+  int _selectedIndex = 0;
+
+  void _onItemTapped(int index) => setState(() => _selectedIndex = index);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF3F4F7),
       appBar: _selectedIndex == 4 ? _buildDashboardAppBar() : null,
       body: _getCurrentPage(),
       bottomNavigationBar: _buildMerchantNavBar(),
@@ -700,21 +1216,12 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   }
 
   AppBar _buildDashboardAppBar() {
+    final titleName = _displayBusinessName();
     return AppBar(
-      title: Text(_initialLoadComplete ? '$_businessName Dashboard' : 'Loading...'),
+      title: Text(_initialLoadComplete ? '$titleName Dashboard' : 'Loading...'),
       backgroundColor: _brandOrange,
       actions: [
-        IconButton(
-          icon: const Icon(Icons.switch_account),
-          tooltip: 'Switch to Customer View',
-          onPressed: () {
-            Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (_) => Bottomnavbar(email: widget.email)),
-              (_) => false,
-            );
-          },
-        ),
+        
         IconButton(
           icon: const Icon(Icons.account_balance_wallet),
           onPressed: () {
@@ -723,10 +1230,21 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               MaterialPageRoute(
                 builder: (_) => MerchantWalletPage(
                   merchantId: _uid,
-                  merchantName: _businessName,
+                  merchantName: titleName,
                   serviceType: 'marketplace',
                 ),
               ),
+            );
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.settings),
+          tooltip: 'Settings',
+          onPressed: () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => SettingsPage()),
+              (_) => false,
             );
           },
         ),
@@ -736,15 +1254,15 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
   Widget _getCurrentPage() {
     switch (_selectedIndex) {
-      case 0: // Home
+      case 0:
         return Vero360Homepage(email: widget.email);
-      case 1: // Marketplace
+      case 1:
         return MarketPage(cartService: _cartService);
-      case 2: // Cart
+      case 2:
         return CartPage(cartService: _cartService);
-      case 3: // Messages
+      case 3:
         return ChatListPage();
-      case 4: // Dashboard
+      case 4:
         return _buildDashboardContent();
       default:
         return Vero360Homepage(email: widget.email);
@@ -752,56 +1270,58 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   }
 
   Widget _buildDashboardContent() {
+    // ✅ Skeleton page instead of spinner
     if (_isLoading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 20),
-            Text('Loading dashboard...'),
-          ],
-        ),
-      );
+      return const _DashboardSkeleton();
     }
 
     return DefaultTabController(
-      length: 3, // Changed to 3 tabs
+      length: 3,
       child: Column(
         children: [
-          TabBar(
-            controller: _marketplaceTabs,
-            labelColor: _brandOrange,
-            unselectedLabelColor: Colors.grey,
-            indicatorColor: _brandOrange,
-            tabs: const [
-              Tab(text: 'Dashboard'),
-              Tab(text: 'Add Item'), // Changed from 'Manage Items'
-              Tab(text: 'My Items'), // New tab
-            ],
+          Container(
+            color: Colors.white,
+            child: TabBar(
+              controller: _marketplaceTabs,
+              labelColor: _brandOrange,
+              unselectedLabelColor: Colors.grey,
+              indicatorColor: _brandOrange,
+              tabs: const [
+                Tab(text: 'Dashboard'),
+                Tab(text: 'Add Item'),
+                Tab(text: 'My Items'),
+              ],
+            ),
           ),
           Expanded(
             child: TabBarView(
               controller: _marketplaceTabs,
               children: [
-                // Dashboard Tab
-                SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildWelcomeSection(),
-                      _buildStatsSection(),
-                      _buildQuickActions(),
-                      _buildWalletSummary(),
-                      _buildRecentSales(),
-                      _buildTopItems(),
-                    ],
+                // ✅ pull-to-refresh on dashboard tab
+                RefreshIndicator(
+                  onRefresh: _refreshAll,
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildModernHeaderCard(),
+                        const SizedBox(height: 12),
+                        _buildStatsSection(),
+                        const SizedBox(height: 12),
+                        _buildQuickActionsSection(),
+                        const SizedBox(height: 12),
+                        _buildWalletSummary(),
+                        const SizedBox(height: 12),
+                        _buildRecentSales(),
+                        const SizedBox(height: 12),
+                        _buildAllClientItemsSection(), // ✅ list all
+                      ],
+                    ),
                   ),
                 ),
-                // Add Item Tab - FIXED: Now just the form, no items list
                 _buildAddItemTab(),
-                // My Items Tab - FIXED: Just the items grid
                 _buildMyItemsTab(),
               ],
             ),
@@ -811,47 +1331,170 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     );
   }
 
-  Widget _buildWelcomeSection() {
-    return Card(
+  // ----------------- Header (modern) -----------------
+  Widget _buildModernHeaderCard() {
+    final business = _displayBusinessName();
+    final st = _status.trim().toLowerCase();
+    final statusText = st.isEmpty ? 'PENDING' : st.toUpperCase();
+
+    Color statusBg;
+    Color statusFg;
+    if (st == 'approved' || st == 'active') {
+      statusBg = const Color(0xFFE7F6EC);
+      statusFg = Colors.green.shade700;
+    } else if (st == 'pending' || st == 'under_review' || st == 'submitted') {
+      statusBg = const Color(0xFFFFF3E5);
+      statusFg = const Color(0xFFB86E00);
+    } else {
+      statusBg = const Color(0xFFFFEDEE);
+      statusFg = Colors.red.shade700;
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          colors: [_brandNavy, _brandNavy.withOpacity(0.86)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 10),
+          )
+        ],
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            const Icon(Icons.store, size: 50, color: Colors.orange),
-            const SizedBox(width: 16),
+            GestureDetector(
+              onTap: _viewProfilePhoto,
+              child: Stack(
+                children: [
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundColor: Colors.white.withOpacity(0.15),
+                    backgroundImage: _profileImageProvider(),
+                    child: _profileImageProvider() == null
+                        ? const Icon(Icons.storefront_rounded,
+                            color: Colors.white, size: 26)
+                        : null,
+                  ),
+                  Positioned(
+                    bottom: -2,
+                    right: -2,
+                    child: GestureDetector(
+                      onTap: _showPhotoSheet,
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: _brandOrange,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        child: _profileUploading
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.edit,
+                                size: 14, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _businessName,
+                    business,
                     style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  const Text('Marketplace Merchant'),
-                  const SizedBox(height: 8),
-                  Row(
+                  const SizedBox(height: 4),
+                  Text(
+                    _merchantEmail,
+                    style: TextStyle(
+                        color: Colors.white.withOpacity(0.85),
+                        fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _merchantPhone,
+                    style: TextStyle(
+                        color: Colors.white.withOpacity(0.85),
+                        fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      Chip(
-                        label: Text(_status.toUpperCase()),
-                        backgroundColor: _status == 'approved' 
-                            ? Colors.green[100] 
-                            : _status == 'pending'
-                              ? Colors.orange[100]
-                              : Colors.red[100],
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                            color: statusBg,
+                            borderRadius: BorderRadius.circular(999)),
+                        child: Text(statusText,
+                            style: TextStyle(
+                                color: statusFg,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 12)),
                       ),
-                      const SizedBox(width: 8),
-                      Chip(
-                        label: Row(
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                            color: Colors.amber.shade100,
+                            borderRadius: BorderRadius.circular(999)),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             const Icon(Icons.star, size: 14),
-                            Text(' ${_rating.toStringAsFixed(1)}'),
+                            Text(' ${_rating.toStringAsFixed(1)}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w900, fontSize: 12)),
                           ],
                         ),
-                        backgroundColor: Colors.amber[100],
                       ),
+                      if (_meOffline)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                              color: const Color(0xFFFFEDEE),
+                              borderRadius: BorderRadius.circular(999)),
+                          child: const Text('OFFLINE (cached)',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 12,
+                                  color: Colors.red)),
+                        ),
+                      if (_loadingMe)
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        ),
                     ],
                   ),
                 ],
@@ -863,631 +1506,285 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     );
   }
 
+  // ----------------- Smaller Business Overview cards -----------------
   Widget _buildStatsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
-        const Text(
-          'Business Overview',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
+        const Text('Business Overview',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
-        GridView.count(
+        GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          children: [
-            _StatCard(
-              title: 'Total Items',
-              value: '$_totalItems',
-              icon: Icons.inventory,
-              color: _brandOrange,
-            ),
-            _StatCard(
-              title: 'Active Items',
-              value: '$_activeItems',
-              icon: Icons.check_circle,
-              color: Colors.green,
-            ),
-            _StatCard(
-              title: 'Sold Items',
-              value: '$_soldItems',
-              icon: Icons.shopping_bag,
-              color: Colors.blue,
-            ),
-            _StatCard(
-              title: 'Total Earnings',
-              value: 'MWK ${_totalEarnings.toStringAsFixed(2)}',
-              icon: Icons.attach_money,
-              color: Colors.green,
-            ),
-          ],
+          itemCount: 4,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            mainAxisExtent: 74, // ✅ compact height
+          ),
+          itemBuilder: (_, i) {
+            switch (i) {
+              case 0:
+                return _compactStatTile(
+                  title: 'Total Items',
+                  value: '$_totalItems',
+                  icon: Icons.inventory_2,
+                  color: _brandOrange,
+                );
+              case 1:
+                return _compactStatTile(
+                  title: 'Active Items',
+                  value: '$_activeItems',
+                  icon: Icons.verified_rounded,
+                  color: Colors.green,
+                );
+              case 2:
+                return _compactStatTile(
+                  title: 'Sold Items',
+                  value: '$_soldItems',
+                  icon: Icons.shopping_bag_rounded,
+                  color: Colors.blue,
+                );
+              default:
+                return _compactStatTile(
+                  title: 'Earnings',
+                  value: 'MWK ${_totalEarnings.toStringAsFixed(0)}',
+                  icon: Icons.payments_rounded,
+                  color: Colors.green,
+                );
+            }
+          },
         ),
       ],
     );
   }
 
-  Widget _buildQuickActions() {
+
+
+
+  // ----------------- Quick actions + profile actions -----------------
+  Widget _buildQuickActionsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
-        const Text(
-          'Quick Actions',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
+        const Text('Quick Actions',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
+        GridView(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisExtent: 74,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+          ),
           children: [
-            ActionChip(
-              avatar: const Icon(Icons.add, size: 20),
-              label: const Text('Add Item'),
-              onPressed: () {
-                _marketplaceTabs.animateTo(1); // Navigate to Add Item tab
-              },
+            _QuickActionTile(
+              title: 'Add Item',
+              icon: Icons.add_circle_outline,
+              color: _brandOrange,
+              onTap: () => _marketplaceTabs.animateTo(1),
             ),
-            ActionChip(
-              avatar: const Icon(Icons.analytics, size: 20),
-              label: const Text('Analytics'),
-              onPressed: () {
-                // Analytics
-              },
+            _QuickActionTile(
+              title: 'My Items',
+              icon: Icons.inventory_2_outlined,
+              color: _brandNavy,
+              onTap: () => _marketplaceTabs.animateTo(2),
             ),
-            ActionChip(
-              avatar: const Icon(Icons.trending_up, size: 20),
-              label: const Text('Performance'),
-              onPressed: () {
-                // Performance
-              },
+            _QuickActionTile(
+              title: 'Orders',
+              icon: Icons.receipt_long,
+              color: Colors.green,
+              onTap: () => _openBottomSheet(const OrdersPage()),
             ),
-            ActionChip(
-              avatar: const Icon(Icons.settings, size: 20),
-              label: const Text('Settings'),
-              onPressed: () {
-                // Settings
-              },
+            _QuickActionTile(
+              title: 'Shipped',
+              icon: Icons.local_shipping_outlined,
+              color: Colors.orange,
+              onTap: () => _openBottomSheet(const ToShipPage()),
             ),
-            ActionChip(
-              avatar: const Icon(Icons.support_agent, size: 20),
-              label: const Text('Support'),
-              onPressed: () {
-                // Support
-              },
+            _QuickActionTile(
+              title: 'Received',
+              icon: Icons.move_to_inbox_outlined,
+              color: Colors.blue,
+              onTap: () => _openBottomSheet(const DeliveredOrdersPage()),
             ),
-            ActionChip(
-              avatar: const Icon(Icons.inventory, size: 20),
-              label: const Text('Inventory'),
-              onPressed: () {
-                _marketplaceTabs.animateTo(2); // Navigate to My Items tab
-              },
+            _QuickActionTile(
+              title: 'Refund',
+              icon: Icons.replay_circle_filled_outlined,
+              color: Colors.red,
+              onTap: () => _openBottomSheet(const ToRefundPage()),
             ),
+         
           ],
         ),
       ],
     );
   }
 
-  Widget _buildWalletSummary() {
-    return Card(
-      margin: const EdgeInsets.only(top: 20),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Wallet Balance',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'MWK ${_walletBalance.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => MerchantWalletPage(
-                          merchantId: _uid,
-                          merchantName: _businessName,
-                          serviceType: 'marketplace',
-                        ),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.account_balance_wallet),
-                  label: const Text('View Wallet'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _brandOrange,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'Earnings from marketplace sales',
-              style: TextStyle(color: Colors.grey),
-            ),
-          ],
-        ),
+  void _openBottomSheet(Widget child) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.88,
+        child: child,
       ),
     );
   }
 
+
+  
+
+  // ----------------- Wallet Summary -----------------
+  Widget _buildWalletSummary() {
+    final titleName = _displayBusinessName();
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.green.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(Icons.account_balance_wallet_rounded,
+                color: Colors.green),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Wallet Balance',
+                    style: TextStyle(fontWeight: FontWeight.w900)),
+                const SizedBox(height: 6),
+                Text('MWK ${_walletBalance.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.green)),
+              ],
+            ),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: _brandOrange,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => MerchantWalletPage(
+                    merchantId: _uid,
+                    merchantName: titleName,
+                    serviceType: 'marketplace',
+                  ),
+                ),
+              );
+            },
+            child: const Text('Open',
+                style: TextStyle(fontWeight: FontWeight.w900)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ----------------- Recent Sales (skeleton handled at page-level) -----------------
   Widget _buildRecentSales() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'Recent Sales',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            TextButton(
-              onPressed: () {
-                // View all sales
-              },
-              child: const Text('View All'),
+          children: const [
+            Expanded(
+              child: Text('Recent Sales',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
             ),
           ],
         ),
         const SizedBox(height: 10),
         if (_recentSales.isEmpty)
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: Text('No sales yet')),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.black12),
             ),
+            child: const Center(child: Text('No sales yet')),
           )
         else
-          ..._recentSales.take(3).map((sale) {
+          ..._recentSales.take(4).map((sale) {
             final saleMap = sale as Map<String, dynamic>;
-            return Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: ListTile(
-                leading: const Icon(Icons.shopping_bag, color: Colors.orange),
-                title: Text('Sale #${saleMap['orderId']?.toString().substring(0, 8) ?? 'N/A'}'),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Customer: ${saleMap['customerName'] ?? 'N/A'}'),
-                    Text('Items: ${saleMap['itemCount'] ?? '0'}'),
-                    Text('Total: MWK ${saleMap['totalAmount'] ?? '0'}'),
-                  ],
-                ),
-                trailing: Chip(
-                  label: Text(saleMap['status'] ?? 'pending'),
-                  backgroundColor: _getSaleStatusColor(saleMap['status']),
-                ),
-              ),
-            );
-          }).toList(),
-      ],
-    );
-  }
+            final orderId = (saleMap['orderId'] ?? '').toString();
+            final shortId = orderId.length >= 8
+                ? orderId.substring(0, 8)
+                : (orderId.isEmpty ? 'N/A' : orderId);
 
-  Widget _buildTopItems() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 20),
-        const Text(
-          'Top Items',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 10),
-        if (_topItems.isEmpty)
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: Text('No items yet')),
-            ),
-          )
-        else
-          ..._topItems.map((item) {
-            final itemMap = item as Map<String, dynamic>;
-            return Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: ListTile(
-                leading: _buildItemImage(itemMap['image']),
-                title: Text(itemMap['name'] ?? 'Unknown Item'),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Price: MWK ${itemMap['price'] ?? '0'}'),
-                    Text('Category: ${itemMap['category'] ?? 'other'}'),
-                  ],
-                ),
-                trailing: Chip(
-                  label: Text(itemMap['isActive'] == true ? 'Active' : 'Inactive'),
-                  backgroundColor: itemMap['isActive'] == true ? Colors.green[50] : Colors.red[50],
-                ),
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: Colors.black12),
               ),
-            );
-          }).toList(),
-      ],
-    );
-  }
-
-  // FIXED: New method for Add Item tab - just the form
-  Widget _buildAddItemTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Card(
-            elevation: 4,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Add New Item',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              child: ListTile(
+                leading: Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: _brandOrange.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  const SizedBox(height: 16),
-                  
-                  // Cover Image
-                  const Text('Cover Image', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: _cover == null
-                        ? Container(
-                            height: 150,
-                            color: Colors.grey[100],
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.image, size: 40, color: Colors.grey),
-                                  const SizedBox(height: 8),
-                                  ElevatedButton.icon(
-                                    onPressed: () => _pickCover(ImageSource.gallery),
-                                    icon: const Icon(Icons.photo_library),
-                                    label: const Text('Select Image'),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                        : Stack(
-                            children: [
-                              Image.memory(
-                                _cover!.bytes,
-                                height: 150,
-                                width: double.infinity,
-                                fit: BoxFit.cover,
-                              ),
-                              Positioned(
-                                top: 8,
-                                right: 8,
-                                child: IconButton(
-                                  icon: const Icon(Icons.close, color: Colors.white),
-                                  onPressed: _clearCover,
-                                ),
-                              ),
-                            ],
-                          ),
-                  ),
-                  
-                  const SizedBox(height: 16),
-                  
-                  // Form Fields
-                  TextField(
-                    controller: _name,
-                    decoration: _inputDecoration(label: 'Item Name'),
-                  ),
-                  const SizedBox(height: 12),
-                  
-                  TextField(
-                    controller: _price,
-                    keyboardType: TextInputType.number,
-                    decoration: _inputDecoration(label: 'Price (MWK)'),
-                  ),
-                  const SizedBox(height: 12),
-                  
-                  TextField(
-                    controller: _location,
-                    decoration: _inputDecoration(label: 'Location').copyWith(
-                      suffixIcon: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.my_location),
-                            onPressed: _getCurrentLocation,
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.map),
-                            onPressed: _openGoogleMap,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  
-                  DropdownButtonFormField<String>(
-                    value: _category,
-                    items: _kCategories.map((c) => DropdownMenuItem(
-                      value: c,
-                      child: Text(c[0].toUpperCase() + c.substring(1)),
-                    )).toList(),
-                    onChanged: (v) => setState(() => _category = v),
-                    decoration: _inputDecoration(label: 'Category'),
-                  ),
-                  const SizedBox(height: 12),
-                  
-                  TextField(
-                    controller: _desc,
-                    minLines: 3,
-                    maxLines: 5,
-                    decoration: _inputDecoration(label: 'Description (optional)'),
-                  ),
-                  const SizedBox(height: 12),
-                  
-                  // Gallery
-                  const Text('Gallery Images (optional)', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  _buildGalleryPreview(),
-                  const SizedBox(height: 12),
-                  
-                  Row(
+                  child: const Icon(Icons.shopping_bag_rounded,
+                      color: _brandOrange),
+                ),
+                title: Text('Sale #$shortId',
+                    style: const TextStyle(fontWeight: FontWeight.w900)),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Switch(
-                        value: _isActive,
-                        onChanged: (v) => setState(() => _isActive = v),
-                      ),
-                      const Text('Active'),
-                      const Spacer(),
-                      FilledButton.icon(
-                        style: _filledBtnStyle(),
-                        onPressed: _submitting ? null : _create,
-                        icon: _submitting
-                            ? const SizedBox(
-                                height: 18,
-                                width: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.save),
-                        label: const Text('Post Item'),
-                      ),
+                      Text('Customer: ${saleMap['customerName'] ?? 'N/A'}'),
+                      Text('Items: ${saleMap['itemCount'] ?? '0'}'),
+                      Text('Total: MWK ${saleMap['totalAmount'] ?? '0'}'),
                     ],
                   ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // FIXED: New method for My Items tab - just the items grid
-  Widget _buildMyItemsTab() {
-    return Column(
-      children: [
-        // Header
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'My Items',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              TextButton.icon(
-                onPressed: () {
-                  _marketplaceTabs.animateTo(1); // Go to Add Item tab
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Add New Item'),
-              ),
-            ],
-          ),
-        ),
-        
-        // Items Grid
-        Expanded(
-          child: _loadingItems
-              ? const Center(child: CircularProgressIndicator())
-              : _items.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.inventory, size: 60, color: Colors.grey),
-                          const SizedBox(height: 16),
-                          const Text(
-                            'No items yet',
-                            style: TextStyle(fontSize: 16, color: Colors.grey),
-                          ),
-                          const SizedBox(height: 8),
-                          TextButton(
-                            onPressed: () {
-                              _marketplaceTabs.animateTo(1); // Go to Add Item tab
-                            },
-                            child: const Text('Add your first item'),
-                          ),
-                        ],
-                      ),
-                    )
-                  : GridView.builder(
-                      padding: const EdgeInsets.all(16),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: 0.8,
-                      ),
-                      itemCount: _items.length,
-                      itemBuilder: (context, i) {
-                        final item = _items[i];
-                        return _ItemCard(
-                          item: item,
-                          busy: _busyRow,
-                          onDelete: () => _deleteItem(item),
-                        );
-                      },
-                    ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGalleryPreview() {
-    return SizedBox(
-      height: 80,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: _gallery.length + 1,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, i) {
-          if (i == _gallery.length) {
-            return OutlinedButton.icon(
-              onPressed: _pickGalleryMulti,
-              icon: const Icon(Icons.add_photo_alternate),
-              label: const Text('Add'),
-            );
-          }
-          final m = _gallery[i];
-          return Stack(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.memory(m.bytes, width: 80, height: 80, fit: BoxFit.cover),
-              ),
-              Positioned(
-                top: 4,
-                right: 4,
-                child: InkWell(
-                  onTap: () => _removeGalleryAt(i),
-                  child: const CircleAvatar(
-                    radius: 12,
-                    backgroundColor: Colors.black54,
-                    child: Icon(Icons.close, size: 14, color: Colors.white),
+                ),
+                trailing: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: _getSaleStatusColor(saleMap['status']?.toString()),
+                    borderRadius: BorderRadius.circular(999),
                   ),
+                  child: Text((saleMap['status'] ?? 'pending').toString(),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w900, fontSize: 12)),
                 ),
               ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildItemImage(dynamic imageData) {
-    if (imageData is! String || imageData.isEmpty) {
-      return const CircleAvatar(
-        backgroundColor: Colors.grey,
-        child: Icon(Icons.image, color: Colors.white),
-      );
-    }
-    
-    try {
-      if (imageData.startsWith('http')) {
-        return CircleAvatar(
-          backgroundColor: Colors.grey[200],
-          backgroundImage: NetworkImage(imageData),
-        );
-      } else {
-        final bytes = base64Decode(imageData);
-        return CircleAvatar(
-          backgroundColor: Colors.grey[200],
-          backgroundImage: MemoryImage(bytes),
-        );
-      }
-    } catch (_) {
-      return const CircleAvatar(
-        backgroundColor: Colors.grey,
-        child: Icon(Icons.image, color: Colors.white),
-      );
-    }
-  }
-
-  Widget _buildMerchantNavBar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.3),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
-        border: Border(top: BorderSide(color: Colors.grey[200]!)),
-      ),
-      child: SafeArea(
-        child: SizedBox(
-          height: 70,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildNavItem(Icons.home, 'Home', 0),
-              _buildNavItem(Icons.store, 'Marketplace', 1),
-              _buildNavItem(Icons.shopping_cart, 'Cart', 2),
-              _buildNavItem(Icons.message, 'Messages', 3),
-              _buildNavItem(Icons.dashboard, 'Dashboard', 4),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNavItem(IconData icon, String label, int index) {
-    bool isSelected = _selectedIndex == index;
-    
-    return GestureDetector(
-      onTap: () => _onItemTapped(index),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? _brandOrange.withOpacity(0.1) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              color: isSelected ? _brandOrange : Colors.grey[600],
-              size: 24,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: isSelected ? _brandOrange : Colors.grey[600],
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
+            );
+          }).toList(),
+      ],
     );
   }
 
@@ -1507,169 +1804,662 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         return Colors.grey[100]!;
     }
   }
-}
 
-class _ItemCard extends StatelessWidget {
-  final Map<String, dynamic> item;
-  final bool busy;
-  final VoidCallback onDelete;
-  
-  const _ItemCard({
-    required this.item,
-    required this.busy,
-    required this.onDelete,
-  });
+  // ----------------- “Top items” replaced: list ALL merchant items (with skeleton) -----------------
+  Widget _buildAllClientItemsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Your Items',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 10),
+        if (_loadingItems)
+          const _ItemsGridSkeleton(count: 6)
+        else if (_items.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.black12),
+            ),
+            child: const Center(child: Text('No items yet')),
+          )
+        else
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _items.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 0.78,
+            ),
+            itemBuilder: (_, i) => _ModernItemMiniCard(item: _items[i]),
+          ),
+      ],
+    );
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 2,
-      child: Stack(
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+  // ----------------- Add Item Tab -----------------
+  Widget _buildAddItemTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.black12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Image
+              const Text('Add New Item',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 14),
+              const Text('Cover Image',
+                  style: TextStyle(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 8),
               ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                child: _buildImage(item['image']),
-              ),
-              
-              // Content
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item['name'] ?? 'Unknown',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'MWK ${(item['price'] ?? 0).toString()}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: Colors.green,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      item['category'] ?? 'other',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.location_on,
-                          size: 12,
-                          color: Colors.grey[600],
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            item['location'] ?? '',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.grey[600],
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                borderRadius: BorderRadius.circular(14),
+                child: _cover == null
+                    ? Container(
+                        height: 160,
+                        color: const Color(0xFFF3F4F7),
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.image,
+                                  size: 40, color: Colors.black26),
+                              const SizedBox(height: 8),
+                              FilledButton.icon(
+                                style: FilledButton.styleFrom(
+                                    backgroundColor: _brandOrange),
+                                onPressed: () => _pickCover(ImageSource.gallery),
+                                icon: const Icon(Icons.photo_library),
+                                label: const Text('Select Image'),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
+                      )
+                    : Stack(
+                        children: [
+                          Image.memory(_cover!.bytes,
+                              height: 160,
+                              width: double.infinity,
+                              fit: BoxFit.cover),
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: InkWell(
+                              onTap: () => setState(() => _cover = null),
+                              child: const CircleAvatar(
+                                radius: 16,
+                                backgroundColor: Colors.black54,
+                                child: Icon(Icons.close,
+                                    color: Colors.white, size: 16),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+              const SizedBox(height: 14),
+              TextField(controller: _name, decoration: _inputDecoration(label: 'Item Name')),
+              const SizedBox(height: 10),
+              TextField(controller: _price, keyboardType: TextInputType.number, decoration: _inputDecoration(label: 'Price (MWK)')),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _location,
+                decoration: _inputDecoration(label: 'Location').copyWith(
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(icon: const Icon(Icons.my_location), onPressed: _getCurrentLocation),
+                      IconButton(icon: const Icon(Icons.map), onPressed: _openGoogleMap),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: _category,
+                items: _kCategories
+                    .map((c) => DropdownMenuItem(
+                          value: c,
+                          child: Text(c[0].toUpperCase() + c.substring(1)),
+                        ))
+                    .toList(),
+                onChanged: (v) => setState(() => _category = v),
+                decoration: _inputDecoration(label: 'Category'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _desc,
+                minLines: 3,
+                maxLines: 5,
+                decoration: _inputDecoration(label: 'Description (optional)'),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Switch(value: _isActive, onChanged: (v) => setState(() => _isActive = v)),
+                  Text(_isActive ? 'Active' : 'Inactive', style: const TextStyle(fontWeight: FontWeight.w900)),
+                  const Spacer(),
+                  FilledButton.icon(
+                    style: _filledBtnStyle(),
+                    onPressed: _submitting ? null : _create,
+                    icon: _submitting
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.upload_rounded),
+                    label: const Text('Post Item'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ----------------- My Items Tab: Search + Filter chips + Edit -----------------
+  Widget _buildMyItemsTab() {
+    final filtered = _filteredItems();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+          child: Column(
+            children: [
+              // search
+              TextField(
+                onChanged: (v) => setState(() => _searchQuery = v),
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search),
+                  hintText: 'Search items...',
+                  filled: true,
+                  fillColor: Colors.white,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  enabledBorder: OutlineInputBorder(
+                    borderSide: const BorderSide(color: Colors.black12),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderSide: const BorderSide(color: _brandOrange, width: 2),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // filter chips row
+              SizedBox(
+                height: 40,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    _chip(
+                      label: 'All Categories',
+                      selected: _filterCategory == 'all',
+                      onTap: () => setState(() => _filterCategory = 'all'),
+                    ),
+                    ..._kCategories.map((c) => _chip(
+                          label: c[0].toUpperCase() + c.substring(1),
+                          selected: _filterCategory == c,
+                          onTap: () => setState(() => _filterCategory = c),
+                        )),
+                    const SizedBox(width: 10),
+                    _chip(
+                      label: 'All',
+                      selected: _filterStatus == 'all',
+                      onTap: () => setState(() => _filterStatus = 'all'),
+                    ),
+                    _chip(
+                      label: 'Active',
+                      selected: _filterStatus == 'active',
+                      onTap: () => setState(() => _filterStatus = 'active'),
+                    ),
+                    _chip(
+                      label: 'Inactive',
+                      selected: _filterStatus == 'inactive',
+                      onTap: () => setState(() => _filterStatus = 'inactive'),
                     ),
                   ],
                 ),
               ),
             ],
           ),
-          
-          // Actions
-          Positioned(
-            top: 8,
-            right: 8,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: IconButton(
-                    icon: const Icon(Icons.delete, size: 18),
-                    color: Colors.red,
-                    onPressed: busy ? null : onDelete,
-                  ),
+        ),
+
+        Expanded(
+          child: _loadingItems
+              ? const _ItemsGridSkeleton(count: 8)
+              : filtered.isEmpty
+                  ? const Center(child: Text('No items match your filters'))
+                  : GridView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      itemCount: filtered.length,
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        childAspectRatio: 0.78,
+                      ),
+                      itemBuilder: (_, i) => _ItemCard(
+                        item: filtered[i],
+                        busy: _busyRow,
+                        onDelete: () => _deleteItem(filtered[i]),
+                        onEdit: () => _openEditItemSheet(filtered[i]),
+                      ),
+                    ),
+        ),
+      ],
+    );
+  }
+
+  Widget _chip({required String label, required bool selected, required VoidCallback onTap}) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ChoiceChip(
+        label: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+        selected: selected,
+        onSelected: (_) => onTap(),
+        selectedColor: _brandOrange.withOpacity(0.16),
+        labelStyle: TextStyle(color: selected ? _brandOrange : Colors.black87),
+        side: const BorderSide(color: Colors.black12),
+      ),
+    );
+  }
+
+  // ----------------- cover picker -----------------
+  Future<void> _pickCover(ImageSource src) async {
+    final x = await _picker.pickImage(source: src, imageQuality: 90, maxWidth: 2048);
+    if (x == null) return;
+    final bytes = await x.readAsBytes();
+    setState(() {
+      _cover = LocalMedia(bytes: bytes, filename: x.name, mime: lookupMimeType(x.name, headerBytes: bytes));
+    });
+  }
+
+  // ----------------- Bottom nav -----------------
+  Widget _buildMerchantNavBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Colors.grey[200]!)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 16, offset: const Offset(0, -6))],
+      ),
+      child: SafeArea(
+        child: SizedBox(
+          height: 72,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildNavItem(Icons.home_rounded, 'Home', 0),
+              _buildNavItem(Icons.storefront_rounded, 'Marketplace', 1),
+              _buildNavItem(Icons.shopping_cart_rounded, 'Cart', 2),
+              _buildNavItem(Icons.message_rounded, 'Messages', 3),
+              _buildNavItem(Icons.dashboard_rounded, 'Dashboard', 4),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavItem(IconData icon, String label, int index) {
+    final isSelected = _selectedIndex == index;
+    return GestureDetector(
+      onTap: () => _onItemTapped(index),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? _brandOrange.withOpacity(0.12) : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: isSelected ? _brandOrange : Colors.grey[600], size: 24),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: isSelected ? _brandOrange : Colors.grey[600],
+                fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ----------------- Quick action tile -----------------
+class _QuickActionTile extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final VoidCallback onTap;
+  final Color color;
+
+  const _QuickActionTile({
+    required this.title,
+    required this.icon,
+    required this.onTap,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      elevation: 0,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              ],
+                child: Icon(icon, color: color),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.black38),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ----------------- Skeletons -----------------
+class _DashboardSkeleton extends StatelessWidget {
+  const _DashboardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget box(double h, {double? w}) => Container(
+          height: h,
+          width: w ?? double.infinity,
+          decoration: BoxDecoration(
+            color: const Color(0xFFEDEFF3),
+            borderRadius: BorderRadius.circular(16),
+          ),
+        );
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Container(
+            height: 120,
+            decoration: BoxDecoration(
+              color: const Color(0xFFEDEFF3),
+              borderRadius: BorderRadius.circular(22),
             ),
           ),
-          
-          // Status badge
-          Positioned(
-            top: 8,
-            left: 8,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: (item['isActive'] == true) ? Colors.green : Colors.red,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                (item['isActive'] == true) ? 'Active' : 'Inactive',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
+          const SizedBox(height: 12),
+          Row(children: [Expanded(child: box(74)), const SizedBox(width: 12), Expanded(child: box(74))]),
+          const SizedBox(height: 12),
+          Row(children: [Expanded(child: box(74)), const SizedBox(width: 12), Expanded(child: box(74))]),
+          const SizedBox(height: 12),
+          Row(children: [Expanded(child: box(74)), const SizedBox(width: 12), Expanded(child: box(74))]),
+          const SizedBox(height: 12),
+          box(90),
+          const SizedBox(height: 12),
+          box(110),
+          const SizedBox(height: 12),
+          const _ItemsGridSkeleton(count: 6),
+        ],
+      ),
+    );
+  }
+}
+
+class _ItemsGridSkeleton extends StatelessWidget {
+  final int count;
+  const _ItemsGridSkeleton({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: count,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 0.78,
+      ),
+      itemBuilder: (_, __) => Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFFEDEFF3),
+          borderRadius: BorderRadius.circular(18),
+        ),
+      ),
+    );
+  }
+}
+
+// ----------------- Cards -----------------
+class _ModernItemMiniCard extends StatelessWidget {
+  final Map<String, dynamic> item;
+  const _ModernItemMiniCard({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final active = item['isActive'] == true;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+              child: _ImageAny(item['image']),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  (item['name'] ?? 'Unknown').toString(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
-              ),
+                const SizedBox(height: 6),
+                Text(
+                  'MWK ${(item['price'] ?? 0).toString()}',
+                  style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.green),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(Icons.circle, size: 10, color: active ? Colors.green : Colors.red),
+                    const SizedBox(width: 6),
+                    Text(active ? 'Active' : 'Inactive', style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.black54)),
+                  ],
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildImage(dynamic imageData) {
-    if (imageData is! String || imageData.isEmpty) {
-      return Container(
-        height: 120,
-        color: Colors.grey[200],
-        child: const Center(
-          child: Icon(Icons.image, color: Colors.grey),
+class _ItemCard extends StatelessWidget {
+  final Map<String, dynamic> item;
+  final bool busy;
+  final VoidCallback onDelete;
+  final VoidCallback onEdit;
+
+  const _ItemCard({
+    required this.item,
+    required this.busy,
+    required this.onDelete,
+    required this.onEdit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final active = item['isActive'] == true;
+
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onEdit,
+        child: Stack(
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+                  child: SizedBox(height: 150, child: _ImageAny(item['image'])),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        (item['name'] ?? 'Unknown').toString(),
+                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'MWK ${(item['price'] ?? 0).toString()}',
+                        style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.green),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        (item['category'] ?? 'other').toString(),
+                        style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w800),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+
+            // status
+            Positioned(
+              top: 10,
+              left: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: active ? Colors.green : Colors.red,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  active ? 'Active' : 'Inactive',
+                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ),
+
+            // actions
+            Positioned(
+              top: 10,
+              right: 10,
+              child: Row(
+                children: [
+                  _iconBtn(
+                    icon: Icons.edit,
+                    color: const Color(0xFF16284C),
+                    onTap: onEdit,
+                  ),
+                  const SizedBox(width: 8),
+                  _iconBtn(
+                    icon: Icons.delete,
+                    color: Colors.red,
+                    onTap: busy ? null : onDelete,
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-      );
-    }
-    
+      ),
+    );
+  }
+
+  Widget _iconBtn({required IconData icon, required Color color, required VoidCallback? onTap}) {
+    return Container(
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(999), border: Border.all(color: Colors.black12)),
+      child: IconButton(
+        icon: Icon(icon, size: 18),
+        color: color,
+        onPressed: onTap,
+      ),
+    );
+  }
+}
+
+// Image widget: supports http OR base64
+class _ImageAny extends StatelessWidget {
+  final dynamic imageData;
+  const _ImageAny(this.imageData);
+
+  @override
+  Widget build(BuildContext context) {
+    if (imageData is! String || imageData.isEmpty) return _placeholder();
+
     try {
       if (imageData.startsWith('http')) {
-        return Image.network(
-          imageData,
-          height: 120,
-          width: double.infinity,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _placeholder(),
-        );
+        return Image.network(imageData, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _placeholder());
       } else {
         final bytes = base64Decode(imageData);
-        return Image.memory(
-          bytes,
-          height: 120,
-          width: double.infinity,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _placeholder(),
-        );
+        return Image.memory(bytes, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _placeholder());
       }
     } catch (_) {
       return _placeholder();
@@ -1678,11 +2468,8 @@ class _ItemCard extends StatelessWidget {
 
   Widget _placeholder() {
     return Container(
-      height: 120,
-      color: Colors.grey[200],
-      child: const Center(
-        child: Icon(Icons.image, color: Colors.grey),
-      ),
+      color: const Color(0xFFF3F4F7),
+      child: const Center(child: Icon(Icons.image_not_supported_rounded, color: Colors.black26)),
     );
   }
 }

@@ -9,6 +9,7 @@ import 'package:crypto/crypto.dart' show sha256;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:http/http.dart' as http; // ✅ REQUIRED (you use http.delete)
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
@@ -16,6 +17,9 @@ import 'package:vero360_app/services/api_client.dart';
 import 'package:vero360_app/services/api_config.dart';
 import 'package:vero360_app/services/api_exception.dart';
 import 'package:vero360_app/toasthelper.dart';
+
+/// ✅ Must be TOP-LEVEL (not inside class / not inside method)
+enum DeleteAccountStatus { success, requiresRecentLogin, failed }
 
 class AuthService {
   static const Duration _reqTimeoutWarm = Duration(seconds: 18);
@@ -45,10 +49,23 @@ class AuthService {
         msg.contains('timed out');
   }
 
+  bool _is2xx(int code) => code >= 200 && code < 300;
+
+  Future<String?> _readAnyToken() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      return sp.getString('jwt_token') ??
+          sp.getString('token') ??
+          sp.getString('authToken') ??
+          sp.getString('jwt');
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ---------- Backend normaliser ----------
 
-  Map<String, dynamic> _normalizeBackendAuthResponse(
-      Map<String, dynamic> data) {
+  Map<String, dynamic> _normalizeBackendAuthResponse(Map<String, dynamic> data) {
     final token = data['access_token'] ?? data['token'] ?? data['jwt'];
 
     final rawUser = data['user'] ?? data;
@@ -83,22 +100,24 @@ class AuthService {
     Map<String, dynamic>? merchantData,
   }) async {
     try {
+      final roleLc = (role ?? '').toLowerCase();
       final doc = _firestore.collection('users').doc(user.uid);
+
       final data = <String, dynamic>{
         'email': user.email,
         if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
         if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
-        if (role != null && role.trim().isNotEmpty)
-          'role': role.toLowerCase(),
+        if (roleLc.isNotEmpty) 'role': roleLc,
         'updatedAt': FieldValue.serverTimestamp(),
       };
-      
-      // Add merchant data if available - FIXED LINE 504
-      if (merchantData != null && role == 'merchant') {
-        // Convert all values to strings to match Map<String, String> type
-        data.addAll(merchantData.map((key, value) => MapEntry(key, value.toString())));
+
+      // Add merchant data if available
+      if (merchantData != null && roleLc == 'merchant') {
+        data.addAll(
+          merchantData.map((k, v) => MapEntry(k, v.toString())),
+        );
       }
-      
+
       await doc.set(data, SetOptions(merge: true));
     } catch (_) {
       // never block auth on profile write
@@ -120,12 +139,11 @@ class AuthService {
       }
     } catch (_) {}
 
-    final name = (profile['name'] ?? fallbackName ?? user.displayName ?? '')
-        .toString();
+    final name =
+        (profile['name'] ?? fallbackName ?? user.displayName ?? '').toString();
     final phone = (profile['phone'] ?? fallbackPhone ?? '').toString();
-    final role = (profile['role'] ?? fallbackRole ?? 'customer')
-        .toString()
-        .toLowerCase();
+    final role =
+        (profile['role'] ?? fallbackRole ?? 'customer').toString().toLowerCase();
 
     final token = await user.getIdToken();
 
@@ -137,8 +155,7 @@ class AuthService {
       'name': name,
       'role': role,
     };
-    
-    // Add merchant data if available
+
     if (merchantData != null && role == 'merchant') {
       userMap.addAll(merchantData);
     }
@@ -158,9 +175,9 @@ class AuthService {
     Map<String, dynamic>? merchantData,
   }) async {
     await _saveFirebaseProfile(
-      user, 
-      name: name, 
-      phone: phone, 
+      user,
+      name: name,
+      phone: phone,
       role: role,
       merchantData: merchantData,
     );
@@ -186,29 +203,19 @@ class AuthService {
       );
       final user = cred.user;
       if (user == null) {
-        _toast(
-          context,
-          onFailMessage ?? 'Backup login failed (no user).',
-          ok: false,
-        );
+        _toast(context, onFailMessage ?? 'Backup login failed (no user).',
+            ok: false);
         return null;
       }
 
       _toast(context, 'Signed in (backup account)', ok: true);
       return await _buildFirebaseAuthResult(user, fallbackRole: 'customer');
     } on FirebaseAuthException catch (e) {
-      _toast(
-        context,
-        onFailMessage ?? (e.message ?? 'Backup login failed.'),
-        ok: false,
-      );
+      _toast(context, onFailMessage ?? (e.message ?? 'Backup login failed.'),
+          ok: false);
       return null;
     } catch (_) {
-      _toast(
-        context,
-        onFailMessage ?? 'Backup login failed.',
-        ok: false,
-      );
+      _toast(context, onFailMessage ?? 'Backup login failed.', ok: false);
       return null;
     }
   }
@@ -237,6 +244,7 @@ class AuthService {
           email: email,
           password: password,
         );
+
         await _saveFirebaseProfile(
           cred.user!,
           name: backendUser?['name']?.toString(),
@@ -250,6 +258,7 @@ class AuthService {
             email: email,
             password: password,
           );
+
           await _saveFirebaseProfile(
             cred.user!,
             name: backendUser?['name']?.toString(),
@@ -257,10 +266,13 @@ class AuthService {
             role: (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
             merchantData: merchantData,
           );
-          
+
           // Create merchant profile in service-specific collection if merchant
-          if (backendUser?['role'] == 'merchant' && merchantData != null) {
-            // FIXED LINE 910 - added null safety
+          final roleLc = (backendUser?['role'] ?? backendUser?['userRole'] ?? '')
+              .toString()
+              .toLowerCase();
+
+          if (roleLc == 'merchant' && merchantData != null) {
             final serviceKey = merchantData['merchantService']?.toString() ?? '';
             if (serviceKey.isNotEmpty) {
               final merchantProfile = {
@@ -277,7 +289,7 @@ class AuthService {
                 'totalRatings': 0,
                 'completedOrders': 0,
               };
-              
+
               final collectionName = '${serviceKey}_merchants';
               await _firestore
                   .collection(collectionName)
@@ -285,8 +297,6 @@ class AuthService {
                   .set(merchantProfile);
             }
           }
-        } else {
-          // ignore other firebase errors here
         }
       }
     } catch (_) {
@@ -320,17 +330,20 @@ class AuthService {
 
       // Best-effort: mirror to Firebase if email login
       if (trimmedId.contains('@')) {
-        // Extract merchant data if available
         Map<String, dynamic>? merchantData;
         final user = normalized['user'] as Map<String, dynamic>?;
-        if (user?['role'] == 'merchant') {
+        final roleLc = (user?['role'] ?? user?['userRole'] ?? '')
+            .toString()
+            .toLowerCase();
+
+        if (roleLc == 'merchant') {
           merchantData = {
             'merchantService': user?['merchantService'],
             'businessName': user?['businessName'],
             'businessAddress': user?['businessAddress'],
           };
         }
-        
+
         _ensureFirebaseMirrorForBackendUser(
           email: trimmedId,
           password: password,
@@ -365,19 +378,13 @@ class AuthService {
         if (fbResult != null) return fbResult;
       }
 
-      _toast(
-        context,
-        'Something went wrong. Please try again.',
-        ok: false,
-      );
+      _toast(context, 'Something went wrong. Please try again.', ok: false);
       return null;
     }
   }
 
   // ---------- OTP (register flow) ----------
 
-  /// NOTE: If Nest is down, this will now still return `true` so the UI
-  /// can continue and we'll rely on Firebase-only registration.
   Future<bool> requestOtp({
     required String channel, // 'email' | 'phone'
     String? email,
@@ -398,21 +405,19 @@ class AuthService {
       _toast(context, 'Verification code sent');
       return true;
     } on ApiException catch (e) {
-      // Backend responded with an error (rate-limit, etc.)
       _toast(
         context,
         'OTP failed: ${e.message}. You can still continue — we will create a backup account.',
         ok: false,
       );
-      return true; // allow flow to continue
+      return true;
     } catch (e) {
-      // Network/server completely down
       _toast(
         context,
         'Server not reachable for OTP. You can still continue — we will create a backup account.',
         ok: false,
       );
-      return true; // allow flow to continue
+      return true;
     }
   }
 
@@ -449,7 +454,6 @@ class AuthService {
       _toast(context, e.message, ok: false);
       return null;
     } catch (_) {
-      // When this fails (server down), we'll fall back to Firebase only.
       _toast(
         context,
         'Could not verify code (server issue). We can still create a backup account.',
@@ -470,12 +474,11 @@ class AuthService {
     required String profilePicture,
     required String preferredVerification,
     required String verificationTicket,
-    Map<String, dynamic>? merchantData, // Add merchant data parameter
+    Map<String, dynamic>? merchantData,
     required BuildContext context,
   }) async {
     final normalizedRole = role.toLowerCase();
 
-    // Prepare merchant data for Firebase if merchant
     Map<String, dynamic>? firebaseMerchantData;
     if (normalizedRole == 'merchant' && merchantData != null) {
       firebaseMerchantData = {
@@ -490,7 +493,7 @@ class AuthService {
     // 1) Try backend registration if we have a ticket
     if (verificationTicket.isNotEmpty) {
       try {
-        final body = {
+        final body = <String, dynamic>{
           'name': name,
           'email': email,
           'phone': phone,
@@ -500,11 +503,9 @@ class AuthService {
           'preferredVerification': preferredVerification,
           'verificationTicket': verificationTicket,
         };
-        
-        // Add merchant data to request if available
+
         if (merchantData != null && normalizedRole == 'merchant') {
-          // FIXED: Convert all values to strings
-          body.addAll(merchantData.map((key, value) => MapEntry(key, value.toString())));
+          body.addAll(merchantData.map((k, v) => MapEntry(k, v.toString())));
         }
 
         final res = await ApiClient.post(
@@ -518,7 +519,6 @@ class AuthService {
 
         final backendAuth = _normalizeBackendAuthResponse(data);
 
-        // Mirror this user into Firebase as backup (best-effort)
         if (email.trim().isNotEmpty) {
           await _ensureFirebaseMirrorForBackendUser(
             email: email.trim(),
@@ -535,32 +535,19 @@ class AuthService {
           'Backend signup failed: ${e.message}. Using backup account.',
           ok: false,
         );
-        // fall through to Firebase backup
       } catch (e) {
         if (_looksLikeServerDown(e)) {
-          _toast(
-            context,
-            'Server unavailable. Creating backup account.',
-            ok: false,
-          );
+          _toast(context, 'Server unavailable. Creating backup account.',
+              ok: false);
         } else {
-          _toast(
-            context,
-            'Signup error: $e. Trying backup account.',
-            ok: false,
-          );
+          _toast(context, 'Signup error: $e. Trying backup account.', ok: false);
         }
-        // fall through to Firebase backup
       }
     }
 
-    // 2) Fallback: pure Firebase registration (NO OTP required here)
+    // 2) Fallback: pure Firebase registration
     if (email.trim().isEmpty) {
-      _toast(
-        context,
-        'Email is required for backup sign-up.',
-        ok: false,
-      );
+      _toast(context, 'Email is required for backup sign-up.', ok: false);
       return null;
     }
 
@@ -575,9 +562,9 @@ class AuthService {
         return null;
       }
 
-      // Create merchant profile in service-specific collection if merchant
       if (normalizedRole == 'merchant' && firebaseMerchantData != null) {
-        final serviceKey = firebaseMerchantData['merchantService']?.toString() ?? '';
+        final serviceKey =
+            firebaseMerchantData['merchantService']?.toString() ?? '';
         if (serviceKey.isNotEmpty) {
           final merchantProfile = {
             'uid': user.uid,
@@ -591,12 +578,11 @@ class AuthService {
             'totalRatings': 0,
             'completedOrders': 0,
           };
-          
+
           final collectionName = '${serviceKey}_merchants';
-          await _firestore
-              .collection(collectionName)
-              .doc(user.uid)
-              .set(merchantProfile);
+          await _firestore.collection(collectionName).doc(user.uid).set(
+                merchantProfile,
+              );
         }
       }
 
@@ -608,15 +594,10 @@ class AuthService {
         merchantData: firebaseMerchantData,
       );
 
-      _toast(
-        context,
-        'Account created (backup)',
-        ok: true,
-      );
+      _toast(context, 'Account created (backup)', ok: true);
       return auth;
     } on FirebaseAuthException catch (e) {
       if (e.code == 'email-already-in-use') {
-        // Already exists in Firebase → sign in instead
         try {
           final cred = await _firebaseAuth.signInWithEmailAndPassword(
             email: email.trim(),
@@ -624,15 +605,11 @@ class AuthService {
           );
           final user = cred.user;
           if (user == null) {
-            _toast(
-              context,
-              'Backup account exists but could not sign in.',
-              ok: false,
-            );
+            _toast(context, 'Backup account exists but could not sign in.',
+                ok: false);
             return null;
           }
 
-          // Update existing user with merchant data if needed
           if (normalizedRole == 'merchant' && firebaseMerchantData != null) {
             await _saveFirebaseProfile(
               user,
@@ -641,9 +618,9 @@ class AuthService {
               role: normalizedRole,
               merchantData: firebaseMerchantData,
             );
-            
-            // Also update/create merchant profile in service-specific collection
-            final serviceKey = firebaseMerchantData['merchantService']?.toString() ?? '';
+
+            final serviceKey =
+                firebaseMerchantData['merchantService']?.toString() ?? '';
             if (serviceKey.isNotEmpty) {
               final merchantProfile = {
                 'uid': user.uid,
@@ -653,12 +630,12 @@ class AuthService {
                 ...firebaseMerchantData,
                 'updatedAt': FieldValue.serverTimestamp(),
               };
-              
+
               final collectionName = '${serviceKey}_merchants';
-              await _firestore
-                  .collection(collectionName)
-                  .doc(user.uid)
-                  .set(merchantProfile, SetOptions(merge: true));
+              await _firestore.collection(collectionName).doc(user.uid).set(
+                    merchantProfile,
+                    SetOptions(merge: true),
+                  );
             }
           }
 
@@ -670,36 +647,103 @@ class AuthService {
             merchantData: firebaseMerchantData,
           );
 
-          _toast(
-            context,
-            'Signed in to existing backup account',
-            ok: true,
-          );
+          _toast(context, 'Signed in to existing backup account', ok: true);
           return auth;
         } catch (e2) {
-          _toast(
-            context,
-            e2.toString(),
-            ok: false,
-          );
+          _toast(context, e2.toString(), ok: false);
           return null;
         }
       }
 
-      _toast(
-        context,
-        e.message ?? 'Backup signup failed.',
-        ok: false,
-      );
+      _toast(context, e.message ?? 'Backup signup failed.', ok: false);
       return null;
     } catch (_) {
-      _toast(
-        context,
-        'Signup failed. Please try again later.',
-        ok: false,
-      );
+      _toast(context, 'Signup failed. Please try again later.', ok: false);
       return null;
     }
+  }
+
+  // ---------- DELETE ACCOUNT EVERYWHERE (Backend + Firebase + Local cleanup) ----------
+
+  Future<DeleteAccountStatus> deleteAccountEverywhere(
+      BuildContext context) async {
+    final token = await _readAnyToken();
+
+    // 1) Delete on Nest backend (best-effort)
+    bool backendDeleted = false;
+    if (token != null && token.trim().isNotEmpty) {
+      try {
+        final base = await ApiConfig.readBase();
+        final resp = await http.delete(
+          Uri.parse('$base/users/me'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Accept': 'application/json',
+          },
+        );
+        backendDeleted = _is2xx(resp.statusCode);
+      } catch (_) {
+        backendDeleted = false;
+      }
+    } else {
+      // no backend token => user might be Firebase-only backup account
+      backendDeleted = true;
+    }
+
+    // 2) Delete Firebase user + Firestore docs (best-effort)
+    bool firebaseDeleted = true;
+    final u = _firebaseAuth.currentUser;
+
+    if (u != null) {
+      // delete firestore docs first
+      try {
+        final userDoc = await _firestore.collection('users').doc(u.uid).get();
+        final data = userDoc.data() ?? {};
+        final serviceKey = (data['merchantService'] ?? '').toString();
+
+        await _firestore.collection('users').doc(u.uid).delete();
+
+        if (serviceKey.trim().isNotEmpty) {
+          final collectionName = '${serviceKey}_merchants';
+          await _firestore.collection(collectionName).doc(u.uid).delete();
+        }
+      } catch (_) {}
+
+      try {
+        await u.delete(); // may require recent login
+      } on FirebaseAuthException catch (e) {
+        firebaseDeleted = false;
+
+        if (e.code == 'requires-recent-login') {
+          _toast(
+            context,
+            'Please login again, then try deleting your account.',
+            ok: false,
+          );
+
+          // still sign out everywhere
+          await logout(context: context);
+          return DeleteAccountStatus.requiresRecentLogin;
+        }
+      } catch (_) {
+        firebaseDeleted = false;
+      }
+    }
+
+    // 3) Cleanup: sign out everywhere + clear local
+    await logout(context: context);
+
+    if (backendDeleted && firebaseDeleted) {
+      _toast(context, 'Account deleted', ok: true);
+      return DeleteAccountStatus.success;
+    }
+
+    _toast(
+      context,
+      'Account delete partially completed. If this persists, contact support.',
+      ok: false,
+    );
+    return DeleteAccountStatus.failed;
   }
 
   // ---------- Logout ----------
@@ -710,6 +754,7 @@ class AuthService {
       final sp = await SharedPreferences.getInstance();
       token = sp.getString('token') ??
           sp.getString('jwt_token') ??
+          sp.getString('authToken') ??
           sp.getString('jwt');
     } catch (_) {}
 
@@ -725,6 +770,7 @@ class AuthService {
       }
     }
 
+    // google
     try {
       await _google.signOut();
     } catch (_) {}
@@ -732,6 +778,7 @@ class AuthService {
       await _google.disconnect();
     } catch (_) {}
 
+    // firebase
     try {
       await _firebaseAuth.signOut();
     } catch (_) {}
@@ -753,6 +800,7 @@ class AuthService {
       for (final k in const [
         'token',
         'jwt_token',
+        'authToken',
         'jwt',
         'email',
         'prefill_login_identifier',
@@ -763,6 +811,13 @@ class AuthService {
         'business_name',
         'business_address',
         'uid',
+        'role',
+        'user_role',
+        'fullName',
+        'name',
+        'phone',
+        'address',
+        'profilepicture',
       ]) {
         await sp.remove(k);
       }
@@ -772,11 +827,9 @@ class AuthService {
     }
   }
 
-  // ---------- Social: Google (unchanged backend flow) ----------
+  // ---------- Social: Google ----------
 
-  Future<Map<String, dynamic>?> continueWithGoogle(
-    BuildContext context,
-  ) async {
+  Future<Map<String, dynamic>?> continueWithGoogle(BuildContext context) async {
     try {
       final acct = await _google.signIn();
       if (acct == null) return null; // cancelled
@@ -806,18 +859,12 @@ class AuthService {
     }
   }
 
-  // ---------- Social: Apple (unchanged backend flow) ----------
+  // ---------- Social: Apple ----------
 
-  Future<Map<String, dynamic>?> continueWithApple(
-    BuildContext context,
-  ) async {
+  Future<Map<String, dynamic>?> continueWithApple(BuildContext context) async {
     try {
       if (!Platform.isIOS) {
-        _toast(
-          context,
-          'Apple Sign-In is only available on iOS',
-          ok: false,
-        );
+        _toast(context, 'Apple Sign-In is only available on iOS', ok: false);
         return null;
       }
 
@@ -869,10 +916,8 @@ class AuthService {
     const charset =
         '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
     final rand = Random.secure();
-    return List.generate(
-      length,
-      (_) => charset[rand.nextInt(charset.length)],
-    ).join();
+    return List.generate(length, (_) => charset[rand.nextInt(charset.length)])
+        .join();
   }
 
   String _sha256of(String input) {
@@ -886,10 +931,10 @@ class AuthService {
     try {
       final doc = await _firestore.collection('users').doc(uid).get();
       if (doc.exists) {
-        return doc.data()?['status'] ?? 'pending';
+        return doc.data()?['status']?.toString() ?? 'pending';
       }
       return 'pending';
-    } catch (e) {
+    } catch (_) {
       return 'pending';
     }
   }
@@ -904,28 +949,24 @@ class AuthService {
         ...updates,
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      
+
       // Also update service-specific collection if merchant
       final userDoc = await _firestore.collection('users').doc(uid).get();
       final userData = userDoc.data();
-      
-      if (userData?['role'] == 'merchant' && userData?['merchantService'] != null) {
-        final serviceKey = userData?['merchantService']?.toString() ?? '';
-        if (serviceKey.isNotEmpty) {
-          final collectionName = '${serviceKey}_merchants';
-          
-          await _firestore
-              .collection(collectionName)
-              .doc(uid)
-              .update({
-                ...updates,
-                'updatedAt': FieldValue.serverTimestamp(),
-              });
-        }
+
+      final roleLc = (userData?['role'] ?? '').toString().toLowerCase();
+      final serviceKey = (userData?['merchantService'] ?? '').toString();
+
+      if (roleLc == 'merchant' && serviceKey.isNotEmpty) {
+        final collectionName = '${serviceKey}_merchants';
+        await _firestore.collection(collectionName).doc(uid).update({
+          ...updates,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
       }
-      
+
       return true;
-    } catch (e) {
+    } catch (_) {
       return false;
     }
   }

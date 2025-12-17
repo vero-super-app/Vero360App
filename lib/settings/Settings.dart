@@ -1,17 +1,1114 @@
-// address.dart
-import 'package:flutter/material.dart';
+import 'dart:convert';
 
-class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key});
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/painting.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:vero360_app/Pages/BottomNavbar.dart' show Bottomnavbar;
+
+import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/services/auth_service.dart';
+import 'package:vero360_app/toasthelper.dart';
+
+// REQUIRED PAGES
+import 'package:vero360_app/Pages/address.dart'; // AddressPage
+import 'package:vero360_app/Pages/changepassword.dart'; // ChangePasswordPage
+
+
+const Color kBrandOrange = Color(0xFFFF8A00);
+const Color kBrandNavy = Color(0xFF16284C);
+
+class SettingsPage extends StatefulWidget {
+  /// If Settings is shown as a TAB/root, pass this so back goes to home tab instead of closing app.
+  final VoidCallback? onBackToHomeTab;
+
+  const SettingsPage({super.key, this.onBackToHomeTab});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  final _auth = FirebaseAuth.instance;
+  final _firestore = FirebaseFirestore.instance;
+
+  bool _loading = true;
+  bool _refreshing = false;
+  bool _offline = false;
+
+  // cached profile
+  String _name = 'Guest User';
+  String _email = 'No Email';
+  String _phone = 'No Phone';
+  String _address = 'No Address';
+  String _photoUrl = '';
+
+  // app info
+  String _appVersion = '—';
+  String _buildNumber = '—';
+
+  // personalization
+  bool _compactMode = false;
+  bool _haptics = true;
+
+  // customer service
+  static const String _supportPhone = '+265999955270';
+  static const String _supportWhatsApp = '+265999955270';
+  static const String _supportEmail = 'support@vero360.app';
+
+  @override
+  void initState() {
+    super.initState();
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    await _loadAppInfo();
+    await _loadPersonalizationPrefs();
+    await _loadCachedProfile();
+    await _hydrateFromFirebaseAuth();
+    await _fetchUserMeFromApi();
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _loadAppInfo() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      _appVersion = info.version;
+      _buildNumber = info.buildNumber;
+    } catch (_) {}
+  }
+
+  Future<void> _loadPersonalizationPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _compactMode = prefs.getBool('pref_compact_mode') ?? false;
+      _haptics = prefs.getBool('pref_haptics') ?? true;
+    });
+  }
+
+  Future<void> _savePersonalizationPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('pref_compact_mode', _compactMode);
+    await prefs.setBool('pref_haptics', _haptics);
+  }
+
+  void _maybeHaptic() {
+    if (_haptics) HapticFeedback.selectionClick();
+  }
+
+  Future<void> _loadCachedProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _name = prefs.getString('fullName') ?? prefs.getString('name') ?? _name;
+      _email = prefs.getString('email') ?? _email;
+      _phone = prefs.getString('phone') ?? _phone;
+      _address = prefs.getString('address') ?? _address;
+      _photoUrl = prefs.getString('profilepicture') ?? '';
+    });
+  }
+
+  Future<void> _hydrateFromFirebaseAuth() async {
+    final u = _auth.currentUser;
+    if (u == null) return;
+
+    if ((u.displayName ?? '').trim().isNotEmpty) _name = u.displayName!.trim();
+    if ((u.email ?? '').trim().isNotEmpty) _email = u.email!.trim();
+    if ((u.photoURL ?? '').trim().isNotEmpty) _photoUrl = u.photoURL!.trim();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('email', _email);
+    if (_name.trim().isNotEmpty) {
+      await prefs.setString('fullName', _name);
+      await prefs.setString('name', _name);
+    }
+    if (_photoUrl.trim().isNotEmpty) {
+      await prefs.setString('profilepicture', _photoUrl);
+    }
+
+    if (mounted) setState(() {});
+  }
+
+  Future<String> _getAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('jwt_token') ??
+        prefs.getString('token') ??
+        prefs.getString('authToken') ??
+        prefs.getString('jwt') ??
+        '';
+  }
+
+  Future<void> _persistUserToPrefsFromApi(Map<String, dynamic> user) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final name = (user['name'] ?? 'Guest User').toString().trim();
+    final email = (user['email'] ?? '').toString().trim();
+    final phone = (user['phone'] ?? '').toString().trim();
+    final pic = (user['profilepicture'] ??
+            user['profilePicture'] ??
+            user['photoURL'] ??
+            '')
+        .toString()
+        .trim();
+
+    String addr = 'No Address';
+    final addresses = user['addresses'];
+    if (addresses is List && addresses.isNotEmpty) {
+      final first = addresses.first;
+      if (first is Map && first['address'] != null) addr = first['address'].toString();
+      else if (first is String && first.trim().isNotEmpty) addr = first;
+    } else if (user['address'] != null) {
+      addr = user['address'].toString();
+    }
+
+    _name = name.isEmpty ? _name : name;
+    _email = email.isEmpty ? _email : email;
+    _phone = phone.isEmpty ? _phone : phone;
+    _address = addr.trim().isEmpty ? _address : addr.trim();
+    if (pic.isNotEmpty) _photoUrl = pic;
+
+    await prefs.setString('fullName', _name);
+    await prefs.setString('name', _name);
+    await prefs.setString('email', _email);
+    await prefs.setString('phone', _phone);
+    await prefs.setString('address', _address);
+    await prefs.setString('profilepicture', _photoUrl);
+
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _fetchUserMeFromApi() async {
+    setState(() {
+      _offline = false;
+      _refreshing = true;
+    });
+
+    try {
+      final token = await _getAuthToken();
+      if (token.isEmpty) return;
+
+      final base = await ApiConfig.readBase();
+      final resp = await http.get(
+        Uri.parse('$base/users/me'),
+        headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+      );
+
+      if (!mounted) return;
+
+      if (resp.statusCode == 200) {
+        final decoded = jsonDecode(resp.body);
+        final data = (decoded is Map && decoded['data'] is Map)
+            ? Map<String, dynamic>.from(decoded['data'])
+            : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
+
+        final user = (data['user'] is Map)
+            ? Map<String, dynamic>.from(data['user'])
+            : data;
+
+        await _persistUserToPrefsFromApi(user);
+      } else {
+        setState(() => _offline = true);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _offline = true);
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  Future<void> _onRefresh() async {
+    _maybeHaptic();
+    await _hydrateFromFirebaseAuth();
+    await _fetchUserMeFromApi();
+    await _loadCachedProfile();
+  }
+
+  // ---------- BACK FIX ----------
+  Future<bool> _handleWillPop() async {
+    final nav = Navigator.of(context);
+    if (nav.canPop()) return true;
+
+    // If this is root (tab), go back to home tab instead of closing the app.
+    if (widget.onBackToHomeTab != null) {
+      widget.onBackToHomeTab!();
+      return false;
+    }
+    return true;
+  }
+
+  void _backPressed() {
+    _maybeHaptic();
+    final nav = Navigator.of(context);
+    if (nav.canPop()) {
+      nav.pop();
+      return;
+    }
+    if (widget.onBackToHomeTab != null) {
+      widget.onBackToHomeTab!();
+    }
+  }
+
+  // ---------- NAV: Address bottom sheet ----------
+  Future<void> _openAddressBottomSheet() async {
+    _maybeHaptic();
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.90,
+        child: const AddressPage(),
+      ),
+    );
+
+    await _loadCachedProfile();
+    await _fetchUserMeFromApi();
+  }
+
+  void _openChangePassword() {
+    _maybeHaptic();
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ChangePasswordPage()),
+    );
+  }
+
+  // ---------- Personalization ----------
+  void _openPersonalization() {
+    _maybeHaptic();
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Personalization',
+                        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  value: _compactMode,
+                  onChanged: (v) async {
+                    setLocal(() => _compactMode = v);
+                    setState(() => _compactMode = v);
+                    await _savePersonalizationPrefs();
+                  },
+                  title: const Text('Compact mode', style: TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: const Text('Smaller spacing in settings list'),
+                ),
+                SwitchListTile(
+                  value: _haptics,
+                  onChanged: (v) async {
+                    setLocal(() => _haptics = v);
+                    setState(() => _haptics = v);
+                    await _savePersonalizationPrefs();
+                  },
+                  title: const Text('Haptics', style: TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: const Text('Vibration feedback when tapping'),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _openAboutUs() {
+    _maybeHaptic();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AboutUsPage(appVersion: _appVersion, buildNumber: _buildNumber),
+      ),
+    );
+  }
+
+  // ---------- Clear cache ----------
+  Future<void> _clearCache() async {
+    _maybeHaptic();
+    final ok = await _confirm(
+      title: 'Clear cache',
+      message: 'This will clear temporary cached data and image cache. You will stay logged in.',
+      confirmText: 'Clear',
+      confirmColor: Colors.red,
+    );
+    if (ok != true) return;
+
+    setState(() => _refreshing = true);
+    try {
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs.getKeys();
+
+      bool isCacheKey(String k) {
+        final lk = k.toLowerCase();
+        return lk.startsWith('cache_') ||
+            lk.startsWith('tmp_') ||
+            lk.contains('cache') ||
+            lk.contains('latest') ||
+            lk.contains('marketplace') ||
+            lk.contains('homefeed') ||
+            lk.contains('image_');
+      }
+
+      for (final k in keys) {
+        if (isCacheKey(k)) await prefs.remove(k);
+      }
+
+      ToastHelper.showCustomToast(context, 'Cache cleared', isSuccess: true, errorMessage: '');
+    } catch (e) {
+      ToastHelper.showCustomToast(context, 'Failed', isSuccess: false, errorMessage: e.toString());
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  // ---------- Customer Service ----------
+  void _openCustomerService() {
+    _maybeHaptic();
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.black12,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Customer service',
+                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: _roundIcon(Icons.call_outlined),
+              title: const Text('Call support', style: TextStyle(fontWeight: FontWeight.w800)),
+              subtitle: const Text(_supportPhone),
+              onTap: () async {
+                Navigator.pop(context);
+                await _launchTel(_supportPhone);
+              },
+            ),
+            ListTile(
+              leading: _roundIcon(Icons.chat_bubble_outline),
+              title: const Text('WhatsApp', style: TextStyle(fontWeight: FontWeight.w800)),
+              subtitle: const Text(_supportWhatsApp),
+              onTap: () async {
+                Navigator.pop(context);
+                await _launchWhatsApp(_supportWhatsApp, 'Hello support, I need help.');
+              },
+            ),
+            ListTile(
+              leading: _roundIcon(Icons.email_outlined),
+              title: const Text('Email', style: TextStyle(fontWeight: FontWeight.w800)),
+              subtitle: const Text(_supportEmail),
+              onTap: () async {
+                Navigator.pop(context);
+                await _launchEmail(_supportEmail, subject: 'Support request', body: 'Hi, I need help with...');
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _roundIcon(IconData icon) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: kBrandOrange.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Icon(icon, color: kBrandOrange),
+    );
+  }
+
+  Future<void> _launchTel(String phone) async {
+    final uri = Uri.parse('tel:${phone.replaceAll(' ', '')}');
+    await launchUrl(uri);
+  }
+
+  Future<void> _launchEmail(String email, {String? subject, String? body}) async {
+    final uri = Uri(
+      scheme: 'mailto',
+      path: email,
+      queryParameters: {
+        if (subject != null) 'subject': subject,
+        if (body != null) 'body': body,
+      },
+    );
+    await launchUrl(uri);
+  }
+
+  Future<void> _launchWhatsApp(String phone, String message) async {
+    final p = phone.replaceAll(' ', '').replaceAll('+', '');
+    final uri = Uri.parse('https://wa.me/$p?text=${Uri.encodeComponent(message)}');
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<bool?> _confirm({
+    required String title,
+    required String message,
+    required String confirmText,
+    required Color confirmColor,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(confirmText, style: TextStyle(color: confirmColor, fontWeight: FontWeight.w900)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------- LOGOUT (Firebase + Nest) ----------
+  Future<void> _logout() async {
+    _maybeHaptic();
+    final ok = await _confirm(
+      title: 'Logout',
+      message: 'Do you want to log out of this account?',
+      confirmText: 'Logout',
+      confirmColor: Colors.red,
+    );
+    if (ok != true) return;
+
+    setState(() => _refreshing = true);
+    try {
+      // ✅ uses your AuthService: backend logout + google/apple + firebase + clear local token keys
+      await AuthService().logout(context: context);
+
+      // extra cleanup for profile keys (keeps personalization prefs)
+      final prefs = await SharedPreferences.getInstance();
+      for (final k in [
+        'fullName',
+        'name',
+        'email',
+        'phone',
+        'address',
+        'profilepicture',
+        'uid',
+        'role',
+        'user_role',
+        'merchant_service',
+        'business_name',
+        'business_address',
+      ]) {
+        await prefs.remove(k);
+      }
+    } finally {
+      if (!mounted) return;
+      setState(() => _refreshing = false);
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
+        (_) => false,
+      );
+    }
+  }
+
+  // ---------- DELETE ACCOUNT (Nest + Firebase) ----------
+  Future<void> _deleteAccount() async {
+    _maybeHaptic();
+    final ok = await _confirm(
+      title: 'Delete account',
+      message: 'This will permanently delete your account.\n\nThis cannot be undone.',
+      confirmText: 'Delete',
+      confirmColor: Colors.red,
+    );
+    if (ok != true) return;
+
+    setState(() => _refreshing = true);
+
+    try {
+      // 1) Delete on Nest backend (best effort)
+      final token = await _getAuthToken();
+      if (token.isNotEmpty) {
+        try {
+          final base = await ApiConfig.readBase();
+          await http.delete(
+            Uri.parse('$base/users/me'),
+            headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+          );
+        } catch (_) {}
+      }
+
+      // 2) Delete Firestore profile + service collection (best effort)
+      final u = _auth.currentUser;
+      if (u != null) {
+        try {
+          final doc = await _firestore.collection('users').doc(u.uid).get();
+          final data = doc.data() ?? {};
+          final serviceKey = (data['merchantService'] ?? '').toString();
+
+          await _firestore.collection('users').doc(u.uid).delete();
+
+          if (serviceKey.trim().isNotEmpty) {
+            await _firestore.collection('${serviceKey}_merchants').doc(u.uid).delete();
+          }
+        } catch (_) {}
+
+        // 3) Delete Firebase auth user (may require recent login)
+        try {
+          await u.delete();
+        } on FirebaseAuthException catch (e) {
+          if (e.code == 'requires-recent-login') {
+            ToastHelper.showCustomToast(
+              context,
+              'Delete failed',
+              isSuccess: false,
+              errorMessage: 'Please login again then try deleting your account.',
+            );
+
+            // still logout everywhere
+            await AuthService().logout(context: context);
+            return;
+          }
+        }
+      }
+
+      // 4) Logout everywhere (google/apple/firebase + clear local)
+      await AuthService().logout(context: context);
+
+      ToastHelper.showCustomToast(context, 'Account deleted', isSuccess: true, errorMessage: '');
+      if (!mounted) return;
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
+        (_) => false,
+      );
+    } catch (e) {
+      ToastHelper.showCustomToast(context, 'Delete failed', isSuccess: false, errorMessage: e.toString());
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  // ---------- UI ----------
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    return WillPopScope(
+      onWillPop: _handleWillPop,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF4F5F7),
+        appBar: AppBar(
+          backgroundColor: kBrandNavy,
+          foregroundColor: Colors.white,
+          title: const Text('Settings'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _backPressed,
+          ),
+          actions: [
+            if (_refreshing)
+              const Padding(
+                padding: EdgeInsets.only(right: 12),
+                child: Center(
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  ),
+                ),
+              ),
+            IconButton(
+              tooltip: 'Refresh',
+              onPressed: _refreshing ? null : _onRefresh,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        body: RefreshIndicator(
+          onRefresh: _onRefresh,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 22),
+            children: [
+              if (_offline) _offlineBanner(),
+              _profileCard(),
+
+              const SizedBox(height: 14),
+              _sectionTitle('Account'),
+              _card([
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.location_on_outlined,
+                  title: 'My address',
+                  subtitle: _address,
+                  onTap: _openAddressBottomSheet,
+                ),
+              ]),
+
+              const SizedBox(height: 14),
+              _sectionTitle('Security'),
+              _card([
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.lock_outline,
+                  title: 'Change password',
+                  subtitle: 'Update your password',
+                  onTap: _openChangePassword,
+                ),
+              ]),
+
+              const SizedBox(height: 14),
+              _sectionTitle('Preferences'),
+              _card([
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.tune,
+                  title: 'Personalization',
+                  subtitle: 'Compact mode, haptics',
+                  onTap: _openPersonalization,
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.cleaning_services_outlined,
+                  title: 'Clear cache',
+                  subtitle: 'Clear temporary cached data',
+                  onTap: _clearCache,
+                ),
+              ]),
+
+              const SizedBox(height: 14),
+              _sectionTitle('Support'),
+              _card([
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.support_agent_outlined,
+                  title: 'Customer service',
+                  subtitle: 'Call, WhatsApp, or email',
+                  onTap: _openCustomerService,
+                ),
+              ]),
+
+              const SizedBox(height: 14),
+              _sectionTitle('About'),
+              _card([
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.info_outline,
+                  title: 'About us',
+                  subtitle: 'App details and information',
+                  onTap: _openAboutUs,
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.verified_user_outlined,
+                  title: 'Privacy policy & Terms',
+                  subtitle: 'Read our policy',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const PolicyPage()),
+                  ),
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.apps_outlined,
+                  title: 'App version',
+                  subtitle: 'v$_appVersion ($_buildNumber)',
+                  onTap: () => _maybeHaptic(),
+                  trailing: const SizedBox.shrink(),
+                ),
+              ]),
+
+              const SizedBox(height: 14),
+              _sectionTitle('Danger zone'),
+              _card([
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.logout,
+                  title: 'Logout',
+                  subtitle: 'Sign out of this device',
+                  onTap: _logout,
+                  iconColor: Colors.red,
+                  titleColor: Colors.red,
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.delete_forever,
+                  title: 'Delete my account',
+                  subtitle: 'Permanently delete your account',
+                  onTap: _deleteAccount,
+                  iconColor: Colors.red,
+                  titleColor: Colors.red,
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _offlineBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFEDEE),
+        border: Border.all(color: const Color(0xFFFFC9CD)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.wifi_off_rounded, color: Colors.red),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'You are offline or the server is unreachable. Showing cached info.',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _profileCard() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [kBrandNavy, kBrandOrange.withOpacity(0.95)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                width: 58,
+                height: 58,
+                color: Colors.white.withOpacity(0.15),
+                child: _photoUrl.isEmpty
+                    ? const Icon(Icons.person, color: Colors.white, size: 30)
+                    : Image.network(
+                        _photoUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            const Icon(Icons.person, color: Colors.white, size: 30),
+                      ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _chip(Icons.phone_outlined, _phone),
+                      _chip(Icons.location_on_outlined, _address),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: Colors.white),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 190),
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionTitle(String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 0, 2, 8),
+      child: Text(text, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+    );
+  }
+
+  Widget _card(List<Widget> children) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Column(
+        children: [
+          for (int i = 0; i < children.length; i++) ...[
+            children[i],
+            if (i != children.length - 1) const Divider(height: 0),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsTile extends StatelessWidget {
+  final bool compact;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final Widget? trailing;
+  final Color? iconColor;
+  final Color? titleColor;
+
+  const _SettingsTile({
+    required this.compact,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.trailing,
+    this.iconColor,
+    this.titleColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      dense: compact,
+      visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
+      onTap: onTap,
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: (iconColor ?? kBrandOrange).withOpacity(0.12),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Icon(icon, color: iconColor ?? kBrandOrange),
+      ),
+      title: Text(title, style: TextStyle(fontWeight: FontWeight.w900, color: titleColor)),
+      subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: trailing ?? const Icon(Icons.chevron_right),
+    );
+  }
+}
+
+// -------------------- ABOUT US --------------------
+class AboutUsPage extends StatelessWidget {
+  final String appVersion;
+  final String buildNumber;
+
+  const AboutUsPage({super.key, required this.appVersion, required this.buildNumber});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF4F5F7),
       appBar: AppBar(
-        title: const Text('Settings'),
+        backgroundColor: kBrandNavy,
+        foregroundColor: Colors.white,
+        title: const Text('About us'),
       ),
-      body: const Center(
-        child: Text('Settings Page'),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Vero360', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+              const SizedBox(height: 8),
+              const Text(
+                'This app helps customers and merchants manage products, orders, and services in one place.',
+                style: TextStyle(height: 1.35),
+              ),
+              const SizedBox(height: 14),
+              Text('Version: v$appVersion ($buildNumber)', style: const TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              const Text(
+                'Replace this About text with your official content.',
+                style: TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// -------------------- POLICY PAGE --------------------
+class PolicyPage extends StatelessWidget {
+  const PolicyPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F5F7),
+      appBar: AppBar(
+        backgroundColor: kBrandNavy,
+        foregroundColor: Colors.white,
+        title: const Text('Privacy & Terms'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: const SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Privacy Policy', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                SizedBox(height: 8),
+                Text(
+                  '• We store basic account details (name, email, phone, address) to run the app.\n'
+                  '• You can clear cache anytime.\n'
+                  '• You can delete your account from Settings.\n',
+                  style: TextStyle(height: 1.35),
+                ),
+                SizedBox(height: 14),
+                Text('Terms & Conditions', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                SizedBox(height: 8),
+                Text(
+                  '• Use the app responsibly.\n'
+                  '• Do not upload illegal content.\n'
+                  '• We may update these terms as features change.\n',
+                  style: TextStyle(height: 1.35),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -44,7 +44,7 @@ class MerchantService {
 const List<MerchantService> kMerchantServices = [
   MerchantService(
     key: 'marketplace',  // New marketplace service
-    name: 'Marketplace Seller',
+    name: 'General Dealers',
     icon: Icons.store_rounded,
   ),
   MerchantService(
@@ -77,26 +77,26 @@ const List<MerchantService> kMerchantServices = [
     name: 'Airport Pickup',
     icon: Icons.flight_takeoff_rounded,
   ),
-  MerchantService(
-    key: 'car_hire',
-    name: 'Car Hire',
-    icon: Icons.car_rental_rounded,
-  ),
-  MerchantService(
-    key: 'hair',
-    name: 'Hair Salon',
-    icon: Icons.cut_rounded,
-  ),
-  MerchantService(
-    key: 'fitness',
-    name: 'Fitness Center',
-    icon: Icons.fitness_center_rounded,
-  ),
-  MerchantService(
-    key: 'mobile_money',
-    name: 'Mobile Money',
-    icon: Icons.money_rounded,
-  ),
+  // MerchantService(
+  //   key: 'car_hire',
+  //   name: 'Car Hire',
+  //   icon: Icons.car_rental_rounded,
+  // ),
+  // MerchantService(
+  //   key: 'hair',
+  //   name: 'Hair Salon',
+  //   icon: Icons.cut_rounded,
+  // ),
+  // MerchantService(
+  //   key: 'fitness',
+  //   name: 'Fitness Center',
+  //   icon: Icons.fitness_center_rounded,
+  // ),
+  // MerchantService(
+  //   key: 'mobile_money',
+  //   name: 'Mobile Money',
+  //   icon: Icons.money_rounded,
+  // ),
 ];
 
 class RegisterScreen extends StatefulWidget {
@@ -162,12 +162,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return null;
   }
 
-  String? _validateBusinessAddress(String? v) {
-    if (_role == UserRole.merchant && (v == null || v.trim().isEmpty)) {
-      return 'Business address is required';
-    }
-    return null;
-  }
+  // String? _validateBusinessAddress(String? v) {
+  //   if (_role == UserRole.merchant && (v == null || v.trim().isEmpty)) {
+  //     return 'Business address is required';
+  //   }
+  //   return null;
+  // }
 
   String? _validateEmail(String? v) {
     final s = v?.trim() ?? '';
@@ -307,7 +307,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         // Fallback to generic merchant dashboard
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => MerchantBottomnavbar(email: displayId),
+            builder: (_) => MarketplaceMerchantDashboard(email: displayId),
           ),
           (_) => false,
         );
@@ -337,7 +337,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return CourierMerchantDashboard(email: email);
       // Add more cases for other services
       default:
-        return MerchantBottomnavbar(email: email);
+        return MarketplaceMerchantDashboard(email: email);
     }
   }
 
@@ -425,17 +425,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return;
       }
       
-      final businessAddressErr = _validateBusinessAddress(_businessAddress.text);
-      if (businessAddressErr != null) {
-        ToastHelper.showCustomToast(
-          context,
-          businessAddressErr,
-          isSuccess: false,
-          errorMessage: '',
-        );
-        return;
-      }
-    }
+    //   final businessAddressErr = _validateBusinessAddress(_businessAddress.text);
+    //   if (businessAddressErr != null) {
+    //     ToastHelper.showCustomToast(
+    //       context,
+    //       businessAddressErr,
+    //       isSuccess: false,
+    //       errorMessage: '',
+    //     );
+    //     return;
+    //   }
+    // }
     
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
@@ -503,7 +503,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } finally {
       if (mounted) setState(() => _registering = false);
     }
-  }
+  }}
 
   // Create Firebase backup account for NestJS-registered users
   Future<void> _createFirebaseBackupAccount(Map<String, dynamic>? userData) async {
@@ -1048,7 +1048,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                             const SizedBox(height: 14),
                             
-                            // Business Name (for merchants)
+                           // Business Name (for merchants)
                             if (_role == UserRole.merchant) ...[
                               TextFormField(
                                 controller: _businessName,
@@ -1090,19 +1090,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             const SizedBox(height: 14),
                             
                             // Business Address (for merchants)
-                            if (_role == UserRole.merchant) ...[
-                              TextFormField(
-                                controller: _businessAddress,
-                                textInputAction: TextInputAction.next,
-                                decoration: _dec(
-                                  label: 'Business Address',
-                                  hint: 'Your business location',
-                                  icon: Icons.location_on_rounded,
-                                ),
-                                validator: _validateBusinessAddress,
-                              ),
-                              const SizedBox(height: 14),
-                            ],
+                            // if (_role == UserRole.merchant) ...[
+                            //   TextFormField(
+                            //     controller: _businessAddress,
+                            //     textInputAction: TextInputAction.next,
+                            //     decoration: _dec(
+                            //       label: 'Business Address',
+                            //       hint: 'Your business location',
+                            //       icon: Icons.location_on_rounded,
+                            //     ),
+                            //     validator: _validateBusinessAddress,
+                            //   ),
+                            //   const SizedBox(height: 14),
+                            // ],
                             
                             // Merchant Service Selection (for merchants)
                             if (_role == UserRole.merchant) ...[

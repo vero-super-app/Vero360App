@@ -26,7 +26,7 @@ android {
 
     defaultConfig {
         applicationId = "com.vero.vero360"
-        minSdk = 23
+        minSdk = flutter.minSdkVersion
         targetSdk = 35
         versionCode = 10001
         versionName = "1.0.1"

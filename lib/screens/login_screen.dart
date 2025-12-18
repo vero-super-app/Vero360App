@@ -63,7 +63,7 @@ class _LoginScreenState extends State<LoginScreen> {
         return CourierMerchantDashboard(email: email);
       // Add more cases for other services as needed
       default:
-        return MerchantBottomnavbar(email: email);
+        return MarketplaceMerchantDashboard(email: email);
     }
   }
 
@@ -162,7 +162,7 @@ class _LoginScreenState extends State<LoginScreen> {
         // No specific service found, go to generic merchant dashboard
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => MerchantBottomnavbar(email: displayId),
+            builder: (_) => MarketplaceMerchantDashboard(email: displayId),
           ),
           (_) => false,
         );

@@ -6,7 +6,7 @@ import 'package:vero360_app/utils/formatters.dart';
 import 'package:vero360_app/utils/error_handler.dart';
 
 class MerchantDashboardPage extends ConsumerWidget {
-  const MerchantDashboardPage({Key? key}) : super(key: key);
+  const MerchantDashboardPage({Key? key, required String email}) : super(key: key);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

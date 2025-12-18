@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/painting.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
@@ -11,8 +13,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:vero360_app/Pages/BottomNavbar.dart';
 
+import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/services/api_config.dart';
 import 'package:vero360_app/services/auth_service.dart';
 import 'package:vero360_app/toasthelper.dart';
@@ -20,7 +22,6 @@ import 'package:vero360_app/toasthelper.dart';
 // REQUIRED PAGES
 import 'package:vero360_app/Pages/address.dart'; // AddressPage
 import 'package:vero360_app/Pages/changepassword.dart'; // ChangePasswordPage
-
 
 const Color kBrandOrange = Color(0xFFFF8A00);
 const Color kBrandNavy = Color(0xFF16284C);
@@ -41,7 +42,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _loading = true;
   bool _refreshing = false;
-  bool _offline = false;
 
   // cached profile
   String _name = 'Guest User';
@@ -66,16 +66,28 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
-    _bootstrap();
+    _bootstrapFast();
   }
 
-  Future<void> _bootstrap() async {
-    await _loadAppInfo();
-    await _loadPersonalizationPrefs();
-    await _loadCachedProfile();
-    await _hydrateFromFirebaseAuth();
-    await _fetchUserMeFromApi();
+  /// FAST BOOTSTRAP:
+  /// - load prefs + firebase auth only (quick)
+  /// - DO NOT call API here (no waiting)
+  /// - app version loads in background (non-blocking)
+  Future<void> _bootstrapFast() async {
+    try {
+      await Future.wait([
+        _loadPersonalizationPrefs(),
+        _loadCachedProfile(),
+        _hydrateFromFirebaseAuth(),
+      ]);
+    } catch (_) {}
+
     if (mounted) setState(() => _loading = false);
+
+    // load app info in background (do not block page open)
+    unawaited(_loadAppInfo().then((_) {
+      if (mounted) setState(() {});
+    }));
   }
 
   Future<void> _loadAppInfo() async {
@@ -88,6 +100,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _loadPersonalizationPrefs() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _compactMode = prefs.getBool('pref_compact_mode') ?? false;
       _haptics = prefs.getBool('pref_haptics') ?? true;
@@ -106,6 +119,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _loadCachedProfile() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _name = prefs.getString('fullName') ?? prefs.getString('name') ?? _name;
       _email = prefs.getString('email') ?? _email;
@@ -145,6 +159,39 @@ class _SettingsPageState extends State<SettingsPage> {
         '';
   }
 
+  /// Optional: manual refresh only (NOT used in initState)
+  Future<void> _fetchUserMeFromApiQuick() async {
+    try {
+      final token = await _getAuthToken();
+      if (token.isEmpty) return;
+
+      final base = await ApiConfig.readBase();
+      final resp = await http
+          .get(
+            Uri.parse('$base/users/me'),
+            headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 8));
+
+      if (!mounted) return;
+
+      if (resp.statusCode == 200) {
+        final decoded = jsonDecode(resp.body);
+        final data = (decoded is Map && decoded['data'] is Map)
+            ? Map<String, dynamic>.from(decoded['data'])
+            : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
+
+        final user = (data['user'] is Map)
+            ? Map<String, dynamic>.from(data['user'])
+            : data;
+
+        await _persistUserToPrefsFromApi(user);
+      }
+    } catch (_) {
+      // NO offline banner. Just silent / friendly.
+    }
+  }
+
   Future<void> _persistUserToPrefsFromApi(Map<String, dynamic> user) async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -158,12 +205,15 @@ class _SettingsPageState extends State<SettingsPage> {
         .toString()
         .trim();
 
-    String addr = 'No Address';
+    String addr = _address;
     final addresses = user['addresses'];
     if (addresses is List && addresses.isNotEmpty) {
       final first = addresses.first;
-      if (first is Map && first['address'] != null) addr = first['address'].toString();
-      else if (first is String && first.trim().isNotEmpty) addr = first;
+      if (first is Map && first['address'] != null) {
+        addr = first['address'].toString();
+      } else if (first is String && first.trim().isNotEmpty) {
+        addr = first;
+      }
     } else if (user['address'] != null) {
       addr = user['address'].toString();
     }
@@ -184,50 +234,29 @@ class _SettingsPageState extends State<SettingsPage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _fetchUserMeFromApi() async {
-    setState(() {
-      _offline = false;
-      _refreshing = true;
-    });
-
+  Future<void> _onRefresh() async {
+    _maybeHaptic();
+    setState(() => _refreshing = true);
     try {
-      final token = await _getAuthToken();
-      if (token.isEmpty) return;
-
-      final base = await ApiConfig.readBase();
-      final resp = await http.get(
-        Uri.parse('$base/users/me'),
-        headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+      await _hydrateFromFirebaseAuth();
+      await _fetchUserMeFromApiQuick(); // optional + quick timeout
+      await _loadCachedProfile();
+      ToastHelper.showCustomToast(
+        context,
+        'Refreshed',
+        isSuccess: true,
+        errorMessage: '',
       );
-
-      if (!mounted) return;
-
-      if (resp.statusCode == 200) {
-        final decoded = jsonDecode(resp.body);
-        final data = (decoded is Map && decoded['data'] is Map)
-            ? Map<String, dynamic>.from(decoded['data'])
-            : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
-
-        final user = (data['user'] is Map)
-            ? Map<String, dynamic>.from(data['user'])
-            : data;
-
-        await _persistUserToPrefsFromApi(user);
-      } else {
-        setState(() => _offline = true);
-      }
     } catch (_) {
-      if (mounted) setState(() => _offline = true);
+      ToastHelper.showCustomToast(
+        context,
+        'Could not refresh right now',
+        isSuccess: false,
+        errorMessage: '',
+      );
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
-  }
-
-  Future<void> _onRefresh() async {
-    _maybeHaptic();
-    await _hydrateFromFirebaseAuth();
-    await _fetchUserMeFromApi();
-    await _loadCachedProfile();
   }
 
   // ---------- BACK FIX ----------
@@ -235,7 +264,6 @@ class _SettingsPageState extends State<SettingsPage> {
     final nav = Navigator.of(context);
     if (nav.canPop()) return true;
 
-    // If this is root (tab), go back to home tab instead of closing the app.
     if (widget.onBackToHomeTab != null) {
       widget.onBackToHomeTab!();
       return false;
@@ -272,8 +300,8 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
 
+    // Fast: only reload cached (no server wait)
     await _loadCachedProfile();
-    await _fetchUserMeFromApi();
   }
 
   void _openChangePassword() {
@@ -395,8 +423,8 @@ class _SettingsPageState extends State<SettingsPage> {
       }
 
       ToastHelper.showCustomToast(context, 'Cache cleared', isSuccess: true, errorMessage: '');
-    } catch (e) {
-      ToastHelper.showCustomToast(context, 'Failed', isSuccess: false, errorMessage: e.toString());
+    } catch (_) {
+      ToastHelper.showCustomToast(context, 'Failed to clear cache', isSuccess: false, errorMessage: '');
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -528,7 +556,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // ---------- LOGOUT (Firebase + Nest) ----------
+  // ---------- LOGOUT ----------
   Future<void> _logout() async {
     _maybeHaptic();
     final ok = await _confirm(
@@ -541,10 +569,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
     setState(() => _refreshing = true);
     try {
-      // ✅ uses your AuthService: backend logout + google/apple + firebase + clear local token keys
       await AuthService().logout(context: context);
 
-      // extra cleanup for profile keys (keeps personalization prefs)
       final prefs = await SharedPreferences.getInstance();
       for (final k in [
         'fullName',
@@ -573,7 +599,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  // ---------- DELETE ACCOUNT (Nest + Firebase) ----------
+  // ---------- DELETE ACCOUNT ----------
   Future<void> _deleteAccount() async {
     _maybeHaptic();
     final ok = await _confirm(
@@ -592,10 +618,12 @@ class _SettingsPageState extends State<SettingsPage> {
       if (token.isNotEmpty) {
         try {
           final base = await ApiConfig.readBase();
-          await http.delete(
-            Uri.parse('$base/users/me'),
-            headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-          );
+          await http
+              .delete(
+                Uri.parse('$base/users/me'),
+                headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+              )
+              .timeout(const Duration(seconds: 8));
         } catch (_) {}
       }
 
@@ -614,26 +642,24 @@ class _SettingsPageState extends State<SettingsPage> {
           }
         } catch (_) {}
 
-        // 3) Delete Firebase auth user (may require recent login)
+        // 3) Delete Firebase auth user
         try {
           await u.delete();
         } on FirebaseAuthException catch (e) {
           if (e.code == 'requires-recent-login') {
             ToastHelper.showCustomToast(
               context,
-              'Delete failed',
+              'Please login again',
               isSuccess: false,
-              errorMessage: 'Please login again then try deleting your account.',
+              errorMessage: 'Login again then try deleting your account.',
             );
-
-            // still logout everywhere
             await AuthService().logout(context: context);
             return;
           }
         }
       }
 
-      // 4) Logout everywhere (google/apple/firebase + clear local)
+      // 4) Logout everywhere
       await AuthService().logout(context: context);
 
       ToastHelper.showCustomToast(context, 'Account deleted', isSuccess: true, errorMessage: '');
@@ -643,8 +669,8 @@ class _SettingsPageState extends State<SettingsPage> {
         MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
         (_) => false,
       );
-    } catch (e) {
-      ToastHelper.showCustomToast(context, 'Delete failed', isSuccess: false, errorMessage: e.toString());
+    } catch (_) {
+      ToastHelper.showCustomToast(context, 'Delete failed', isSuccess: false, errorMessage: '');
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -693,7 +719,6 @@ class _SettingsPageState extends State<SettingsPage> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 22),
             children: [
-              if (_offline) _offlineBanner(),
               _profileCard(),
 
               const SizedBox(height: 14),
@@ -806,30 +831,6 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _offlineBanner() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFEDEE),
-        border: Border.all(color: const Color(0xFFFFC9CD)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: const Row(
-        children: [
-          Icon(Icons.wifi_off_rounded, color: Colors.red),
-          SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'You are offline or the server is unreachable. Showing cached info.',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
       ),
     );
   }

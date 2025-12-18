@@ -1,18 +1,4 @@
-// lib/Pages/MerchantDashboards/marketplace_merchant_dashboard.dart
-//
-// ✅ Adds:
-// 1) Pull-to-refresh (Dashboard tab)
-// 2) Search + filter chips (My Items tab)
-// 3) Edit item (modern bottom-sheet)
-// 4) Skeleton loaders (no spinners)
-// 5) Business name FIX: resolves from Auth → Firestore → API → Prefs (and can backfill Auth displayName)
-// 6) Business overview cards are compact (not big)
-// 7) ✅ Wallet is LOCKED by default: balance hidden + PIN prompt before opening wallet
-// 8) ✅ Settings “back” works (uses push instead of pushAndRemoveUntil)
-//
-// ✅ Add to pubspec.yaml if missing:
-// firebase_storage: ^11.6.0
-// crypto: ^3.0.3
+
 
 import 'dart:async';
 import 'dart:convert';
@@ -42,7 +28,6 @@ import 'package:vero360_app/services/api_config.dart';
 
 import 'package:vero360_app/services/merchant_service_helper.dart';
 import 'package:vero360_app/services/cart_services.dart';
-import 'package:vero360_app/services/api_exception.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/toasthelper.dart';
 
@@ -79,8 +64,8 @@ class MarketplaceMerchantDashboard extends StatefulWidget {
       _MarketplaceMerchantDashboardState();
 }
 
-class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashboard>
-    with TickerProviderStateMixin {
+class _MarketplaceMerchantDashboardState
+    extends State<MarketplaceMerchantDashboard> with TickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final MerchantServiceHelper _helper = MerchantServiceHelper();
@@ -102,7 +87,11 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   // Create form state
   bool _isActive = true;
   bool _submitting = false;
+
   LocalMedia? _cover;
+
+  // ✅ multi-photos for posting
+  static const int _maxGalleryPhotos = 8;
   final List<LocalMedia> _gallery = <LocalMedia>[];
 
   static const List<String> _kCategories = <String>[
@@ -153,6 +142,9 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
   Timer? _ticker;
 
+  // ✅ prevent periodic refresh while an edit sheet is open (stops random crashes)
+  bool _sheetOpen = false;
+
   // Brand
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
@@ -165,6 +157,24 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     final until = _walletUnlockedUntil;
     if (until == null) return false;
     return DateTime.now().isBefore(until);
+  }
+
+  void _toastOk(String msg) {
+    ToastHelper.showCustomToast(
+      context,
+      msg,
+      isSuccess: true,
+      errorMessage: '',
+    );
+  }
+
+  void _toastErr(String msg) {
+    ToastHelper.showCustomToast(
+      context,
+      msg,
+      isSuccess: false,
+      errorMessage: '',
+    );
   }
 
   Random _safeRandom() {
@@ -208,13 +218,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     await sp.setString('app_pin_salt', salt);
     await sp.setString('app_pin_hash', hash);
 
-    ToastHelper.showCustomToast(
-      context,
-      'App password set',
-      isSuccess: true,
-      errorMessage: '',
-    );
-
+    if (!mounted) return true;
+    _toastOk('App password set');
     return true;
   }
 
@@ -236,12 +241,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     final ok = enteredHash == hash;
 
     if (!ok) {
-      ToastHelper.showCustomToast(
-        context,
-        'Wrong password',
-        isSuccess: false,
-        errorMessage: 'Wrong ,password',
-      );
+      if (!mounted) return false;
+      _toastErr('Wrong password');
       return false;
     }
 
@@ -302,7 +303,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       barrierDismissible: false,
       builder: (_) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Set App Password'),
+          title: const Text('Set Password'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -380,12 +381,11 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
     _loadMerchantProfileFromPrefs();
     _hydrateFromFirebaseAuth();
-    _ensureBusinessName(); // ✅ FIX business name
+    _ensureBusinessName();
 
-    _fetchCurrentUserMe(); // ✅ API /users/me
-
-    _loadMerchantData(); // ✅ API dashboard stats
-    _loadItems(); // ✅ Firestore items counts + list
+    _fetchCurrentUserMe();
+    _loadMerchantData();
+    _loadItems();
     _startPeriodicUpdates();
   }
 
@@ -402,13 +402,14 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
   void _startPeriodicUpdates() {
     _ticker?.cancel();
-    _ticker = Timer.periodic(const Duration(seconds: 30), (_) {
+    _ticker = Timer.periodic(const Duration(seconds: 30), (_) async {
       if (!mounted) return;
+      if (_sheetOpen) return; // ✅ important
       _hydrateFromFirebaseAuth();
-      _ensureBusinessName();
-      _fetchCurrentUserMe();
-      _loadMerchantData();
-      _loadItems();
+      await _ensureBusinessName();
+      await _fetchCurrentUserMe();
+      await _loadMerchantData();
+      await _loadItems();
     });
   }
 
@@ -529,7 +530,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
     if (resolved.isEmpty) resolved = 'Marketplace Merchant';
 
-    // ✅ backfill FirebaseAuth displayName so next time it's correct
+    // backfill FirebaseAuth displayName
     try {
       if ((u.displayName ?? '').trim().isEmpty &&
           resolved != 'Marketplace Merchant') {
@@ -566,7 +567,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     try {
       final idToken = await user.getIdToken();
       final t = idToken?.trim();
-      return t!.isEmpty ? null : t;
+      if (t == null || t.isEmpty) return null;
+      return t;
     } catch (_) {
       return null;
     }
@@ -584,7 +586,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     });
   }
 
-  // ✅ /users/me for email/phone/pic/rating (keeps name from resolver)
+  // ✅ /users/me for email/phone/pic/rating
   Future<void> _fetchCurrentUserMe() async {
     if (!mounted) return;
 
@@ -643,14 +645,16 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
           if (phoneVal.isNotEmpty) _merchantPhone = phoneVal;
 
           final authPhoto = (_auth.currentUser?.photoURL ?? '').trim();
-          if (authPhoto.isEmpty && picVal.isNotEmpty) _merchantProfileUrl = picVal;
+          if (authPhoto.isEmpty && picVal.isNotEmpty) {
+            _merchantProfileUrl = picVal;
+          }
         });
       } else {
         setState(() => _meOffline = true);
       }
     } catch (e) {
-      setState(() => _meOffline = true);
       debugPrint('Error fetching /users/me: $e');
+      if (mounted) setState(() => _meOffline = true);
     } finally {
       if (mounted) setState(() => _loadingMe = false);
     }
@@ -763,7 +767,10 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       final base = await ApiConfig.readBase();
       final resp = await http.get(
         Uri.parse('$base/users/me'),
-        headers: {'Authorization': 'Bearer $bearer', 'Accept': 'application/json'},
+        headers: {
+          'Authorization': 'Bearer $bearer',
+          'Accept': 'application/json'
+        },
       );
       if (resp.statusCode != 200) return null;
 
@@ -785,7 +792,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
   // ----------------- Items load + counts (total/active) -----------------
   Future<void> _loadItems() async {
-    setState(() => _loadingItems = true);
+    if (mounted) setState(() => _loadingItems = true);
+
     try {
       final nestSellerId = await _getNestUserId();
       final firebaseUid = _auth.currentUser?.uid ?? _uid;
@@ -925,7 +933,9 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
           child: Stack(
             children: [
               AspectRatio(
-                  aspectRatio: 1, child: Image(image: img, fit: BoxFit.cover)),
+                aspectRatio: 1,
+                child: Image(image: img, fit: BoxFit.cover),
+              ),
               Positioned(
                 top: 10,
                 right: 10,
@@ -952,14 +962,13 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   Future<void> _pickAndUploadProfile(ImageSource src) async {
     try {
       final user = _auth.currentUser;
-      if (user == null) {
-        ToastHelper.showCustomToast(context, 'Please login first',
-            isSuccess: false, errorMessage: '');
-        return;
-      }
+      if (user == null) return;
 
       final file = await _picker.pickImage(
-          source: src, maxWidth: 1400, imageQuality: 85);
+        source: src,
+        maxWidth: 1400,
+        imageQuality: 85,
+      );
       if (file == null) return;
 
       setState(() => _profileUploading = true);
@@ -978,13 +987,11 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       if (!mounted) return;
       setState(() => _merchantProfileUrl = url);
 
-      ToastHelper.showCustomToast(context, 'Profile picture updated',
-          isSuccess: true, errorMessage: '');
+      _toastOk('Profile picture updated');
     } catch (e) {
       debugPrint('Profile upload error: $e');
       if (!mounted) return;
-      ToastHelper.showCustomToast(context, 'Failed to upload photo',
-          isSuccess: false, errorMessage: e.toString());
+      _toastErr('Failed to upload photo. Please try again.');
     } finally {
       if (mounted) setState(() => _profileUploading = false);
     }
@@ -992,7 +999,9 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
   Future<String> _uploadProfileToFirebaseStorage(String uid, XFile file) async {
     final ext = (file.name.contains('.')) ? file.name.split('.').last : 'jpg';
-    final mime = lookupMimeType(file.path) ?? 'image/jpeg';
+
+    final bytes = await file.readAsBytes();
+    final mime = lookupMimeType(file.name, headerBytes: bytes) ?? 'image/jpeg';
 
     final ref = FirebaseStorage.instance
         .ref()
@@ -1000,7 +1009,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         .child(uid)
         .child('profile_${DateTime.now().millisecondsSinceEpoch}.$ext');
 
-    final bytes = await file.readAsBytes();
     await ref.putData(bytes, SettableMetadata(contentType: mime));
     return await ref.getDownloadURL();
   }
@@ -1025,26 +1033,66 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       if (!mounted) return;
       setState(() => _merchantProfileUrl = '');
 
-      ToastHelper.showCustomToast(context, 'Profile picture removed',
-          isSuccess: true, errorMessage: '');
+      _toastOk('Profile picture removed');
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Failed to remove photo',
-          isSuccess: false, errorMessage: e.toString());
+      debugPrint('Remove photo error: $e');
+      if (!mounted) return;
+      _toastErr('Failed to remove photo. Please try again.');
     } finally {
       if (mounted) setState(() => _profileUploading = false);
     }
   }
 
+  // ----------------- ✅ More photos helpers -----------------
+  Future<void> _pickMorePhotos() async {
+    try {
+      final files = await _picker.pickMultiImage(
+        imageQuality: 88,
+        maxWidth: 2048,
+      );
+
+      if (files.isEmpty) return;
+
+      final remaining = _maxGalleryPhotos - _gallery.length;
+      if (remaining <= 0) {
+        if (!mounted) return;
+        _toastErr('You can add up to $_maxGalleryPhotos photos.');
+        return;
+      }
+
+      final toAdd = files.take(remaining).toList();
+      for (final x in toAdd) {
+        final bytes = await x.readAsBytes();
+        _gallery.add(
+          LocalMedia(
+            bytes: bytes,
+            filename: x.name,
+            mime: lookupMimeType(x.name, headerBytes: bytes),
+          ),
+        );
+      }
+
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('Pick more photos error: $e');
+      if (!mounted) return;
+      _toastErr('Could not pick photos. Please try again.');
+    }
+  }
+
+  void _removeGalleryAt(int index) {
+    if (index < 0 || index >= _gallery.length) return;
+    setState(() => _gallery.removeAt(index));
+  }
+
   // ----------------- CREATE item -----------------
   Future<void> _create() async {
     if (_cover == null) {
-      ToastHelper.showCustomToast(context, 'Please pick a cover photo',
-          isSuccess: false, errorMessage: 'Photo required');
+      _toastErr('Please pick a cover photo');
       return;
     }
     if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
-      ToastHelper.showCustomToast(context, 'Please fill all required fields',
-          isSuccess: false, errorMessage: 'Missing fields');
+      _toastErr('Please fill all required fields');
       return;
     }
 
@@ -1053,12 +1101,11 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     try {
       final firebaseUid = _auth.currentUser?.uid ?? _uid;
       if (firebaseUid.trim().isEmpty) {
-        ToastHelper.showCustomToast(context, 'Please login first',
-            isSuccess: false, errorMessage: 'Not logged in');
+        _toastErr('Please login first');
         return;
       }
 
-      final sellerId = await _getNestUserId(); // ✅ API seller id if available
+      final sellerId = await _getNestUserId();
       final coverBase64 = base64Encode(_cover!.bytes);
 
       final galleryBase64 = <String>[];
@@ -1078,7 +1125,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         'category': _category ?? 'other',
         'gallery': galleryBase64,
         'createdAt': FieldValue.serverTimestamp(),
-        // ✅ BOTH IDs saved
         'sellerUserId': (sellerId != null && sellerId.trim().isNotEmpty)
             ? sellerId.trim()
             : 'unknown',
@@ -1089,8 +1135,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
       await _firestore.collection('marketplace_items').add(data);
 
-      ToastHelper.showCustomToast(context, 'Item Posted Successfully!',
-          isSuccess: true, errorMessage: '');
+      if (!mounted) return;
+      _toastOk('Item Posted Successfully!');
 
       _name.clear();
       _price.clear();
@@ -1105,8 +1151,9 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       await _loadItems();
       _marketplaceTabs.animateTo(2);
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Create failed: $e',
-          isSuccess: false, errorMessage: 'Create failed');
+      debugPrint('Create item error: $e');
+      if (!mounted) return;
+      _toastErr('Failed to post item. Please try again.');
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -1137,25 +1184,30 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       await _firestore.collection('marketplace_items').doc(id).delete();
       _items.removeWhere((e) => e['id'] == id);
 
-      ToastHelper.showCustomToast(context, 'Deleted • ${item['name']}',
-          isSuccess: true, errorMessage: '');
+      if (!mounted) return;
+      _toastOk('Deleted • ${item['name']}');
 
       setState(() {
         _totalItems = _items.length;
         _activeItems = _items.where((e) => e['isActive'] == true).length;
       });
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Delete failed: $e',
-          isSuccess: false, errorMessage: '');
+      debugPrint('Delete item error: $e');
+      if (!mounted) return;
+      _toastErr('Delete failed. Please try again.');
     } finally {
       if (mounted) setState(() => _busyRow = false);
     }
   }
 
-  // ----------------- EDIT item (modern bottom sheet) -----------------
+  // ✅ FIXED: no parent setState while sheet is closing + no crash after save
   Future<void> _openEditItemSheet(Map<String, dynamic> item) async {
-    final id = (item['id'] ?? '').toString();
+    final id = (item['id'] ?? '').toString().trim();
     if (id.isEmpty) return;
+
+    _sheetOpen = true;
+
+    final rootCtx = context;
 
     final nameCtrl =
         TextEditingController(text: (item['name'] ?? '').toString());
@@ -1165,29 +1217,36 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         TextEditingController(text: (item['location'] ?? '').toString());
     final descCtrl =
         TextEditingController(text: (item['description'] ?? '').toString());
+
     String category = (item['category'] ?? 'other').toString();
     bool isActive = item['isActive'] == true;
 
     LocalMedia? newCover;
-    bool saving = false;
 
-    await showModalBottomSheet(
-      context: context,
+    final didSave = await showModalBottomSheet<bool>(
+      context: rootCtx,
       isScrollControlled: true,
       useSafeArea: true,
+      useRootNavigator: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-      builder: (_) {
-        final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (sheetCtx) {
+        bool saving = false;
+
         return StatefulBuilder(
-          builder: (context, setSheet) {
+          builder: (sheetCtx, setSheet) {
+            final bottomInset = MediaQuery.of(sheetCtx).viewInsets.bottom;
+
             Future<void> pickNewCover() async {
               final x = await _picker.pickImage(
-                  source: ImageSource.gallery,
-                  maxWidth: 1800,
-                  imageQuality: 90);
+                source: ImageSource.gallery,
+                maxWidth: 1800,
+                imageQuality: 90,
+              );
               if (x == null) return;
+
               final bytes = await x.readAsBytes();
               setSheet(() {
                 newCover = LocalMedia(
@@ -1201,17 +1260,24 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
             Future<void> save() async {
               if (saving) return;
 
+              FocusScope.of(sheetCtx).unfocus();
+
               final n = nameCtrl.text.trim();
               final p = double.tryParse(priceCtrl.text.trim()) ?? 0;
               final loc = locationCtrl.text.trim();
 
               if (n.isEmpty || p <= 0 || loc.isEmpty) {
-                ToastHelper.showCustomToast(context, 'Fill name, price and location',
-                    isSuccess: false, errorMessage: '');
+                ToastHelper.showCustomToast(
+                  rootCtx,
+                  'Fill name, price and location',
+                  isSuccess: false,
+                  errorMessage: '',
+                );
                 return;
               }
 
               setSheet(() => saving = true);
+
               try {
                 final patch = <String, dynamic>{
                   'name': n,
@@ -1228,141 +1294,156 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                   patch['image'] = base64Encode(newCover!.bytes);
                 }
 
-                await _firestore.collection('marketplace_items').doc(id).update(patch);
+                await _firestore.collection('marketplace_items').doc(id).update(
+                      patch,
+                    );
 
-                final idx = _items.indexWhere((e) => (e['id'] ?? '') == id);
-                if (idx != -1) {
-                  _items[idx] = {..._items[idx], ...patch};
+                if (Navigator.of(sheetCtx).canPop()) {
+                  Navigator.of(sheetCtx).pop(true);
                 }
-
-                if (mounted) {
-                  setState(() {
-                    _totalItems = _items.length;
-                    _activeItems = _items.where((e) => e['isActive'] == true).length;
-                  });
-                }
-
-                if (mounted) Navigator.pop(context);
-                ToastHelper.showCustomToast(context, 'Item updated',
-                    isSuccess: true, errorMessage: '');
               } catch (e) {
-                ToastHelper.showCustomToast(context, 'Update failed: $e',
-                    isSuccess: false, errorMessage: '');
-              } finally {
-                setSheet(() => saving = false);
+                debugPrint('Update item error: $e');
+                ToastHelper.showCustomToast(
+                  rootCtx,
+                  'Update failed. Please try again.',
+                  isSuccess: false,
+                  errorMessage: '',
+                );
+                try {
+                  setSheet(() => saving = false);
+                } catch (_) {}
               }
             }
 
+            final coverWidget = newCover != null
+                ? Image.memory(newCover!.bytes, fit: BoxFit.cover)
+                : _ImageAny(item['image']);
+
             return Padding(
               padding: EdgeInsets.only(
-                  left: 16, right: 16, bottom: 16 + bottomInset, top: 14),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                      width: 42,
-                      height: 5,
-                      decoration: BoxDecoration(
-                          color: Colors.black12,
-                          borderRadius: BorderRadius.circular(99))),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text('Edit Item',
+                left: 16,
+                right: 16,
+                top: 14,
+                bottom: 16 + bottomInset,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Edit Item',
                             style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w900)),
-                      ),
-                      IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close)),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: SizedBox(
-                      height: 150,
-                      width: double.infinity,
-                      child: newCover != null
-                          ? Image.memory(newCover!.bytes, fit: BoxFit.cover)
-                          : _ImageAny(item['image']),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(sheetCtx).pop(false),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: pickNewCover,
-                        icon: const Icon(Icons.photo),
-                        label: const Text('Change Cover'),
+                    const SizedBox(height: 10),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: SizedBox(
+                        height: 160,
+                        width: double.infinity,
+                        child: coverWidget,
                       ),
-                      const Spacer(),
-                      Switch(
-                        value: isActive,
-                        onChanged: (v) => setSheet(() => isActive = v),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: saving ? null : pickNewCover,
+                      icon: const Icon(Icons.photo),
+                      label: const Text(
+                        'Change Cover',
+                        style: TextStyle(fontWeight: FontWeight.w900),
                       ),
-                      Text(isActive ? 'Active' : 'Inactive',
-                          style: const TextStyle(fontWeight: FontWeight.w800)),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
                       controller: nameCtrl,
-                      decoration: _inputDecoration(label: 'Item Name')),
-                  const SizedBox(height: 10),
-                  TextField(
+                      decoration: _inputDecoration(label: 'Item Name'),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
                       controller: priceCtrl,
                       keyboardType: TextInputType.number,
-                      decoration: _inputDecoration(label: 'Price (MWK)')),
-                  const SizedBox(height: 10),
-                  TextField(
-                      controller: locationCtrl,
-                      decoration: _inputDecoration(label: 'Location')),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    value: category,
-                    items: _kCategories
-                        .map((c) => DropdownMenuItem(
-                              value: c,
-                              child: Text(
-                                  c[0].toUpperCase() + c.substring(1)),
-                            ))
-                        .toList(),
-                    onChanged: (v) => setSheet(() => category = v ?? 'other'),
-                    decoration: _inputDecoration(label: 'Category'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: descCtrl,
-                    minLines: 2,
-                    maxLines: 4,
-                    decoration: _inputDecoration(label: 'Description (optional)'),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _brandOrange,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      onPressed: saving ? null : save,
-                      icon: saving
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.save),
-                      label: const Text('Save Changes',
-                          style: TextStyle(fontWeight: FontWeight.w900)),
+                      decoration: _inputDecoration(label: 'Price (MWK)'),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: locationCtrl,
+                      decoration: _inputDecoration(label: 'Location'),
+                    ),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      value: category,
+                      items: _kCategories
+                          .map((c) => DropdownMenuItem(
+                                value: c,
+                                child:
+                                    Text(c[0].toUpperCase() + c.substring(1)),
+                              ))
+                          .toList(),
+                      onChanged: saving
+                          ? null
+                          : (v) => setSheet(() => category = v ?? 'other'),
+                      decoration: _inputDecoration(label: 'Category'),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: descCtrl,
+                      minLines: 3,
+                      maxLines: 5,
+                      decoration:
+                          _inputDecoration(label: 'Description (optional)'),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Switch(
+                          value: isActive,
+                          onChanged: saving
+                              ? null
+                              : (v) => setSheet(() => isActive = v),
+                        ),
+                        Text(
+                          isActive ? 'Active' : 'Inactive',
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        style: _filledBtnStyle(),
+                        onPressed: saving ? null : save,
+                        icon: saving
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.save),
+                        label: const Text(
+                          'Save Changes',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -1370,10 +1451,21 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       },
     );
 
+    // ✅ allow sheet route to fully finish closing animation before disposing
+    await Future.delayed(const Duration(milliseconds: 350));
     nameCtrl.dispose();
     priceCtrl.dispose();
     locationCtrl.dispose();
     descCtrl.dispose();
+    _sheetOpen = false;
+
+    if (didSave == true && mounted) {
+      await _loadItems();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _toastOk('Item updated');
+      });
+    }
   }
 
   // ----------------- Location helpers -----------------
@@ -1381,8 +1473,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        ToastHelper.showCustomToast(context, 'Location services are disabled.',
-            isSuccess: false, errorMessage: '');
+        if (!mounted) return;
+        _toastErr('Location services are disabled.');
         return;
       }
 
@@ -1390,27 +1482,27 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          ToastHelper.showCustomToast(context, 'Location permissions are denied.',
-              isSuccess: false, errorMessage: '');
+          if (!mounted) return;
+          _toastErr('Location permissions are denied.');
           return;
         }
       }
 
       if (permission == LocationPermission.deniedForever) {
-        ToastHelper.showCustomToast(
-            context, 'Location permissions are permanently denied.',
-            isSuccess: false, errorMessage: '');
+        if (!mounted) return;
+        _toastErr('Location permissions are permanently denied.');
         return;
       }
 
       final position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
+        desiredAccuracy: LocationAccuracy.high,
+      );
       final placemarks =
           await placemarkFromCoordinates(position.latitude, position.longitude);
 
       if (placemarks.isEmpty) {
-        ToastHelper.showCustomToast(context, 'Could not fetch address.',
-            isSuccess: false, errorMessage: '');
+        if (!mounted) return;
+        _toastErr('Could not fetch address.');
         return;
       }
 
@@ -1425,15 +1517,15 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
       setState(() => _location.text = address);
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Failed to get location: $e',
-          isSuccess: false, errorMessage: '');
+      debugPrint('Location error: $e');
+      if (!mounted) return;
+      _toastErr('Failed to get location. Please try again.');
     }
   }
 
   Future<void> _openGoogleMap() async {
     if (_location.text.trim().isEmpty) {
-      ToastHelper.showCustomToast(context, 'Enter a location first.',
-          isSuccess: false, errorMessage: '');
+      _toastErr('Enter a location first.');
       return;
     }
     final query = Uri.encodeComponent(_location.text.trim());
@@ -1442,8 +1534,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     } else {
-      ToastHelper.showCustomToast(context, 'Could not open Google Maps.',
-          isSuccess: false, errorMessage: '');
+      _toastErr('Could not open Google Maps.');
     }
   }
 
@@ -1540,37 +1631,19 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   }
 
   AppBar _buildDashboardAppBar() {
-    final titleName = _displayBusinessName();
     return AppBar(
-      title: Text(_initialLoadComplete ? '$titleName Dashboard' : 'Loading...'),
+      title: const Text('Merchant Dashboard'),
       backgroundColor: _brandOrange,
       actions: [
-        IconButton(
-          icon: const Icon(Icons.account_balance_wallet),
-          onPressed: () async {
-            final ok = await _unlockWalletWithPin();
-            if (!ok || !mounted) return;
-
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => MerchantWalletPage(
-                  merchantId: _uid,
-                  merchantName: titleName,
-                  serviceType: 'marketplace',
-                ),
-              ),
-            );
-          },
-        ),
         IconButton(
           icon: const Icon(Icons.settings),
           tooltip: 'Settings',
           onPressed: () {
-            // ✅ back will work now
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => SettingsPage(onBackToHomeTab: () {  },)),
+              MaterialPageRoute(
+                builder: (_) => SettingsPage(onBackToHomeTab: () {}),
+              ),
             );
           },
         ),
@@ -1587,7 +1660,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       case 2:
         return CartPage(cartService: _cartService);
       case 3:
-        return ChatListPage();
+        return const ChatListPage();
       case 4:
         return _buildDashboardContent();
       default:
@@ -1600,58 +1673,56 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       return const _DashboardSkeleton();
     }
 
-    return DefaultTabController(
-      length: 3,
-      child: Column(
-        children: [
-          Container(
-            color: Colors.white,
-            child: TabBar(
-              controller: _marketplaceTabs,
-              labelColor: _brandOrange,
-              unselectedLabelColor: Colors.grey,
-              indicatorColor: _brandOrange,
-              tabs: const [
-                Tab(text: 'Dashboard'),
-                Tab(text: 'Add Item'),
-                Tab(text: 'My Items'),
-              ],
-            ),
+    // ✅ removed DefaultTabController (it can trigger dependents assertion in some setups)
+    return Column(
+      children: [
+        Container(
+          color: Colors.white,
+          child: TabBar(
+            controller: _marketplaceTabs,
+            labelColor: _brandOrange,
+            unselectedLabelColor: Colors.grey,
+            indicatorColor: _brandOrange,
+            tabs: const [
+              Tab(text: 'Dashboard'),
+              Tab(text: 'Add Item'),
+              Tab(text: 'My Items'),
+            ],
           ),
-          Expanded(
-            child: TabBarView(
-              controller: _marketplaceTabs,
-              children: [
-                RefreshIndicator(
-                  onRefresh: _refreshAll,
-                  child: SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildModernHeaderCard(),
-                        const SizedBox(height: 12),
-                        _buildStatsSection(),
-                        const SizedBox(height: 12),
-                        _buildQuickActionsSection(),
-                        const SizedBox(height: 12),
-                        _buildWalletSummary(),
-                        const SizedBox(height: 12),
-                        _buildRecentSales(),
-                        const SizedBox(height: 12),
-                        _buildAllClientItemsSection(),
-                      ],
-                    ),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _marketplaceTabs,
+            children: [
+              RefreshIndicator(
+                onRefresh: _refreshAll,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildModernHeaderCard(),
+                      const SizedBox(height: 12),
+                      _buildStatsSection(),
+                      const SizedBox(height: 12),
+                      _buildQuickActionsSection(),
+                      const SizedBox(height: 12),
+                      _buildWalletSummary(),
+                      const SizedBox(height: 12),
+                      _buildRecentSales(),
+                      const SizedBox(height: 12),
+                      _buildAllClientItemsSection(),
+                    ],
                   ),
                 ),
-                _buildAddItemTab(),
-                _buildMyItemsTab(),
-              ],
-            ),
+              ),
+              _buildAddItemTab(),
+              _buildMyItemsTab(),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -1806,7 +1877,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                           decoration: BoxDecoration(
                               color: const Color(0xFFFFEDEE),
                               borderRadius: BorderRadius.circular(999)),
-                          child: const Text('YOUR OFFLINE',
+                          child: const Text('YOU\'RE OFFLINE',
                               style: TextStyle(
                                   fontWeight: FontWeight.w900,
                                   fontSize: 12,
@@ -1982,7 +2053,9 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(
-              unlocked ? Icons.account_balance_wallet_rounded : Icons.lock_rounded,
+              unlocked
+                  ? Icons.account_balance_wallet_rounded
+                  : Icons.lock_rounded,
               color: unlocked ? Colors.green : Colors.grey,
             ),
           ),
@@ -1995,7 +2068,9 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                     style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 6),
                 Text(
-                  unlocked ? 'MWK ${_walletBalance.toStringAsFixed(2)}' : 'MWK ••••',
+                  unlocked
+                      ? 'MWK ${_walletBalance.toStringAsFixed(2)}'
+                      : 'MWK ••••',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
@@ -2038,8 +2113,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                 ),
               );
             },
-            child: const Text('Open',
-                style: TextStyle(fontWeight: FontWeight.w900)),
+            child:
+                const Text('Open', style: TextStyle(fontWeight: FontWeight.w900)),
           ),
         ],
       ),
@@ -2051,8 +2126,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: const [
+        const Row(
+          children: [
             Expanded(
               child: Text('Recent Sales',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
@@ -2181,7 +2256,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     );
   }
 
-  // ----------------- Add Item Tab -----------------
+  // ----------------- ✅ Add Item Tab (with multi-photos) -----------------
   Widget _buildAddItemTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -2228,10 +2303,12 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                       )
                     : Stack(
                         children: [
-                          Image.memory(_cover!.bytes,
-                              height: 160,
-                              width: double.infinity,
-                              fit: BoxFit.cover),
+                          Image.memory(
+                            _cover!.bytes,
+                            height: 160,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                          ),
                           Positioned(
                             top: 8,
                             right: 8,
@@ -2249,6 +2326,91 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                       ),
               ),
               const SizedBox(height: 14),
+
+              // ✅ More Photos
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'More Photos (optional)',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  Text(
+                    '${_gallery.length}/$_maxGalleryPhotos',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w800, color: Colors.black54),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _gallery.length >= _maxGalleryPhotos
+                          ? null
+                          : _pickMorePhotos,
+                      icon: const Icon(Icons.collections_outlined),
+                      label: Text(
+                        _gallery.isEmpty ? 'Add Photos' : 'Add More',
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  if (_gallery.isNotEmpty)
+                    OutlinedButton(
+                      onPressed: () => setState(() => _gallery.clear()),
+                      child: const Text('Clear',
+                          style: TextStyle(fontWeight: FontWeight.w900)),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (_gallery.isNotEmpty)
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _gallery.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                  ),
+                  itemBuilder: (_, i) {
+                    final m = _gallery[i];
+                    return Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.memory(
+                            m.bytes,
+                            width: double.infinity,
+                            height: double.infinity,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        Positioned(
+                          top: 6,
+                          right: 6,
+                          child: InkWell(
+                            onTap: () => _removeGalleryAt(i),
+                            child: const CircleAvatar(
+                              radius: 12,
+                              backgroundColor: Colors.black54,
+                              child: Icon(Icons.close,
+                                  size: 14, color: Colors.white),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+
+              const SizedBox(height: 14),
+
               TextField(
                   controller: _name,
                   decoration: _inputDecoration(label: 'Item Name')),
@@ -2418,10 +2580,11 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     );
   }
 
-  Widget _chip(
-      {required String label,
-      required bool selected,
-      required VoidCallback onTap}) {
+  Widget _chip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: ChoiceChip(
@@ -2438,14 +2601,18 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   // ----------------- cover picker -----------------
   Future<void> _pickCover(ImageSource src) async {
     final x = await _picker.pickImage(
-        source: src, imageQuality: 90, maxWidth: 2048);
+      source: src,
+      imageQuality: 90,
+      maxWidth: 2048,
+    );
     if (x == null) return;
     final bytes = await x.readAsBytes();
     setState(() {
       _cover = LocalMedia(
-          bytes: bytes,
-          filename: x.name,
-          mime: lookupMimeType(x.name, headerBytes: bytes));
+        bytes: bytes,
+        filename: x.name,
+        mime: lookupMimeType(x.name, headerBytes: bytes),
+      );
     });
   }
 
@@ -2488,7 +2655,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         duration: const Duration(milliseconds: 220),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: isSelected ? _brandOrange.withOpacity(0.12) : Colors.transparent,
+          color:
+              isSelected ? _brandOrange.withOpacity(0.12) : Colors.transparent,
           borderRadius: BorderRadius.circular(14),
         ),
         child: Column(
@@ -2510,7 +2678,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       ),
     );
   }
-}
+} // ✅ END of _MarketplaceMerchantDashboardState
 
 // ----------------- Quick action tile -----------------
 class _QuickActionTile extends StatelessWidget {
@@ -2660,56 +2828,71 @@ class _ModernItemMiniCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = item['isActive'] == true;
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.black12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: ClipRRect(
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(18)),
-              child: _ImageAny(item['image']),
-            ),
+
+    // ✅ LayoutBuilder prevents pixel overflow inside Grid cells
+    return LayoutBuilder(
+      builder: (context, c) {
+        final h = c.maxHeight;
+        final imgH = min(140.0, h * 0.60);
+
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.black12),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  (item['name'] ?? 'Unknown').toString(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'MWK ${(item['price'] ?? 0).toString()}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w900, color: Colors.green),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Icon(Icons.circle,
-                        size: 10, color: active ? Colors.green : Colors.red),
-                    const SizedBox(width: 6),
-                    Text(active ? 'Active' : 'Inactive',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ClipRRect(
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(18)),
+                child: SizedBox(height: imgH, child: _ImageAny(item['image'])),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        (item['name'] ?? 'Unknown').toString(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'MWK ${(item['price'] ?? 0).toString()}',
                         style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: Colors.black54)),
-                  ],
+                            fontWeight: FontWeight.w900, color: Colors.green),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.circle,
+                              size: 10,
+                              color: active ? Colors.green : Colors.red),
+                          const SizedBox(width: 6),
+                          Text(
+                            active ? 'Active' : 'Inactive',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: Colors.black54),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -2731,109 +2914,131 @@ class _ItemCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final active = item['isActive'] == true;
 
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onEdit,
-        child: Stack(
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+    // ✅ LayoutBuilder prevents bottom overflow in Grid
+    return LayoutBuilder(
+      builder: (context, c) {
+        final h = c.maxHeight;
+        final imgH = min(150.0, h * 0.62);
+
+        return Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: onEdit,
+            child: Stack(
               children: [
-                ClipRRect(
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(18)),
-                  child: SizedBox(height: 150, child: _ImageAny(item['image'])),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ClipRRect(
+                      borderRadius:
+                          const BorderRadius.vertical(top: Radius.circular(18)),
+                      child: SizedBox(
+                        height: imgH,
+                        child: _ImageAny(item['image']),
+                      ),
+                    ),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              (item['name'] ?? 'Unknown').toString(),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w900, fontSize: 14),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'MWK ${(item['price'] ?? 0).toString()}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.green),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              (item['category'] ?? 'other').toString(),
+                              style: const TextStyle(
+                                  color: Colors.black54,
+                                  fontWeight: FontWeight.w800),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: active ? Colors.green : Colors.red,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      active ? 'Active' : 'Inactive',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 10,
+                  right: 10,
+                  child: Row(
                     children: [
-                      Text(
-                        (item['name'] ?? 'Unknown').toString(),
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w900, fontSize: 14),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      _iconBtn(
+                        icon: Icons.edit,
+                        color: const Color(0xFF16284C),
+                        onTap: onEdit,
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'MWK ${(item['price'] ?? 0).toString()}',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w900, color: Colors.green),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        (item['category'] ?? 'other').toString(),
-                        style: const TextStyle(
-                            color: Colors.black54,
-                            fontWeight: FontWeight.w800),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      const SizedBox(width: 8),
+                      _iconBtn(
+                        icon: Icons.delete,
+                        color: Colors.red,
+                        onTap: busy ? null : onDelete,
                       ),
                     ],
                   ),
                 ),
               ],
             ),
-            Positioned(
-              top: 10,
-              left: 10,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: active ? Colors.green : Colors.red,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  active ? 'Active' : 'Inactive',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900),
-                ),
-              ),
-            ),
-            Positioned(
-              top: 10,
-              right: 10,
-              child: Row(
-                children: [
-                  _iconBtn(
-                    icon: Icons.edit,
-                    color: const Color(0xFF16284C),
-                    onTap: onEdit,
-                  ),
-                  const SizedBox(width: 8),
-                  _iconBtn(
-                    icon: Icons.delete,
-                    color: Colors.red,
-                    onTap: busy ? null : onDelete,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
-  Widget _iconBtn(
-      {required IconData icon,
-      required Color color,
-      required VoidCallback? onTap}) {
+  static Widget _iconBtn({
+    required IconData icon,
+    required Color color,
+    required VoidCallback? onTap,
+  }) {
     return Container(
       decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: Colors.black12)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.black12),
+      ),
       child: IconButton(
-        icon: Icon(icon, size: 18),
+        icon: Icon(icon),
+        iconSize: 18,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 36, height: 36),
         color: color,
         onPressed: onTap,
       ),

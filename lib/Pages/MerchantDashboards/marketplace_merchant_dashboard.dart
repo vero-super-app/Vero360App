@@ -7,12 +7,16 @@
 // 4) Skeleton loaders (no spinners)
 // 5) Business name FIX: resolves from Auth → Firestore → API → Prefs (and can backfill Auth displayName)
 // 6) Business overview cards are compact (not big)
+// 7) ✅ Wallet is LOCKED by default: balance hidden + PIN prompt before opening wallet
+// 8) ✅ Settings “back” works (uses push instead of pushAndRemoveUntil)
 //
 // ✅ Add to pubspec.yaml if missing:
 // firebase_storage: ^11.6.0
+// crypto: ^3.0.3
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -22,6 +26,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+
+import 'package:crypto/crypto.dart' show sha256;
 
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
@@ -44,14 +50,12 @@ import 'package:vero360_app/Pages/homepage.dart';
 import 'package:vero360_app/Pages/marketPlace.dart';
 import 'package:vero360_app/Pages/cartpage.dart';
 import 'package:vero360_app/screens/chat_list_page.dart';
-import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/merchant_wallet.dart';
 
 import 'package:vero360_app/Pages/Home/myorders.dart';
 import 'package:vero360_app/Pages/ToRefund.dart';
 import 'package:vero360_app/Pages/Toreceive.dart';
 import 'package:vero360_app/Pages/Toship.dart';
-import 'package:vero360_app/Pages/myaccomodation.dart';
 
 class LocalMedia {
   final Uint8List bytes;
@@ -153,6 +157,220 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
 
+  // ----------------- Wallet lock (PIN) -----------------
+  DateTime? _walletUnlockedUntil;
+  static const Duration _walletUnlockDuration = Duration(minutes: 5);
+
+  bool get _walletUnlockedNow {
+    final until = _walletUnlockedUntil;
+    if (until == null) return false;
+    return DateTime.now().isBefore(until);
+  }
+
+  Random _safeRandom() {
+    try {
+      return Random.secure();
+    } catch (_) {
+      return Random();
+    }
+  }
+
+  String _randomSalt([int len = 16]) {
+    const chars =
+        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final r = _safeRandom();
+    return List.generate(len, (_) => chars[r.nextInt(chars.length)]).join();
+  }
+
+  String _hashPin(String pin, String salt) {
+    final bytes = utf8.encode('$pin::$salt');
+    return sha256.convert(bytes).toString();
+  }
+
+  Future<bool> _ensureAppPinExists() async {
+    final sp = await SharedPreferences.getInstance();
+    final existingHash = sp.getString('app_pin_hash');
+    final existingSalt = sp.getString('app_pin_salt');
+
+    if (existingHash != null &&
+        existingHash.trim().isNotEmpty &&
+        existingSalt != null &&
+        existingSalt.trim().isNotEmpty) {
+      return true;
+    }
+
+    final pin = await _showSetPinDialog();
+    if (pin == null) return false;
+
+    final salt = _randomSalt();
+    final hash = _hashPin(pin, salt);
+
+    await sp.setString('app_pin_salt', salt);
+    await sp.setString('app_pin_hash', hash);
+
+    ToastHelper.showCustomToast(
+      context,
+      'App password set',
+      isSuccess: true,
+      errorMessage: '',
+    );
+
+    return true;
+  }
+
+  Future<bool> _unlockWalletWithPin() async {
+    if (_walletUnlockedNow) return true;
+
+    final okSetup = await _ensureAppPinExists();
+    if (!okSetup) return false;
+
+    final sp = await SharedPreferences.getInstance();
+    final salt = (sp.getString('app_pin_salt') ?? '').trim();
+    final hash = (sp.getString('app_pin_hash') ?? '').trim();
+    if (salt.isEmpty || hash.isEmpty) return false;
+
+    final entered = await _showEnterPinDialog();
+    if (entered == null) return false;
+
+    final enteredHash = _hashPin(entered, salt);
+    final ok = enteredHash == hash;
+
+    if (!ok) {
+      ToastHelper.showCustomToast(
+        context,
+        'Wrong password',
+        isSuccess: false,
+        errorMessage: 'Wrong ,password',
+      );
+      return false;
+    }
+
+    if (!mounted) return true;
+    setState(() {
+      _walletUnlockedUntil = DateTime.now().add(_walletUnlockDuration);
+    });
+
+    return true;
+  }
+
+  Future<String?> _showEnterPinDialog() async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Enter Your Password'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+          maxLength: 6,
+          decoration: const InputDecoration(
+            hintText: 'PIN (4–6 digits)',
+            counterText: '',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final pin = controller.text.trim();
+              if (pin.length < 4) return;
+              Navigator.pop(context, pin);
+            },
+            child: const Text(
+              'Unlock',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _showSetPinDialog() async {
+    final p1 = TextEditingController();
+    final p2 = TextEditingController();
+    String? err;
+
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Set App Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Create a PIN to protect your wallet.'),
+              const SizedBox(height: 10),
+              TextField(
+                controller: p1,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                decoration: const InputDecoration(
+                  hintText: 'New PIN (4–6 digits)',
+                  counterText: '',
+                ),
+              ),
+              TextField(
+                controller: p2,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                decoration: const InputDecoration(
+                  hintText: 'Confirm PIN',
+                  counterText: '',
+                ),
+              ),
+              if (err != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  err!,
+                  style: const TextStyle(
+                    color: Colors.red,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                final a = p1.text.trim();
+                final b = p2.text.trim();
+
+                if (a.length < 4) {
+                  setLocal(() => err = 'PIN must be at least 4 digits.');
+                  return;
+                }
+                if (a != b) {
+                  setLocal(() => err = 'PINs do not match.');
+                  return;
+                }
+                Navigator.pop(context, a);
+              },
+              child: const Text(
+                'Save',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -228,10 +446,14 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
     // 1) Firestore marketplace_merchants
     try {
-      final doc = await _firestore.collection('marketplace_merchants').doc(u.uid).get();
+      final doc = await _firestore
+          .collection('marketplace_merchants')
+          .doc(u.uid)
+          .get();
       final data = doc.data();
       if (data != null) {
-        resolved = (data['businessName'] ?? data['name'] ?? '').toString().trim();
+        resolved =
+            (data['businessName'] ?? data['name'] ?? '').toString().trim();
       }
     } catch (_) {}
 
@@ -260,27 +482,36 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
           final base = await ApiConfig.readBase();
           final resp = await http.get(
             Uri.parse('$base/users/me'),
-            headers: {'Authorization': 'Bearer $bearer', 'Accept': 'application/json'},
+            headers: {
+              'Authorization': 'Bearer $bearer',
+              'Accept': 'application/json'
+            },
           );
           if (resp.statusCode == 200) {
             final decoded = jsonDecode(resp.body);
             final Map<String, dynamic> payload =
                 (decoded is Map && decoded['data'] is Map)
                     ? Map<String, dynamic>.from(decoded['data'])
-                    : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
+                    : (decoded is Map
+                        ? Map<String, dynamic>.from(decoded)
+                        : {});
             final user = (payload['user'] is Map)
                 ? Map<String, dynamic>.from(payload['user'] as Map)
                 : payload;
 
             final business =
-                (user['businessName'] ?? user['merchantName'] ?? '').toString().trim();
-            final name =
-                (user['name'] ?? '').toString().trim();
+                (user['businessName'] ?? user['merchantName'] ?? '')
+                    .toString()
+                    .trim();
+            final name = (user['name'] ?? '').toString().trim();
             final first = (user['firstName'] ?? '').toString().trim();
             final last = (user['lastName'] ?? '').toString().trim();
-            final joined = [first, last].where((x) => x.isNotEmpty).join(' ').trim();
+            final joined =
+                [first, last].where((x) => x.isNotEmpty).join(' ').trim();
 
-            resolved = business.isNotEmpty ? business : (name.isNotEmpty ? name : joined);
+            resolved = business.isNotEmpty
+                ? business
+                : (name.isNotEmpty ? name : joined);
           }
         }
       } catch (_) {}
@@ -300,7 +531,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
     // ✅ backfill FirebaseAuth displayName so next time it's correct
     try {
-      if ((u.displayName ?? '').trim().isEmpty && resolved != 'Marketplace Merchant') {
+      if ((u.displayName ?? '').trim().isEmpty &&
+          resolved != 'Marketplace Merchant') {
         await u.updateDisplayName(resolved);
       }
     } catch (_) {}
@@ -333,7 +565,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
     try {
       final idToken = await user.getIdToken();
-      return idToken!.trim().isEmpty ? null : idToken?.trim();
+      final t = idToken?.trim();
+      return t!.isEmpty ? null : t;
     } catch (_) {
       return null;
     }
@@ -346,7 +579,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     setState(() {
       _merchantEmail = prefs.getString('email') ?? _merchantEmail;
       _merchantPhone = prefs.getString('phone') ?? _merchantPhone;
-      _merchantProfileUrl = prefs.getString('profilepicture') ?? _merchantProfileUrl;
+      _merchantProfileUrl =
+          prefs.getString('profilepicture') ?? _merchantProfileUrl;
     });
   }
 
@@ -369,7 +603,10 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       final base = await ApiConfig.readBase();
       final resp = await http.get(
         Uri.parse('$base/users/me'),
-        headers: {'Authorization': 'Bearer $bearer', 'Accept': 'application/json'},
+        headers: {
+          'Authorization': 'Bearer $bearer',
+          'Accept': 'application/json'
+        },
       );
 
       if (!mounted) return;
@@ -387,7 +624,10 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         final emailVal =
             (user['email'] ?? user['userEmail'] ?? '').toString().trim();
         final phoneVal = (user['phone'] ?? '').toString().trim();
-        final picVal = (user['profilepicture'] ?? user['profilePicture'] ?? '').toString().trim();
+        final picVal =
+            (user['profilepicture'] ?? user['profilePicture'] ?? '')
+                .toString()
+                .trim();
 
         final apiRating = user['rating'];
         if (apiRating is num) _rating = apiRating.toDouble();
@@ -402,7 +642,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
           if (emailVal.isNotEmpty) _merchantEmail = emailVal;
           if (phoneVal.isNotEmpty) _merchantPhone = phoneVal;
 
-          // keep auth photo if set, else use API photo
           final authPhoto = (_auth.currentUser?.photoURL ?? '').trim();
           if (authPhoto.isEmpty && picVal.isNotEmpty) _merchantProfileUrl = picVal;
         });
@@ -439,7 +678,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                 ? (dashboardData['totalRevenue'] as num).toDouble()
                 : double.tryParse('${dashboardData['totalRevenue']}') ?? 0;
 
-            // some APIs might give these too
             final ti = dashboardData['totalItems'];
             final ai = dashboardData['activeItems'];
             final si = dashboardData['soldItems'];
@@ -478,14 +716,22 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       final firebaseUid = _auth.currentUser?.uid ?? _uid;
       if (firebaseUid.trim().isEmpty) return;
 
-      final walletDoc =
-          await _firestore.collection('merchant_wallets').doc(firebaseUid).get();
+      final walletDoc = await _firestore
+          .collection('merchant_wallets')
+          .doc(firebaseUid)
+          .get();
 
-      if (walletDoc.exists && mounted) {
-        setState(() {
-          _walletBalance = (walletDoc.data()?['balance'] ?? 0).toDouble();
-        });
+      if (!walletDoc.exists || !mounted) return;
+
+      final raw = walletDoc.data()?['balance'];
+      double val = 0;
+      if (raw is num) {
+        val = raw.toDouble();
+      } else {
+        val = double.tryParse(raw?.toString() ?? '') ?? 0;
       }
+
+      setState(() => _walletBalance = val);
     } catch (e) {
       debugPrint('Error loading wallet: $e');
     }
@@ -511,7 +757,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         }
       }
 
-      // fallback: /users/me id
       final bearer = await _getBearerTokenForApi();
       if (bearer == null || bearer.isEmpty) return null;
 
@@ -550,7 +795,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
       if (nestSellerId != null && nestSellerId.trim().isNotEmpty) {
         query = query.where('sellerUserId', isEqualTo: nestSellerId.trim());
-      } else if (firebaseUid != null && firebaseUid.trim().isNotEmpty) {
+      } else if (firebaseUid.trim().isNotEmpty) {
         query = query.where('merchantId', isEqualTo: firebaseUid.trim());
       }
 
@@ -652,7 +897,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
             ),
             if (_merchantProfileUrl.trim().isNotEmpty)
               ListTile(
-                leading: const Icon(Icons.remove_circle_outline, color: Colors.red),
+                leading:
+                    const Icon(Icons.remove_circle_outline, color: Colors.red),
                 title: const Text('Remove current photo'),
                 onTap: () {
                   Navigator.pop(context);
@@ -678,7 +924,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
           borderRadius: BorderRadius.circular(18),
           child: Stack(
             children: [
-              AspectRatio(aspectRatio: 1, child: Image(image: img, fit: BoxFit.cover)),
+              AspectRatio(
+                  aspectRatio: 1, child: Image(image: img, fit: BoxFit.cover)),
               Positioned(
                 top: 10,
                 right: 10,
@@ -706,11 +953,13 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     try {
       final user = _auth.currentUser;
       if (user == null) {
-        ToastHelper.showCustomToast(context, 'Please login first', isSuccess: false, errorMessage: '');
+        ToastHelper.showCustomToast(context, 'Please login first',
+            isSuccess: false, errorMessage: '');
         return;
       }
 
-      final file = await _picker.pickImage(source: src, maxWidth: 1400, imageQuality: 85);
+      final file = await _picker.pickImage(
+          source: src, maxWidth: 1400, imageQuality: 85);
       if (file == null) return;
 
       setState(() => _profileUploading = true);
@@ -729,11 +978,13 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       if (!mounted) return;
       setState(() => _merchantProfileUrl = url);
 
-      ToastHelper.showCustomToast(context, 'Profile picture updated', isSuccess: true, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Profile picture updated',
+          isSuccess: true, errorMessage: '');
     } catch (e) {
       debugPrint('Profile upload error: $e');
       if (!mounted) return;
-      ToastHelper.showCustomToast(context, 'Failed to upload photo', isSuccess: false, errorMessage: e.toString());
+      ToastHelper.showCustomToast(context, 'Failed to upload photo',
+          isSuccess: false, errorMessage: e.toString());
     } finally {
       if (mounted) setState(() => _profileUploading = false);
     }
@@ -774,9 +1025,11 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       if (!mounted) return;
       setState(() => _merchantProfileUrl = '');
 
-      ToastHelper.showCustomToast(context, 'Profile picture removed', isSuccess: true, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Profile picture removed',
+          isSuccess: true, errorMessage: '');
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Failed to remove photo', isSuccess: false, errorMessage: e.toString());
+      ToastHelper.showCustomToast(context, 'Failed to remove photo',
+          isSuccess: false, errorMessage: e.toString());
     } finally {
       if (mounted) setState(() => _profileUploading = false);
     }
@@ -785,11 +1038,13 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   // ----------------- CREATE item -----------------
   Future<void> _create() async {
     if (_cover == null) {
-      ToastHelper.showCustomToast(context, 'Please pick a cover photo', isSuccess: false, errorMessage: 'Photo required');
+      ToastHelper.showCustomToast(context, 'Please pick a cover photo',
+          isSuccess: false, errorMessage: 'Photo required');
       return;
     }
     if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
-      ToastHelper.showCustomToast(context, 'Please fill all required fields', isSuccess: false, errorMessage: 'Missing fields');
+      ToastHelper.showCustomToast(context, 'Please fill all required fields',
+          isSuccess: false, errorMessage: 'Missing fields');
       return;
     }
 
@@ -798,7 +1053,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     try {
       final firebaseUid = _auth.currentUser?.uid ?? _uid;
       if (firebaseUid.trim().isEmpty) {
-        ToastHelper.showCustomToast(context, 'Please login first', isSuccess: false, errorMessage: 'Not logged in');
+        ToastHelper.showCustomToast(context, 'Please login first',
+            isSuccess: false, errorMessage: 'Not logged in');
         return;
       }
 
@@ -822,9 +1078,10 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         'category': _category ?? 'other',
         'gallery': galleryBase64,
         'createdAt': FieldValue.serverTimestamp(),
-
         // ✅ BOTH IDs saved
-        'sellerUserId': (sellerId != null && sellerId.trim().isNotEmpty) ? sellerId.trim() : 'unknown',
+        'sellerUserId': (sellerId != null && sellerId.trim().isNotEmpty)
+            ? sellerId.trim()
+            : 'unknown',
         'merchantId': firebaseUid,
         'merchantName': merchantDisplay,
         'serviceType': 'marketplace',
@@ -832,7 +1089,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
       await _firestore.collection('marketplace_items').add(data);
 
-      ToastHelper.showCustomToast(context, 'Item Posted Successfully!', isSuccess: true, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Item Posted Successfully!',
+          isSuccess: true, errorMessage: '');
 
       _name.clear();
       _price.clear();
@@ -847,7 +1105,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       await _loadItems();
       _marketplaceTabs.animateTo(2);
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Create failed: $e', isSuccess: false, errorMessage: 'Create failed');
+      ToastHelper.showCustomToast(context, 'Create failed: $e',
+          isSuccess: false, errorMessage: 'Create failed');
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -860,7 +1119,9 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         title: const Text('Delete item'),
         content: Text('Delete "${item['name']}"? This cannot be undone.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
@@ -876,14 +1137,16 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       await _firestore.collection('marketplace_items').doc(id).delete();
       _items.removeWhere((e) => e['id'] == id);
 
-      ToastHelper.showCustomToast(context, 'Deleted • ${item['name']}', isSuccess: true, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Deleted • ${item['name']}',
+          isSuccess: true, errorMessage: '');
 
       setState(() {
         _totalItems = _items.length;
         _activeItems = _items.where((e) => e['isActive'] == true).length;
       });
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Delete failed: $e', isSuccess: false, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Delete failed: $e',
+          isSuccess: false, errorMessage: '');
     } finally {
       if (mounted) setState(() => _busyRow = false);
     }
@@ -894,10 +1157,14 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     final id = (item['id'] ?? '').toString();
     if (id.isEmpty) return;
 
-    final nameCtrl = TextEditingController(text: (item['name'] ?? '').toString());
-    final priceCtrl = TextEditingController(text: (item['price'] ?? '').toString());
-    final locationCtrl = TextEditingController(text: (item['location'] ?? '').toString());
-    final descCtrl = TextEditingController(text: (item['description'] ?? '').toString());
+    final nameCtrl =
+        TextEditingController(text: (item['name'] ?? '').toString());
+    final priceCtrl =
+        TextEditingController(text: (item['price'] ?? '').toString());
+    final locationCtrl =
+        TextEditingController(text: (item['location'] ?? '').toString());
+    final descCtrl =
+        TextEditingController(text: (item['description'] ?? '').toString());
     String category = (item['category'] ?? 'other').toString();
     bool isActive = item['isActive'] == true;
 
@@ -909,17 +1176,25 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
       builder: (_) {
         final bottomInset = MediaQuery.of(context).viewInsets.bottom;
         return StatefulBuilder(
           builder: (context, setSheet) {
             Future<void> pickNewCover() async {
-              final x = await _picker.pickImage(source: ImageSource.gallery, maxWidth: 1800, imageQuality: 90);
+              final x = await _picker.pickImage(
+                  source: ImageSource.gallery,
+                  maxWidth: 1800,
+                  imageQuality: 90);
               if (x == null) return;
               final bytes = await x.readAsBytes();
               setSheet(() {
-                newCover = LocalMedia(bytes: bytes, filename: x.name, mime: lookupMimeType(x.name, headerBytes: bytes));
+                newCover = LocalMedia(
+                  bytes: bytes,
+                  filename: x.name,
+                  mime: lookupMimeType(x.name, headerBytes: bytes),
+                );
               });
             }
 
@@ -931,7 +1206,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               final loc = locationCtrl.text.trim();
 
               if (n.isEmpty || p <= 0 || loc.isEmpty) {
-                ToastHelper.showCustomToast(context, 'Fill name, price and location', isSuccess: false, errorMessage: '');
+                ToastHelper.showCustomToast(context, 'Fill name, price and location',
+                    isSuccess: false, errorMessage: '');
                 return;
               }
 
@@ -942,7 +1218,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                   'price': p,
                   'location': loc,
                   'category': category,
-                  'description': descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+                  'description':
+                      descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
                   'isActive': isActive,
                   'updatedAt': FieldValue.serverTimestamp(),
                 };
@@ -953,7 +1230,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
                 await _firestore.collection('marketplace_items').doc(id).update(patch);
 
-                // update local list quickly
                 final idx = _items.indexWhere((e) => (e['id'] ?? '') == id);
                 if (idx != -1) {
                   _items[idx] = {..._items[idx], ...patch};
@@ -967,28 +1243,41 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                 }
 
                 if (mounted) Navigator.pop(context);
-                ToastHelper.showCustomToast(context, 'Item updated', isSuccess: true, errorMessage: '');
+                ToastHelper.showCustomToast(context, 'Item updated',
+                    isSuccess: true, errorMessage: '');
               } catch (e) {
-                ToastHelper.showCustomToast(context, 'Update failed: $e', isSuccess: false, errorMessage: '');
+                ToastHelper.showCustomToast(context, 'Update failed: $e',
+                    isSuccess: false, errorMessage: '');
               } finally {
                 setSheet(() => saving = false);
               }
             }
 
             return Padding(
-              padding: EdgeInsets.only(left: 16, right: 16, bottom: 16 + bottomInset, top: 14),
+              padding: EdgeInsets.only(
+                  left: 16, right: 16, bottom: 16 + bottomInset, top: 14),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(width: 42, height: 5, decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(99))),
+                  Container(
+                      width: 42,
+                      height: 5,
+                      decoration: BoxDecoration(
+                          color: Colors.black12,
+                          borderRadius: BorderRadius.circular(99))),
                   const SizedBox(height: 14),
                   Row(
                     children: [
-                      const Expanded(child: Text('Edit Item', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900))),
-                      IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                      const Expanded(
+                        child: Text('Edit Item',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w900)),
+                      ),
+                      IconButton(
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.close)),
                     ],
                   ),
-
                   const SizedBox(height: 8),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
@@ -1009,32 +1298,41 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                         label: const Text('Change Cover'),
                       ),
                       const Spacer(),
-                      Switch(value: isActive, onChanged: (v) => setSheet(() => isActive = v)),
-                      Text(isActive ? 'Active' : 'Inactive', style: const TextStyle(fontWeight: FontWeight.w800)),
+                      Switch(
+                        value: isActive,
+                        onChanged: (v) => setSheet(() => isActive = v),
+                      ),
+                      Text(isActive ? 'Active' : 'Inactive',
+                          style: const TextStyle(fontWeight: FontWeight.w800)),
                     ],
                   ),
-
                   const SizedBox(height: 10),
-                  TextField(controller: nameCtrl, decoration: _inputDecoration(label: 'Item Name')),
+                  TextField(
+                      controller: nameCtrl,
+                      decoration: _inputDecoration(label: 'Item Name')),
                   const SizedBox(height: 10),
-                  TextField(controller: priceCtrl, keyboardType: TextInputType.number, decoration: _inputDecoration(label: 'Price (MWK)')),
+                  TextField(
+                      controller: priceCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: _inputDecoration(label: 'Price (MWK)')),
                   const SizedBox(height: 10),
-                  TextField(controller: locationCtrl, decoration: _inputDecoration(label: 'Location')),
+                  TextField(
+                      controller: locationCtrl,
+                      decoration: _inputDecoration(label: 'Location')),
                   const SizedBox(height: 10),
-
                   DropdownButtonFormField<String>(
                     value: category,
                     items: _kCategories
                         .map((c) => DropdownMenuItem(
                               value: c,
-                              child: Text(c[0].toUpperCase() + c.substring(1)),
+                              child: Text(
+                                  c[0].toUpperCase() + c.substring(1)),
                             ))
                         .toList(),
                     onChanged: (v) => setSheet(() => category = v ?? 'other'),
                     decoration: _inputDecoration(label: 'Category'),
                   ),
                   const SizedBox(height: 10),
-
                   TextField(
                     controller: descCtrl,
                     minLines: 2,
@@ -1042,20 +1340,26 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                     decoration: _inputDecoration(label: 'Description (optional)'),
                   ),
                   const SizedBox(height: 14),
-
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
                       style: FilledButton.styleFrom(
                         backgroundColor: _brandOrange,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                       onPressed: saving ? null : save,
                       icon: saving
-                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
                           : const Icon(Icons.save),
-                      label: const Text('Save Changes', style: TextStyle(fontWeight: FontWeight.w900)),
+                      label: const Text('Save Changes',
+                          style: TextStyle(fontWeight: FontWeight.w900)),
                     ),
                   ),
                 ],
@@ -1077,7 +1381,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        ToastHelper.showCustomToast(context, 'Location services are disabled.', isSuccess: false, errorMessage: '');
+        ToastHelper.showCustomToast(context, 'Location services are disabled.',
+            isSuccess: false, errorMessage: '');
         return;
       }
 
@@ -1085,21 +1390,27 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          ToastHelper.showCustomToast(context, 'Location permissions are denied.', isSuccess: false, errorMessage: '');
+          ToastHelper.showCustomToast(context, 'Location permissions are denied.',
+              isSuccess: false, errorMessage: '');
           return;
         }
       }
 
       if (permission == LocationPermission.deniedForever) {
-        ToastHelper.showCustomToast(context, 'Location permissions are permanently denied.', isSuccess: false, errorMessage: '');
+        ToastHelper.showCustomToast(
+            context, 'Location permissions are permanently denied.',
+            isSuccess: false, errorMessage: '');
         return;
       }
 
-      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      final placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
+      final position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+      final placemarks =
+          await placemarkFromCoordinates(position.latitude, position.longitude);
 
       if (placemarks.isEmpty) {
-        ToastHelper.showCustomToast(context, 'Could not fetch address.', isSuccess: false, errorMessage: '');
+        ToastHelper.showCustomToast(context, 'Could not fetch address.',
+            isSuccess: false, errorMessage: '');
         return;
       }
 
@@ -1114,21 +1425,25 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
       setState(() => _location.text = address);
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Failed to get location: $e', isSuccess: false, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Failed to get location: $e',
+          isSuccess: false, errorMessage: '');
     }
   }
 
   Future<void> _openGoogleMap() async {
     if (_location.text.trim().isEmpty) {
-      ToastHelper.showCustomToast(context, 'Enter a location first.', isSuccess: false, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Enter a location first.',
+          isSuccess: false, errorMessage: '');
       return;
     }
     final query = Uri.encodeComponent(_location.text.trim());
-    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
+    final uri =
+        Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     } else {
-      ToastHelper.showCustomToast(context, 'Could not open Google Maps.', isSuccess: false, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Could not open Google Maps.',
+          isSuccess: false, errorMessage: '');
     }
   }
 
@@ -1139,7 +1454,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       hintText: hint,
       filled: true,
       fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       enabledBorder: OutlineInputBorder(
         borderSide: const BorderSide(color: Colors.black12),
         borderRadius: BorderRadius.circular(14),
@@ -1189,9 +1505,17 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.black54), maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(title,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black54),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 4),
-                Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                Text(value,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w900)),
               ],
             ),
           ),
@@ -1221,10 +1545,12 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       title: Text(_initialLoadComplete ? '$titleName Dashboard' : 'Loading...'),
       backgroundColor: _brandOrange,
       actions: [
-        
         IconButton(
           icon: const Icon(Icons.account_balance_wallet),
-          onPressed: () {
+          onPressed: () async {
+            final ok = await _unlockWalletWithPin();
+            if (!ok || !mounted) return;
+
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -1241,10 +1567,10 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
           icon: const Icon(Icons.settings),
           tooltip: 'Settings',
           onPressed: () {
-            Navigator.pushAndRemoveUntil(
+            // ✅ back will work now
+            Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => SettingsPage()),
-              (_) => false,
+              MaterialPageRoute(builder: (_) => SettingsPage(onBackToHomeTab: () {  },)),
             );
           },
         ),
@@ -1270,7 +1596,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
   }
 
   Widget _buildDashboardContent() {
-    // ✅ Skeleton page instead of spinner
     if (_isLoading) {
       return const _DashboardSkeleton();
     }
@@ -1297,7 +1622,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
             child: TabBarView(
               controller: _marketplaceTabs,
               children: [
-                // ✅ pull-to-refresh on dashboard tab
                 RefreshIndicator(
                   onRefresh: _refreshAll,
                   child: SingleChildScrollView(
@@ -1316,7 +1640,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                         const SizedBox(height: 12),
                         _buildRecentSales(),
                         const SizedBox(height: 12),
-                        _buildAllClientItemsSection(), // ✅ list all
+                        _buildAllClientItemsSection(),
                       ],
                     ),
                   ),
@@ -1482,7 +1806,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                           decoration: BoxDecoration(
                               color: const Color(0xFFFFEDEE),
                               borderRadius: BorderRadius.circular(999)),
-                          child: const Text('OFFLINE (cached)',
+                          child: const Text('YOUR OFFLINE',
                               style: TextStyle(
                                   fontWeight: FontWeight.w900,
                                   fontSize: 12,
@@ -1522,7 +1846,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
             crossAxisCount: 2,
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
-            mainAxisExtent: 74, // ✅ compact height
+            mainAxisExtent: 74,
           ),
           itemBuilder: (_, i) {
             switch (i) {
@@ -1561,9 +1885,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     );
   }
 
-
-
-
   // ----------------- Quick actions + profile actions -----------------
   Widget _buildQuickActionsSection() {
     return Column(
@@ -1595,7 +1916,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               onTap: () => _marketplaceTabs.animateTo(2),
             ),
             _QuickActionTile(
-              title: 'Orders',
+              title: 'My Orders',
               icon: Icons.receipt_long,
               color: Colors.green,
               onTap: () => _openBottomSheet(const OrdersPage()),
@@ -1618,7 +1939,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               color: Colors.red,
               onTap: () => _openBottomSheet(const ToRefundPage()),
             ),
-         
           ],
         ),
       ],
@@ -1640,12 +1960,11 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     );
   }
 
-
-  
-
-  // ----------------- Wallet Summary -----------------
+  // ----------------- Wallet Summary (LOCKED) -----------------
   Widget _buildWalletSummary() {
     final titleName = _displayBusinessName();
+    final unlocked = _walletUnlockedNow;
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -1659,11 +1978,13 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: Colors.green.withOpacity(0.12),
+              color: (unlocked ? Colors.green : Colors.grey).withOpacity(0.12),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const Icon(Icons.account_balance_wallet_rounded,
-                color: Colors.green),
+            child: Icon(
+              unlocked ? Icons.account_balance_wallet_rounded : Icons.lock_rounded,
+              color: unlocked ? Colors.green : Colors.grey,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1673,11 +1994,26 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                 const Text('Wallet Balance',
                     style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 6),
-                Text('MWK ${_walletBalance.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.green)),
+                Text(
+                  unlocked ? 'MWK ${_walletBalance.toStringAsFixed(2)}' : 'MWK ••••',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: unlocked ? Colors.green : Colors.black54,
+                  ),
+                ),
+                if (!unlocked)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 4),
+                    child: Text(
+                      'Locked — tap Open to unlock',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -1687,7 +2023,10 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14)),
             ),
-            onPressed: () {
+            onPressed: () async {
+              final ok = await _unlockWalletWithPin();
+              if (!ok || !mounted) return;
+
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -1707,7 +2046,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     );
   }
 
-  // ----------------- Recent Sales (skeleton handled at page-level) -----------------
+  // ----------------- Recent Sales -----------------
   Widget _buildRecentSales() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1805,7 +2144,7 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     }
   }
 
-  // ----------------- “Top items” replaced: list ALL merchant items (with skeleton) -----------------
+  // ----------------- “Top items” replaced: list ALL merchant items -----------------
   Widget _buildAllClientItemsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1910,9 +2249,14 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                       ),
               ),
               const SizedBox(height: 14),
-              TextField(controller: _name, decoration: _inputDecoration(label: 'Item Name')),
+              TextField(
+                  controller: _name,
+                  decoration: _inputDecoration(label: 'Item Name')),
               const SizedBox(height: 10),
-              TextField(controller: _price, keyboardType: TextInputType.number, decoration: _inputDecoration(label: 'Price (MWK)')),
+              TextField(
+                  controller: _price,
+                  keyboardType: TextInputType.number,
+                  decoration: _inputDecoration(label: 'Price (MWK)')),
               const SizedBox(height: 10),
               TextField(
                 controller: _location,
@@ -1920,8 +2264,12 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                   suffixIcon: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(icon: const Icon(Icons.my_location), onPressed: _getCurrentLocation),
-                      IconButton(icon: const Icon(Icons.map), onPressed: _openGoogleMap),
+                      IconButton(
+                          icon: const Icon(Icons.my_location),
+                          onPressed: _getCurrentLocation),
+                      IconButton(
+                          icon: const Icon(Icons.map),
+                          onPressed: _openGoogleMap),
                     ],
                   ),
                 ),
@@ -1948,14 +2296,21 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Switch(value: _isActive, onChanged: (v) => setState(() => _isActive = v)),
-                  Text(_isActive ? 'Active' : 'Inactive', style: const TextStyle(fontWeight: FontWeight.w900)),
+                  Switch(
+                      value: _isActive,
+                      onChanged: (v) => setState(() => _isActive = v)),
+                  Text(_isActive ? 'Active' : 'Inactive',
+                      style: const TextStyle(fontWeight: FontWeight.w900)),
                   const Spacer(),
                   FilledButton.icon(
                     style: _filledBtnStyle(),
                     onPressed: _submitting ? null : _create,
                     icon: _submitting
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
                         : const Icon(Icons.upload_rounded),
                     label: const Text('Post Item'),
                   ),
@@ -1978,7 +2333,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
           child: Column(
             children: [
-              // search
               TextField(
                 onChanged: (v) => setState(() => _searchQuery = v),
                 decoration: InputDecoration(
@@ -1986,20 +2340,20 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                   hintText: 'Search items...',
                   filled: true,
                   fillColor: Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   enabledBorder: OutlineInputBorder(
                     borderSide: const BorderSide(color: Colors.black12),
                     borderRadius: BorderRadius.circular(16),
                   ),
                   focusedBorder: OutlineInputBorder(
-                    borderSide: const BorderSide(color: _brandOrange, width: 2),
+                    borderSide:
+                        const BorderSide(color: _brandOrange, width: 2),
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
               ),
               const SizedBox(height: 10),
-
-              // filter chips row
               SizedBox(
                 height: 40,
                 child: ListView(
@@ -2037,7 +2391,6 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
             ],
           ),
         ),
-
         Expanded(
           child: _loadingItems
               ? const _ItemsGridSkeleton(count: 8)
@@ -2046,7 +2399,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                   : GridView.builder(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       itemCount: filtered.length,
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 2,
                         crossAxisSpacing: 12,
                         mainAxisSpacing: 12,
@@ -2064,7 +2418,10 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
     );
   }
 
-  Widget _chip({required String label, required bool selected, required VoidCallback onTap}) {
+  Widget _chip(
+      {required String label,
+      required bool selected,
+      required VoidCallback onTap}) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: ChoiceChip(
@@ -2080,11 +2437,15 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
 
   // ----------------- cover picker -----------------
   Future<void> _pickCover(ImageSource src) async {
-    final x = await _picker.pickImage(source: src, imageQuality: 90, maxWidth: 2048);
+    final x = await _picker.pickImage(
+        source: src, imageQuality: 90, maxWidth: 2048);
     if (x == null) return;
     final bytes = await x.readAsBytes();
     setState(() {
-      _cover = LocalMedia(bytes: bytes, filename: x.name, mime: lookupMimeType(x.name, headerBytes: bytes));
+      _cover = LocalMedia(
+          bytes: bytes,
+          filename: x.name,
+          mime: lookupMimeType(x.name, headerBytes: bytes));
     });
   }
 
@@ -2094,7 +2455,12 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border(top: BorderSide(color: Colors.grey[200]!)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 16, offset: const Offset(0, -6))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 16,
+              offset: const Offset(0, -6))
+        ],
       ),
       child: SafeArea(
         child: SizedBox(
@@ -2128,7 +2494,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: isSelected ? _brandOrange : Colors.grey[600], size: 24),
+            Icon(icon,
+                color: isSelected ? _brandOrange : Colors.grey[600], size: 24),
             const SizedBox(height: 4),
             Text(
               label,
@@ -2230,11 +2597,23 @@ class _DashboardSkeleton extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Row(children: [Expanded(child: box(74)), const SizedBox(width: 12), Expanded(child: box(74))]),
+          Row(children: [
+            Expanded(child: box(74)),
+            const SizedBox(width: 12),
+            Expanded(child: box(74))
+          ]),
           const SizedBox(height: 12),
-          Row(children: [Expanded(child: box(74)), const SizedBox(width: 12), Expanded(child: box(74))]),
+          Row(children: [
+            Expanded(child: box(74)),
+            const SizedBox(width: 12),
+            Expanded(child: box(74))
+          ]),
           const SizedBox(height: 12),
-          Row(children: [Expanded(child: box(74)), const SizedBox(width: 12), Expanded(child: box(74))]),
+          Row(children: [
+            Expanded(child: box(74)),
+            const SizedBox(width: 12),
+            Expanded(child: box(74))
+          ]),
           const SizedBox(height: 12),
           box(90),
           const SizedBox(height: 12),
@@ -2292,7 +2671,8 @@ class _ModernItemMiniCard extends StatelessWidget {
         children: [
           Expanded(
             child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(18)),
               child: _ImageAny(item['image']),
             ),
           ),
@@ -2310,14 +2690,19 @@ class _ModernItemMiniCard extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   'MWK ${(item['price'] ?? 0).toString()}',
-                  style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.green),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w900, color: Colors.green),
                 ),
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    Icon(Icons.circle, size: 10, color: active ? Colors.green : Colors.red),
+                    Icon(Icons.circle,
+                        size: 10, color: active ? Colors.green : Colors.red),
                     const SizedBox(width: 6),
-                    Text(active ? 'Active' : 'Inactive', style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.black54)),
+                    Text(active ? 'Active' : 'Inactive',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: Colors.black54)),
                   ],
                 ),
               ],
@@ -2358,7 +2743,8 @@ class _ItemCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(18)),
                   child: SizedBox(height: 150, child: _ImageAny(item['image'])),
                 ),
                 Padding(
@@ -2368,19 +2754,23 @@ class _ItemCard extends StatelessWidget {
                     children: [
                       Text(
                         (item['name'] ?? 'Unknown').toString(),
-                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w900, fontSize: 14),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 6),
                       Text(
                         'MWK ${(item['price'] ?? 0).toString()}',
-                        style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.green),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w900, color: Colors.green),
                       ),
                       const SizedBox(height: 6),
                       Text(
                         (item['category'] ?? 'other').toString(),
-                        style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w800),
+                        style: const TextStyle(
+                            color: Colors.black54,
+                            fontWeight: FontWeight.w800),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -2389,25 +2779,25 @@ class _ItemCard extends StatelessWidget {
                 ),
               ],
             ),
-
-            // status
             Positioned(
               top: 10,
               left: 10,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: active ? Colors.green : Colors.red,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   active ? 'Active' : 'Inactive',
-                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900),
                 ),
               ),
             ),
-
-            // actions
             Positioned(
               top: 10,
               right: 10,
@@ -2433,9 +2823,15 @@ class _ItemCard extends StatelessWidget {
     );
   }
 
-  Widget _iconBtn({required IconData icon, required Color color, required VoidCallback? onTap}) {
+  Widget _iconBtn(
+      {required IconData icon,
+      required Color color,
+      required VoidCallback? onTap}) {
     return Container(
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(999), border: Border.all(color: Colors.black12)),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.black12)),
       child: IconButton(
         icon: Icon(icon, size: 18),
         color: color,
@@ -2456,10 +2852,18 @@ class _ImageAny extends StatelessWidget {
 
     try {
       if (imageData.startsWith('http')) {
-        return Image.network(imageData, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _placeholder());
+        return Image.network(
+          imageData,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _placeholder(),
+        );
       } else {
         final bytes = base64Decode(imageData);
-        return Image.memory(bytes, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _placeholder());
+        return Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _placeholder(),
+        );
       }
     } catch (_) {
       return _placeholder();
@@ -2469,7 +2873,9 @@ class _ImageAny extends StatelessWidget {
   Widget _placeholder() {
     return Container(
       color: const Color(0xFFF3F4F7),
-      child: const Center(child: Icon(Icons.image_not_supported_rounded, color: Colors.black26)),
+      child: const Center(
+        child: Icon(Icons.image_not_supported_rounded, color: Colors.black26),
+      ),
     );
   }
 }

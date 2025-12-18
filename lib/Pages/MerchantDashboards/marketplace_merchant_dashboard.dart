@@ -26,6 +26,8 @@ import 'package:vero360_app/services/serviceprovider_service.dart';
 import 'package:vero360_app/models/marketplace.model.dart';
 import 'package:vero360_app/services/api_exception.dart';
 import 'package:vero360_app/toasthelper.dart';
+// Add login screen import (using your correct path)
+import 'package:vero360_app/screens/login_screen.dart';
 
 class LocalMedia {
   final Uint8List bytes;
@@ -226,6 +228,78 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
       }
     } catch (e) {
       print('Error loading wallet: $e');
+    }
+  }
+
+  // ---------------- Logout Functionality ----------------
+  Future<void> _logout() async {
+    // Show confirmation dialog
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Logout',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
+      // Sign out from Firebase
+      await _auth.signOut();
+
+      // Clear SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear(); // Or clear specific keys if you want to keep some data
+
+      // Show success message
+      ToastHelper.showCustomToast(
+        context,
+        'Logged out successfully',
+        isSuccess: true,
+        errorMessage: 'Logged out',
+      );
+
+      // Navigate to login screen and remove all routes
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => LoginScreen()), // Using LoginScreen from your path
+          (_) => false,
+        );
+      }
+    } catch (e) {
+      print('Error during logout: $e');
+      
+      // Show error message
+      ToastHelper.showCustomToast(
+        context,
+        'Logout failed: $e',
+        isSuccess: false,
+        errorMessage: 'Logout failed',
+      );
     }
   }
 
@@ -730,6 +804,12 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
             );
           },
         ),
+        // Add logout button here
+        IconButton(
+          icon: const Icon(Icons.logout),
+          tooltip: 'Logout',
+          onPressed: _logout,
+        ),
       ],
     );
   }
@@ -796,6 +876,8 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
                       _buildWalletSummary(),
                       _buildRecentSales(),
                       _buildTopItems(),
+                      // Add logout option in the dashboard too
+                      _buildLogoutSection(),
                     ],
                   ),
                 ),
@@ -807,6 +889,49 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // Add a logout section in the dashboard tab
+  Widget _buildLogoutSection() {
+    return Card(
+      margin: const EdgeInsets.only(top: 20),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Account',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            ListTile(
+              leading: const Icon(Icons.person, color: Colors.blue),
+              title: const Text('Merchant Profile'),
+              subtitle: Text(_businessName),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                // Add profile navigation here if needed
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.settings, color: Colors.grey),
+              title: const Text('Settings'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                // Add settings navigation here if needed
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Colors.red),
+              title: const Text('Logout'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _logout,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -965,6 +1090,11 @@ class _MarketplaceMerchantDashboardState extends State<MarketplaceMerchantDashbo
               onPressed: () {
                 _marketplaceTabs.animateTo(2); // Navigate to My Items tab
               },
+            ),
+            ActionChip(
+              avatar: const Icon(Icons.logout, size: 20),
+              label: const Text('Logout'),
+              onPressed: _logout,
             ),
           ],
         ),

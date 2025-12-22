@@ -7,7 +7,8 @@ import 'package:vero360_app/services/car_rental_service.dart';
 import 'package:vero360_app/services/merchant_service.dart';
 import 'package:vero360_app/services/analytics_service.dart';
 
-// Services
+// -------------------- Services --------------------
+
 final carRentalServiceProvider = Provider<CarRentalService>((ref) {
   return CarRentalService();
 });
@@ -20,13 +21,15 @@ final analyticsServiceProvider = Provider<AnalyticsService>((ref) {
   return AnalyticsService();
 });
 
-// Merchant Cars
+// -------------------- Merchant Cars --------------------
+
 final myCarsFutureProvider = FutureProvider<List<CarModel>>((ref) async {
   final service = ref.watch(carRentalServiceProvider);
   return service.getMyCars();
 });
 
-// Merchant Bookings
+// -------------------- Merchant Bookings --------------------
+
 final pendingBookingsFutureProvider = FutureProvider<List<CarBookingModel>>((ref) async {
   final service = ref.watch(merchantServiceProvider);
   return service.getPendingBookings();
@@ -37,19 +40,22 @@ final activeRentalsFutureProvider = FutureProvider<List<CarBookingModel>>((ref) 
   return service.getActiveRentals();
 });
 
-// Car Bookings by Car ID
-final carBookingsFutureProvider = FutureProvider.family<List<CarBookingModel>, int>((ref, carId) async {
+// -------------------- Bookings by Car ID --------------------
+
+final carBookingsFutureProvider =
+    FutureProvider.family<List<CarBookingModel>, int>((ref, carId) async {
   final service = ref.watch(carRentalServiceProvider);
   return service.getMyCarBookings(carId);
 });
 
-// Rental History
-final rentalHistoryFutureProvider = FutureProvider.family<List<CarBookingModel>, int>((ref, carId) async {
+final rentalHistoryFutureProvider =
+    FutureProvider.family<List<CarBookingModel>, int>((ref, carId) async {
   final service = ref.watch(carRentalServiceProvider);
   return service.getRentalHistory(carId);
 });
 
-// Analytics
+// -------------------- Analytics --------------------
+
 final merchantAnalyticsFutureProvider = FutureProvider<MerchantAnalytics>((ref) async {
   final service = ref.watch(carRentalServiceProvider);
   return service.getAnalytics();
@@ -60,10 +66,10 @@ final merchantProfileFutureProvider = FutureProvider<MerchantModel>((ref) async 
   return service.getMerchantProfile();
 });
 
-// State Management for Form
-final newCarFormProvider = StateNotifierProvider<NewCarFormNotifier, NewCarFormState>((ref) {
-  return NewCarFormNotifier();
-});
+// -------------------- New Car Form (Notifier) --------------------
+
+final newCarFormProvider =
+    NotifierProvider<NewCarFormNotifier, NewCarFormState>(NewCarFormNotifier.new);
 
 class NewCarFormState {
   final String make;
@@ -78,7 +84,7 @@ class NewCarFormState {
   final bool isLoading;
   final String? error;
 
-  NewCarFormState({
+  const NewCarFormState({
     this.make = '',
     this.model = '',
     this.year = 0,
@@ -121,17 +127,22 @@ class NewCarFormState {
   }
 }
 
-class NewCarFormNotifier extends StateNotifier<NewCarFormState> {
-  NewCarFormNotifier() : super(NewCarFormState());
+class NewCarFormNotifier extends Notifier<NewCarFormState> {
+  @override
+  NewCarFormState build() => const NewCarFormState();
 
-  void updateMake(String value) => state = state.copyWith(make: value);
-  void updateModel(String value) => state = state.copyWith(model: value);
-  void updateYear(int value) => state = state.copyWith(year: value);
-  void updateLicensePlate(String value) => state = state.copyWith(licensePlate: value);
-  void updateColor(String value) => state = state.copyWith(color: value);
-  void updateDailyRate(double value) => state = state.copyWith(dailyRate: value);
-  void updateDescription(String value) => state = state.copyWith(description: value);
-  void updateSeats(int value) => state = state.copyWith(seats: value);
-  void updateFuelType(String value) => state = state.copyWith(fuelType: value);
-  void reset() => state = NewCarFormState();
+  void updateMake(String v) => state = state.copyWith(make: v);
+  void updateModel(String v) => state = state.copyWith(model: v);
+  void updateYear(int v) => state = state.copyWith(year: v);
+  void updateLicensePlate(String v) => state = state.copyWith(licensePlate: v);
+  void updateColor(String v) => state = state.copyWith(color: v);
+  void updateDailyRate(double v) => state = state.copyWith(dailyRate: v);
+  void updateDescription(String v) => state = state.copyWith(description: v);
+  void updateSeats(int v) => state = state.copyWith(seats: v);
+  void updateFuelType(String v) => state = state.copyWith(fuelType: v);
+
+  void setLoading(bool v) => state = state.copyWith(isLoading: v, error: null);
+  void setError(String? e) => state = state.copyWith(isLoading: false, error: e);
+
+  void reset() => state = const NewCarFormState();
 }

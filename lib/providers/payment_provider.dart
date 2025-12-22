@@ -1,4 +1,7 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart' show Provider, FutureProvider;
+import 'package:flutter_riverpod/legacy.dart' show StateNotifierProvider;
+import 'package:state_notifier/state_notifier.dart';
+
 import 'package:vero360_app/models/payment_model.dart';
 import 'package:vero360_app/services/payment_service.dart';
 
@@ -16,7 +19,8 @@ final transactionHistoryFutureProvider = FutureProvider<List<PaymentModel>>((ref
   return service.getTransactionHistory();
 });
 
-final paymentFormProvider = StateNotifierProvider<PaymentFormNotifier, PaymentFormState>((ref) {
+final paymentFormProvider =
+    StateNotifierProvider<PaymentFormNotifier, PaymentFormState>((ref) {
   return PaymentFormNotifier();
 });
 

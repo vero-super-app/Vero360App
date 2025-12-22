@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:math';
-import 'dart:io'; // Add this import
+import 'dart:io';
 
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -20,13 +22,116 @@ class CheckoutFromCartPage extends StatefulWidget {
 }
 
 class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandSoft = Color(0xFFFFF3E0);
+
   bool _paying = false;
+
+  // ✅ MWK formatter with commas (same style as your main checkout page)
+  late final NumberFormat _mwkFmt =
+      NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
+  String _mwk(num v) => _mwkFmt.format(v);
 
   double get _subtotal =>
       widget.items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
+
   double get _deliveryFee => widget.items.isEmpty ? 0.0 : 20.0;
+
   double get _total => max(0.0, _subtotal + _deliveryFee);
-  String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
+
+  // ✅ Same image logic as CheckoutPage (http / base64 / gs:// / firebase storage path)
+  Widget _itemImage(String raw, {double size = 64}) {
+    final s = raw.trim();
+    if (s.isEmpty) {
+      return Container(
+        width: size,
+        height: size,
+        color: Colors.grey.shade200,
+        child: const Icon(Icons.image_not_supported, color: Colors.grey),
+      );
+    }
+
+    // HTTP URL
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      return Image.network(
+        s,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(
+          width: size,
+          height: size,
+          color: Colors.grey.shade200,
+          child: const Icon(Icons.image_not_supported, color: Colors.grey),
+        ),
+      );
+    }
+
+    // Firebase Storage gs://
+    if (s.startsWith('gs://')) {
+      return FutureBuilder<String>(
+        future: FirebaseStorage.instance.refFromURL(s).getDownloadURL(),
+        builder: (context, snap) {
+          if (!snap.hasData) {
+            return Container(
+              width: size,
+              height: size,
+              color: Colors.grey.shade100,
+              child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            );
+          }
+          return Image.network(
+            snap.data!,
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(
+              width: size,
+              height: size,
+              color: Colors.grey.shade200,
+              child: const Icon(Icons.image_not_supported, color: Colors.grey),
+            ),
+          );
+        },
+      );
+    }
+
+    // Try Base64
+    try {
+      final base64Part = s.contains(',') ? s.split(',').last : s;
+      if (base64Part.length > 150) {
+        final bytes = base64Decode(base64Part);
+        return Image.memory(bytes, width: size, height: size, fit: BoxFit.cover);
+      }
+    } catch (_) {}
+
+    // Try Firebase Storage path
+    return FutureBuilder<String>(
+      future: FirebaseStorage.instance.ref(s).getDownloadURL(),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return Container(
+            width: size,
+            height: size,
+            color: Colors.grey.shade200,
+            child: const Icon(Icons.image_not_supported, color: Colors.grey),
+          );
+        }
+        return Image.network(
+          snap.data!,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Container(
+            width: size,
+            height: size,
+            color: Colors.grey.shade200,
+            child: const Icon(Icons.image_not_supported, color: Colors.grey),
+          ),
+        );
+      },
+    );
+  }
 
   Future<void> _startPayChanguPayment() async {
     if (widget.items.isEmpty) {
@@ -46,60 +151,57 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       final email = prefs.getString('email') ?? 'customer@example.com';
       final name = prefs.getString('name') ?? 'Customer';
       final phone = prefs.getString('phone') ?? '+265888000000';
-      
+
       final parts = name.split(' ');
       final firstName = parts.isNotEmpty ? parts.first : 'Customer';
       final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
 
       final txRef = 'vero-${DateTime.now().millisecondsSinceEpoch}';
 
-      // First, test if we can resolve the hostname
+      // DNS test
       try {
-        final lookup = await InternetAddress.lookup('api.paychangu.com');
-        print('DNS lookup successful: ${lookup.first.address}');
-      } on SocketException catch (e) {
-        print('DNS lookup failed: $e');
-        throw Exception('Cannot connect to payment service. Please check your internet connection.');
+        await InternetAddress.lookup('api.paychangu.com');
+      } on SocketException catch (_) {
+        throw Exception(
+            'Cannot connect to payment service. Please check your internet connection.');
       }
 
-      // PayChangu API call
-      final response = await http.post(
-        Uri.parse('https://api.paychangu.com/payment'),
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
-        },
-        body: json.encode({
-          'tx_ref': txRef,
-          'first_name': firstName,
-          'last_name': lastName,
-          'email': email,
-          'phone_number': phone,
-          'currency': 'MWK',
-          'amount': _total.round().toString(),
-          'payment_methods': ['card', 'mobile_money', 'bank'],
-          'callback_url': 'https://webhook.site/your-webhook',
-          'return_url': 'https://your-app.com/payment-success',
-          'customization': {
-            'title': 'Vero 360 Payment',
-            'description': 'Order checkout',
-          },
-        }),
-      ).timeout(const Duration(seconds: 30));
-
-      print('API Response: ${response.statusCode}');
-      print('Response Body: ${response.body}');
+      final response = await http
+          .post(
+            Uri.parse('https://api.paychangu.com/payment'),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
+            },
+            body: json.encode({
+              'tx_ref': txRef,
+              'first_name': firstName,
+              'last_name': lastName,
+              'email': email,
+              'phone_number': phone,
+              'currency': 'MWK',
+              'amount': _total.round().toString(),
+              'payment_methods': ['card', 'mobile_money', 'bank'],
+              'callback_url': 'https://webhook.site/your-webhook',
+              'return_url': 'https://your-app.com/payment-success',
+              'customization': {
+                'title': 'Vero 360 Payment',
+                'description': 'Order checkout',
+              },
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final Map<String, dynamic> responseJson = json.decode(response.body);
-        
-        if (responseJson['status'] == 'success' || responseJson['status'] == 'Success') {
+
+        final status = (responseJson['status'] ?? '').toString().toLowerCase();
+        if (status == 'success') {
           final checkoutUrl = responseJson['data']['checkout_url'] as String;
-          print('Opening checkout URL: $checkoutUrl');
 
           if (!mounted) return;
-          
+
           Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => InAppPaymentPage(
               checkoutUrl: checkoutUrl,
@@ -115,15 +217,13 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
     } on SocketException catch (e) {
-      print('Network Error: $e');
       ToastHelper.showCustomToast(
         context,
         'Network error. Please check your internet connection.',
         isSuccess: false,
         errorMessage: e.message,
       );
-    } on TimeoutException catch (e) {
-      print('Timeout Error: $e');
+    } on TimeoutException {
       ToastHelper.showCustomToast(
         context,
         'Connection timeout. Please try again.',
@@ -131,7 +231,6 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         errorMessage: 'Request timed out',
       );
     } catch (e) {
-      print('Payment Error: $e');
       ToastHelper.showCustomToast(
         context,
         'Payment initialization failed',
@@ -143,25 +242,51 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     }
   }
 
+  Widget _row(String label, String value, {bool bold = false, bool green = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+              color: Colors.grey[700],
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
+              color: green ? const Color(0xFF2E7D32) : Colors.black,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Checkout'),
-        backgroundColor: const Color(0xFFFF8A00),
+        backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
         elevation: 0,
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
         children: [
-          // Trust banner
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: const Color(0xFFFFF3E0),
+              color: _brandSoft,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFFF8A00).withValues(alpha: 0.35)),
+              border: Border.all(color: _brandOrange.withOpacity(0.35)),
             ),
             child: const Row(
               children: [
@@ -173,7 +298,6 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
           ),
           const SizedBox(height: 12),
 
-          // Items summary with thumbnails
           Card(
             elevation: 6,
             shadowColor: Colors.black12,
@@ -200,14 +324,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                           ClipRRect(
                             borderRadius: BorderRadius.circular(12),
                             child: SizedBox(
-                              width: 64, height: 64,
-                              child: (it.image.isNotEmpty)
-                                  ? Image.network(
-                                      it.image,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) => const _ImgFallback(),
-                                    )
-                                  : const _ImgFallback(),
+                              width: 64,
+                              height: 64,
+                              child: _itemImage(it.image, size: 64),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -215,11 +334,13 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(it.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w700, fontSize: 15)),
+                                Text(
+                                  it.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w700, fontSize: 15),
+                                ),
                                 const SizedBox(height: 4),
                                 Text(
                                   '${_mwk(it.price)}  •  Qty: ${it.quantity}',
@@ -244,7 +365,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               ),
             ),
           ),
+
           const SizedBox(height: 12),
+
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -267,10 +390,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               children: [
                 const Text(
                   'Order Summary',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 12),
                 _row('Subtotal', _mwk(_subtotal)),
@@ -283,9 +403,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _paying || widget.items.isEmpty ? null : _startPayChanguPayment,
+                    onPressed:
+                        _paying || widget.items.isEmpty ? null : _startPayChanguPayment,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF8A00),
+                      backgroundColor: _brandOrange,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -296,7 +417,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         if (_paying)
-                          SizedBox(
+                          const SizedBox(
                             width: 20,
                             height: 20,
                             child: CircularProgressIndicator(
@@ -326,48 +447,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       ),
     );
   }
-
-  Widget _row(String label, String value, {bool bold = false, bool green = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
-              color: Colors.grey[700],
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
-              color: green ? const Color(0xFF2E7D32) : Colors.black,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
-class _ImgFallback extends StatelessWidget {
-  const _ImgFallback();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: Colors.grey.shade200,
-      child: const Icon(Icons.image_not_supported, color: Colors.grey),
-    );
-  }
-}
-
-// ────────────────────── SIMPLIFIED IN-APP PAYMENT PAGE ──────────────────────
+// ────────────────────── IN-APP PAYMENT PAGE ──────────────────────
 class InAppPaymentPage extends StatefulWidget {
   final String checkoutUrl;
   final String txRef;
@@ -390,12 +472,10 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   late final WebViewController _controller;
   Timer? _pollTimer;
   bool _isLoading = true;
-  bool _hasError = false;
 
   @override
   void initState() {
     super.initState();
-    print('Opening PayChangu URL: ${widget.checkoutUrl}');
     _initializeWebView();
     _startStatusPolling();
   }
@@ -405,26 +485,10 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(NavigationDelegate(
-        onProgress: (int progress) {
-          setState(() {
-            _isLoading = progress < 100;
-          });
-        },
-        onPageStarted: (String url) {
-          setState(() {
-            _isLoading = true;
-            _hasError = false;
-          });
-        },
-        onPageFinished: (String url) {
-          setState(() => _isLoading = false);
-        },
-        onWebResourceError: (WebResourceError error) {
-          setState(() {
-            _hasError = true;
-            _isLoading = false;
-          });
-        },
+        onProgress: (int progress) => setState(() => _isLoading = progress < 100),
+        onPageStarted: (String url) => setState(() => _isLoading = true),
+        onPageFinished: (String url) => setState(() => _isLoading = false),
+        onWebResourceError: (_) => setState(() => _isLoading = false),
       ))
       ..loadRequest(Uri.parse(widget.checkoutUrl));
   }
@@ -444,20 +508,18 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
         },
       );
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final status = (data['data']?['status'] as String?)?.toLowerCase();
-        
+
         if (status == 'successful' || status == 'success') {
           _handlePaymentSuccess();
         } else if (status == 'failed' || status == 'cancelled') {
           _handlePaymentFailure();
         }
       }
-    } catch (e) {
-      // Silently fail for polling
-    }
+    } catch (_) {}
   }
 
   void _handlePaymentSuccess() {
@@ -497,31 +559,6 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       appBar: AppBar(
         title: const Text('Complete Payment'),
         backgroundColor: const Color(0xFFFF8A00),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            showDialog(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('Cancel Payment?'),
-                content: const Text('Are you sure you want to cancel this payment?'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Continue Payment'),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      _handlePaymentFailure();
-                    },
-                    child: const Text('Cancel', style: TextStyle(color: Colors.red)),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
       ),
       body: Stack(
         children: [

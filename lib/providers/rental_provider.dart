@@ -1,4 +1,7 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart' show Provider, FutureProvider;
+import 'package:flutter_riverpod/legacy.dart' show StateNotifierProvider, StateProvider;
+import 'package:state_notifier/state_notifier.dart';
+
 import 'package:vero360_app/models/car_booking_model.dart';
 import 'package:vero360_app/models/car_model.dart';
 import 'package:vero360_app/services/car_rental_service.dart';
@@ -102,22 +105,21 @@ class BookingFormNotifier extends StateNotifier<BookingFormState> {
   void setReturnLocation(String location) => state = state.copyWith(returnLocation: location);
   void toggleInsurance() => state = state.copyWith(includeInsurance: !state.includeInsurance);
   void addExtra(String extra) => state = state.copyWith(extras: [...state.extras, extra]);
-  void removeExtra(String extra) => state = state.copyWith(extras: state.extras.where((e) => e != extra).toList());
+  void removeExtra(String extra) =>
+      state = state.copyWith(extras: state.extras.where((e) => e != extra).toList());
   void setPromoCode(String code) => state = state.copyWith(promoCode: code);
   void setEstimatedCost(double cost) => state = state.copyWith(estimatedCost: cost);
   void reset() => state = BookingFormState(carId: 0);
 }
 
 // Booking status filter
-final bookingStatusFilterProvider = StateProvider<BookingStatus?>((ref) {
-  return null;
-});
+final bookingStatusFilterProvider = StateProvider<BookingStatus?>((ref) => null);
 
 // Filtered bookings
 final filteredBookingsFutureProvider = FutureProvider<List<CarBookingModel>>((ref) async {
   final bookings = await ref.watch(userBookingsFutureProvider.future);
   final filter = ref.watch(bookingStatusFilterProvider);
-  
+
   if (filter == null) return bookings;
   return bookings.where((b) => b.status == filter).toList();
 });

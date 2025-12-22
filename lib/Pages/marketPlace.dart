@@ -6,14 +6,16 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart'; // ✅ NEW
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/Pages/checkout_page.dart';
-import 'package:vero360_app/models/marketplace.model.dart'
-    as core;
+import 'package:vero360_app/models/marketplace.model.dart' as core;
 
 import 'package:vero360_app/models/cart_model.dart';
 import 'package:vero360_app/services/cart_services.dart';
@@ -25,7 +27,7 @@ import 'package:vero360_app/services/serviceprovider_service.dart';
 import 'package:vero360_app/models/serviceprovider_model.dart';
 
 /// --------------------
-/// Local marketplace model (Firestore) - UPDATED WITH MERCHANT FIELDS
+/// Local marketplace model (Firestore)
 /// --------------------
 class MarketplaceDetailModel {
   final String id;
@@ -34,21 +36,31 @@ class MarketplaceDetailModel {
   final String name;
   final String category;
   final double price;
+
+  /// Can be:
+  /// - base64 string (old)
+  /// - http(s) url
+  /// - gs://... firebase storage url
+  /// - firebase storage path like "marketplace_items/abc.jpg"
   final String image;
+
+  /// Only used when `image` is base64 and decodes successfully
   final Uint8List? imageBytes;
 
   final String? description;
   final String? location;
   final bool isActive;
   final DateTime? createdAt;
-  
-  // Merchant fields for wallet integration
+
+  // Merchant fields
   final String? merchantId;
   final String? merchantName;
   final String? serviceType;
 
+  // gallery can contain http / gs:// / firebase paths
   final List<String> gallery;
 
+  // Seller/business meta (sometimes coming from service provider)
   final String? sellerBusinessName;
   final String? sellerOpeningHours;
   final String? sellerStatus;
@@ -86,9 +98,9 @@ class MarketplaceDetailModel {
 
   bool get hasValidSqlItemId => sqlItemId != null && sqlItemId! > 0;
 
-  bool get hasValidMerchantInfo => 
-      merchantId != null && 
-      merchantId!.isNotEmpty && 
+  bool get hasValidMerchantInfo =>
+      merchantId != null &&
+      merchantId!.isNotEmpty &&
       merchantId != 'unknown' &&
       merchantName != null &&
       merchantName!.isNotEmpty &&
@@ -97,11 +109,20 @@ class MarketplaceDetailModel {
   factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
     final data = (doc.data() as Map<String, dynamic>?) ?? {};
 
-    final rawImage = (data['image'] ?? '').toString();
+    final rawImage = (data['image'] ?? '').toString().trim();
+
+    bool looksLikeBase64(String s) {
+      final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
+      if (x.length < 150) return false;
+      return RegExp(r'^[A-Za-z0-9+/=\s]+$').hasMatch(x);
+    }
+
     Uint8List? bytes;
-    if (rawImage.isNotEmpty) {
+    if (rawImage.isNotEmpty && looksLikeBase64(rawImage)) {
       try {
-        bytes = base64Decode(rawImage);
+        final base64Part =
+            rawImage.contains(',') ? rawImage.split(',').last : rawImage;
+        bytes = base64Decode(base64Part);
       } catch (_) {
         bytes = null;
       }
@@ -123,17 +144,15 @@ class MarketplaceDetailModel {
       price = double.tryParse(p.toString()) ?? 0;
     }
 
-    int? _parseInt(dynamic v) {
+    int? parseInt(dynamic v) {
       if (v == null) return null;
       if (v is num) return v.toInt();
-      return int.tryParse(
-        v.toString().replaceAll(RegExp(r'[^\d]'), ''),
-      );
+      return int.tryParse(v.toString().replaceAll(RegExp(r'[^\d]'), ''));
     }
 
     final rawSql =
         data['sqlItemId'] ?? data['backendId'] ?? data['itemId'] ?? data['id'];
-    final sqlId = _parseInt(rawSql);
+    final sqlId = parseInt(rawSql);
 
     final cat = (data['category'] ?? '').toString().toLowerCase();
 
@@ -168,8 +187,7 @@ class MarketplaceDetailModel {
       sellerBusinessName: data['sellerBusinessName']?.toString(),
       sellerOpeningHours: data['sellerOpeningHours']?.toString(),
       sellerStatus: data['sellerStatus']?.toString(),
-      sellerBusinessDescription:
-          data['sellerBusinessDescription']?.toString(),
+      sellerBusinessDescription: data['sellerBusinessDescription']?.toString(),
       sellerRating: sellerRating,
       sellerLogoUrl: data['sellerLogoUrl']?.toString(),
       serviceProviderId: data['serviceProviderId']?.toString(),
@@ -226,6 +244,7 @@ Future<_SellerInfo> _loadSellerForItem(MarketplaceDetailModel i) async {
         info.status ??= sp.status;
         info.description ??= sp.businessDescription;
         info.logoUrl ??= sp.logoUrl;
+
         final r = sp.rating;
         if (info.rating == null && r != null) {
           info.rating = (r is num) ? r.toDouble() : double.tryParse('$r');
@@ -256,8 +275,7 @@ Widget _ratingStars(double? rating) {
   return Row(mainAxisSize: MainAxisSize.min, children: [
     for (int i = 0; i < filled; i++)
       const Icon(Icons.star, size: 16, color: Colors.amber),
-    if (hasHalf)
-      const Icon(Icons.star_half, size: 16, color: Colors.amber),
+    if (hasHalf) const Icon(Icons.star_half, size: 16, color: Colors.amber),
     for (int i = 0; i < empty; i++)
       const Icon(Icons.star_border, size: 16, color: Colors.amber),
     const SizedBox(width: 6),
@@ -277,10 +295,7 @@ Widget _infoRow(String label, String? value, {IconData? icon}) {
         ],
         SizedBox(
           width: 120,
-          child: Text(
-            label,
-            style: const TextStyle(color: Colors.black54),
-          ),
+          child: Text(label, style: const TextStyle(color: Colors.black54)),
         ),
         const SizedBox(width: 8),
         Expanded(
@@ -298,6 +313,7 @@ Widget _statusChip(String? status) {
   final s = (status ?? '').toLowerCase().trim();
   Color bg = Colors.grey.shade200;
   Color fg = Colors.black87;
+
   if (s == 'open') {
     bg = Colors.green.shade50;
     fg = Colors.green.shade700;
@@ -308,6 +324,7 @@ Widget _statusChip(String? status) {
     bg = Colors.orange.shade50;
     fg = Colors.orange.shade800;
   }
+
   return Chip(
     label: Text((status ?? '—').toUpperCase()),
     backgroundColor: bg,
@@ -332,6 +349,32 @@ class _MarketPageState extends State<MarketPage> {
   final ImagePicker _picker = ImagePicker();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  // MWK formatter (commas, no decimals)
+  late final NumberFormat _mwkFmt =
+      NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
+
+  String _mwk(num v) => _mwkFmt.format(v);
+
+  Widget _smallBadge(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.65),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
   static const List<String> _kCategories = <String>[
     'food',
     'drinks',
@@ -349,6 +392,169 @@ class _MarketPageState extends State<MarketPage> {
 
   late Future<List<MarketplaceDetailModel>> _future;
 
+  // ✅ Cache firebase download URLs to avoid repeated calls
+  final Map<String, Future<String>> _dlUrlCache = {};
+
+  bool _isHttp(String s) => s.startsWith('http://') || s.startsWith('https://');
+  bool _isGs(String s) => s.startsWith('gs://');
+
+  bool _looksLikeBase64(String s) {
+    final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
+    if (x.length < 150) return false;
+    return RegExp(r'^[A-Za-z0-9+/=\s]+$').hasMatch(x);
+  }
+
+  Future<String?> _toFirebaseDownloadUrl(String raw) async {
+    final s = raw.trim();
+    if (s.isEmpty) return null;
+
+    if (_isHttp(s)) return s;
+
+    if (_dlUrlCache.containsKey(s)) return _dlUrlCache[s]!.then((v) => v);
+
+    Future<String> fut() async {
+      if (_isGs(s)) {
+        return FirebaseStorage.instance.refFromURL(s).getDownloadURL();
+      }
+      return FirebaseStorage.instance.ref(s).getDownloadURL();
+    }
+
+    _dlUrlCache[s] = fut();
+    try {
+      return await _dlUrlCache[s]!;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _imageFromAnySource(
+    String raw, {
+    BoxFit fit = BoxFit.cover,
+    double? width,
+    double? height,
+    BorderRadius? radius,
+  }) {
+    final s = raw.trim();
+
+    Widget wrap(Widget child) {
+      if (radius == null) return child;
+      return ClipRRect(borderRadius: radius, child: child);
+    }
+
+    if (s.isEmpty) {
+      return wrap(Container(
+        width: width,
+        height: height,
+        color: Colors.grey.shade200,
+        alignment: Alignment.center,
+        child: const Icon(Icons.image_not_supported_rounded),
+      ));
+    }
+
+    if (_looksLikeBase64(s)) {
+      try {
+        final base64Part = s.contains(',') ? s.split(',').last : s;
+        final bytes = base64Decode(base64Part);
+        return wrap(Image.memory(bytes, fit: fit, width: width, height: height));
+      } catch (_) {
+        // fall through
+      }
+    }
+
+    if (_isHttp(s)) {
+      return wrap(Image.network(
+        s,
+        fit: fit,
+        width: width,
+        height: height,
+        errorBuilder: (_, __, ___) => Container(
+          width: width,
+          height: height,
+          color: Colors.grey.shade200,
+          alignment: Alignment.center,
+          child: const Icon(Icons.image_not_supported_rounded),
+        ),
+        loadingBuilder: (c, child, progress) {
+          if (progress == null) return child;
+          return Container(
+            width: width,
+            height: height,
+            color: Colors.grey.shade100,
+            alignment: Alignment.center,
+            child: const CircularProgressIndicator(strokeWidth: 2),
+          );
+        },
+      ));
+    }
+
+    return FutureBuilder<String?>(
+      future: _toFirebaseDownloadUrl(s),
+      builder: (context, snap) {
+        final url = snap.data;
+        if (url == null || url.isEmpty) {
+          return wrap(Container(
+            width: width,
+            height: height,
+            color: Colors.grey.shade200,
+            alignment: Alignment.center,
+            child: const Icon(Icons.image_not_supported_rounded),
+          ));
+        }
+        return wrap(Image.network(
+          url,
+          fit: fit,
+          width: width,
+          height: height,
+          errorBuilder: (_, __, ___) => Container(
+            width: width,
+            height: height,
+            color: Colors.grey.shade200,
+            alignment: Alignment.center,
+            child: const Icon(Icons.image_not_supported_rounded),
+          ),
+        ));
+      },
+    );
+  }
+
+  Widget _circleAvatarFromAnySource(String? raw, {double radius = 18}) {
+    final s = (raw ?? '').trim();
+    if (s.isEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: Colors.grey.shade200,
+        child: const Icon(Icons.storefront_rounded, color: Colors.black54),
+      );
+    }
+
+    if (_looksLikeBase64(s)) {
+      try {
+        final base64Part = s.contains(',') ? s.split(',').last : s;
+        final bytes = base64Decode(base64Part);
+        return CircleAvatar(radius: radius, backgroundImage: MemoryImage(bytes));
+      } catch (_) {}
+    }
+
+    if (_isHttp(s)) {
+      return CircleAvatar(radius: radius, backgroundImage: NetworkImage(s));
+    }
+
+    return FutureBuilder<String?>(
+      future: _toFirebaseDownloadUrl(s),
+      builder: (_, snap) {
+        final url = snap.data;
+        if (url == null || url.isEmpty) {
+          return CircleAvatar(
+            radius: radius,
+            backgroundColor: Colors.grey.shade200,
+            child: const Icon(Icons.storefront_rounded, color: Colors.black54),
+          );
+        }
+        return CircleAvatar(radius: radius, backgroundImage: NetworkImage(url));
+      },
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -364,7 +570,6 @@ class _MarketPageState extends State<MarketPage> {
     super.dispose();
   }
 
-  // Helper Methods
   void _showLoadingDialog() {
     showDialog(
       context: context,
@@ -389,45 +594,42 @@ class _MarketPageState extends State<MarketPage> {
       final FirebaseAuth auth = FirebaseAuth.instance;
       final User? user = auth.currentUser;
       if (user != null) return user.uid;
-      
+
       final SharedPreferences prefs = await SharedPreferences.getInstance();
       return prefs.getString('uid');
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   }
 
-  // Get proper authentication token
   Future<String?> _getAuthToken() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      
-      // Try backend JWT tokens first
-      final token = prefs.getString('token') ?? prefs.getString('jwt_token');
-      if (token != null && token.isNotEmpty) {
-        return token;
-      }
-      
-      // If no backend token, try Firebase token
-      final firebaseUser = FirebaseAuth.instance.currentUser;
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+      // 1) backend JWT tokens first
+      final String? token =
+          prefs.getString('token') ?? prefs.getString('jwt_token');
+      if (token != null && token.isNotEmpty) return token;
+
+      // 2) Firebase token
+      final User? firebaseUser = FirebaseAuth.instance.currentUser;
       if (firebaseUser != null) {
-        final firebaseToken = await firebaseUser.getIdToken();
+        final String? firebaseToken = await firebaseUser.getIdToken();
         if (firebaseToken != null && firebaseToken.isNotEmpty) {
-          // Store it for future use
           await prefs.setString('firebase_token', firebaseToken);
           return firebaseToken;
         }
       }
-      
-      // Try stored Firebase token
-      final storedFirebaseToken = prefs.getString('firebase_token');
+
+      // 3) stored firebase token fallback
+      final String? storedFirebaseToken = prefs.getString('firebase_token');
       if (storedFirebaseToken != null && storedFirebaseToken.isNotEmpty) {
         return storedFirebaseToken;
       }
-      
+
       return null;
     } catch (e) {
-      print('Error getting auth token: $e');
+      // ignore
       return null;
     }
   }
@@ -482,22 +684,6 @@ class _MarketPageState extends State<MarketPage> {
     return hash;
   }
 
-  // Connectivity Check Helper (Optional - requires connectivity_plus package)
-  Future<bool> _checkConnectivity() async {
-    try {
-      // Option 1: If you have connectivity_plus package (uncomment and add to pubspec.yaml)
-      // final connectivityResult = await (Connectivity().checkConnectivity());
-      // return connectivityResult != ConnectivityResult.none;
-      
-      // Option 2: Simple network check (less reliable but works without extra packages)
-      final result = await InternetAddress.lookup('google.com');
-      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
-    } on SocketException catch (_) {
-      return false;
-    }
-  }
-
-  // Data Loaders - FIXED WITH OFFLINE SUPPORT
   Future<List<MarketplaceDetailModel>> _loadAll({String? category}) async {
     setState(() {
       _loading = true;
@@ -507,34 +693,28 @@ class _MarketPageState extends State<MarketPage> {
 
     try {
       QuerySnapshot? snapshot;
-      
-      // FIRST: Try to read from CACHE
+
+      // cache first
       try {
         snapshot = await _firestore
             .collection('marketplace_items')
             .orderBy('createdAt', descending: true)
             .get(const GetOptions(source: Source.cache));
-        
+
         if (snapshot.docs.isNotEmpty) {
-          // We have cached data, process it
           final all = snapshot.docs
               .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
               .where((item) => item.isActive)
               .toList();
 
-          if (category == null || category.isEmpty) {
-            return all;
-          }
+          if (category == null || category.isEmpty) return all;
 
           final c = category.toLowerCase();
           return all.where((item) => item.category.toLowerCase() == c).toList();
         }
-      } catch (cacheError) {
-        // Cache is empty or inaccessible, we'll try server next
-        print('Cache read failed: $cacheError');
-      }
+      } catch (_) {}
 
-      // SECOND: Try to fetch from SERVER (if online)
+      // server second
       try {
         snapshot = await _firestore
             .collection('marketplace_items')
@@ -546,39 +726,31 @@ class _MarketPageState extends State<MarketPage> {
             .where((item) => item.isActive)
             .toList();
 
-        if (category == null || category.isEmpty) {
-          return all;
-        }
+        if (category == null || category.isEmpty) return all;
 
         final c = category.toLowerCase();
         return all.where((item) => item.category.toLowerCase() == c).toList();
       } catch (serverError) {
-        // Server failed, check if this is a connectivity issue
         final errorStr = serverError.toString().toLowerCase();
-        final isNetworkError = errorStr.contains('unavailable') || 
-                              errorStr.contains('network') ||
-                              errorStr.contains('offline');
-        
+        final isNetworkError = errorStr.contains('unavailable') ||
+            errorStr.contains('network') ||
+            errorStr.contains('offline');
+
         if (isNetworkError && mounted) {
-          // Show user-friendly message about being offline
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('You are offline. Showing cached items if available.'),
+              content: const Text(
+                  'You are offline. Showing cached items if available.'),
               backgroundColor: Colors.orange,
               duration: const Duration(seconds: 3),
             ),
           );
         }
-        
-        // Return empty list - we tried both cache and server
         return [];
       }
-
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-    
-    return [];
   }
 
   Future<List<MarketplaceDetailModel>> _searchByName(String raw) async {
@@ -593,11 +765,8 @@ class _MarketPageState extends State<MarketPage> {
     });
 
     try {
-      // First load all items with offline support
       final all = await _loadAll(category: _selectedCategory);
       final lower = q.toLowerCase();
-      
-      // Then filter locally
       return all
           .where((item) => item.name.toLowerCase().contains(lower))
           .toList();
@@ -616,8 +785,7 @@ class _MarketPageState extends State<MarketPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content:
-                Text('Photo search not implemented yet. Showing all items.'),
+            content: Text('Photo search not implemented yet. Showing all items.'),
           ),
         );
       }
@@ -627,29 +795,20 @@ class _MarketPageState extends State<MarketPage> {
     }
   }
 
-  // Auth Helpers
   Future<bool> _isUserLoggedIn() async {
-    // Check Firebase Auth first
-    final FirebaseAuth auth = FirebaseAuth.instance;
-    final User? firebaseUser = auth.currentUser;
-    if (firebaseUser != null) {
-      return true;
-    }
-    
-    // Check SharedPreferences for tokens
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser != null) return true;
+
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final String? token = prefs.getString('token');
     final String? jwtToken = prefs.getString('jwt_token');
     final String? uid = prefs.getString('uid');
-    
-    // Also check if we have user role or email
     final String? email = prefs.getString('email');
-    final String? role = prefs.getString('role');
-    
-    return (token != null && token.isNotEmpty) || 
-           (jwtToken != null && jwtToken.isNotEmpty) ||
-           (uid != null && uid.isNotEmpty) ||
-           (email != null && email.isNotEmpty);
+
+    return (token != null && token.isNotEmpty) ||
+        (jwtToken != null && jwtToken.isNotEmpty) ||
+        (uid != null && uid.isNotEmpty) ||
+        (email != null && email.isNotEmpty);
   }
 
   Future<bool> _requireLoginForCart() async {
@@ -678,7 +837,6 @@ class _MarketPageState extends State<MarketPage> {
     return isLoggedIn;
   }
 
-  // Cart Functionality
   Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     final isLoggedIn = await _requireLoginForCart();
     if (!isLoggedIn) return;
@@ -696,7 +854,6 @@ class _MarketPageState extends State<MarketPage> {
     _showLoadingDialog();
 
     try {
-      // Get fresh auth token before adding to cart
       final token = await _getAuthToken();
       if (token == null || token.isEmpty) {
         ToastHelper.showCustomToast(
@@ -710,10 +867,9 @@ class _MarketPageState extends State<MarketPage> {
       }
 
       final userId = await _getCurrentUserId() ?? 'unknown';
-      
-      final int numericItemId = item.hasValidSqlItemId
-          ? item.sqlItemId!
-          : _stablePositiveIdFromString(item.id);
+
+      final int numericItemId =
+          item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id);
 
       final cartItem = CartModel(
         userId: userId,
@@ -732,7 +888,7 @@ class _MarketPageState extends State<MarketPage> {
 
       ToastHelper.showCustomToast(
         context,
-        '${item.name} added to cart!\nFunds will go to ${item.merchantName}',
+        '${item.name} added to cart',
         isSuccess: true,
         errorMessage: 'OK',
       );
@@ -744,25 +900,19 @@ class _MarketPageState extends State<MarketPage> {
         errorMessage: 'Timeout',
       );
     } catch (e) {
-      // Check if it's an authentication error
-      if (e.toString().contains('401') || e.toString().contains('Unauthorized')) {
+      if (e.toString().contains('401') ||
+          e.toString().contains('Unauthorized')) {
         ToastHelper.showCustomToast(
           context,
           'Session expired. Please log in again.',
           isSuccess: false,
           errorMessage: 'Auth failed',
         );
-        
-        // Clear invalid tokens
+
         final prefs = await SharedPreferences.getInstance();
         await prefs.remove('token');
         await prefs.remove('jwt_token');
         await prefs.remove('firebase_token');
-        
-        // Optionally, redirect to login
-        // if (mounted) {
-        //   Navigator.pushNamed(context, '/login');
-        // }
       } else {
         ToastHelper.showCustomToast(
           context,
@@ -772,13 +922,10 @@ class _MarketPageState extends State<MarketPage> {
         );
       }
     } finally {
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
+      if (mounted) Navigator.of(context).pop();
     }
   }
 
-  // Chat Functionality
   Future<void> _openChatWithMerchant(MarketplaceDetailModel item) async {
     if (!await _requireLoginForChat()) return;
 
@@ -794,8 +941,15 @@ class _MarketPageState extends State<MarketPage> {
       return;
     }
 
-    final sellerName = item.sellerBusinessName ?? 'Seller';
-    final sellerAvatar = item.sellerLogoUrl ?? '';
+    // ✅ Use merchant name in chat
+    final merchantName = (item.merchantName ?? '').trim();
+    final sellerName = merchantName.isNotEmpty
+        ? merchantName
+        : ((item.sellerBusinessName ?? 'Seller').trim());
+
+    // ✅ Support firebase storage avatar
+    final rawAvatar = (item.sellerLogoUrl ?? '').trim();
+    final sellerAvatar = (await _toFirebaseDownloadUrl(rawAvatar)) ?? rawAvatar;
 
     await ChatService.ensureFirebaseAuth();
     final me = await ChatService.myAppUserId();
@@ -820,17 +974,11 @@ class _MarketPageState extends State<MarketPage> {
     );
   }
 
-  // Checkout
-  Future<void> _goToCheckoutFromBottomSheet(
-      MarketplaceDetailModel item) async {
-  
+  Future<void> _goToCheckoutFromBottomSheet(MarketplaceDetailModel item) async {
     if (!mounted) return;
 
-    final core.MarketplaceDetailModel checkoutItem =
-        core.MarketplaceDetailModel(
-      id: item.hasValidSqlItemId
-          ? item.sqlItemId!
-          : _stablePositiveIdFromString(item.id),
+    final core.MarketplaceDetailModel checkoutItem = core.MarketplaceDetailModel(
+      id: item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id),
       name: item.name,
       category: item.category,
       price: item.price,
@@ -853,13 +1001,10 @@ class _MarketPageState extends State<MarketPage> {
 
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => CheckoutPage(item: checkoutItem),
-      ),
+      MaterialPageRoute(builder: (_) => CheckoutPage(item: checkoutItem)),
     );
   }
 
-  // Search Handlers
   void _onSearchChanged() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
@@ -891,8 +1036,7 @@ class _MarketPageState extends State<MarketPage> {
       if (picked == null) return;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Photo search works best in mobile builds.')),
+        const SnackBar(content: Text('Photo search works best in mobile builds.')),
       );
       return;
     }
@@ -953,18 +1097,19 @@ class _MarketPageState extends State<MarketPage> {
     await _future;
   }
 
-  // Details Bottom Sheet
+  /// ✅ Details Bottom Sheet (now supports firebase images in carousel + logo)
   Future<void> _showDetailsBottomSheet(MarketplaceDetailModel item) async {
     if (!mounted) return;
 
     final Future<_SellerInfo> sellerFuture = _loadSellerForItem(item);
 
-    final List<String> mediaUrls = [];
-    if (item.image.isNotEmpty && item.image.startsWith('http')) {
-      mediaUrls.add(item.image);
-    }
+    // ✅ media can be http/base64/gs:///path
+    final List<String> mediaSources = [];
+    if (item.image.trim().isNotEmpty) mediaSources.add(item.image.trim());
     if (item.gallery.isNotEmpty) {
-      mediaUrls.addAll(item.gallery.where((u) => u.trim().isNotEmpty));
+      mediaSources.addAll(
+        item.gallery.map((e) => e.toString().trim()).where((u) => u.isNotEmpty),
+      );
     }
 
     final pageController = PageController();
@@ -994,13 +1139,23 @@ class _MarketPageState extends State<MarketPage> {
                     future: sellerFuture,
                     builder: (ctx, snap) {
                       final seller = snap.data;
-                      final businessName = seller?.businessName;
+
                       final openingHours = seller?.openingHours;
                       final closing = _closingFromHours(openingHours);
                       final status = seller?.status;
                       final rating = seller?.rating;
                       final businessDesc = seller?.description;
                       final logo = seller?.logoUrl;
+
+                      // ✅ merchant name drives "posted by" + business name
+                      final merchantName = (item.merchantName ?? '').trim();
+                      final displayMerchantName = merchantName.isNotEmpty
+                          ? merchantName
+                          : ((seller?.businessName ?? item.sellerBusinessName ?? '')
+                                  .trim()
+                                  .isNotEmpty
+                              ? (seller?.businessName ?? item.sellerBusinessName)!.trim()
+                              : 'Merchant');
 
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1024,34 +1179,27 @@ class _MarketPageState extends State<MarketPage> {
                               children: [
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(16),
-                                  child: mediaUrls.isEmpty
+                                  child: mediaSources.isEmpty
                                       ? _buildItemImageWidget(item)
                                       : PageView.builder(
                                           controller: pageController,
-                                          itemCount: mediaUrls.length,
-                                          physics: mediaUrls.length > 1
+                                          itemCount: mediaSources.length,
+                                          physics: mediaSources.length > 1
                                               ? const BouncingScrollPhysics()
                                               : const NeverScrollableScrollPhysics(),
                                           onPageChanged: (i) =>
-                                              setModalState(
-                                                  () => currentPage = i),
+                                              setModalState(() => currentPage = i),
                                           itemBuilder: (_, i) {
-                                            return Image.network(
-                                              mediaUrls[i],
+                                            return _imageFromAnySource(
+                                              mediaSources[i],
                                               fit: BoxFit.cover,
-                                              errorBuilder: (_, __, ___) =>
-                                                  Container(
-                                                color: Colors.grey.shade200,
-                                                child: const Center(
-                                                  child: Icon(Icons
-                                                      .image_not_supported_rounded),
-                                                ),
-                                              ),
+                                              width: double.infinity,
+                                              height: double.infinity,
                                             );
                                           },
                                         ),
                                 ),
-                                if (mediaUrls.length > 1) ...[
+                                if (mediaSources.length > 1) ...[
                                   Positioned(
                                     left: 4,
                                     top: 0,
@@ -1060,25 +1208,20 @@ class _MarketPageState extends State<MarketPage> {
                                       color: Colors.black38,
                                       borderRadius: BorderRadius.circular(24),
                                       child: InkWell(
-                                        borderRadius:
-                                            BorderRadius.circular(24),
+                                        borderRadius: BorderRadius.circular(24),
                                         onTap: () {
-                                          final prev = (currentPage -
-                                                      1 +
-                                                      mediaUrls.length) %
-                                                  mediaUrls.length;
+                                          final prev = (currentPage - 1 + mediaSources.length) %
+                                              mediaSources.length;
                                           pageController.animateToPage(
                                             prev,
-                                            duration: const Duration(
-                                                milliseconds: 300),
+                                            duration: const Duration(milliseconds: 300),
                                             curve: Curves.easeOut,
                                           );
                                         },
                                         child: const SizedBox(
                                           width: 36,
                                           height: 36,
-                                          child: Icon(Icons.chevron_left,
-                                              color: Colors.white),
+                                          child: Icon(Icons.chevron_left, color: Colors.white),
                                         ),
                                       ),
                                     ),
@@ -1091,56 +1234,21 @@ class _MarketPageState extends State<MarketPage> {
                                       color: Colors.black38,
                                       borderRadius: BorderRadius.circular(24),
                                       child: InkWell(
-                                        borderRadius:
-                                            BorderRadius.circular(24),
+                                        borderRadius: BorderRadius.circular(24),
                                         onTap: () {
-                                          final next =
-                                              (currentPage + 1) %
-                                                  mediaUrls.length;
+                                          final next = (currentPage + 1) % mediaSources.length;
                                           pageController.animateToPage(
                                             next,
-                                            duration: const Duration(
-                                                milliseconds: 300),
+                                            duration: const Duration(milliseconds: 300),
                                             curve: Curves.easeOut,
                                           );
                                         },
                                         child: const SizedBox(
                                           width: 36,
                                           height: 36,
-                                          child: Icon(Icons.chevron_right,
-                                              color: Colors.white),
+                                          child: Icon(Icons.chevron_right, color: Colors.white),
                                         ),
                                       ),
-                                    ),
-                                  ),
-                                  Positioned(
-                                    bottom: 8,
-                                    left: 0,
-                                    right: 0,
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children:
-                                          List.generate(mediaUrls.length, (i) {
-                                        final active = i == currentPage;
-                                        return AnimatedContainer(
-                                          duration: const Duration(
-                                              milliseconds: 200),
-                                          margin: const EdgeInsets.symmetric(
-                                              horizontal: 3),
-                                          width: active ? 18 : 8,
-                                          height: 8,
-                                          decoration: BoxDecoration(
-                                            color: active
-                                                ? Colors.orange
-                                                : Colors.white70,
-                                            borderRadius:
-                                                BorderRadius.circular(20),
-                                            border: Border.all(
-                                                color: Colors.black26),
-                                          ),
-                                        );
-                                      }),
                                     ),
                                   ),
                                 ],
@@ -1156,8 +1264,7 @@ class _MarketPageState extends State<MarketPage> {
                             children: [
                               Expanded(
                                 child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
                                       item.name,
@@ -1168,17 +1275,14 @@ class _MarketPageState extends State<MarketPage> {
                                     ),
                                     const SizedBox(height: 4),
                                     Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 10, vertical: 6),
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                       decoration: BoxDecoration(
                                         color: const Color(0xFFFFE8CC),
-                                        borderRadius:
-                                            BorderRadius.circular(20),
-                                        border: Border.all(
-                                            color: const Color(0xFFFF8A00)),
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: Border.all(color: const Color(0xFFFF8A00)),
                                       ),
                                       child: Text(
-                                        "MWK ${item.price.toStringAsFixed(0)}",
+                                        _mwk(item.price),
                                         style: const TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w700,
@@ -1186,15 +1290,12 @@ class _MarketPageState extends State<MarketPage> {
                                       ),
                                     ),
                                     const SizedBox(height: 8),
-                                    if (item.location != null &&
-                                        item.location!.trim().isNotEmpty)
+                                    if (item.location != null && item.location!.trim().isNotEmpty)
                                       Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                        crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
                                           const Icon(Icons.location_on,
-                                              size: 16,
-                                              color: Colors.redAccent),
+                                              size: 16, color: Colors.redAccent),
                                           const SizedBox(width: 4),
                                           Expanded(
                                             child: Text(
@@ -1210,11 +1311,8 @@ class _MarketPageState extends State<MarketPage> {
                                     if (item.createdAt != null) ...[
                                       const SizedBox(height: 4),
                                       Text(
-                                        "Posted ${_formatTimeAgo(item.createdAt!)}",
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[600],
-                                        ),
+                                        "Posted by $displayMerchantName • ${_formatTimeAgo(item.createdAt!)}",
+                                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                                       ),
                                     ],
                                   ],
@@ -1226,14 +1324,11 @@ class _MarketPageState extends State<MarketPage> {
                                   backgroundColor: const Color(0xFFFF8A00),
                                   foregroundColor: Colors.white,
                                   shape: RoundedRectangleBorder(
-                                    borderRadius:
-                                        BorderRadius.circular(12),
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 10),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                                 ),
-                                onPressed: () =>
-                                    _openChatWithMerchant(item),
+                                onPressed: () => _openChatWithMerchant(item),
                                 icon: const Icon(Icons.message_rounded),
                                 label: const Text('Chat'),
                               ),
@@ -1243,11 +1338,8 @@ class _MarketPageState extends State<MarketPage> {
                           const SizedBox(height: 12),
 
                           if ((item.description ?? '').trim().isNotEmpty)
-                            Text(
-                              item.description!.trim(),
-                              style: const TextStyle(
-                                  fontSize: 14, height: 1.3),
-                            ),
+                            Text(item.description!.trim(),
+                                style: const TextStyle(fontSize: 14, height: 1.3)),
 
                           const SizedBox(height: 16),
 
@@ -1260,39 +1352,28 @@ class _MarketPageState extends State<MarketPage> {
                             ),
                             clipBehavior: Clip.antiAlias,
                             child: Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                  16, 14, 16, 14),
+                              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
                               child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.center,
+                                    crossAxisAlignment: CrossAxisAlignment.center,
                                     children: [
-                                      if (logo != null && logo.isNotEmpty)
-                                        CircleAvatar(
-                                          radius: 18,
-                                          backgroundImage:
-                                              NetworkImage(logo),
-                                        ),
-                                      if (logo != null && logo.isNotEmpty)
-                                        const SizedBox(width: 10),
-                                      const Icon(
-                                          Icons.storefront_rounded,
-                                          size: 20,
-                                          color: Colors.black87),
+                                      // ✅ firebase/gs/base64/http logo support
+                                      if ((logo ?? '').trim().isNotEmpty) _circleAvatarFromAnySource(logo, radius: 18),
+                                      if ((logo ?? '').trim().isNotEmpty) const SizedBox(width: 10),
+                                      const Icon(Icons.storefront_rounded,
+                                          size: 20, color: Colors.black87),
                                       const SizedBox(width: 8),
                                       Expanded(
                                         child: Text(
-                                          businessName ?? 'Posted by —',
+                                          displayMerchantName,
                                           style: const TextStyle(
                                             fontWeight: FontWeight.w700,
                                             fontSize: 16,
                                           ),
                                           maxLines: 1,
-                                          overflow:
-                                              TextOverflow.ellipsis,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
                                       const SizedBox(width: 8),
@@ -1302,31 +1383,25 @@ class _MarketPageState extends State<MarketPage> {
                                     ],
                                   ),
                                   const SizedBox(height: 10),
-                                  _infoRow('Business name', businessName,
+
+                                  // ✅ Business name uses merchant name
+                                  _infoRow('Business name', displayMerchantName,
                                       icon: Icons.badge_rounded),
+
                                   _infoRow('Closing hours', closing,
                                       icon: Icons.access_time_rounded),
                                   _infoRow(
                                     'Status',
-                                    (status ?? '').isEmpty
-                                        ? '—'
-                                        : status!.toUpperCase(),
-                                    icon:
-                                        Icons.info_outline_rounded,
+                                    (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
+                                    icon: Icons.info_outline_rounded,
                                   ),
                                   const SizedBox(height: 6),
-                                  const Text(
-                                    'Business description',
-                                    style: TextStyle(
-                                        color: Colors.black54),
-                                  ),
+                                  const Text('Business description',
+                                      style: TextStyle(color: Colors.black54)),
                                   const SizedBox(height: 4),
                                   Text(
-                                    (businessDesc ?? '').isNotEmpty
-                                        ? businessDesc!
-                                        : '—',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w600),
+                                    (businessDesc ?? '').isNotEmpty ? businessDesc! : '—',
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
                                   ),
                                 ],
                               ),
@@ -1335,30 +1410,23 @@ class _MarketPageState extends State<MarketPage> {
 
                           const SizedBox(height: 20),
 
-                          // Action Button
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton.icon(
                               style: FilledButton.styleFrom(
-                                backgroundColor:
-                                    const Color(0xFFFF8A00),
+                                backgroundColor: const Color(0xFFFF8A00),
                                 foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(
-                                        vertical: 14),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius:
-                                      BorderRadius.circular(14),
+                                  borderRadius: BorderRadius.circular(14),
                                 ),
-                                textStyle: const TextStyle(
-                                    fontWeight: FontWeight.w700),
+                                textStyle: const TextStyle(fontWeight: FontWeight.w700),
                               ),
                               onPressed: () {
                                 Navigator.pop(ctx);
                                 _goToCheckoutFromBottomSheet(item);
                               },
-                              icon: const Icon(
-                                  Icons.shopping_bag_outlined),
+                              icon: const Icon(Icons.shopping_bag_outlined),
                               label: const Text("Continue to checkout"),
                             ),
                           ),
@@ -1372,15 +1440,11 @@ class _MarketPageState extends State<MarketPage> {
           ),
         );
       },
-    ).whenComplete(() {
-      pageController.dispose();
-    });
+    ).whenComplete(pageController.dispose);
   }
 
-  // UI Widgets
   Widget _buildCategoryChip(String title,
-      {required bool isSelected,
-      required VoidCallback onTap}) {
+      {required bool isSelected, required VoidCallback onTap}) {
     return InkWell(
       borderRadius: BorderRadius.circular(20),
       onTap: onTap,
@@ -1392,55 +1456,32 @@ class _MarketPageState extends State<MarketPage> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor:
-            isSelected ? Colors.orange : Colors.grey[300],
-        padding:
-            const EdgeInsets.symmetric(horizontal: 10),
+        backgroundColor: isSelected ? Colors.orange : Colors.grey[300],
+        padding: const EdgeInsets.symmetric(horizontal: 10),
       ),
     );
   }
 
+  // ✅ Grid image widget (supports base64 + http + firebase)
   Widget _buildItemImageWidget(MarketplaceDetailModel item) {
     if (item.imageBytes != null) {
-      return Image.memory(
-        item.imageBytes!,
-        fit: BoxFit.cover,
-        width: double.infinity,
-      );
+      return Image.memory(item.imageBytes!,
+          fit: BoxFit.cover, width: double.infinity);
     }
-
-    if (item.image.isNotEmpty &&
-        item.image.startsWith('http')) {
-      return Image.network(
-        item.image,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        errorBuilder: (_, __, ___) => Container(
-          color: Colors.grey[300],
-          alignment: Alignment.center,
-          child: const Icon(Icons.broken_image),
-        ),
-        loadingBuilder: (context, child, progress) {
-          if (progress == null) return child;
-          return Container(
-            color: Colors.grey[200],
-            alignment: Alignment.center,
-            child: const CircularProgressIndicator(
-                strokeWidth: 2),
-          );
-        },
-      );
-    }
-
-    return Container(
-      color: Colors.grey[300],
-      alignment: Alignment.center,
-      child: const Icon(Icons.image, size: 32),
+    return _imageFromAnySource(
+      item.image,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
     );
   }
 
   Widget _buildMarketItem(MarketplaceDetailModel item) {
-    final cat = (item.category).trim();
+    final cat = item.category.trim();
+    final merchant = (item.merchantName ?? '').trim();
+    final showCat = cat.isNotEmpty;
+    final showMerchant = merchant.isNotEmpty;
+
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -1448,15 +1489,14 @@ class _MarketPageState extends State<MarketPage> {
         borderRadius: BorderRadius.circular(15),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
+            color: Colors.black.withOpacity(0.08),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Photo
           Expanded(
@@ -1465,44 +1505,35 @@ class _MarketPageState extends State<MarketPage> {
                 Positioned.fill(
                   child: ClipRRect(
                     borderRadius:
-                        const BorderRadius.vertical(
-                            top: Radius.circular(15)),
+                        const BorderRadius.vertical(top: Radius.circular(15)),
                     child: _buildItemImageWidget(item),
                   ),
                 ),
-                if (cat.isNotEmpty)
+
+                // badge row
+                if (showCat || showMerchant)
                   Positioned(
                     left: 8,
-                    top: 8,
-                    child: Chip(
-                      label: Text(_titleCase(cat)),
-                      backgroundColor: Colors.black.withValues(alpha: 0.75),
-                      labelStyle: const TextStyle(color: Colors.white),
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-                if (item.merchantName != null && item.merchantName!.isNotEmpty)
-                  Positioned(
                     right: 8,
                     top: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.6),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        item.merchantName!,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
+                    child: Row(
+                      children: [
+                        if (showCat)
+                          Flexible(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: _smallBadge(_titleCase(cat)),
+                            ),
+                          ),
+                        if (showCat && showMerchant) const SizedBox(width: 8),
+                        if (showMerchant)
+                          Flexible(
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: _smallBadge(merchant),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
               ],
@@ -1511,65 +1542,51 @@ class _MarketPageState extends State<MarketPage> {
 
           // Texts
           Padding(
-            padding: const EdgeInsets.fromLTRB(
-                10, 10, 10, 6),
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
             child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   item.name,
                   maxLines: 1,
-                  overflow:
-                      TextOverflow.ellipsis,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 16,
-                    fontWeight:
-                        FontWeight.bold,
+                    fontWeight: FontWeight.bold,
                     color: Colors.black,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  "MWK ${item.price.toStringAsFixed(0)}",
+                  _mwk(item.price),
                   style: const TextStyle(
                     fontSize: 14,
-                    fontWeight:
-                        FontWeight.w600,
+                    fontWeight: FontWeight.w600,
                     color: Colors.green,
                   ),
                 ),
+
                 const SizedBox(height: 4),
-                if (item.location != null &&
-                    item.location!.trim().isNotEmpty)
+                if (item.location != null && item.location!.trim().isNotEmpty)
                   Row(
                     children: [
-                      const Icon(
-                          Icons.location_on,
-                          size: 12,
-                          color: Colors.redAccent),
+                      const Icon(Icons.location_on,
+                          size: 12, color: Colors.redAccent),
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
                           item.location!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey[700],
-                          ),
+                          style: TextStyle(fontSize: 11, color: Colors.grey[700]),
                         ),
                       ),
                     ],
                   ),
                 if (item.createdAt != null)
                   Text(
-                    _formatTimeAgo(
-                        item.createdAt!),
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey[500],
-                    ),
+                    _formatTimeAgo(item.createdAt!),
+                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                   ),
               ],
             ),
@@ -1577,56 +1594,34 @@ class _MarketPageState extends State<MarketPage> {
 
           // Buttons
           Padding(
-            padding: const EdgeInsets.fromLTRB(
-                10, 0, 10, 10),
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
             child: Row(
               children: [
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () =>
-                        _addToCart(item),
+                    onPressed: () => _addToCart(item),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          Colors.green,
-                      foregroundColor:
-                          Colors.white,
-                      padding: const EdgeInsets
-                          .symmetric(
-                              vertical: 10),
-                      shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(
-                                10),
-                      ),
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
                     ),
-                    child:
-                        const Text("AddCart"),
+                    child: const Text("AddCart"),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () =>
-                        _showDetailsBottomSheet(
-                            item),
+                    onPressed: () => _showDetailsBottomSheet(item),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          Colors.red,
-                      foregroundColor:
-                          Colors.white,
-                      padding: const EdgeInsets
-                          .symmetric(
-                              vertical: 10),
-                      shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(
-                                10),
-                      ),
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
                     ),
-                    child:
-                        const Text("BuyNow"),
+                    child: const Text("BuyNow"),
                   ),
                 ),
               ],
@@ -1637,8 +1632,7 @@ class _MarketPageState extends State<MarketPage> {
     );
   }
 
-  String _titleCase(String s) =>
-      s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
+  String _titleCase(String s) => s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
 
   @override
   Widget build(BuildContext context) {
@@ -1647,8 +1641,7 @@ class _MarketPageState extends State<MarketPage> {
       appBar: AppBar(
         title: const Text(
           "Market Place",
-          style:
-              TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.white,
         elevation: 2,
@@ -1689,8 +1682,8 @@ class _MarketPageState extends State<MarketPage> {
                   borderRadius: BorderRadius.circular(30),
                   borderSide: BorderSide.none,
                 ),
-                contentPadding: const EdgeInsets.symmetric(
-                    vertical: 12, horizontal: 16),
+                contentPadding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
               ),
             ),
           ),
@@ -1698,14 +1691,12 @@ class _MarketPageState extends State<MarketPage> {
           SizedBox(
             height: 44,
             child: ListView(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               scrollDirection: Axis.horizontal,
               children: [
                 _buildCategoryChip(
                   "All Products",
-                  isSelected:
-                      _selectedCategory == null && !_photoMode,
+                  isSelected: _selectedCategory == null && !_photoMode,
                   onTap: () => _setCategory(null),
                 ),
                 const SizedBox(width: 6),
@@ -1722,10 +1713,10 @@ class _MarketPageState extends State<MarketPage> {
           ),
 
           if (_photoMode)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(12, 6, 12, 0),
               child: Row(
-                children: const [
+                children: [
                   Icon(Icons.image_search, size: 16),
                   SizedBox(width: 6),
                   Text("Showing results from photo search"),
@@ -1736,39 +1727,31 @@ class _MarketPageState extends State<MarketPage> {
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refresh,
-              child: FutureBuilder<
-                  List<MarketplaceDetailModel>>(
+              child: FutureBuilder<List<MarketplaceDetailModel>>(
                 future: _future,
                 builder: (context, snapshot) {
                   if (_loading &&
-                      snapshot.connectionState ==
-                          ConnectionState.waiting) {
-                    return const Center(
-                        child: CircularProgressIndicator());
+                      snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
                   }
 
                   if (snapshot.hasError) {
                     return ListView(
-                      physics:
-                          const AlwaysScrollableScrollPhysics(),
+                      physics: const AlwaysScrollableScrollPhysics(),
                       children: const [
                         SizedBox(height: 120),
                         Center(
-                          child: Text(
-                            "Failed to load items",
-                            style: TextStyle(color: Colors.red),
-                          ),
+                          child: Text("Failed to load items",
+                              style: TextStyle(color: Colors.red)),
                         ),
                       ],
                     );
                   }
 
-                  final items = snapshot.data ??
-                      const <MarketplaceDetailModel>[];
+                  final items = snapshot.data ?? const <MarketplaceDetailModel>[];
                   if (items.isEmpty) {
                     return ListView(
-                      physics:
-                          const AlwaysScrollableScrollPhysics(),
+                      physics: const AlwaysScrollableScrollPhysics(),
                       children: [
                         const SizedBox(height: 120),
                         Center(
@@ -1776,8 +1759,7 @@ class _MarketPageState extends State<MarketPage> {
                             _photoMode
                                 ? "No visually similar items found"
                                 : "No items available",
-                            style: const TextStyle(
-                                color: Colors.red),
+                            style: const TextStyle(color: Colors.red),
                           ),
                         ),
                       ],
@@ -1788,12 +1770,9 @@ class _MarketPageState extends State<MarketPage> {
                     padding: const EdgeInsets.all(12.0),
                     child: LayoutBuilder(
                       builder: (context, constraints) {
-                        final isWide =
-                            constraints.maxWidth >= 700;
-                        final crossAxisCount =
-                            isWide ? 3 : 2;
-                        final childAspectRatio =
-                            isWide ? 0.70 : 0.68;
+                        final isWide = constraints.maxWidth >= 700;
+                        final crossAxisCount = isWide ? 3 : 2;
+                        final childAspectRatio = isWide ? 0.70 : 0.68;
 
                         return GridView.builder(
                           itemCount: items.length,
@@ -1807,8 +1786,7 @@ class _MarketPageState extends State<MarketPage> {
                           itemBuilder: (context, i) {
                             final item = items[i];
                             return GestureDetector(
-                              onTap: () =>
-                                  _showDetailsBottomSheet(item),
+                              onTap: () => _showDetailsBottomSheet(item),
                               child: _buildMarketItem(item),
                             );
                           },

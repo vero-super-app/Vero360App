@@ -13,23 +13,28 @@ dependencies:
 
   # Core Flutter
   cupertino_icons: ^1.0.8
-  web_socket_channel: ^2.4.0
+  web_socket_channel: ^3.0.3
   http: ^1.2.2
-  intl: ^0.20.1
+  intl: ^0.20.2
   shared_preferences: ^2.2.2
-  fluttertoast: ^8.2.10
-  flutter_secure_storage: ^9.2.4
+  fluttertoast: ^9.0.0
+  flutter_secure_storage: ^10.0.0
   qr_flutter: ^4.1.0
   saver_gallery: ^4.0.1
   app_links: ^6.0.0
-  permission_handler: ^11.3.1
+  permission_handler: ^12.0.1
   uuid: ^4.4.0
-  google_sign_in: ^6.2.1
-  sign_in_with_apple: ^6.1.0
+  google_sign_in: ^7.2.0
+  sign_in_with_apple: ^7.0.1
   google_maps_flutter: ^2.2.8
-  google_maps_flutter_web: ^0.4.0
-  flutter_riverpod: ^2.4.0
-  riverpod_annotation: ^2.3.0
+  google_maps_flutter_web: ^0.5.14+3
+  flutter_riverpod: ^3.0.3
+  riverpod_annotation: ^3.0.3
+  path_provider: ^2.1.4
+  path: ^1.9.0
+
+  record: ^6.1.2
+  audioplayers: ^6.1.0
 
   mime: ^2.0.0
   http_parser: ^4.0.2
@@ -45,11 +50,11 @@ dependencies:
   image_picker: ^1.2.0
 
   # Firebase
-  firebase_core: ^3.0.0
-  firebase_auth: ^5.4.1
-  firebase_auth_web: ^5.9.0
-  cloud_firestore: ^5.6.0
-  firebase_storage: ^12.4.1
+  firebase_core: ^4.3.0
+  firebase_auth: ^6.1.3
+  firebase_auth_web: ^6.1.1
+  cloud_firestore: ^6.1.1
+  firebase_storage: ^13.0.5
   geocoding: ^4.0.0
   paychangu_flutter: ^0.0.1
 
@@ -65,8 +70,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
-  firebase_auth_mocks: ^0.14.1
+  flutter_lints: ^6.0.0
+  firebase_auth_mocks: ^0.15.1
   flutter_launcher_icons: ^0.14.4
   rename: ^3.0.1 
 
@@ -90,7 +95,7 @@ flutter:
     - assets/veroai.png
     - assets/google.png
     - assets/apple.webp
-    # - assets/brands/spotify.png
+    - assets/brands/spotify.png
     - assets/brands/apple_music.png
     - assets/brands/netflix.png
     - assets/brands/chatgpt.png

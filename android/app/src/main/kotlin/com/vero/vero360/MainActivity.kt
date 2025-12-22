@@ -1,4 +1,4 @@
-package com.vero.vero360
+package vero.a360_app
 
 import io.flutter.embedding.android.FlutterActivity
 

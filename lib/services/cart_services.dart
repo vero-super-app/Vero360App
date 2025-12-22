@@ -1,4 +1,5 @@
 // lib/services/cart_services.dart
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -9,14 +10,26 @@ import 'package:vero360_app/services/api_exception.dart';
 
 import '../models/cart_model.dart';
 
-const _kFirstTimeout = Duration(seconds: 60);
+const _kApiTimeout = Duration(seconds: 10);
+const _kWarmupTimeout = Duration(milliseconds: 900);
+const _kWarmupCooldown = Duration(seconds: 45);
 
 class CartService {
-  static bool _warmedUp = false;
+  // Keep this EXACT signature (you use it everywhere)
+  CartService(String unused, {required String apiPrefix}) : _apiPrefix = apiPrefix;
 
-  CartService(String unused, {required String apiPrefix});
+  final String _apiPrefix; // kept for compatibility (even if unused)
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  // Warmup throttling (fast + avoids spamming)
+  static bool _warmedUp = false;
+  static bool _warmupInFlight = false;
+  static DateTime? _lastWarmupAttempt;
+
+  // ---------------------------------------------------------------------------
+  // BASIC HELPERS
+  // ---------------------------------------------------------------------------
 
   Future<String?> _getToken() async {
     final p = await SharedPreferences.getInstance();
@@ -34,124 +47,73 @@ class CartService {
     return null;
   }
 
-  bool _looksLikeServiceUnavailable(Object e) {
-    final msg = e.toString().toLowerCase();
-    return msg.contains('service is temporarily unavailable') ||
-        msg.contains('503') ||
-        msg.contains('socketexception') ||
-        msg.contains('failed host lookup') ||
-        msg.contains('connection refused') ||
-        msg.contains('network is unreachable');
-  }
-
-  Future<void> warmup() async {
-    if (_warmedUp) return;
-    try {
-      await ApiConfig.ensureBackendUp(timeout: _kFirstTimeout);
-      _warmedUp = true;
-    } catch (_) {}
-  }
-
-  Map<String, String> _headers({String? token}) => {
-        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+  Map<String, String> _headers({required String token}) => {
+        'Authorization': 'Bearer $token',
         'Accept': 'application/json',
         'Content-Type': 'application/json',
         'Connection': 'close',
         'User-Agent': 'Vero360App/Cart/1.0',
       };
 
+  Future<void> warmup() async {
+    // Avoid long blocks; warmup is best-effort only.
+    if (_warmedUp) return;
+
+    final now = DateTime.now();
+    if (_lastWarmupAttempt != null &&
+        now.difference(_lastWarmupAttempt!) < _kWarmupCooldown) {
+      return;
+    }
+
+    if (_warmupInFlight) return;
+    _warmupInFlight = true;
+    _lastWarmupAttempt = now;
+
+    try {
+      await ApiConfig.ensureBackendUp(timeout: _kWarmupTimeout);
+      _warmedUp = true;
+    } catch (_) {
+      // ignore; we operate offline if needed
+    } finally {
+      _warmupInFlight = false;
+    }
+  }
+
+  bool _looksLikeAuthError(Object e) {
+    final msg = e.toString().toLowerCase();
+    return msg.contains('401') ||
+        msg.contains('403') ||
+        msg.contains('unauthorized') ||
+        msg.contains('forbidden') ||
+        (msg.contains('jwt') && msg.contains('expired'));
+  }
+
+  bool _looksLikePassengerHtmlOrDown(Object e) {
+    final msg = e.toString().toLowerCase();
+    return msg.contains('phusion passenger') ||
+        msg.contains('web application could not be started') ||
+        msg.contains("we're sorry, but something went wrong") ||
+        msg.contains('<!doctype html') ||
+        msg.contains('<html') ||
+        msg.contains('500') ||
+        msg.contains('502') ||
+        msg.contains('503') ||
+        msg.contains('504') ||
+        msg.contains('socketexception') ||
+        msg.contains('failed host lookup') ||
+        msg.contains('connection refused') ||
+        msg.contains('network is unreachable') ||
+        msg.contains('timed out') ||
+        // your ApiClient generic message
+        msg.contains('we couldn’t process your request') ||
+        msg.contains("we couldn't process your request") ||
+        msg.contains('unexpected error');
+  }
+
   // ---------------------------------------------------------------------------
-  // FIRESTORE BACKUP HELPERS - UPDATED WITH MERCHANT FIELDS
+  // FIRESTORE BACKUP HELPERS
   // Schema: backup_carts/{userEmail}/items/{itemId}
   // ---------------------------------------------------------------------------
-
-  Future<void> _saveCartListToFirestore(List<CartModel> items) async {
-    try {
-      final userId = await _getUserEmail();
-      if (userId == null || userId.isEmpty) return;
-
-      final col =
-          _firestore.collection('backup_carts').doc(userId).collection('items');
-
-      final batch = _firestore.batch();
-
-      final existing = await col.get();
-      for (final doc in existing.docs) {
-        batch.delete(doc.reference);
-      }
-
-      for (final it in items) {
-        final docRef = col.doc(it.item.toString());
-        batch.set(docRef, {
-          'itemId': it.item,
-          'name': it.name,
-          'image': it.image,
-          'price': it.price,
-          'quantity': it.quantity,
-          'description': it.description,
-          'comment': it.comment,
-          // NEW: Merchant fields for wallet integration
-          'merchantId': it.merchantId,
-          'merchantName': it.merchantName,
-          'serviceType': it.serviceType,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-
-      await batch.commit();
-    } catch (_) {
-      // never crash UI because of backup issues
-    }
-  }
-
-  Future<List<CartModel>> _loadCartFromFirestore() async {
-    try {
-      final userId = await _getUserEmail();
-      if (userId == null || userId.isEmpty) return [];
-
-      final snapshot = await _firestore
-          .collection('backup_carts')
-          .doc(userId)
-          .collection('items')
-          .get();
-
-      return snapshot.docs.map((d) {
-        final data = d.data();
-
-        final rawItemId = data['itemId'] ?? data['item'];
-        final itemId = rawItemId is num
-            ? rawItemId.toInt()
-            : int.tryParse(rawItemId.toString()) ?? 0;
-
-        final rawQty = data['quantity'];
-        final quantity = rawQty is num
-            ? rawQty.toInt()
-            : int.tryParse(rawQty.toString()) ?? 1;
-
-        final rawPrice = data['price'];
-        final price = rawPrice is num
-            ? rawPrice.toDouble()
-            : double.tryParse(rawPrice.toString()) ?? 0.0;
-
-        return CartModel(
-          userId: userId,
-          item: itemId,
-          quantity: quantity,
-          name: (data['name'] ?? '').toString(),
-          image: (data['image'] ?? '').toString(),
-          price: price,
-          description: (data['description'] ?? '').toString(),
-          comment: (data['comment'] ?? '').toString(),
-          // NEW: Load merchant fields from Firestore
-          merchantId: (data['merchantId'] ?? '').toString(),
-          merchantName: (data['merchantName'] ?? '').toString(),
-          serviceType: (data['serviceType'] ?? 'marketplace').toString(),
-        );
-      }).toList();
-    } catch (_) {
-      return [];
-    }
-  }
 
   Future<void> _upsertCartItemInFirestore(CartModel item) async {
     try {
@@ -164,20 +126,22 @@ class CartService {
           .collection('items')
           .doc(item.item.toString());
 
-      await doc.set({
-        'itemId': item.item,
-        'name': item.name,
-        'image': item.image,
-        'price': item.price,
-        'quantity': item.quantity,
-        'description': item.description,
-        'comment': item.comment,
-        // NEW: Merchant fields for wallet integration
-        'merchantId': item.merchantId,
-        'merchantName': item.merchantName,
-        'serviceType': item.serviceType,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      await doc.set(
+        {
+          'itemId': item.item,
+          'name': item.name,
+          'image': item.image,
+          'price': item.price,
+          'quantity': item.quantity,
+          'description': item.description,
+          'comment': item.comment,
+          'merchantId': item.merchantId,
+          'merchantName': item.merchantName,
+          'serviceType': item.serviceType,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
     } catch (_) {}
   }
 
@@ -186,13 +150,12 @@ class CartService {
       final userId = await _getUserEmail();
       if (userId == null || userId.isEmpty) return;
 
-      final doc = _firestore
+      await _firestore
           .collection('backup_carts')
           .doc(userId)
           .collection('items')
-          .doc(itemId.toString());
-
-      await doc.delete();
+          .doc(itemId.toString())
+          .delete();
     } catch (_) {}
   }
 
@@ -213,23 +176,112 @@ class CartService {
     } catch (_) {}
   }
 
+  Future<void> _saveCartListToFirestore(List<CartModel> items) async {
+    try {
+      final userId = await _getUserEmail();
+      if (userId == null || userId.isEmpty) return;
+
+      final col =
+          _firestore.collection('backup_carts').doc(userId).collection('items');
+
+      final existing = await col.get();
+      final wantedIds = items.map((e) => e.item.toString()).toSet();
+
+      final batch = _firestore.batch();
+
+      // delete removed items only (faster than delete-all)
+      for (final doc in existing.docs) {
+        if (!wantedIds.contains(doc.id)) batch.delete(doc.reference);
+      }
+
+      // upsert current
+      for (final it in items) {
+        final docRef = col.doc(it.item.toString());
+        batch.set(
+          docRef,
+          {
+            'itemId': it.item,
+            'name': it.name,
+            'image': it.image,
+            'price': it.price,
+            'quantity': it.quantity,
+            'description': it.description,
+            'comment': it.comment,
+            'merchantId': it.merchantId,
+            'merchantName': it.merchantName,
+            'serviceType': it.serviceType,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+      }
+
+      await batch.commit();
+    } catch (_) {}
+  }
+
+  Future<List<CartModel>> _loadCartFromFirestore() async {
+    try {
+      final userId = await _getUserEmail();
+      if (userId == null || userId.isEmpty) return [];
+
+      final snapshot = await _firestore
+          .collection('backup_carts')
+          .doc(userId)
+          .collection('items')
+          .get();
+
+      return snapshot.docs.map((d) {
+        final data = d.data();
+
+        int _int(Object? v, {int def = 0}) {
+          if (v is int) return v;
+          if (v is num) return v.toInt();
+          return int.tryParse('${v ?? ''}') ?? def;
+        }
+
+        double _double(Object? v, {double def = 0}) {
+          if (v is num) return v.toDouble();
+          return double.tryParse('${v ?? ''}') ?? def;
+        }
+
+        return CartModel(
+          userId: userId,
+          item: _int(data['itemId'] ?? data['item']),
+          quantity: _int(data['quantity'], def: 1),
+          name: (data['name'] ?? '').toString(),
+          image: (data['image'] ?? '').toString(),
+          price: _double(data['price']),
+          description: (data['description'] ?? '').toString(),
+          comment: data['comment'] == null ? null : data['comment'].toString(),
+          merchantId: (data['merchantId'] ?? '').toString(),
+          merchantName: (data['merchantName'] ?? '').toString(),
+          serviceType: (data['serviceType'] ?? 'marketplace').toString(),
+        );
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   // ---------------------------------------------------------------------------
-  // API + FIREBASE BACKUP METHODS - UPDATED WITH MERCHANT FIELDS
+  // CART API + OFFLINE MODE
   // ---------------------------------------------------------------------------
 
-  /// POST /cart (server identifies user from Bearer token)
-  /// If backend is unavailable, we still upsert into Firestore and return OK.
+  /// POST /cart
+  /// ✅ Never fails on Passenger/500/timeouts. Saves locally and returns OK.
   Future<void> addToCart(CartModel cartItem) async {
     await warmup();
+
     final token = await _getToken();
     if (token == null || token.isEmpty) {
-      throw const ApiException(
-        message: 'You need to be signed in to add items to cart.',
-      );
+      throw const ApiException(message: 'You need to be signed in to add items to cart.');
     }
 
+    // offline-first: always save immediately
+    await _upsertCartItemInFirestore(cartItem);
+
     try {
-      // UPDATED: Include merchant fields in API request
       await ApiClient.post(
         '/cart',
         headers: _headers(token: token),
@@ -240,203 +292,182 @@ class CartService {
           'name': cartItem.name,
           'price': cartItem.price,
           'description': cartItem.description,
-          // NEW: Merchant fields for wallet integration
           'merchantId': cartItem.merchantId,
           'merchantName': cartItem.merchantName,
           'serviceType': cartItem.serviceType,
           if (cartItem.comment != null) 'comment': cartItem.comment,
         }),
-        timeout: _kFirstTimeout,
+        timeout: _kApiTimeout,
       );
-
-      // Mirror to Firebase when API works (now includes merchant fields)
-      await _upsertCartItemInFirestore(cartItem);
     } on ApiException catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        // Backend down → save to Firebase only (offline backup with merchant fields)
-        await _upsertCartItemInFirestore(cartItem);
-        return;
+      if (_looksLikeAuthError(e)) {
+        throw const ApiException(message: 'Session expired. Please log in again.');
       }
-      rethrow;
+      // swallow backend-down errors
+      if (_looksLikePassengerHtmlOrDown(e)) return;
+      return; // safest: do not block cart UX
     } catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        await _upsertCartItemInFirestore(cartItem);
-        return;
-      }
-      rethrow;
+      if (_looksLikePassengerHtmlOrDown(e)) return;
+      return;
     }
   }
 
-  /// GET /cart (returns current user's cart; 404 => empty)
-  /// Falls back to Firebase backup if server is unavailable.
+  /// GET /cart
+  /// ✅ Returns Firestore quickly if backend is down; syncs when backend is up.
   Future<List<CartModel>> fetchCartItems() async {
     await warmup();
+
     final token = await _getToken();
     if (token == null || token.isEmpty) {
-      throw const ApiException(
-        message: 'You need to be signed in to view your cart.',
-      );
+      throw const ApiException(message: 'You need to be signed in to view your cart.');
     }
+
+    // fast fallback ready
+    final local = await _loadCartFromFirestore();
 
     try {
       final res = await ApiClient.get(
         '/cart',
         headers: _headers(token: token),
-        timeout: _kFirstTimeout,
+        timeout: _kApiTimeout,
         allowedStatusCodes: {200, 404},
       );
 
       if (res.statusCode == 404) {
-        // Backend says "no items" => clear backup as well
         await _clearCartInFirestore();
         return <CartModel>[];
+      }
+
+      // If server returns HTML, jsonDecode will crash; return local instead.
+      final bodyTrim = res.body.trimLeft().toLowerCase();
+      if (bodyTrim.startsWith('<!doctype html') || bodyTrim.startsWith('<html')) {
+        return local;
       }
 
       final decoded = jsonDecode(res.body);
       final list = decoded is List
           ? decoded
-          : (decoded is Map && decoded['data'] is List
-              ? decoded['data']
-              : <dynamic>[]);
+          : (decoded is Map && decoded['data'] is List ? decoded['data'] : <dynamic>[]);
 
-      // UPDATED: CartModel.fromJson now handles merchant fields automatically
-      final items =
-          list.map<CartModel>((e) => CartModel.fromJson(e)).toList();
+      final items = <CartModel>[];
+      for (final e in list) {
+        if (e is Map) {
+          items.add(CartModel.fromJson(Map<String, dynamic>.from(e)));
+        }
+      }
 
-      // Keep Firebase backup synced (now includes merchant fields)
       await _saveCartListToFirestore(items);
       return items;
     } on ApiException catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        // Use last known Firebase backup (now includes merchant fields)
-        return await _loadCartFromFirestore();
+      if (_looksLikeAuthError(e)) {
+        throw const ApiException(message: 'Session expired. Please log in again.');
       }
-      rethrow;
-    } catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        return await _loadCartFromFirestore();
-      }
-      rethrow;
+      return local;
+    } catch (_) {
+      return local;
     }
   }
 
   /// DELETE /cart/:itemId
-  /// If backend is unavailable, we still remove from Firebase backup.
+  /// ✅ Offline-first: remove locally, best-effort API.
   Future<void> removeFromCart(int itemId) async {
     await warmup();
+
     final token = await _getToken();
     if (token == null || token.isEmpty) {
-      throw const ApiException(
-        message: 'You need to be signed in to modify your cart.',
-      );
+      throw const ApiException(message: 'You need to be signed in to modify your cart.');
     }
+
+    await _removeFromFirestore(itemId);
 
     try {
       await ApiClient.delete(
         '/cart/$itemId',
         headers: _headers(token: token),
-        timeout: _kFirstTimeout,
+        timeout: _kApiTimeout,
       );
-
-      await _removeFromFirestore(itemId);
     } on ApiException catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        await _removeFromFirestore(itemId);
-        return;
+      if (_looksLikeAuthError(e)) {
+        throw const ApiException(message: 'Session expired. Please log in again.');
       }
-      rethrow;
+      // swallow server errors
+      if (_looksLikePassengerHtmlOrDown(e)) return;
+      return;
     } catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        await _removeFromFirestore(itemId);
-        return;
-      }
-      rethrow;
+      if (_looksLikePassengerHtmlOrDown(e)) return;
+      return;
     }
   }
 
-  /// DELETE /cart (clear everything, if backend supports it)
-  /// If backend is unavailable, we still clear the Firebase backup.
+  /// DELETE /cart
+  /// ✅ Offline-first: clear locally, best-effort API.
   Future<void> clearCart() async {
     await warmup();
+
     final token = await _getToken();
     if (token == null || token.isEmpty) {
-      throw const ApiException(
-        message: 'You need to be signed in to clear your cart.',
-      );
+      throw const ApiException(message: 'You need to be signed in to clear your cart.');
     }
+
+    await _clearCartInFirestore();
 
     try {
       await ApiClient.delete(
         '/cart',
         headers: _headers(token: token),
-        timeout: _kFirstTimeout,
+        timeout: _kApiTimeout,
       );
-
-      await _clearCartInFirestore();
     } on ApiException catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        await _clearCartInFirestore();
-        return;
+      if (_looksLikeAuthError(e)) {
+        throw const ApiException(message: 'Session expired. Please log in again.');
       }
-      rethrow;
+      if (_looksLikePassengerHtmlOrDown(e)) return;
+      return;
     } catch (e) {
-      if (_looksLikeServiceUnavailable(e)) {
-        await _clearCartInFirestore();
-        return;
-      }
-      rethrow;
+      if (_looksLikePassengerHtmlOrDown(e)) return;
+      return;
     }
   }
 
   // ---------------------------------------------------------------------------
-  // NEW HELPER METHODS FOR MERCHANT WALLET INTEGRATION
+  // WALLET / CHECKOUT HELPERS
   // ---------------------------------------------------------------------------
 
-  /// Helper to validate cart items have merchant info for wallet payments
   Future<bool> validateCartForCheckout() async {
     try {
       final items = await fetchCartItems();
       if (items.isEmpty) return false;
 
-      // Check if all items have valid merchant information
       for (final item in items) {
-        if (!item.hasValidMerchant) {
-          print('Cart validation failed: Item "${item.name}" missing valid merchant info');
-          return false;
-        }
+        if (!item.hasValidMerchant) return false;
       }
 
-      // Check for duplicate items from same merchant
       final itemKeys = <String>{};
       for (final item in items) {
         final key = '${item.item}_${item.merchantId}';
-        if (itemKeys.contains(key)) {
-          print('Cart validation failed: Duplicate item $key');
-          return false;
-        }
+        if (itemKeys.contains(key)) return false;
         itemKeys.add(key);
       }
 
       return true;
-    } catch (e) {
-      print('Cart validation error: $e');
+    } catch (_) {
       return false;
     }
   }
-Future<double> getCartTotal() async {
-  try {
-    final items = await fetchCartItems();
-    double total = 0.0;
-    for (final item in items) {
-      total += item.price * item.quantity;
-    }
-    return total;
-  } catch (e) {
-    return 0.0;
-  }
-}
 
-  /// Helper to group items by merchant for wallet payments
+  Future<double> getCartTotal() async {
+    try {
+      final items = await fetchCartItems();
+      double total = 0.0;
+      for (final item in items) {
+        total += item.price * item.quantity;
+      }
+      return total;
+    } catch (_) {
+      return 0.0;
+    }
+  }
+
   Future<Map<String, List<CartModel>>> getItemsByMerchant() async {
     try {
       final items = await fetchCartItems();
@@ -444,14 +475,12 @@ Future<double> getCartTotal() async {
 
       for (final item in items) {
         final merchantKey = '${item.merchantId}_${item.serviceType}';
-        if (!merchantGroups.containsKey(merchantKey)) {
-          merchantGroups[merchantKey] = [];
-        }
+        merchantGroups.putIfAbsent(merchantKey, () => <CartModel>[]);
         merchantGroups[merchantKey]!.add(item);
       }
 
       return merchantGroups;
-    } catch (e) {
+    } catch (_) {
       return {};
     }
   }

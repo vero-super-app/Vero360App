@@ -6,14 +6,21 @@ import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // NEW
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart'; // ✅ ADD (commas formatter)
 
 import 'package:vero360_app/Pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/models/cart_model.dart';
 import 'package:vero360_app/services/cart_services.dart';
 import 'package:vero360_app/toasthelper.dart';
+
+// ✅ ONE global formatter (commas)
+// If you want decimals, change decimalDigits: 2
+final NumberFormat _mwkFmt =
+    NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
+String mwk(num n) => _mwkFmt.format(n);
 
 class CartPage extends StatefulWidget {
   final CartService cartService;
@@ -28,11 +35,11 @@ class _CartPageState extends State<CartPage> {
   final List<CartModel> _items = [];
   String? _error;
   bool _loading = false;
-  
-  // NEW: Firebase services
+
+  // Firebase services
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance; // NEW
-  
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   @override
   void initState() {
     super.initState();
@@ -42,19 +49,21 @@ class _CartPageState extends State<CartPage> {
   /// Check if user has a valid session
   Future<bool> _hasSession() async {
     final sp = await SharedPreferences.getInstance();
-    final t = sp.getString('token') ?? sp.getString('jwt_token') ?? sp.getString('jwt');
+    final t = sp.getString('token') ??
+        sp.getString('jwt_token') ??
+        sp.getString('jwt');
     final email = sp.getString('email');
     final uid = _auth.currentUser?.uid;
-    return (t != null && t.isNotEmpty) || 
-           (email != null && email.isNotEmpty) ||
-           (uid != null && uid.isNotEmpty);
+    return (t != null && t.isNotEmpty) ||
+        (email != null && email.isNotEmpty) ||
+        (uid != null && uid.isNotEmpty);
   }
 
   /// Get current user ID for Firestore
   Future<String?> _getCurrentUserId() async {
     final user = _auth.currentUser;
     if (user != null) return user.uid;
-    
+
     final sp = await SharedPreferences.getInstance();
     final email = sp.getString('email');
     return email;
@@ -82,7 +91,7 @@ class _CartPageState extends State<CartPage> {
 
       // Write fresh with merchant info
       for (final item in items) {
-        final docRef = col.doc('${item.item}_${item.merchantId}'); // Include merchant ID
+        final docRef = col.doc('${item.item}_${item.merchantId}');
         batch.set(docRef, {
           'itemId': item.item,
           'name': item.name,
@@ -91,16 +100,16 @@ class _CartPageState extends State<CartPage> {
           'quantity': item.quantity,
           'description': item.description,
           'comment': item.comment,
-          'merchantId': item.merchantId,          // NEW
-          'merchantName': item.merchantName,      // NEW
-          'serviceType': item.serviceType,        // NEW
+          'merchantId': item.merchantId,
+          'merchantName': item.merchantName,
+          'serviceType': item.serviceType,
           'updatedAt': FieldValue.serverTimestamp(),
         });
       }
 
       await batch.commit();
     } catch (e) {
-      print('Error saving cart to Firestore: $e');
+      // ignore
     }
   }
 
@@ -118,16 +127,15 @@ class _CartPageState extends State<CartPage> {
 
       return snapshot.docs.map((doc) {
         final data = doc.data();
-        
+
         final rawItemId = data['itemId'] ?? data['item'];
         final itemId = rawItemId is num
             ? rawItemId.toInt()
             : int.tryParse(rawItemId.toString()) ?? 0;
 
         final rawQty = data['quantity'];
-        final quantity = rawQty is num
-            ? rawQty.toInt()
-            : int.tryParse(rawQty.toString()) ?? 1;
+        final quantity =
+            rawQty is num ? rawQty.toInt() : int.tryParse(rawQty.toString()) ?? 1;
 
         final rawPrice = data['price'];
         final price = rawPrice is num
@@ -143,13 +151,12 @@ class _CartPageState extends State<CartPage> {
           price: price,
           description: (data['description'] ?? '').toString(),
           comment: (data['comment'] ?? '').toString(),
-          merchantId: (data['merchantId'] ?? '').toString(),    // NEW
-          merchantName: (data['merchantName'] ?? '').toString(), // NEW
-          serviceType: (data['serviceType'] ?? 'marketplace').toString(), // NEW
+          merchantId: (data['merchantId'] ?? '').toString(),
+          merchantName: (data['merchantName'] ?? '').toString(),
+          serviceType: (data['serviceType'] ?? 'marketplace').toString(),
         );
       }).toList();
-    } catch (e) {
-      print('Error loading cart from Firestore: $e');
+    } catch (_) {
       return [];
     }
   }
@@ -163,7 +170,7 @@ class _CartPageState extends State<CartPage> {
           .collection('backup_carts')
           .doc(userId)
           .collection('items')
-          .doc('${item.item}_${item.merchantId}'); // Include merchant ID
+          .doc('${item.item}_${item.merchantId}');
 
       await doc.set({
         'itemId': item.item,
@@ -173,14 +180,12 @@ class _CartPageState extends State<CartPage> {
         'quantity': item.quantity,
         'description': item.description,
         'comment': item.comment,
-        'merchantId': item.merchantId,          // NEW
-        'merchantName': item.merchantName,      // NEW
-        'serviceType': item.serviceType,        // NEW
+        'merchantId': item.merchantId,
+        'merchantName': item.merchantName,
+        'serviceType': item.serviceType,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-    } catch (e) {
-      print('Error upserting cart item: $e');
-    }
+    } catch (_) {}
   }
 
   Future<void> _removeFromFirestore(CartModel item) async {
@@ -192,11 +197,9 @@ class _CartPageState extends State<CartPage> {
           .collection('backup_carts')
           .doc(userId)
           .collection('items')
-          .doc('${item.item}_${item.merchantId}'); // Include merchant ID
+          .doc('${item.item}_${item.merchantId}');
       await doc.delete();
-    } catch (e) {
-      print('Error removing from Firestore: $e');
-    }
+    } catch (_) {}
   }
 
   // -------- MAIN FETCH (UPDATED FOR MERCHANT INFO) --------
@@ -221,14 +224,11 @@ class _CartPageState extends State<CartPage> {
       try {
         // 1) Try main backend (NestJS)
         final data = await widget.cartService.fetchCartItems();
-        
+
         // Validate merchant info
-        final validatedItems = data.where((item) => item.hasValidMerchant).toList();
-        
-        if (validatedItems.length != data.length) {
-          print('Warning: Some items missing merchant info');
-        }
-        
+        final validatedItems =
+            data.where((item) => item.hasValidMerchant).toList();
+
         _items
           ..clear()
           ..addAll(validatedItems);
@@ -237,7 +237,7 @@ class _CartPageState extends State<CartPage> {
         await _saveCartToFirestore(_items);
 
         return _items;
-      } catch (e) {
+      } catch (_) {
         // Fallback to Firebase backup
         final backup = await _loadCartFromFirestore();
         _items
@@ -246,9 +246,9 @@ class _CartPageState extends State<CartPage> {
 
         ToastHelper.showCustomToast(
           context,
-          backup.isEmpty 
-            ? 'Unable to load cart. Please check your connection.'
-            : 'Showing your last saved cart from backup.',
+          backup.isEmpty
+              ? 'Unable to load cart. Please check your connection.'
+              : 'Showing your last saved cart from backup.',
           isSuccess: backup.isNotEmpty,
           errorMessage: backup.isEmpty ? 'No backup available' : '',
         );
@@ -260,7 +260,7 @@ class _CartPageState extends State<CartPage> {
   }
 
   // -------- CART OPERATIONS (UPDATED) --------
-  
+
   Future<void> _remove(CartModel item) async {
     if (item.item <= 0) {
       ToastHelper.showCustomToast(
@@ -272,17 +272,17 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
-    final idx = _items.indexWhere((x) => 
-        x.item == item.item && x.merchantId == item.merchantId);
+    final idx = _items.indexWhere(
+        (x) => x.item == item.item && x.merchantId == item.merchantId);
     if (idx == -1) return;
-    
+
     final backup = _items[idx];
     setState(() => _items.removeAt(idx));
 
     try {
       await widget.cartService.removeFromCart(item.item);
       await _removeFromFirestore(backup);
-      
+
       ToastHelper.showCustomToast(
         context,
         'Removed ${item.name}',
@@ -290,7 +290,6 @@ class _CartPageState extends State<CartPage> {
         errorMessage: 'OK',
       );
     } catch (e) {
-      // Restore item on error
       setState(() => _items.insert(idx, backup));
       ToastHelper.showCustomToast(
         context,
@@ -305,8 +304,8 @@ class _CartPageState extends State<CartPage> {
     newQty = max(1, min(99, newQty));
     if (newQty == item.quantity) return;
 
-    final idx = _items.indexWhere((x) => 
-        x.item == item.item && x.merchantId == item.merchantId);
+    final idx = _items.indexWhere(
+        (x) => x.item == item.item && x.merchantId == item.merchantId);
     if (idx == -1) return;
 
     final old = _items[idx];
@@ -330,7 +329,6 @@ class _CartPageState extends State<CartPage> {
 
   // -------- CHECKOUT VALIDATION --------
   Future<void> _proceedToCheckout() async {
-    // 1. Check authentication
     if (!await _hasSession()) {
       ToastHelper.showCustomToast(
         context,
@@ -340,8 +338,7 @@ class _CartPageState extends State<CartPage> {
       );
       return;
     }
-    
-    // 2. Check if cart is empty
+
     if (_items.isEmpty) {
       ToastHelper.showCustomToast(
         context,
@@ -351,8 +348,7 @@ class _CartPageState extends State<CartPage> {
       );
       return;
     }
-    
-    // 3. Check if all items have valid merchant info
+
     final invalidItems = _items.where((item) => !item.hasValidMerchant).toList();
     if (invalidItems.isNotEmpty) {
       ToastHelper.showCustomToast(
@@ -364,18 +360,15 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
-    // 4. Check for duplicates (same item from same merchant)
     final itemKeys = <String>{};
     final duplicates = <CartModel>[];
-    
+
     for (final item in _items) {
       final key = '${item.item}_${item.merchantId}';
-      if (itemKeys.contains(key)) {
-        duplicates.add(item);
-      }
+      if (itemKeys.contains(key)) duplicates.add(item);
       itemKeys.add(key);
     }
-    
+
     if (duplicates.isNotEmpty) {
       ToastHelper.showCustomToast(
         context,
@@ -386,7 +379,6 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
-    // 5. Proceed to checkout
     final itemsForCheckout = List<CartModel>.from(_items);
 
     await Navigator.push(
@@ -411,14 +403,12 @@ class _CartPageState extends State<CartPage> {
   // Helper to group items by merchant (for display)
   Map<String, List<CartModel>> get _itemsByMerchant {
     final Map<String, List<CartModel>> groups = {};
-    
     for (final item in _items) {
       if (!groups.containsKey(item.merchantId)) {
         groups[item.merchantId] = [];
       }
       groups[item.merchantId]!.add(item);
     }
-    
     return groups;
   }
 
@@ -427,7 +417,7 @@ class _CartPageState extends State<CartPage> {
     final deliveryFee = _items.isEmpty ? 0.0 : 20.0;
     final discount = 0.0;
     final total = _subtotal + deliveryFee + discount;
-    
+
     final merchantGroups = _itemsByMerchant;
 
     return Scaffold(
@@ -469,7 +459,6 @@ class _CartPageState extends State<CartPage> {
 
             return Column(
               children: [
-                // Merchant Groups Header
                 if (merchantGroups.length > 1)
                   Padding(
                     padding: const EdgeInsets.all(12),
@@ -495,23 +484,23 @@ class _CartPageState extends State<CartPage> {
                       ),
                     ),
                   ),
-
                 Expanded(
                   child: ListView(
                     children: [
-                      // Display items grouped by merchant
                       for (final merchantId in merchantGroups.keys)
                         _MerchantGroupSection(
-                          merchantName: merchantGroups[merchantId]!.first.merchantName,
+                          merchantName:
+                              merchantGroups[merchantId]!.first.merchantName,
                           items: merchantGroups[merchantId]!,
-                          onInc: (item) => _changeQty(item, item.quantity + 1),
-                          onDec: (item) => _changeQty(item, item.quantity - 1),
+                          onInc: (item) =>
+                              _changeQty(item, item.quantity + 1),
+                          onDec: (item) =>
+                              _changeQty(item, item.quantity - 1),
                           onRemove: _remove,
                         ),
                     ],
                   ),
                 ),
-                
                 _CartSummary(
                   subtotal: _subtotal,
                   deliveryFee: deliveryFee,
@@ -530,7 +519,7 @@ class _CartPageState extends State<CartPage> {
   }
 }
 
-// NEW: Merchant Group Section Widget
+// Merchant Group Section Widget
 class _MerchantGroupSection extends StatelessWidget {
   final String merchantName;
   final List<CartModel> items;
@@ -546,8 +535,8 @@ class _MerchantGroupSection extends StatelessWidget {
     required this.onRemove,
   });
 
-  double get merchantTotal => items.fold(
-      0.0, (sum, item) => sum + (item.price * item.quantity));
+  double get merchantTotal =>
+      items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
 
   @override
   Widget build(BuildContext context) {
@@ -571,9 +560,10 @@ class _MerchantGroupSection extends StatelessWidget {
                   ),
                 ),
               ),
+              // ✅ COMMAS
               Text(
-                'MWK ${merchantTotal.toStringAsFixed(2)}',
-                style:  TextStyle(
+                mwk(merchantTotal),
+                style: const TextStyle(
                   fontWeight: FontWeight.w600,
                   color: Colors.green,
                 ),
@@ -582,21 +572,19 @@ class _MerchantGroupSection extends StatelessWidget {
           ),
         ),
 
-        // Items for this merchant
         ...items.map((item) => _CartItemTile(
               item: item,
               onInc: () => onInc(item),
               onDec: () => onDec(item),
               onRemove: () => onRemove(item),
             )),
-        
+
         const SizedBox(height: 8),
       ],
     );
   }
 }
 
-// Updated CartItemTile (keeps your existing image logic)
 class _CartItemTile extends StatelessWidget {
   const _CartItemTile({
     required this.item,
@@ -610,24 +598,17 @@ class _CartItemTile extends StatelessWidget {
   final VoidCallback onDec;
   final VoidCallback onRemove;
 
-  String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
-
-  // ... (keep your existing image decoding methods)
   void _debugLogImage() {
     if (item.image.isEmpty) {
-      print('[CartPage] image EMPTY for "${item.name}"');
-    } else {
-      final short = item.image.length > 80 ? item.image.substring(0, 80) : item.image;
-      print('[CartPage] image for "${item.name}" len=${item.image.length}: $short...');
+      // ignore
     }
   }
 
   Uint8List? _decodeBase64Image(String v) {
     if (v.isEmpty) return null;
     final lower = v.toLowerCase();
-    if (lower.startsWith('http://') || lower.startsWith('https://')) {
-      return null;
-    }
+    if (lower.startsWith('http://') || lower.startsWith('https://')) return null;
+
     try {
       var cleaned = v.trim().replaceAll(RegExp(r'\s+'), '');
       final commaIndex = cleaned.indexOf(',');
@@ -635,14 +616,11 @@ class _CartItemTile extends StatelessWidget {
         cleaned = cleaned.substring(commaIndex + 1);
       }
       final mod = cleaned.length % 4;
-      if (mod != 0) {
-        cleaned = cleaned.padRight(cleaned.length + (4 - mod), '=');
-      }
+      if (mod != 0) cleaned = cleaned.padRight(cleaned.length + (4 - mod), '=');
       final bytes = base64Decode(cleaned);
       if (bytes.isEmpty) return null;
       return bytes;
-    } catch (e) {
-      print('[CartPage] base64 decode failed for "${item.name}": $e');
+    } catch (_) {
       return null;
     }
   }
@@ -659,7 +637,6 @@ class _CartItemTile extends StatelessWidget {
     _debugLogImage();
 
     Widget imageWidget;
-
     if (item.image.isEmpty) {
       imageWidget = _placeholder();
     } else {
@@ -674,8 +651,10 @@ class _CartItemTile extends StatelessWidget {
         );
       } else {
         final bytes = _decodeBase64Image(item.image);
-        imageWidget = bytes != null 
-            ? Image.memory(bytes, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _placeholder())
+        imageWidget = bytes != null
+            ? Image.memory(bytes,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _placeholder())
             : _placeholder();
       }
     }
@@ -686,7 +665,13 @@ class _CartItemTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [BoxShadow(color: Colors.black12.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, 3))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12.withValues(alpha: 0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          )
+        ],
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -714,8 +699,9 @@ class _CartItemTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
+                // ✅ COMMAS
                 Text(
-                  _mwk(item.price),
+                  mwk(item.price),
                   style: const TextStyle(
                     color: Colors.green,
                     fontWeight: FontWeight.w600,
@@ -744,10 +730,10 @@ class _CartItemTile extends StatelessWidget {
                     ),
                   ],
                 ),
-                // Merchant info badge
                 Container(
                   margin: const EdgeInsets.only(top: 4),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: Colors.grey[100],
                     borderRadius: BorderRadius.circular(4),
@@ -791,7 +777,6 @@ class _IconBtn extends StatelessWidget {
   }
 }
 
-// Updated Cart Summary
 class _CartSummary extends StatelessWidget {
   final double subtotal;
   final double deliveryFee;
@@ -811,8 +796,6 @@ class _CartSummary extends StatelessWidget {
     required this.onCheckout,
   });
 
-  String _mwk(num n) => 'MWK ${n.toStringAsFixed(2)}';
-
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -825,10 +808,10 @@ class _CartSummary extends StatelessWidget {
         ),
         child: Column(
           children: [
-            // Merchant count info
             if (merchantCount > 1)
               Container(
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                 margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
                   color: Colors.orange[50],
@@ -836,7 +819,8 @@ class _CartSummary extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline, size: 16, color: Colors.orange[800]),
+                    Icon(Icons.info_outline,
+                        size: 16, color: Colors.orange[800]),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -851,11 +835,13 @@ class _CartSummary extends StatelessWidget {
                 ),
               ),
 
-            _row('Subtotal', _mwk(subtotal)),
-            _row('Delivery Fee', _mwk(deliveryFee)),
+            // ✅ COMMAS everywhere
+            _row('Subtotal', mwk(subtotal)),
+            _row('Delivery Fee', mwk(deliveryFee)),
             const Divider(height: 16),
-            _row('Total', _mwk(total), bold: true, green: true),
+            _row('Total', mwk(total), bold: true, green: true),
             const SizedBox(height: 12),
+
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -874,7 +860,8 @@ class _CartSummary extends StatelessWidget {
                         height: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(Colors.white),
                         ),
                       )
                     : const Text(

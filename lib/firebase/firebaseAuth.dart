@@ -1,4 +1,4 @@
-import 'package:firebase_auth/firebase_auth.dart'; // Make sure this import is included
+import 'package:firebase_auth/firebase_auth.dart'; 
 
 class FirebaseAuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;

@@ -1,5 +1,3 @@
-
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -43,6 +41,25 @@ import 'package:vero360_app/Pages/Home/myorders.dart';
 import 'package:vero360_app/Pages/ToRefund.dart';
 import 'package:vero360_app/Pages/Toreceive.dart';
 import 'package:vero360_app/Pages/Toship.dart';
+
+import 'package:intl/intl.dart'; // ✅ NEW
+
+// ----------------- ✅ PRICE FORMAT HELPERS (MWK with commas) -----------------
+final NumberFormat _mwk0Fmt =
+    NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
+final NumberFormat _mwk2Fmt =
+    NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 2);
+
+num _asNum(dynamic v) {
+  if (v == null) return 0;
+  if (v is num) return v;
+  final s = v.toString().replaceAll(',', '').trim();
+  return num.tryParse(s) ?? 0;
+}
+
+String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
+String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
+// ---------------------------------------------------------------------------
 
 class LocalMedia {
   final Uint8List bytes;
@@ -1947,7 +1964,7 @@ class _MarketplaceMerchantDashboardState
               default:
                 return _compactStatTile(
                   title: 'Earnings',
-                  value: 'MWK ${_totalEarnings.toStringAsFixed(0)}',
+                  value: mwk0(_totalEarnings), // ✅ commas
                   icon: Icons.payments_rounded,
                   color: Colors.green,
                 );
@@ -2012,7 +2029,6 @@ class _MarketplaceMerchantDashboardState
               color: Colors.red,
               onTap: () => _openBottomSheet(const ToRefundPage()),
             ),
-         
           ],
         ),
       ],
@@ -2071,9 +2087,7 @@ class _MarketplaceMerchantDashboardState
                     style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 6),
                 Text(
-                  unlocked
-                      ? 'MWK ${_walletBalance.toStringAsFixed(2)}'
-                      : 'MWK ••••',
+                  unlocked ? mwk2(_walletBalance) : 'MWK ••••', // ✅ commas
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
@@ -2183,7 +2197,7 @@ class _MarketplaceMerchantDashboardState
                     children: [
                       Text('Customer: ${saleMap['customerName'] ?? 'N/A'}'),
                       Text('Items: ${saleMap['itemCount'] ?? '0'}'),
-                      Text('Total: MWK ${saleMap['totalAmount'] ?? '0'}'),
+                      Text('Total: ${mwk0(saleMap['totalAmount'])}'), // ✅ commas
                     ],
                   ),
                 ),
@@ -2867,7 +2881,7 @@ class _ModernItemMiniCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'MWK ${(item['price'] ?? 0).toString()}',
+                        mwk0(item['price']), // ✅ commas
                         style: const TextStyle(
                             fontWeight: FontWeight.w900, color: Colors.green),
                         maxLines: 1,
@@ -2958,7 +2972,7 @@ class _ItemCard extends StatelessWidget {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'MWK ${(item['price'] ?? 0).toString()}',
+                              mwk0(item['price']), // ✅ commas
                               style: const TextStyle(
                                   fontWeight: FontWeight.w900,
                                   color: Colors.green),

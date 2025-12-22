@@ -1896,7 +1896,7 @@ class _MarketplaceMerchantDashboardState
                           decoration: BoxDecoration(
                               color: const Color(0xFFFFEDEE),
                               borderRadius: BorderRadius.circular(999)),
-                          child: const Text('YOU\'RE OFFLINE',
+                          child: const Text('',
                               style: TextStyle(
                                   fontWeight: FontWeight.w900,
                                   fontSize: 12,

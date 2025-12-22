@@ -747,7 +747,7 @@ class _MessagePageState extends State<MessagePage> {
                   children: [
                     Expanded(
                       child: StreamBuilder<List<ChatMessage>>(
-                        stream: ChatService.messagesStream(_threadId),
+                        stream: ChatService.messagesStream(_threadId, myAppId: '', peerAppId: ''),
                         builder: (context, snap) {
                           if (snap.hasError) {
                             return Center(

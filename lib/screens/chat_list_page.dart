@@ -1,4 +1,7 @@
 // lib/screens/chat_list_page.dart
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/services/chat_service.dart';
 import 'package:vero360_app/Pages/Home/Messages.dart';
@@ -35,6 +38,7 @@ class _ChatListPageState extends State<ChatListPage> {
     try {
       await ChatService.ensureFirebaseAuth();
       final appId = await ChatService.myAppUserId();
+
       try {
         await ChatService.lockUidMapping(appId);
       } catch (_) {}
@@ -46,19 +50,28 @@ class _ChatListPageState extends State<ChatListPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Chat init failed: $e');
+      final ui = _friendlyChatError(e);
+      setState(() => _error = ui.message);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // ✅ removes scrollbars + glow “bars”
+    return ScrollConfiguration(
+      behavior: const _NoBarsScrollBehavior(),
+      child: _buildBody(context),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
     if (_error != null) {
       return Scaffold(
         backgroundColor: _bg,
         appBar: _appBar(),
         body: _EmptyState(
           icon: Icons.error_outline_rounded,
-          title: 'Something went wrong',
+          title: 'Chats unavailable',
           subtitle: _error!,
           onRetry: _boot,
         ),
@@ -81,18 +94,21 @@ class _ChatListPageState extends State<ChatListPage> {
         stream: ChatService.threadsStream(me),
         builder: (context, snap) {
           if (snap.hasError) {
+            final ui = _friendlyChatError(snap.error!);
             return _EmptyState(
-              icon: Icons.wifi_off_rounded,
-              title: 'Chats unavailable',
-              subtitle: '${snap.error}',
+              icon: ui.icon,
+              title: ui.title,
+              subtitle: ui.message,
               onRetry: _boot,
             );
           }
+
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
 
           var items = snap.data ?? <ChatThread>[];
+          items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
           // Search filter (name + last message)
           final q = _searchCtrl.text.trim().toLowerCase();
@@ -130,17 +146,20 @@ class _ChatListPageState extends State<ChatListPage> {
 
                 final meta = (t.participants[otherId] as Map?) ?? const {};
                 final name = ('${meta['name'] ?? 'Contact'}').trim();
-                final avatar = ('${meta['avatar'] ?? ''}').trim();
 
-                // last message preview
+                // ✅ supports:
+                // - meta['avatars'] as List
+                // - meta['avatar'] as String with "," or "|" separated
+                final avatarUrls = _extractAvatarUrls(meta);
+
                 final rawLast = t.lastText.toString().trim();
-                final lastSender = _safeLastSender(t);
+                final lastSender = t.lastSenderAppId; // now populated by service
                 final youPrefix = (lastSender != null && lastSender == me) ? 'You: ' : '';
                 final subtitle = rawLast.isEmpty ? 'Tap to chat' : '$youPrefix$rawLast';
 
                 return _ChatRow(
                   name: name.isEmpty ? 'Contact' : name,
-                  avatarUrl: avatar,
+                  avatarUrls: avatarUrls,
                   lastText: subtitle,
                   updatedAt: t.updatedAt,
                   unreadCount: _safeUnreadCount(t, me),
@@ -150,7 +169,7 @@ class _ChatListPageState extends State<ChatListPage> {
                       builder: (_) => MessagePage(
                         peerAppId: otherId,
                         peerName: name.isEmpty ? 'Contact' : name,
-                        peerAvatarUrl: avatar,
+                        peerAvatarUrl: avatarUrls.isNotEmpty ? avatarUrls.first : '',
                         peerId: '',
                       ),
                     ),
@@ -233,31 +252,116 @@ class _ChatListPageState extends State<ChatListPage> {
     );
   }
 
-  String? _safeLastSender(ChatThread t) {
+  List<String> _extractAvatarUrls(Map meta) {
     try {
-      final dynamic v = (t as dynamic).lastSenderAppId;
-      if (v is String && v.isNotEmpty) return v;
+      final v = meta['avatars'];
+      if (v is List) {
+        return v.map((e) => '$e').where((s) => s.trim().isNotEmpty).toList();
+      }
     } catch (_) {}
-    return null;
+
+    final raw = ('${meta['avatar'] ?? ''}').trim();
+    if (raw.isEmpty) return const [];
+
+    if (raw.contains('|')) {
+      return raw.split('|').map((e) => e.trim()).where((s) => s.isNotEmpty).toList();
+    }
+    if (raw.contains(',')) {
+      return raw.split(',').map((e) => e.trim()).where((s) => s.isNotEmpty).toList();
+    }
+    return [raw];
   }
 
   int _safeUnreadCount(ChatThread t, String me) {
     try {
-      final dynamic unread = (t as dynamic).unreadCount;
-      if (unread is int) return unread;
-    } catch (_) {}
-    try {
-      final dynamic unreadMap = (t as dynamic).unread;
-      if (unreadMap is Map && unreadMap[me] is int) return unreadMap[me] as int;
+      final m = t.unread;
+      if (m is Map && m?[me] is int) return m?[me] as int;
+      if (m is Map && m?[me] is num) return (m?[me] as num).toInt();
     } catch (_) {}
     return 0;
   }
+
+  _ChatUiError _friendlyChatError(Object e) {
+    final raw = e.toString().toLowerCase();
+    final isIndexError =
+        raw.contains('failed-precondition') && raw.contains('requires an index');
+
+    if (e is FirebaseException) {
+      final code = e.code.toLowerCase();
+      final msg = (e.message ?? '').toLowerCase();
+
+      if (code == 'failed-precondition' && (msg.contains('requires an index') || isIndexError)) {
+        return const _ChatUiError(
+          icon: Icons.build_circle_outlined,
+          title: 'Chats unavailable',
+          message: 'Chats are being set up on our side. Please tap Retry in a moment.',
+        );
+      }
+
+      if (code == 'permission-denied') {
+        return const _ChatUiError(
+          icon: Icons.lock_outline,
+          title: 'Access denied',
+          message: 'You don’t have access to chats. Please log in again.',
+        );
+      }
+
+      if (code == 'unavailable') {
+        return const _ChatUiError(
+          icon: Icons.wifi_off_rounded,
+          title: 'No connection',
+          message: 'We can’t reach the chat service. Check your internet and try again.',
+        );
+      }
+    }
+
+    if (raw.contains('socketexception') ||
+        raw.contains('network') ||
+        raw.contains('timed out') ||
+        raw.contains('timeout')) {
+      return const _ChatUiError(
+        icon: Icons.wifi_off_rounded,
+        title: 'Connection problem',
+        message: 'Please check your internet connection and try again.',
+      );
+    }
+
+    return const _ChatUiError(
+      icon: Icons.error_outline_rounded,
+      title: 'Chats unavailable',
+      message: 'Something went wrong while loading chats. Please tap Retry.',
+    );
+  }
 }
+
+/// ✅ Removes scrollbar + glow bars
+class _NoBarsScrollBehavior extends MaterialScrollBehavior {
+  const _NoBarsScrollBehavior();
+
+  @override
+  Widget buildOverscrollIndicator(BuildContext context, Widget child, ScrollableDetails details) {
+    return child;
+  }
+
+  @override
+  Widget buildScrollbar(BuildContext context, Widget child, ScrollableDetails details) {
+    return child;
+  }
+}
+
+class _ChatUiError {
+  final IconData icon;
+  final String title;
+  final String message;
+  const _ChatUiError({required this.icon, required this.title, required this.message});
+}
+
+// ─────────────────────────────────────────────────────────────
 
 class _ChatRow extends StatelessWidget {
   const _ChatRow({
     required this.name,
-    required this.avatarUrl,
+    required this.avatarUrls,
     required this.lastText,
     required this.updatedAt,
     required this.unreadCount,
@@ -265,7 +369,7 @@ class _ChatRow extends StatelessWidget {
   });
 
   final String name;
-  final String avatarUrl;
+  final List<String> avatarUrls;
   final String lastText;
   final DateTime updatedAt;
   final int unreadCount;
@@ -287,7 +391,7 @@ class _ChatRow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
-              _Avatar(url: avatarUrl, name: name),
+              _AvatarCarousel(urls: avatarUrls, name: name),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -346,6 +450,7 @@ class _ChatRow extends StatelessWidget {
   }
 
   String _fmtTime(DateTime dt) {
+    if (dt.millisecondsSinceEpoch == 0) return '';
     final now = DateTime.now();
     final sameDay = dt.year == now.year && dt.month == now.month && dt.day == now.day;
     if (sameDay) {
@@ -358,15 +463,71 @@ class _ChatRow extends StatelessWidget {
   }
 }
 
-class _Avatar extends StatelessWidget {
-  const _Avatar({required this.url, required this.name});
-
-  final String url;
+class _AvatarCarousel extends StatefulWidget {
+  const _AvatarCarousel({required this.urls, required this.name});
+  final List<String> urls;
   final String name;
 
   @override
+  State<_AvatarCarousel> createState() => _AvatarCarouselState();
+}
+
+class _AvatarCarouselState extends State<_AvatarCarousel> {
+  late final PageController _pc;
+  Timer? _timer;
+  int _i = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pc = PageController();
+
+    // ✅ auto-slide only when > 1 image
+    if (widget.urls.length > 1) {
+      _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+        if (!mounted) return;
+        _i = (_i + 1) % widget.urls.length;
+        _pc.animateToPage(
+          _i,
+          duration: const Duration(milliseconds: 420),
+          curve: Curves.easeInOut,
+        );
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _AvatarCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // restart timer if urls count changes
+    if (oldWidget.urls.length != widget.urls.length) {
+      _timer?.cancel();
+      _i = 0;
+      if (widget.urls.length > 1) {
+        _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+          if (!mounted) return;
+          _i = (_i + 1) % widget.urls.length;
+          _pc.animateToPage(
+            _i,
+            duration: const Duration(milliseconds: 420),
+            curve: Curves.easeInOut,
+          );
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _pc.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final initials = _initials(name);
+    final initials = _initials(widget.name);
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(999),
@@ -374,26 +535,34 @@ class _Avatar extends StatelessWidget {
         width: 48,
         height: 48,
         color: Colors.grey.shade200,
-        child: url.isNotEmpty
-            ? Image.network(
-                url,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _fallback(initials),
-                loadingBuilder: (c, w, p) {
-                  if (p == null) return w;
-                  return Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
+        child: widget.urls.isEmpty
+            ? _fallback(initials)
+            : PageView.builder(
+                controller: _pc,
+                itemCount: widget.urls.length,
+                physics: const NeverScrollableScrollPhysics(), // auto only
+                itemBuilder: (_, idx) {
+                  final url = widget.urls[idx];
+                  return Image.network(
+                    url,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _fallback(initials),
+                    loadingBuilder: (c, w, p) {
+                      if (p == null) return w;
+                      return Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                      );
+                    },
                   );
                 },
-              )
-            : _fallback(initials),
+              ),
       ),
     );
   }
@@ -437,7 +606,6 @@ class _UnreadPill extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  // ✅ Fix: define brand color inside this widget (no scope issues)
   static const _brandOrange = Color(0xFFFF8A00);
 
   const _EmptyState({

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ChatMessage {
   final String id, fromAppId, toAppId, text;
   final DateTime ts;
+
   ChatMessage({
     required this.id,
     required this.fromAppId,
@@ -14,10 +15,11 @@ class ChatMessage {
     required this.text,
     required this.ts,
   });
+
   bool isMine(String myAppId) => fromAppId == myAppId;
 
   factory ChatMessage.fromSnap(DocumentSnapshot<Map<String, dynamic>> d) {
-    final m = d.data() ?? {};
+    final m = d.data() ?? <String, dynamic>{};
     final ts = (m['ts'] as Timestamp?)?.toDate() ?? DateTime.now();
     return ChatMessage(
       id: d.id,
@@ -32,9 +34,13 @@ class ChatMessage {
 class ChatThread {
   final String id;
   final List<String> participantsAppIds;
-  final Map<String, dynamic> participants; // appId -> {name,avatar}
+  final Map<String, dynamic> participants; // appId -> {name, avatar or avatars}
   final String lastText;
   final DateTime updatedAt;
+
+  // optional (your UI reads these safely via dynamic)
+  final String? lastSenderAppId;
+  final Map<String, dynamic>? unread; // {appId: int}
 
   ChatThread({
     required this.id,
@@ -42,35 +48,47 @@ class ChatThread {
     required this.participants,
     required this.lastText,
     required this.updatedAt,
+    this.lastSenderAppId,
+    this.unread,
   });
 
-  String otherId(String me) => participantsAppIds.firstWhere((x) => x != me, orElse: () => me);
+  String otherId(String me) =>
+      participantsAppIds.firstWhere((x) => x != me, orElse: () => me);
 
   factory ChatThread.fromSnap(DocumentSnapshot<Map<String, dynamic>> d) {
-    final m = d.data() ?? {};
-    final ts = (m['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final m = d.data() ?? <String, dynamic>{};
+
+    DateTime ts;
+    final raw = m['updatedAt'];
+    if (raw is Timestamp) {
+      ts = raw.toDate();
+    } else {
+      ts = DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
     return ChatThread(
       id: d.id,
-      participantsAppIds: (m['participantsAppIds'] as List? ?? const []).map((e) => '$e').toList(),
-      participants: (m['participants'] as Map<String, dynamic>? ?? const {}),
+      participantsAppIds:
+          (m['participantsAppIds'] as List? ?? const []).map((e) => '$e').toList(),
+      participants: (m['participants'] as Map<String, dynamic>?) ?? <String, dynamic>{},
       lastText: '${m['lastText'] ?? ''}',
       updatedAt: ts,
+      lastSenderAppId: (m['lastSenderAppId'] is String) ? m['lastSenderAppId'] as String : null,
+      unread: (m['unread'] is Map) ? Map<String, dynamic>.from(m['unread'] as Map) : null,
     );
   }
 }
 
 class ChatService {
-  static final _auth = FirebaseAuth.instance;
-  static final _db = FirebaseFirestore.instance;
+  static final FirebaseAuth _auth = FirebaseAuth.instance;
+  static final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // Ensure Firebase Core is ready. Your main.dart already does initializeApp(),
-  // so this usually returns immediately.
   static Future<void> _ensureCore() async {
     if (Firebase.apps.isEmpty) {
       try {
-        await Firebase.initializeApp(); // no options needed; main.dart handled it
+        await Firebase.initializeApp();
       } catch (_) {
-        // Swallow: if another place already initialized in a race, this will throw.
+        // ignore init race
       }
     }
   }
@@ -83,6 +101,7 @@ class ChatService {
 
   static Future<User> ensureFirebaseAuth({String? firebaseCustomToken}) async {
     await _ensureCore();
+
     final existing = _auth.currentUser;
     if (existing != null) return existing;
 
@@ -90,13 +109,15 @@ class ChatService {
       final cred = await _auth.signInWithCustomToken(firebaseCustomToken);
       return cred.user!;
     }
+
     final cred = await _auth.signInAnonymously();
     return cred.user!;
   }
 
   static Future<void> lockUidMapping(String appUserId) async {
-    final uid = _auth.currentUser!.uid; // call ensureFirebaseAuth() before this
+    final uid = _auth.currentUser!.uid;
     final ref = _db.collection('profiles').doc(uid);
+
     await _db.runTransaction((tx) async {
       final snap = await tx.get(ref);
       if (!snap.exists) {
@@ -113,22 +134,18 @@ class ChatService {
     return (x.compareTo(y) < 0) ? '${x}_$y' : '${y}_$x';
   }
 
+  /// ✅ FIXED: no orderBy => NO composite index required
+  /// We sort locally by updatedAt.
   static Stream<List<ChatThread>> threadsStream(String myAppId) {
     return _db
         .collection('threads')
         .where('participantsAppIds', arrayContains: myAppId)
-        .orderBy('updatedAt', descending: true)
         .snapshots()
-        .map((qs) => qs.docs.map((d) => ChatThread.fromSnap(d)).toList());
-  }
-
-  static Stream<List<ChatMessage>> messagesStream(String threadId) {
-    return _db
-        .collection('threads').doc(threadId)
-        .collection('messages')
-        .orderBy('ts')
-        .snapshots()
-        .map((qs) => qs.docs.map((d) => ChatMessage.fromSnap(d)).toList());
+        .map((qs) {
+      final list = qs.docs.map((d) => ChatThread.fromSnap(d)).toList();
+      list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return list;
+    });
   }
 
   static Future<void> ensureThread({
@@ -136,19 +153,54 @@ class ChatService {
     required String peerAppId,
     String? myName,
     String? myAvatar,
+    dynamic myAvatars, // allow list too if you want
     String? peerName,
     String? peerAvatar,
+    dynamic peerAvatars,
   }) async {
     final id = threadIdForApp(myAppId, peerAppId);
     final ref = _db.collection('threads').doc(id);
+
     await ref.set({
       'participantsAppIds': [myAppId, peerAppId],
       'participants': {
-        myAppId: {'name': myName, 'avatar': myAvatar},
-        peerAppId: {'name': peerName, 'avatar': peerAvatar},
+        myAppId: {
+          'name': myName,
+          if (myAvatars != null) 'avatars': myAvatars,
+          if (myAvatars == null) 'avatar': myAvatar,
+        },
+        peerAppId: {
+          'name': peerName,
+          if (peerAvatars != null) 'avatars': peerAvatars,
+          if (peerAvatars == null) 'avatar': peerAvatar,
+        },
       },
       'updatedAt': FieldValue.serverTimestamp(),
+      'lastText': FieldValue.delete(),
+      'lastSenderAppId': FieldValue.delete(),
+      'unread': {
+        myAppId: 0,
+        peerAppId: 0,
+      },
     }, SetOptions(merge: true));
+  }
+
+  /// Messages stream (for MessagePage)
+  static Stream<List<ChatMessage>> messagesStream(String threadId, {
+    required String myAppId,
+    required String peerAppId,
+    int limit = 60,
+  }) {
+    final id = threadIdForApp(myAppId, peerAppId);
+
+    return _db
+        .collection('threads')
+        .doc(id)
+        .collection('messages')
+        .orderBy('ts', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map((qs) => qs.docs.map((d) => ChatMessage.fromSnap(d)).toList());
   }
 
   static Future<void> sendMessage({
@@ -168,10 +220,30 @@ class ChatService {
         'text': text,
         'ts': now,
       });
-      tx.set(tRef, {
-        'updatedAt': now,
-        'lastText': text,
-      }, SetOptions(merge: true));
+
+      // ✅ keeps your UI "You:" prefix + unread badge working
+      tx.set(
+        tRef,
+        {
+          'updatedAt': now,
+          'lastText': text,
+          'lastSenderAppId': myAppId,
+          'unread.$peerAppId': FieldValue.increment(1),
+          'unread.$myAppId': 0,
+        },
+        SetOptions(merge: true),
+      );
     });
+  }
+
+  static Future<void> markThreadRead({
+    required String myAppId,
+    required String peerAppId,
+  }) async {
+    final id = threadIdForApp(myAppId, peerAppId);
+    await _db.collection('threads').doc(id).set(
+      {'unread.$myAppId': 0},
+      SetOptions(merge: true),
+    );
   }
 }

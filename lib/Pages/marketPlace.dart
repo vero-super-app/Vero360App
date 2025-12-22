@@ -6,11 +6,10 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart'; // ✅ NEW
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -25,6 +24,27 @@ import 'package:vero360_app/Pages/Home/Messages.dart';
 import 'package:vero360_app/services/chat_service.dart';
 import 'package:vero360_app/services/serviceprovider_service.dart';
 import 'package:vero360_app/models/serviceprovider_model.dart';
+
+/// ✅ Removes scrollbars + glow everywhere inside bottom-sheet
+class _NoBarsScrollBehavior extends MaterialScrollBehavior {
+  const _NoBarsScrollBehavior();
+
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) =>
+      child;
+
+  @override
+  Widget buildScrollbar(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) =>
+      child;
+}
 
 /// --------------------
 /// Local marketplace model (Firestore)
@@ -60,7 +80,7 @@ class MarketplaceDetailModel {
   // gallery can contain http / gs:// / firebase paths
   final List<String> gallery;
 
-  // Seller/business meta (sometimes coming from service provider)
+  // Seller/business meta
   final String? sellerBusinessName;
   final String? sellerOpeningHours;
   final String? sellerStatus;
@@ -349,10 +369,9 @@ class _MarketPageState extends State<MarketPage> {
   final ImagePicker _picker = ImagePicker();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // MWK formatter (commas, no decimals)
+  // ✅ MWK formatter (commas, no decimals)
   late final NumberFormat _mwkFmt =
       NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
-
   String _mwk(num v) => _mwkFmt.format(v);
 
   Widget _smallBadge(String text) {
@@ -451,16 +470,16 @@ class _MarketPageState extends State<MarketPage> {
       ));
     }
 
+    // base64
     if (_looksLikeBase64(s)) {
       try {
         final base64Part = s.contains(',') ? s.split(',').last : s;
         final bytes = base64Decode(base64Part);
         return wrap(Image.memory(bytes, fit: fit, width: width, height: height));
-      } catch (_) {
-        // fall through
-      }
+      } catch (_) {}
     }
 
+    // http(s)
     if (_isHttp(s)) {
       return wrap(Image.network(
         s,
@@ -487,6 +506,7 @@ class _MarketPageState extends State<MarketPage> {
       ));
     }
 
+    // firebase gs:// or storage path
     return FutureBuilder<String?>(
       future: _toFirebaseDownloadUrl(s),
       builder: (context, snap) {
@@ -628,8 +648,7 @@ class _MarketPageState extends State<MarketPage> {
       }
 
       return null;
-    } catch (e) {
-      // ignore
+    } catch (_) {
       return null;
     }
   }
@@ -785,7 +804,8 @@ class _MarketPageState extends State<MarketPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Photo search not implemented yet. Showing all items.'),
+            content:
+                Text('Photo search not implemented yet. Showing all items.'),
           ),
         );
       }
@@ -868,8 +888,9 @@ class _MarketPageState extends State<MarketPage> {
 
       final userId = await _getCurrentUserId() ?? 'unknown';
 
-      final int numericItemId =
-          item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id);
+      final int numericItemId = item.hasValidSqlItemId
+          ? item.sqlItemId!
+          : _stablePositiveIdFromString(item.id);
 
       final cartItem = CartModel(
         userId: userId,
@@ -941,13 +962,11 @@ class _MarketPageState extends State<MarketPage> {
       return;
     }
 
-    // ✅ Use merchant name in chat
     final merchantName = (item.merchantName ?? '').trim();
     final sellerName = merchantName.isNotEmpty
         ? merchantName
         : ((item.sellerBusinessName ?? 'Seller').trim());
 
-    // ✅ Support firebase storage avatar
     final rawAvatar = (item.sellerLogoUrl ?? '').trim();
     final sellerAvatar = (await _toFirebaseDownloadUrl(rawAvatar)) ?? rawAvatar;
 
@@ -978,7 +997,9 @@ class _MarketPageState extends State<MarketPage> {
     if (!mounted) return;
 
     final core.MarketplaceDetailModel checkoutItem = core.MarketplaceDetailModel(
-      id: item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id),
+      id: item.hasValidSqlItemId
+          ? item.sqlItemId!
+          : _stablePositiveIdFromString(item.id),
       name: item.name,
       category: item.category,
       price: item.price,
@@ -1036,7 +1057,9 @@ class _MarketPageState extends State<MarketPage> {
       if (picked == null) return;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Photo search works best in mobile builds.')),
+        const SnackBar(
+          content: Text('Photo search works best in mobile builds.'),
+        ),
       );
       return;
     }
@@ -1097,13 +1120,29 @@ class _MarketPageState extends State<MarketPage> {
     await _future;
   }
 
-  /// ✅ Details Bottom Sheet (now supports firebase images in carousel + logo)
+  // ✅ Grid image widget (supports base64 + http + firebase)
+  Widget _buildItemImageWidget(MarketplaceDetailModel item) {
+    if (item.imageBytes != null) {
+      return Image.memory(item.imageBytes!, fit: BoxFit.cover, width: double.infinity);
+    }
+    return _imageFromAnySource(
+      item.image,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+    );
+  }
+
+  /// ✅ FULL Details Bottom Sheet
+  /// - Removes the left/right "bars" (no arrow overlays)
+  /// - Auto-slides photos every 3 seconds
+  /// - Still swipeable
+  /// - No scrollbars / no glow
   Future<void> _showDetailsBottomSheet(MarketplaceDetailModel item) async {
     if (!mounted) return;
 
     final Future<_SellerInfo> sellerFuture = _loadSellerForItem(item);
 
-    // ✅ media can be http/base64/gs:///path
     final List<String> mediaSources = [];
     if (item.image.trim().isNotEmpty) mediaSources.add(item.image.trim());
     if (item.gallery.isNotEmpty) {
@@ -1113,7 +1152,9 @@ class _MarketPageState extends State<MarketPage> {
     }
 
     final pageController = PageController();
+    Timer? autoTimer;
     int currentPage = 0;
+    bool autoStarted = false;
 
     await showModalBottomSheet(
       context: context,
@@ -1122,317 +1163,302 @@ class _MarketPageState extends State<MarketPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (ctx) {
+      builder: (sheetCtx) {
         return FractionallySizedBox(
           heightFactor: 0.9,
           child: StatefulBuilder(
             builder: (ctx, setModalState) {
-              return SingleChildScrollView(
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    left: 16,
-                    right: 16,
-                    top: 12,
-                    bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-                  ),
-                  child: FutureBuilder<_SellerInfo>(
-                    future: sellerFuture,
-                    builder: (ctx, snap) {
-                      final seller = snap.data;
+              // ✅ start auto-slide ONCE
+              if (!autoStarted && mediaSources.length > 1) {
+                autoStarted = true;
+                autoTimer?.cancel();
+                autoTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+                  if (!pageController.hasClients) return;
+                  final next = (currentPage + 1) % mediaSources.length;
+                  pageController.animateToPage(
+                    next,
+                    duration: const Duration(milliseconds: 420),
+                    curve: Curves.easeInOut,
+                  );
+                  setModalState(() => currentPage = next);
+                });
+              }
 
-                      final openingHours = seller?.openingHours;
-                      final closing = _closingFromHours(openingHours);
-                      final status = seller?.status;
-                      final rating = seller?.rating;
-                      final businessDesc = seller?.description;
-                      final logo = seller?.logoUrl;
+              return ScrollConfiguration(
+                behavior: const _NoBarsScrollBehavior(),
+                child: SingleChildScrollView(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      left: 16,
+                      right: 16,
+                      top: 12,
+                      bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+                    ),
+                    child: FutureBuilder<_SellerInfo>(
+                      future: sellerFuture,
+                      builder: (ctx, snap) {
+                        final seller = snap.data;
 
-                      // ✅ merchant name drives "posted by" + business name
-                      final merchantName = (item.merchantName ?? '').trim();
-                      final displayMerchantName = merchantName.isNotEmpty
-                          ? merchantName
-                          : ((seller?.businessName ?? item.sellerBusinessName ?? '')
-                                  .trim()
-                                  .isNotEmpty
-                              ? (seller?.businessName ?? item.sellerBusinessName)!.trim()
-                              : 'Merchant');
+                        final openingHours = seller?.openingHours;
+                        final closing = _closingFromHours(openingHours);
+                        final status = seller?.status;
+                        final rating = seller?.rating;
+                        final businessDesc = seller?.description;
+                        final logo = seller?.logoUrl;
 
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Center(
-                            child: Container(
-                              width: 40,
-                              height: 4,
-                              margin: const EdgeInsets.only(bottom: 12),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[300],
-                                borderRadius: BorderRadius.circular(2),
+                        final merchantName = (item.merchantName ?? '').trim();
+                        final displayMerchantName = merchantName.isNotEmpty
+                            ? merchantName
+                            : ((seller?.businessName ?? item.sellerBusinessName ?? '')
+                                    .trim()
+                                    .isNotEmpty
+                                ? (seller?.businessName ?? item.sellerBusinessName)!.trim()
+                                : 'Merchant');
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Center(
+                              child: Container(
+                                width: 40,
+                                height: 4,
+                                margin: const EdgeInsets.only(bottom: 12),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[300],
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
                               ),
                             ),
-                          ),
 
-                          // Media Area
-                          AspectRatio(
-                            aspectRatio: 16 / 9,
-                            child: Stack(
-                              children: [
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: mediaSources.isEmpty
-                                      ? _buildItemImageWidget(item)
-                                      : PageView.builder(
-                                          controller: pageController,
-                                          itemCount: mediaSources.length,
-                                          physics: mediaSources.length > 1
-                                              ? const BouncingScrollPhysics()
-                                              : const NeverScrollableScrollPhysics(),
-                                          onPageChanged: (i) =>
-                                              setModalState(() => currentPage = i),
-                                          itemBuilder: (_, i) {
-                                            return _imageFromAnySource(
-                                              mediaSources[i],
-                                              fit: BoxFit.cover,
-                                              width: double.infinity,
-                                              height: double.infinity,
-                                            );
-                                          },
+                            // ✅ Media Area (NO BARS)
+                            AspectRatio(
+                              aspectRatio: 16 / 9,
+                              child: Stack(
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: mediaSources.isEmpty
+                                        ? _buildItemImageWidget(item)
+                                        : PageView.builder(
+                                            controller: pageController,
+                                            itemCount: mediaSources.length,
+                                            physics: mediaSources.length > 1
+                                                ? const PageScrollPhysics()
+                                                : const NeverScrollableScrollPhysics(),
+                                            onPageChanged: (i) => setModalState(() => currentPage = i),
+                                            itemBuilder: (_, i) {
+                                              return _imageFromAnySource(
+                                                mediaSources[i],
+                                                fit: BoxFit.cover,
+                                                width: double.infinity,
+                                                height: double.infinity,
+                                              );
+                                            },
+                                          ),
+                                  ),
+                                  if (mediaSources.length > 1)
+                                    Positioned(
+                                      right: 10,
+                                      bottom: 10,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.55),
+                                          borderRadius: BorderRadius.circular(999),
                                         ),
-                                ),
-                                if (mediaSources.length > 1) ...[
-                                  Positioned(
-                                    left: 4,
-                                    top: 0,
-                                    bottom: 0,
-                                    child: Material(
-                                      color: Colors.black38,
-                                      borderRadius: BorderRadius.circular(24),
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(24),
-                                        onTap: () {
-                                          final prev = (currentPage - 1 + mediaSources.length) %
-                                              mediaSources.length;
-                                          pageController.animateToPage(
-                                            prev,
-                                            duration: const Duration(milliseconds: 300),
-                                            curve: Curves.easeOut,
-                                          );
-                                        },
-                                        child: const SizedBox(
-                                          width: 36,
-                                          height: 36,
-                                          child: Icon(Icons.chevron_left, color: Colors.white),
+                                        child: Text(
+                                          '${currentPage + 1}/${mediaSources.length}',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 12,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                  Positioned(
-                                    right: 4,
-                                    top: 0,
-                                    bottom: 0,
-                                    child: Material(
-                                      color: Colors.black38,
-                                      borderRadius: BorderRadius.circular(24),
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(24),
-                                        onTap: () {
-                                          final next = (currentPage + 1) % mediaSources.length;
-                                          pageController.animateToPage(
-                                            next,
-                                            duration: const Duration(milliseconds: 300),
-                                            curve: Curves.easeOut,
-                                          );
-                                        },
-                                        child: const SizedBox(
-                                          width: 36,
-                                          height: 36,
-                                          child: Icon(Icons.chevron_right, color: Colors.white),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
                                 ],
+                              ),
+                            ),
+
+                            const SizedBox(height: 16),
+
+                            // Title + Price + Chat
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.name,
+                                        style: const TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Container(
+                                        padding:
+                                            const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFFFE8CC),
+                                          borderRadius: BorderRadius.circular(20),
+                                          border: Border.all(color: const Color(0xFFFF8A00)),
+                                        ),
+                                        child: Text(
+                                          _mwk(item.price),
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      if (item.location != null &&
+                                          item.location!.trim().isNotEmpty)
+                                        Row(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Icon(Icons.location_on,
+                                                size: 16, color: Colors.redAccent),
+                                            const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Text(
+                                                item.location!,
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  color: Colors.grey[700],
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      if (item.createdAt != null) ...[
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          "Posted by $displayMerchantName • ${_formatTimeAgo(item.createdAt!)}",
+                                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                FilledButton.icon(
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: const Color(0xFFFF8A00),
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  ),
+                                  onPressed: () => _openChatWithMerchant(item),
+                                  icon: const Icon(Icons.message_rounded),
+                                  label: const Text('Chat'),
+                                ),
                               ],
                             ),
-                          ),
 
-                          const SizedBox(height: 16),
+                            const SizedBox(height: 12),
 
-                          // Title + Price + Chat
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
+                            if ((item.description ?? '').trim().isNotEmpty)
+                              Text(
+                                item.description!.trim(),
+                                style: const TextStyle(fontSize: 14, height: 1.3),
+                              ),
+
+                            const SizedBox(height: 16),
+
+                            // Seller Card
+                            Card(
+                              elevation: 4,
+                              shadowColor: Colors.black12,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      item.name,
-                                      style: const TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFFFE8CC),
-                                        borderRadius: BorderRadius.circular(20),
-                                        border: Border.all(color: const Color(0xFFFF8A00)),
-                                      ),
-                                      child: Text(
-                                        _mwk(item.price),
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    if (item.location != null && item.location!.trim().isNotEmpty)
-                                      Row(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          const Icon(Icons.location_on,
-                                              size: 16, color: Colors.redAccent),
-                                          const SizedBox(width: 4),
-                                          Expanded(
-                                            child: Text(
-                                              item.location!,
-                                              style: TextStyle(
-                                                fontSize: 13,
-                                                color: Colors.grey[700],
-                                              ),
+                                    Row(
+                                      crossAxisAlignment: CrossAxisAlignment.center,
+                                      children: [
+                                        if ((logo ?? '').trim().isNotEmpty)
+                                          _circleAvatarFromAnySource(logo, radius: 18),
+                                        if ((logo ?? '').trim().isNotEmpty) const SizedBox(width: 10),
+                                        const Icon(Icons.storefront_rounded,
+                                            size: 20, color: Colors.black87),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            displayMerchantName,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 16,
                                             ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                        ],
-                                      ),
-                                    if (item.createdAt != null) ...[
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        "Posted by $displayMerchantName • ${_formatTimeAgo(item.createdAt!)}",
-                                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                                      ),
-                                    ],
+                                        ),
+                                        const SizedBox(width: 8),
+                                        _ratingStars(rating),
+                                        const SizedBox(width: 8),
+                                        _statusChip(status),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 10),
+                                    _infoRow('Business name', displayMerchantName,
+                                        icon: Icons.badge_rounded),
+                                    _infoRow('Closing hours', closing,
+                                        icon: Icons.access_time_rounded),
+                                    _infoRow(
+                                      'Status',
+                                      (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
+                                      icon: Icons.info_outline_rounded,
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Text('Business description',
+                                        style: TextStyle(color: Colors.black54)),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      (businessDesc ?? '').isNotEmpty ? businessDesc! : '—',
+                                      style: const TextStyle(fontWeight: FontWeight.w600),
+                                    ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(width: 10),
-                              FilledButton.icon(
+                            ),
+
+                            const SizedBox(height: 20),
+
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
                                 style: FilledButton.styleFrom(
                                   backgroundColor: const Color(0xFFFF8A00),
                                   foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
                                   shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
+                                    borderRadius: BorderRadius.circular(14),
                                   ),
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  textStyle: const TextStyle(fontWeight: FontWeight.w700),
                                 ),
-                                onPressed: () => _openChatWithMerchant(item),
-                                icon: const Icon(Icons.message_rounded),
-                                label: const Text('Chat'),
-                              ),
-                            ],
-                          ),
-
-                          const SizedBox(height: 12),
-
-                          if ((item.description ?? '').trim().isNotEmpty)
-                            Text(item.description!.trim(),
-                                style: const TextStyle(fontSize: 14, height: 1.3)),
-
-                          const SizedBox(height: 16),
-
-                          // Seller Card
-                          Card(
-                            elevation: 4,
-                            shadowColor: Colors.black12,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            clipBehavior: Clip.antiAlias,
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    crossAxisAlignment: CrossAxisAlignment.center,
-                                    children: [
-                                      // ✅ firebase/gs/base64/http logo support
-                                      if ((logo ?? '').trim().isNotEmpty) _circleAvatarFromAnySource(logo, radius: 18),
-                                      if ((logo ?? '').trim().isNotEmpty) const SizedBox(width: 10),
-                                      const Icon(Icons.storefront_rounded,
-                                          size: 20, color: Colors.black87),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          displayMerchantName,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 16,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      _ratingStars(rating),
-                                      const SizedBox(width: 8),
-                                      _statusChip(status),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 10),
-
-                                  // ✅ Business name uses merchant name
-                                  _infoRow('Business name', displayMerchantName,
-                                      icon: Icons.badge_rounded),
-
-                                  _infoRow('Closing hours', closing,
-                                      icon: Icons.access_time_rounded),
-                                  _infoRow(
-                                    'Status',
-                                    (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
-                                    icon: Icons.info_outline_rounded,
-                                  ),
-                                  const SizedBox(height: 6),
-                                  const Text('Business description',
-                                      style: TextStyle(color: Colors.black54)),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    (businessDesc ?? '').isNotEmpty ? businessDesc! : '—',
-                                    style: const TextStyle(fontWeight: FontWeight.w600),
-                                  ),
-                                ],
+                                onPressed: () {
+                                  Navigator.pop(sheetCtx);
+                                  _goToCheckoutFromBottomSheet(item);
+                                },
+                                icon: const Icon(Icons.shopping_bag_outlined),
+                                label: const Text("Continue to checkout"),
                               ),
                             ),
-                          ),
-
-                          const SizedBox(height: 20),
-
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.icon(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: const Color(0xFFFF8A00),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                textStyle: const TextStyle(fontWeight: FontWeight.w700),
-                              ),
-                              onPressed: () {
-                                Navigator.pop(ctx);
-                                _goToCheckoutFromBottomSheet(item);
-                              },
-                              icon: const Icon(Icons.shopping_bag_outlined),
-                              label: const Text("Continue to checkout"),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
+                          ],
+                        );
+                      },
+                    ),
                   ),
                 ),
               );
@@ -1440,11 +1466,17 @@ class _MarketPageState extends State<MarketPage> {
           ),
         );
       },
-    ).whenComplete(pageController.dispose);
+    ).whenComplete(() {
+      autoTimer?.cancel();
+      pageController.dispose();
+    });
   }
 
-  Widget _buildCategoryChip(String title,
-      {required bool isSelected, required VoidCallback onTap}) {
+  Widget _buildCategoryChip(
+    String title, {
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
     return InkWell(
       borderRadius: BorderRadius.circular(20),
       onTap: onTap,
@@ -1459,20 +1491,6 @@ class _MarketPageState extends State<MarketPage> {
         backgroundColor: isSelected ? Colors.orange : Colors.grey[300],
         padding: const EdgeInsets.symmetric(horizontal: 10),
       ),
-    );
-  }
-
-  // ✅ Grid image widget (supports base64 + http + firebase)
-  Widget _buildItemImageWidget(MarketplaceDetailModel item) {
-    if (item.imageBytes != null) {
-      return Image.memory(item.imageBytes!,
-          fit: BoxFit.cover, width: double.infinity);
-    }
-    return _imageFromAnySource(
-      item.image,
-      fit: BoxFit.cover,
-      width: double.infinity,
-      height: double.infinity,
     );
   }
 
@@ -1504,13 +1522,10 @@ class _MarketPageState extends State<MarketPage> {
               children: [
                 Positioned.fill(
                   child: ClipRRect(
-                    borderRadius:
-                        const BorderRadius.vertical(top: Radius.circular(15)),
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
                     child: _buildItemImageWidget(item),
                   ),
                 ),
-
-                // badge row
                 if (showCat || showMerchant)
                   Positioned(
                     left: 8,
@@ -1565,13 +1580,11 @@ class _MarketPageState extends State<MarketPage> {
                     color: Colors.green,
                   ),
                 ),
-
                 const SizedBox(height: 4),
                 if (item.location != null && item.location!.trim().isNotEmpty)
                   Row(
                     children: [
-                      const Icon(Icons.location_on,
-                          size: 12, color: Colors.redAccent),
+                      const Icon(Icons.location_on, size: 12, color: Colors.redAccent),
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
@@ -1604,8 +1617,7 @@ class _MarketPageState extends State<MarketPage> {
                       backgroundColor: Colors.green,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     child: const Text("AddCart"),
                   ),
@@ -1618,8 +1630,7 @@ class _MarketPageState extends State<MarketPage> {
                       backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     child: const Text("BuyNow"),
                   ),
@@ -1682,12 +1693,10 @@ class _MarketPageState extends State<MarketPage> {
                   borderRadius: BorderRadius.circular(30),
                   borderSide: BorderSide.none,
                 ),
-                contentPadding:
-                    const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
               ),
             ),
           ),
-
           SizedBox(
             height: 44,
             child: ListView(
@@ -1711,7 +1720,6 @@ class _MarketPageState extends State<MarketPage> {
               ],
             ),
           ),
-
           if (_photoMode)
             const Padding(
               padding: EdgeInsets.fromLTRB(12, 6, 12, 0),
@@ -1723,7 +1731,6 @@ class _MarketPageState extends State<MarketPage> {
                 ],
               ),
             ),
-
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refresh,
@@ -1776,8 +1783,7 @@ class _MarketPageState extends State<MarketPage> {
 
                         return GridView.builder(
                           itemCount: items.length,
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
+                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: crossAxisCount,
                             crossAxisSpacing: 12,
                             mainAxisSpacing: 12,

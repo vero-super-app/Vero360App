@@ -1,4 +1,3 @@
-// lib/Pages/Home/Messages.dart
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
@@ -46,7 +45,7 @@ class _MessagePageState extends State<MessagePage> {
   final _scroll = ScrollController();
   final _picker = ImagePicker();
 
-  // Voice notes (record v6+ uses AudioRecorder) :contentReference[oaicite:4]{index=4}
+  // Voice notes
   final AudioRecorder _recorder = AudioRecorder();
   Timer? _recTimer;
   bool _recording = false;
@@ -81,18 +80,26 @@ class _MessagePageState extends State<MessagePage> {
   }
 
   Future<void> _boot() async {
-    await ChatService.ensureFirebaseAuth();
-    final me = await ChatService.myAppUserId();
+    try {
+      await ChatService.ensureFirebaseAuth();
+      final me = await ChatService.myAppUserId();
 
-    if (!mounted) return;
-    setState(() => _me = me);
+      if (!mounted) return;
+      setState(() => _me = me);
 
-    await ChatService.ensureThread(
-      myAppId: me,
-      peerAppId: widget.peerAppId,
-      peerName: widget.peerName,
-      peerAvatar: widget.peerAvatarUrl,
-    );
+      await ChatService.ensureThread(
+        myAppId: me,
+        peerAppId: widget.peerAppId,
+        peerName: widget.peerName,
+        peerAvatar: widget.peerAvatarUrl,
+      );
+
+      // mark read when opening
+      await ChatService.markThreadRead(myAppId: me, peerAppId: widget.peerAppId);
+    } catch (e) {
+      if (!mounted) return;
+      _toast(ChatService.friendlyError(e));
+    }
   }
 
   @override
@@ -110,6 +117,8 @@ class _MessagePageState extends State<MessagePage> {
   bool _isImageMsg(String txt) => txt.trimLeft().startsWith(_imgPrefix);
   bool _isAudioMsg(String txt) => txt.trimLeft().startsWith(_audPrefix);
   bool _isCallMsg(String txt) => txt.trimLeft().startsWith(_callPrefix);
+
+  bool _isPlainText(String txt) => !_isImageMsg(txt) && !_isAudioMsg(txt) && !_isCallMsg(txt);
 
   String _imgUrl(String txt) {
     final firstLine = txt.split('\n').first;
@@ -146,6 +155,9 @@ class _MessagePageState extends State<MessagePage> {
     final parts = body.split('::');
     return parts.length >= 2 ? parts[1].trim() : '';
   }
+
+  bool _within5Min(ChatMessage m) =>
+      DateTime.now().difference(m.ts) <= const Duration(minutes: 5);
 
   // -------------------- Pick images --------------------
   Future<void> _pickFromGallery() async {
@@ -202,7 +214,6 @@ class _MessagePageState extends State<MessagePage> {
       if (!mounted) return;
       setState(() {});
     } catch (_) {
-      if (!mounted) return;
       _toast('Camera not available');
     }
   }
@@ -318,8 +329,7 @@ class _MessagePageState extends State<MessagePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title,
-                        style: const TextStyle(fontWeight: FontWeight.w900)),
+                    Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
@@ -386,7 +396,10 @@ class _MessagePageState extends State<MessagePage> {
 
     try {
       if (hasPics) {
-        for (final img in _pendingImages) {
+        // DON’T clear until success
+        final localCaption = caption;
+
+        for (final img in List<_PendingImage>.from(_pendingImages)) {
           final url = await _uploadBytesToFirebase(
             bytes: img.bytes,
             folder: 'chat_media',
@@ -394,8 +407,7 @@ class _MessagePageState extends State<MessagePage> {
             mime: img.mime,
           );
 
-          // ✅ IMPORTANT: no space after $  (this fixes your error)
-          final text = '$_imgPrefix$url${caption.isEmpty ? '' : '\n$caption'}';
+          final text = '$_imgPrefix$url${localCaption.isEmpty ? '' : '\n$localCaption'}';
 
           await ChatService.sendMessage(
             myAppId: _me!,
@@ -407,20 +419,24 @@ class _MessagePageState extends State<MessagePage> {
         _pendingImages.clear();
         _input.clear();
       } else {
-        _input.clear();
         await ChatService.sendMessage(
           myAppId: _me!,
           peerAppId: widget.peerAppId,
           text: caption,
         );
+        _input.clear();
       }
 
       if (!mounted) return;
       setState(() => _uploadProgress = null);
+
+      await ChatService.markThreadRead(myAppId: _me!, peerAppId: widget.peerAppId);
+
       _jumpToBottom();
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      _toast('Failed to send');
+      _toast(ChatService.friendlyError(e));
+      // keep input + images so user can retry
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -439,7 +455,7 @@ class _MessagePageState extends State<MessagePage> {
     if (_sending) return;
 
     if (kIsWeb) {
-      _toast('Voice notes: web not enabled in this build');
+      _toast('Voice notes not enabled on web in this build');
       return;
     }
 
@@ -453,7 +469,6 @@ class _MessagePageState extends State<MessagePage> {
       final dir = await getTemporaryDirectory();
       final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
-      // record package v6 API :contentReference[oaicite:5]{index=5}
       await _recorder.start(
         const RecordConfig(
           encoder: AudioEncoder.aacLc,
@@ -479,7 +494,7 @@ class _MessagePageState extends State<MessagePage> {
   Future<void> _cancelVoiceRecording() async {
     try {
       _recTimer?.cancel();
-      await _recorder.cancel(); // removes file/blob :contentReference[oaicite:6]{index=6}
+      await _recorder.cancel();
     } catch (_) {}
     if (!mounted) return;
     setState(() {
@@ -500,7 +515,7 @@ class _MessagePageState extends State<MessagePage> {
     });
 
     try {
-      final path = await _recorder.stop(); // returns path :contentReference[oaicite:7]{index=7}
+      final path = await _recorder.stop();
       if (path == null || path.isEmpty) {
         _toast('Recording failed');
         setState(() {
@@ -533,9 +548,12 @@ class _MessagePageState extends State<MessagePage> {
         _recordMs = 0;
         _uploadProgress = null;
       });
+
+      await ChatService.markThreadRead(myAppId: _me!, peerAppId: widget.peerAppId);
+
       _jumpToBottom();
-    } catch (_) {
-      _toast('Failed to send voice note');
+    } catch (e) {
+      _toast(ChatService.friendlyError(e));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -547,7 +565,7 @@ class _MessagePageState extends State<MessagePage> {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
-  // -------------------- Call / Video call signaling (skeleton) --------------------
+  // -------------------- Call signaling (skeleton) --------------------
   Future<void> _startCall({required String type}) async {
     if (_me == null) return;
 
@@ -579,8 +597,132 @@ class _MessagePageState extends State<MessagePage> {
           ),
         ),
       );
-    } catch (_) {
-      _toast('Could not start $type call');
+    } catch (e) {
+      _toast(ChatService.friendlyError(e));
+    }
+  }
+
+  // -------------------- Edit/Delete UI --------------------
+  Future<void> _showMsgActions(ChatMessage m) async {
+    if (_me == null) return;
+    if (!m.isMine(_me!)) return;
+    if (!_within5Min(m)) return;
+    if (m.isDeleted) return;
+
+    final canEdit = _isPlainText(m.text);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => SafeArea(
+        child: Wrap(
+          children: [
+            const SizedBox(height: 8),
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            if (canEdit)
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('Edit'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _editMessageDialog(m);
+                },
+              ),
+
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('Delete', style: TextStyle(color: Colors.red)),
+              onTap: () async {
+                Navigator.pop(context);
+                final ok = await _confirmDelete();
+                if (!ok) return;
+                try {
+                  await ChatService.deleteMessage(
+                    threadId: _threadId,
+                    messageId: m.id,
+                    myAppId: _me!,
+                  );
+                } catch (e) {
+                  _toast(ChatService.friendlyError(e));
+                }
+              },
+            ),
+
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _confirmDelete() async {
+    final res = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete message?'),
+        content: const Text('You can only delete within 5 minutes.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return res == true;
+  }
+
+  Future<void> _editMessageDialog(ChatMessage m) async {
+    final ctrl = TextEditingController(text: m.text);
+
+    final res = await showDialog<String?>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Edit message'),
+        content: TextField(
+          controller: ctrl,
+          minLines: 1,
+          maxLines: 4,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    final txt = (res ?? '').trim();
+    if (txt.isEmpty) return;
+
+    try {
+      await ChatService.editMessage(
+        threadId: _threadId,
+        messageId: m.id,
+        myAppId: _me!,
+        newText: txt,
+      );
+    } catch (e) {
+      _toast(ChatService.friendlyError(e));
     }
   }
 
@@ -619,27 +761,7 @@ class _MessagePageState extends State<MessagePage> {
     return 'jpg';
   }
 
-  DateTime? _extractTime(ChatMessage m) {
-    try {
-      final dyn = (m as dynamic).createdAt;
-      if (dyn is DateTime) return dyn;
-      if (dyn is Timestamp) return dyn.toDate();
-      if (dyn is int) return DateTime.fromMillisecondsSinceEpoch(dyn);
-    } catch (_) {}
-    try {
-      final dyn = (m as dynamic).timestamp;
-      if (dyn is DateTime) return dyn;
-      if (dyn is Timestamp) return dyn.toDate();
-      if (dyn is int) return DateTime.fromMillisecondsSinceEpoch(dyn);
-    } catch (_) {}
-    return null;
-  }
-
-  String _timeLabel(ChatMessage m) {
-    final t = _extractTime(m);
-    if (t == null) return '';
-    return DateFormat('HH:mm').format(t);
-  }
+  String _timeLabel(ChatMessage m) => DateFormat('HH:mm').format(m.ts);
 
   void _viewImage(String url) {
     showDialog(
@@ -747,12 +869,12 @@ class _MessagePageState extends State<MessagePage> {
                   children: [
                     Expanded(
                       child: StreamBuilder<List<ChatMessage>>(
-                        stream: ChatService.messagesStream(_threadId, myAppId: '', peerAppId: ''),
+                        stream: ChatService.messagesStream(_threadId),
                         builder: (context, snap) {
                           if (snap.hasError) {
                             return Center(
                               child: Text(
-                                'Messages unavailable\n${snap.error}',
+                                'Messages unavailable\n${ChatService.friendlyError(snap.error!)}',
                                 textAlign: TextAlign.center,
                               ),
                             );
@@ -789,57 +911,54 @@ class _MessagePageState extends State<MessagePage> {
                               final time = _timeLabel(m);
 
                               final txt = m.text;
+                              final canAct = mine && _within5Min(m) && !m.isDeleted;
 
-                              if (_isImageMsg(txt)) {
-                                final url = _imgUrl(txt);
-                                return _MessageBubble(
-                                  mine: mine,
-                                  time: time,
-                                  child: _ImageBubble(
-                                    url: url,
-                                    caption: _imgCaption(txt),
-                                    onTap: () => _viewImage(url),
-                                  ),
+                              Widget bubbleChild;
+
+                              if (m.isDeleted) {
+                                bubbleChild = const Text(
+                                  'Message deleted',
+                                  style: TextStyle(fontStyle: FontStyle.italic),
                                 );
-                              }
-
-                              if (_isAudioMsg(txt)) {
+                              } else if (_isImageMsg(txt)) {
+                                final url = _imgUrl(txt);
+                                bubbleChild = _ImageBubble(
+                                  url: url,
+                                  caption: _imgCaption(txt),
+                                  onTap: () => _viewImage(url),
+                                );
+                              } else if (_isAudioMsg(txt)) {
                                 final url = _audUrl(txt);
                                 final ms = _audMs(txt);
-                                return _MessageBubble(
-                                  mine: mine,
-                                  time: time,
-                                  child: _AudioBubble(
-                                    duration: _formatMs(ms),
-                                    onTap: () => _openAudioUrl(url),
-                                  ),
+                                bubbleChild = _AudioBubble(
+                                  duration: _formatMs(ms),
+                                  onTap: () => _openAudioUrl(url),
                                 );
-                              }
-
-                              if (_isCallMsg(txt)) {
+                              } else if (_isCallMsg(txt)) {
                                 final type = _callType(txt);
                                 final callId = _callId(txt);
-                                return _MessageBubble(
-                                  mine: mine,
-                                  time: time,
-                                  child: _CallBubble(
-                                    type: type,
-                                    callId: callId,
-                                  ),
-                                );
-                              }
-
-                              return _MessageBubble(
-                                mine: mine,
-                                time: time,
-                                child: Text(
+                                bubbleChild = _CallBubble(type: type, callId: callId);
+                              } else {
+                                bubbleChild = Text(
                                   txt,
                                   style: TextStyle(
                                     color: mine ? Colors.white : Colors.black87,
                                     fontWeight: FontWeight.w600,
                                     height: 1.25,
                                   ),
-                                ),
+                                );
+                              }
+
+                              final bubble = _MessageBubble(
+                                mine: mine,
+                                time: time,
+                                edited: (!m.isDeleted && m.isEdited),
+                                child: bubbleChild,
+                              );
+
+                              return GestureDetector(
+                                onLongPress: canAct ? () => _showMsgActions(m) : null,
+                                child: bubble,
                               );
                             },
                           );
@@ -920,11 +1039,7 @@ class _MessagePageState extends State<MessagePage> {
                                 ),
                                 const SizedBox(width: 8),
 
-                                // Send OR Mic (WhatsApp style)
-                                if (canSend)
-                                  _sendButton()
-                                else
-                                  _micButton(),
+                                if (canSend) _sendButton() else _micButton(),
                               ],
                             ),
                           ),
@@ -1020,8 +1135,7 @@ class _MessagePageState extends State<MessagePage> {
                     border: Border.all(color: Colors.black12),
                   ),
                   child: const Center(
-                    child: Icon(Icons.add_photo_alternate_outlined,
-                        color: Colors.black54),
+                    child: Icon(Icons.add_photo_alternate_outlined, color: Colors.black54),
                   ),
                 ),
               );
@@ -1112,11 +1226,13 @@ class _MessagePageState extends State<MessagePage> {
 class _MessageBubble extends StatelessWidget {
   final bool mine;
   final String time;
+  final bool edited;
   final Widget child;
 
   const _MessageBubble({
     required this.mine,
     required this.time,
+    required this.edited,
     required this.child,
   });
 
@@ -1156,8 +1272,7 @@ class _MessageBubble extends StatelessWidget {
             ],
           ),
           child: Column(
-            crossAxisAlignment:
-                mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             children: [
               child,
               const SizedBox(height: 6),
@@ -1165,7 +1280,7 @@ class _MessageBubble extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    time,
+                    edited ? '$time • edited' : time,
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
@@ -1174,8 +1289,7 @@ class _MessageBubble extends StatelessWidget {
                   ),
                   if (mine) ...[
                     const SizedBox(width: 6),
-                    const Icon(Icons.done_all,
-                        size: 14, color: Colors.white70),
+                    const Icon(Icons.done_all, size: 14, color: Colors.white70),
                   ],
                 ],
               ),

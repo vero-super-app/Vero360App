@@ -110,7 +110,7 @@ class _MarketplaceMerchantDashboardState
   LocalMedia? _cover;
 
   // ✅ multi-photos for posting
-  static const int _maxGalleryPhotos = 8;
+  static const int _maxGalleryPhotos = 5;
   final List<LocalMedia> _gallery = <LocalMedia>[];
 
   static const List<String> _kCategories = <String>[

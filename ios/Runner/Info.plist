@@ -65,7 +65,7 @@
 
 	<!-- 🔸 Google Maps API key (for google_maps_flutter) -->
 	<key>GMSApiKey</key>
-	<string>YOUR_GOOGLE_MAPS_API_KEY</string>
+	<string>AIzaSyBqvHbaR4EooNVrk9sgULwmIFJydKhERiE</string>
 
 	<!-- 🔸 Deep link so scanners can open your app: vero360://users/me -->
 	<key>CFBundleURLTypes</key>

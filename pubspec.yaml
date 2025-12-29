@@ -41,6 +41,7 @@ dependencies:
 
   # Location
   geolocator: ^14.0.2
+  location: ^8.0.1
 
   # UI / UX
   carousel_slider: ^5.0.0
@@ -95,7 +96,6 @@ flutter:
     - assets/veroai.png
     - assets/google.png
     - assets/apple.webp
-    - assets/brands/spotify.png
     - assets/brands/apple_music.png
     - assets/brands/netflix.png
     - assets/brands/chatgpt.png

@@ -15,6 +15,8 @@ class CarModel {
   final int year;
   final String? description;
   final String? color;
+  final double? latitude;
+  final double? longitude;
 
   CarModel({
     required this.id,
@@ -33,6 +35,8 @@ class CarModel {
     this.year = 2020,
     this.description,
     this.color,
+    this.latitude,
+    this.longitude,
   });
 
   factory CarModel.fromJson(Map<String, dynamic> json) {
@@ -53,6 +57,8 @@ class CarModel {
       year: json['year'] ?? 2020,
       description: json['description'],
       color: json['color'],
+      latitude: json['latitude'] != null ? (json['latitude'] as num).toDouble() : null,
+      longitude: json['longitude'] != null ? (json['longitude'] as num).toDouble() : null,
     );
   }
 
@@ -73,6 +79,8 @@ class CarModel {
         'year': year,
         'description': description,
         'color': color,
+        'latitude': latitude,
+        'longitude': longitude,
       };
 
   CarModel copyWith({
@@ -92,6 +100,8 @@ class CarModel {
     int? year,
     String? description,
     String? color,
+    double? latitude,
+    double? longitude,
   }) {
     return CarModel(
       id: id ?? this.id,
@@ -110,6 +120,8 @@ class CarModel {
       year: year ?? this.year,
       description: description ?? this.description,
       color: color ?? this.color,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
     );
   }
 }

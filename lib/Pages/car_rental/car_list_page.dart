@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:vero360_app/services/car_rental_service.dart';
 import 'package:vero360_app/models/car_model.dart';
 import 'car_detail_page.dart';
+import 'car_map_page.dart';
 import 'widgets/car_card.dart';
 
 class CarListPage extends StatefulWidget {
@@ -117,6 +118,18 @@ class _CarListPageState extends State<CarListPage> {
       appBar: AppBar(
         title: const Text('Available Cars'),
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.map),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CarMapPage()),
+              );
+            },
+            tooltip: 'View on map',
+          ),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: _loadCars,

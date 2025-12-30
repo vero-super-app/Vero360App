@@ -9,7 +9,7 @@ class ApiConfig {
   static const String apiPrefix = '/vero';
 
   /// PROD root (as you requested)
-  static const String _defaultProdRoot = 'http://127.0.0.1:3000';
+  static const String _defaultProdRoot = 'https://heflexitservice.co.za';
 
   /// Optional override at build time:
   /// flutter run --dart-define=API_BASE_URL=http://127.0.0.1:3000

@@ -23,6 +23,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:http/http.dart' as http;
 import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/services/marketplace.service.dart';
 
 import 'package:vero360_app/services/merchant_service_helper.dart';
 import 'package:vero360_app/services/cart_services.dart';
@@ -1105,78 +1106,95 @@ class _MarketplaceMerchantDashboardState
   }
 
   // ----------------- CREATE item -----------------
-  Future<void> _create() async {
-    if (_cover == null) {
-      _toastErr('Please pick a cover photo');
-      return;
-    }
-    if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
-      _toastErr('Please fill all required fields');
-      return;
-    }
-
-    setState(() => _submitting = true);
-
-    try {
-      final firebaseUid = _auth.currentUser?.uid ?? _uid;
-      if (firebaseUid.trim().isEmpty) {
-        _toastErr('Please login first');
-        return;
-      }
-
-      final sellerId = await _getNestUserId();
-      final coverBase64 = base64Encode(_cover!.bytes);
-
-      final galleryBase64 = <String>[];
-      for (final m in _gallery) {
-        galleryBase64.add(base64Encode(m.bytes));
-      }
-
-      final merchantDisplay = _displayBusinessName();
-
-      final data = {
-        'name': _name.text.trim(),
-        'price': double.tryParse(_price.text.trim()) ?? 0,
-        'image': coverBase64,
-        'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
-        'location': _location.text.trim(),
-        'isActive': _isActive,
-        'category': _category ?? 'other',
-        'gallery': galleryBase64,
-        'createdAt': FieldValue.serverTimestamp(),
-        'sellerUserId': (sellerId != null && sellerId.trim().isNotEmpty)
-            ? sellerId.trim()
-            : 'unknown',
-        'merchantId': firebaseUid,
-        'merchantName': merchantDisplay,
-        'serviceType': 'marketplace',
-      };
-
-      await _firestore.collection('marketplace_items').add(data);
-
-      if (!mounted) return;
-      _toastOk('Item Posted Successfully!');
-
-      _name.clear();
-      _price.clear();
-      _location.clear();
-      _desc.clear();
-      _cover = null;
-      _gallery.clear();
-      _isActive = true;
-      _category = 'other';
-
-      setState(() {});
-      await _loadItems();
-      _marketplaceTabs.animateTo(2);
-    } catch (e) {
-      debugPrint('Create item error: $e');
-      if (!mounted) return;
-      _toastErr('Failed to post item. Please try again.');
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
+ Future<void> _create() async {
+  if (_cover == null) {
+    _toastErr('Please pick a cover photo');
+    return;
   }
+  if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
+    _toastErr('Please fill all required fields');
+    return;
+  }
+
+  setState(() => _submitting = true);
+
+  try {
+    final firebaseUid = _auth.currentUser?.uid ?? _uid;
+    // if (firebaseUid.trim().isEmpty) {
+    //   _toastErr('Please login first');
+    //   return;
+    // }
+
+    final sellerId = await _getNestUserId();
+    final merchantDisplay = _displayBusinessName();
+
+    // ✅ Upload images first (NO base64 in Firestore)
+    final svc = MarketplaceService();
+
+    final coverUrl = await svc.uploadBytes(
+      _cover!.bytes,
+      filename: _cover!.filename ?? 'cover.jpg',
+      mimeType: _cover!.mime,
+    );
+
+    final galleryUrls = <String>[];
+    for (final m in _gallery) {
+      final url = await svc.uploadBytes(
+        m.bytes,
+        filename: m.filename.isNotEmpty ? m.filename : 'gallery.jpg',
+        mimeType: m.mime,
+      );
+      galleryUrls.add(url);
+    }
+
+    final data = {
+      'name': _name.text.trim(),
+      'price': double.tryParse(_price.text.trim()) ?? 0,
+
+      // ✅ store URLs only
+      'imageUrl': coverUrl,
+      'galleryUrls': galleryUrls,
+
+      'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+      'location': _location.text.trim(),
+      'isActive': _isActive,
+      'category': _category ?? 'other',
+
+      'createdAt': FieldValue.serverTimestamp(),
+      'sellerUserId': (sellerId != null && sellerId.trim().isNotEmpty)
+          ? sellerId.trim()
+          : 'unknown',
+      'merchantId': firebaseUid,
+      'merchantName': merchantDisplay,
+      'serviceType': 'marketplace',
+    };
+
+    await _firestore.collection('marketplace_items').add(data);
+
+    if (!mounted) return;
+    _toastOk('Item Posted Successfully!');
+
+    _name.clear();
+    _price.clear();
+    _location.clear();
+    _desc.clear();
+    _cover = null;
+    _gallery.clear();
+    _isActive = true;
+    _category = 'other';
+
+    setState(() {});
+    await _loadItems();
+    _marketplaceTabs.animateTo(2);
+  } catch (e) {
+    debugPrint('Create item error: $e');
+    if (!mounted) return;
+    _toastErr('Failed to post item. Please try again.');
+  } finally {
+    if (mounted) setState(() => _submitting = false);
+  }
+}
+
 
   Future<void> _deleteItem(Map<String, dynamic> item) async {
     final ok = await showDialog<bool>(

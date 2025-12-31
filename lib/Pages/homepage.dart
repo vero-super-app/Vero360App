@@ -14,13 +14,11 @@ import 'package:vero360_app/Pages/Quickservices/MobileMoney.dart';
 import 'package:vero360_app/Pages/Quickservices/More.dart';
 import 'package:vero360_app/Pages/Quickservices/Taxi.dart';
 import 'package:vero360_app/Pages/Quickservices/airportpickup.dart';
-import 'package:vero360_app/Pages/Quickservices/carhire.dart';
 import 'package:vero360_app/Pages/Quickservices/fitness.dart';
 import 'package:vero360_app/Pages/Quickservices/food.dart';
 import 'package:vero360_app/Pages/Quickservices/jobs.dart';
 import 'package:vero360_app/Pages/Quickservices/verocourier.dart';
-import 'package:vero360_app/Pages/car_rental/car_list_page.dart';
-import 'package:vero360_app/Pages/car_rental/merchant/my_cars_page.dart';
+import 'package:vero360_app/Pages/car_rental/car_rental_page.dart';
 import 'package:vero360_app/services/api_config.dart';
 import '../services/cart_services.dart';
 
@@ -68,14 +66,14 @@ const List<Mini> kQuickServices = [
   Mini('fx', 'Exchange rates', Icons.currency_exchange_rounded),
 
   // Lifestyle
- // Mini('hair', 'Hair salon', Icons.cut_rounded),
+  // Mini('hair', 'Hair salon', Icons.cut_rounded),
   Mini('food', 'Food', Icons.fastfood_rounded),
- // Mini('fitness', 'Fitness', Icons.fitness_center_rounded),
+  // Mini('fitness', 'Fitness', Icons.fitness_center_rounded),
 
   // Other
   Mini('jobs', 'Jobs', Icons.business_center_rounded),
   Mini('accommodation', 'Accomodation', Icons.hotel_rounded),
- // Mini('more', 'More', Icons.more_horiz_rounded),
+  // Mini('more', 'More', Icons.more_horiz_rounded),
 ];
 
 /* ───────────────────────────────────────────
@@ -196,8 +194,9 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
       serviceKey: 'Vero Chat',
     ),
   ];
-  
-final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
+
+  final cartService =
+      CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
 
   @override
   void initState() {
@@ -219,7 +218,8 @@ final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'ver
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
-        statusBarColor: Colors.white, // keep solid so content never bleeds under
+        statusBarColor:
+            Colors.white, // keep solid so content never bleeds under
         statusBarIconBrightness: Brightness.dark, // Android
         statusBarBrightness: Brightness.light, // iOS
         systemNavigationBarColor: Colors.white,
@@ -248,7 +248,9 @@ final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'ver
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                     child: Column(
                       children: [
-                        const _BrandBar(appName: 'Vero360', logoPath: 'assets/logo_mark.png'),
+                        const _BrandBar(
+                            appName: 'Vero360',
+                            logoPath: 'assets/logo_mark.png'),
                         const SizedBox(height: 12),
                         _TopSection(
                           animateIn: _animateIn,
@@ -272,7 +274,8 @@ final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'ver
                     ),
                   ),
                 ),
-                SliverToBoxAdapter(child: _Dots(count: _promos.length, index: _promoIndex)),
+                SliverToBoxAdapter(
+                    child: _Dots(count: _promos.length, index: _promoIndex)),
 
                 // Space so Quick Services doesn't collide with chips
                 const SliverToBoxAdapter(child: SizedBox(height: 22)),
@@ -402,11 +405,11 @@ final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'ver
         break;
 
       case 'taxi':
-        page = const CarListPage();
+        page = const CarRentalPage();
         break;
 
       case 'car_hire':
-        page = const CarListPage();
+        page = const CarRentalPage();
         break;
 
       case 'send_money':
@@ -434,7 +437,7 @@ final cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'ver
         break;
 
       default:
-         page = const MorePage();
+        page = const MorePage();
     }
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }
@@ -453,7 +456,8 @@ class _BrandBar extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(3),
           decoration: const BoxDecoration(
-            gradient: LinearGradient(colors: [AppColors.brandOrange, Color(0xFFFFB85C)]),
+            gradient: LinearGradient(
+                colors: [AppColors.brandOrange, Color(0xFFFFB85C)]),
             shape: BoxShape.circle,
           ),
           child: CircleAvatar(
@@ -465,20 +469,24 @@ class _BrandBar extends StatelessWidget {
                 width: 30,
                 height: 30,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    const Icon(Icons.eco, size: 22, color: AppColors.brandOrange),
+                errorBuilder: (_, __, ___) => const Icon(Icons.eco,
+                    size: 22, color: AppColors.brandOrange),
               ),
             ),
           ),
         ),
         const SizedBox(width: 10),
         Text(appName,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppColors.title)),
+            style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+                color: AppColors.title)),
         const Spacer(),
         IconButton(
           visualDensity: VisualDensity.compact,
           onPressed: () {},
-          icon: const Icon(Icons.notifications_active_outlined, color: AppColors.title),
+          icon: const Icon(Icons.notifications_active_outlined,
+              color: AppColors.title),
         ),
         const SizedBox(width: 4),
         // const CircleAvatar(
@@ -518,7 +526,9 @@ class _TopSection extends StatelessWidget {
           children: [
             Text(greeting,
                 style: const TextStyle(
-                    fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.title)),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                    color: AppColors.title)),
             const SizedBox(height: 10),
             Row(
               children: [
@@ -543,8 +553,9 @@ class _TopSection extends StatelessWidget {
                               'what are you looking for?',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style:
-                                  TextStyle(color: AppColors.body, fontWeight: FontWeight.w600),
+                              style: TextStyle(
+                                  color: AppColors.body,
+                                  fontWeight: FontWeight.w600),
                             ),
                           ),
                           Icon(Icons.expand_more_rounded, color: Colors.grey),
@@ -565,18 +576,25 @@ class _TopSection extends StatelessWidget {
                           colors: [AppColors.brandOrange, Color(0xFFFFB85C)]),
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: const [
-                        BoxShadow(color: Color(0x33FF8A00), blurRadius: 8, offset: Offset(0, 2))
+                        BoxShadow(
+                            color: Color(0x33FF8A00),
+                            blurRadius: 8,
+                            offset: Offset(0, 2))
                       ],
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: const [
-                        Icon(Icons.search_rounded, color: Colors.white, size: 20),
+                        Icon(Icons.search_rounded,
+                            color: Colors.white, size: 20),
                         SizedBox(width: 8),
                         Text('Search',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900)),
                         SizedBox(width: 4),
-                        Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 18),
+                        Icon(Icons.arrow_forward_rounded,
+                            color: Colors.white, size: 18),
                       ],
                     ),
                   ),
@@ -781,7 +799,8 @@ class _QuickStrip extends StatelessWidget {
           ),
           child: Center(
             child: Text('${items[i][0]}  ${items[i][1]}',
-                style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.title)),
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700, color: AppColors.title)),
           ),
         ),
         separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -806,9 +825,11 @@ class _SectionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.brandOrangeSoft.withValues(alpha: 0.55)),
+        border: Border.all(
+            color: AppColors.brandOrangeSoft.withValues(alpha: 0.55)),
         boxShadow: const [
-          BoxShadow(color: Color(0x14000000), blurRadius: 8, offset: Offset(0, 2)),
+          BoxShadow(
+              color: Color(0x14000000), blurRadius: 8, offset: Offset(0, 2)),
         ],
       ),
       padding: const EdgeInsets.fromLTRB(4, 2, 4, 10),
@@ -868,7 +889,8 @@ class _MiniIconsGrid extends StatelessWidget {
 
       return MediaQuery(
         data: MediaQuery.of(context).copyWith(
-          textScaler: MediaQuery.of(context).textScaler.clamp(maxScaleFactor: 1.2),
+          textScaler:
+              MediaQuery.of(context).textScaler.clamp(maxScaleFactor: 1.2),
         ),
         child: GridView.builder(
           shrinkWrap: true,
@@ -899,7 +921,8 @@ class _MiniIconTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  const _MiniIconTile({required this.icon, required this.label, required this.onTap});
+  const _MiniIconTile(
+      {required this.icon, required this.label, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -955,14 +978,16 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
         backgroundColor: AppColors.brandOrange,
         foregroundColor: Colors.white,
         iconTheme: const IconThemeData(color: Colors.white),
-        titleTextStyle:
-            const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18),
+        titleTextStyle: const TextStyle(
+            color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18),
       ),
       inputDecorationTheme: base.inputDecorationTheme.copyWith(
-        hintStyle: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
+        hintStyle:
+            const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
         border: InputBorder.none,
       ),
-      textTheme: base.textTheme.apply(bodyColor: Colors.white, displayColor: Colors.white),
+      textTheme: base.textTheme
+          .apply(bodyColor: Colors.white, displayColor: Colors.white),
     );
   }
 
@@ -1056,7 +1081,8 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
                   showSuggestions(context);
                 },
                 backgroundColor: AppColors.brandOrangePale,
-                shape: StadiumBorder(side: BorderSide(color: AppColors.brandOrangeSoft)),
+                shape: StadiumBorder(
+                    side: BorderSide(color: AppColors.brandOrangeSoft)),
               ),
           ],
         ),
@@ -1071,7 +1097,10 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
           child: Text(
             'No matches. Try: taxi, bike, airport, hotel, forex, food, fitness, jobs...',
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white),
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: Colors.white),
           ),
         ),
       );
@@ -1093,9 +1122,11 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
               backgroundColor: AppColors.brandOrangePale,
               child: Icon(m.icon, color: AppColors.brandOrange),
             ),
-            title: Text(m.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+            title: Text(m.label,
+                style: const TextStyle(fontWeight: FontWeight.w800)),
             subtitle: Text(m.keyId),
-            trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.body),
+            trailing:
+                const Icon(Icons.chevron_right_rounded, color: AppColors.body),
             onTap: () => close(context, m),
           ),
         );
@@ -1166,7 +1197,8 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
         onPressed: () =>
             _Vero360HomepageState._openServiceStatic(context, 'more'),
         child: const Text('See all',
-            style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
+            style: TextStyle(
+                color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
       ),
       child: Column(
         children: [
@@ -1230,7 +1262,8 @@ class _ProviderCard extends StatelessWidget {
               child: Text(emoji, style: const TextStyle(fontSize: 18))),
           const SizedBox(width: 10),
           Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1246,10 +1279,12 @@ class _ProviderCard extends StatelessWidget {
           OutlinedButton(
             onPressed: onOpen, // button also routes
             style: OutlinedButton.styleFrom(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
                 side: const BorderSide(color: AppColors.brandOrange)),
             child: const Text('Open',
-                style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
+                style: TextStyle(
+                    color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
           ),
         ]),
       ),
@@ -1277,14 +1312,15 @@ class _DealsStrip extends StatelessWidget {
         itemBuilder: (_, i) => Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFFFFE2BF), Colors.white]),
+            gradient:
+                const LinearGradient(colors: [Color(0xFFFFE2BF), Colors.white]),
             border: Border.all(color: AppColors.brandOrangeSoft),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Center(
               child: Text('${deals[i][0]}  ${deals[i][1]}',
-                  style:
-                      const TextStyle(fontWeight: FontWeight.w800, color: AppColors.title))),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, color: AppColors.title))),
         ),
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemCount: deals.length,
@@ -1305,10 +1341,11 @@ class DigitalServicesSection extends StatelessWidget {
     return _Section(
       title: 'Digital & Virtual Services',
       action: TextButton(
-        onPressed: () => ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('See all digital services'))),
+        onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('See all digital services'))),
         child: const Text('See all',
-            style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
+            style: TextStyle(
+                color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
       ),
       child: LayoutBuilder(builder: (ctx, c) {
         final w = c.maxWidth;
@@ -1337,7 +1374,8 @@ class DigitalServicesSection extends StatelessWidget {
 
         return MediaQuery(
           data: MediaQuery.of(ctx).copyWith(
-            textScaler: MediaQuery.of(ctx).textScaler.clamp(maxScaleFactor: 1.2),
+            textScaler:
+                MediaQuery.of(ctx).textScaler.clamp(maxScaleFactor: 1.2),
           ),
           child: GridView.builder(
             shrinkWrap: true,
@@ -1391,10 +1429,12 @@ class _DigitalCircleTile extends StatelessWidget {
                   ? Image.asset(
                       p.logoAsset!,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
-                          Icon(p.icon ?? Icons.shopping_bag, color: AppColors.title),
+                      errorBuilder: (_, __, ___) => Icon(
+                          p.icon ?? Icons.shopping_bag,
+                          color: AppColors.title),
                     )
-                  : Icon(p.icon ?? Icons.shopping_bag, size: 24, color: AppColors.title),
+                  : Icon(p.icon ?? Icons.shopping_bag,
+                      size: 24, color: AppColors.title),
             ),
           ),
           const SizedBox(height: 4),
@@ -1473,13 +1513,23 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
               if (items.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: Text('No items yet.', style: TextStyle(color: Colors.red))),
+                  child: Center(
+                      child: Text('No items yet.',
+                          style: TextStyle(color: Colors.red))),
                 );
               }
 
               final width = MediaQuery.of(context).size.width;
-              final cols = width >= 1200 ? 4 : width >= 800 ? 3 : 2;
-              final ratio = width >= 1200 ? 0.95 : width >= 800 ? 0.85 : 0.72;
+              final cols = width >= 1200
+                  ? 4
+                  : width >= 800
+                      ? 3
+                      : 2;
+              final ratio = width >= 1200
+                  ? 0.95
+                  : width >= 800
+                      ? 0.85
+                      : 0.72;
 
               return GridView.builder(
                 shrinkWrap: true,
@@ -1533,8 +1583,8 @@ class _ProductCardFromApi extends StatelessWidget {
         children: [
           Expanded(
             child: ClipRRect(
-              borderRadius:
-                  const BorderRadius.only(topLeft: Radius.circular(16), topRight: Radius.circular(16)),
+              borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(16), topRight: Radius.circular(16)),
               child: imageUrl.isNotEmpty
                   ? Image.network(
                       imageUrl,
@@ -1545,14 +1595,17 @@ class _ProductCardFromApi extends StatelessWidget {
                               child: SizedBox(
                                   width: 20,
                                   height: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2))),
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2))),
                       errorBuilder: (_, __, ___) => Container(
                           color: const Color(0xFFEDEDED),
-                          child: const Center(child: Icon(Icons.image_not_supported_rounded))),
+                          child: const Center(
+                              child: Icon(Icons.image_not_supported_rounded))),
                     )
                   : Container(
                       color: const Color(0xFFEDEDED),
-                      child: const Center(child: Icon(Icons.image_not_supported_rounded))),
+                      child: const Center(
+                          child: Icon(Icons.image_not_supported_rounded))),
             ),
           ),
           Padding(
@@ -1560,20 +1613,25 @@ class _ProductCardFromApi extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        softWrap: false,
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 4),
-                    Text(priceText,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        softWrap: false,
-                        style: const TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.w700, color: Colors.green)),
-                  ]),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 4),
+                        Text(priceText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                            style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.green)),
+                      ]),
                 ),
                 IconButton(
                   constraints: const BoxConstraints(),
@@ -1612,7 +1670,8 @@ class _ProductCardFromApi extends StatelessWidget {
           ),
           const Divider(height: 0),
           ListTile(
-            leading: const Icon(Icons.info_outline_rounded, color: AppColors.brandOrange),
+            leading: const Icon(Icons.info_outline_rounded,
+                color: AppColors.brandOrange),
             title: const Text('More details'),
             onTap: () => Navigator.pop(context),
           ),
@@ -1701,7 +1760,8 @@ class DigitalProductDetailPage extends StatefulWidget {
   });
 
   @override
-  State<DigitalProductDetailPage> createState() => _DigitalProductDetailPageState();
+  State<DigitalProductDetailPage> createState() =>
+      _DigitalProductDetailPageState();
 }
 
 class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
@@ -1746,7 +1806,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
       showDialog(
         context: context,
         builder: (_) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           title: const Text('Order Created'),
           content: Text(
             'Thanks ${_nameCtrl.text.trim()}, we\'ll email your ${widget.product.name} key to ${_emailCtrl.text.trim()}.',
@@ -1795,7 +1856,10 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                   border: Border.all(color: AppColors.brandOrangeSoft),
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: const [
-                    BoxShadow(color: Color(0x14000000), blurRadius: 8, offset: Offset(0, 2)),
+                    BoxShadow(
+                        color: Color(0x14000000),
+                        blurRadius: 8,
+                        offset: Offset(0, 2)),
                   ],
                 ),
                 padding: const EdgeInsets.all(14),
@@ -1814,8 +1878,9 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                             ? Image.asset(
                                 p.logoAsset!,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    Icon(p.icon ?? Icons.shopping_bag, color: AppColors.title),
+                                errorBuilder: (_, __, ___) => Icon(
+                                    p.icon ?? Icons.shopping_bag,
+                                    color: AppColors.title),
                               )
                             : Icon(p.icon ?? Icons.shopping_bag,
                                 size: 26, color: AppColors.title),
@@ -1829,19 +1894,21 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                           Text(p.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w900, fontSize: 16)),
                           const SizedBox(height: 2),
                           Text(p.subtitle,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                  color: AppColors.body, fontWeight: FontWeight.w600)),
+                                  color: AppColors.body,
+                                  fontWeight: FontWeight.w600)),
                           const SizedBox(height: 6),
                           Text(
                             p.price,
                             style: const TextStyle(
-                                color: Colors.green, fontWeight: FontWeight.w800),
+                                color: Colors.green,
+                                fontWeight: FontWeight.w800),
                           ),
                         ],
                       ),
@@ -1908,7 +1975,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                       ? const SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.lock_outline_rounded),
                   label: Text(_submitting ? 'Processing...' : 'Pay Now'),
                   style: ElevatedButton.styleFrom(
@@ -1916,7 +1984,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                     foregroundColor: Colors.white,
                     elevation: 0,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
               ),
@@ -1927,7 +1996,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                 child: Text(
                   'Secure checkout • You’ll receive your code via email',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: AppColors.body, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                      color: AppColors.body, fontWeight: FontWeight.w600),
                 ),
               ),
             ],
@@ -1963,7 +2033,9 @@ class _LabeledField extends StatelessWidget {
       children: [
         Text(label,
             style: const TextStyle(
-                fontWeight: FontWeight.w800, color: AppColors.title, fontSize: 13)),
+                fontWeight: FontWeight.w800,
+                color: AppColors.title,
+                fontSize: 13)),
         const SizedBox(height: 6),
         TextFormField(
           controller: controller,

@@ -18,7 +18,7 @@ class CartService {
   // Keep this EXACT signature (you use it everywhere)
   CartService(String unused, {required String apiPrefix}) : _apiPrefix = apiPrefix;
 
-  final String _apiPrefix; // kept for compatibility (even if unused)
+  final String _apiPrefix; // kept for compatibility; ApiConfig already applies /vero
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
@@ -26,6 +26,9 @@ class CartService {
   static bool _warmedUp = false;
   static bool _warmupInFlight = false;
   static DateTime? _lastWarmupAttempt;
+
+  // Cache the working POST endpoint once discovered
+  static String? _workingPostCartEndpoint;
 
   // ---------------------------------------------------------------------------
   // BASIC HELPERS
@@ -56,7 +59,6 @@ class CartService {
       };
 
   Future<void> warmup() async {
-    // Avoid long blocks; warmup is best-effort only.
     if (_warmedUp) return;
 
     final now = DateTime.now();
@@ -104,10 +106,29 @@ class CartService {
         msg.contains('connection refused') ||
         msg.contains('network is unreachable') ||
         msg.contains('timed out') ||
-        // your ApiClient generic message
         msg.contains('we couldn’t process your request') ||
         msg.contains("we couldn't process your request") ||
         msg.contains('unexpected error');
+  }
+
+  bool _looksLikeNotFound(Object e) {
+    final msg = e.toString().toLowerCase();
+    return msg.contains('404') ||
+        msg.contains('not found') ||
+        msg.contains('cannot post');
+  }
+
+  // ---------------------------------------------------------------------------
+  // MINIMAL PAYLOAD (fix 413 forever)
+  // ---------------------------------------------------------------------------
+
+  Map<String, dynamic> _smallCartPayload(CartModel cartItem) {
+    return <String, dynamic>{
+      'item': cartItem.item,
+      'quantity': cartItem.quantity,
+      'merchantId': cartItem.merchantId,
+      'serviceType': cartItem.serviceType,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -186,15 +207,12 @@ class CartService {
 
       final existing = await col.get();
       final wantedIds = items.map((e) => e.item.toString()).toSet();
-
       final batch = _firestore.batch();
 
-      // delete removed items only (faster than delete-all)
       for (final doc in existing.docs) {
         if (!wantedIds.contains(doc.id)) batch.delete(doc.reference);
       }
 
-      // upsert current
       for (final it in items) {
         final docRef = col.doc(it.item.toString());
         batch.set(
@@ -268,8 +286,6 @@ class CartService {
   // CART API + OFFLINE MODE
   // ---------------------------------------------------------------------------
 
-  /// POST /cart
-  /// ✅ Never fails on Passenger/500/timeouts. Saves locally and returns OK.
   Future<void> addToCart(CartModel cartItem) async {
     await warmup();
 
@@ -278,42 +294,59 @@ class CartService {
       throw const ApiException(message: 'You need to be signed in to add items to cart.');
     }
 
-    // offline-first: always save immediately
+    // offline-first: save immediately
     await _upsertCartItemInFirestore(cartItem);
 
-    try {
-      await ApiClient.post(
-        '/cart',
-        headers: _headers(token: token),
-        body: jsonEncode({
-          'item': cartItem.item,
-          'quantity': cartItem.quantity,
-          'image': cartItem.image,
-          'name': cartItem.name,
-          'price': cartItem.price,
-          'description': cartItem.description,
-          'merchantId': cartItem.merchantId,
-          'merchantName': cartItem.merchantName,
-          'serviceType': cartItem.serviceType,
-          if (cartItem.comment != null) 'comment': cartItem.comment,
-        }),
-        timeout: _kApiTimeout,
-      );
-    } on ApiException catch (e) {
-      if (_looksLikeAuthError(e)) {
-        throw const ApiException(message: 'Session expired. Please log in again.');
+    // background sync
+    unawaited(_syncAddToCart(token, cartItem));
+  }
+
+  Future<void> _syncAddToCart(String token, CartModel cartItem) async {
+    final payload = _smallCartPayload(cartItem);
+    final body = jsonEncode(payload);
+
+    // If we already discovered working endpoint, use it
+    final candidates = <String>[
+      if (_workingPostCartEndpoint != null) _workingPostCartEndpoint!,
+      '/cart',
+      '/carts',
+      '/cart/add',
+      '/cart-items',
+      '/cart/item',
+    ].toSet().toList();
+
+    for (final ep in candidates) {
+      try {
+        // ignore: avoid_print
+        print('CART POST try=$ep bytes=${utf8.encode(body).length}');
+
+        await ApiClient.post(
+          ep, // ApiConfig will prefix /vero automatically
+          headers: _headers(token: token),
+          body: body,
+          timeout: _kApiTimeout,
+        );
+
+        // ✅ success — remember it
+        _workingPostCartEndpoint = ep;
+        return;
+      } on ApiException catch (e) {
+        if (_looksLikeAuthError(e)) return;
+        if (_looksLikePassengerHtmlOrDown(e)) return;
+
+        // Not found => try next candidate
+        if (_looksLikeNotFound(e)) continue;
+
+        // Other errors: stop (don’t spam)
+        return;
+      } catch (e) {
+        if (_looksLikePassengerHtmlOrDown(e)) return;
+        // unknown error: stop
+        return;
       }
-      // swallow backend-down errors
-      if (_looksLikePassengerHtmlOrDown(e)) return;
-      return; // safest: do not block cart UX
-    } catch (e) {
-      if (_looksLikePassengerHtmlOrDown(e)) return;
-      return;
     }
   }
 
-  /// GET /cart
-  /// ✅ Returns Firestore quickly if backend is down; syncs when backend is up.
   Future<List<CartModel>> fetchCartItems() async {
     await warmup();
 
@@ -322,7 +355,6 @@ class CartService {
       throw const ApiException(message: 'You need to be signed in to view your cart.');
     }
 
-    // fast fallback ready
     final local = await _loadCartFromFirestore();
 
     try {
@@ -338,7 +370,6 @@ class CartService {
         return <CartModel>[];
       }
 
-      // If server returns HTML, jsonDecode will crash; return local instead.
       final bodyTrim = res.body.trimLeft().toLowerCase();
       if (bodyTrim.startsWith('<!doctype html') || bodyTrim.startsWith('<html')) {
         return local;
@@ -368,8 +399,6 @@ class CartService {
     }
   }
 
-  /// DELETE /cart/:itemId
-  /// ✅ Offline-first: remove locally, best-effort API.
   Future<void> removeFromCart(int itemId) async {
     await warmup();
 
@@ -390,7 +419,6 @@ class CartService {
       if (_looksLikeAuthError(e)) {
         throw const ApiException(message: 'Session expired. Please log in again.');
       }
-      // swallow server errors
       if (_looksLikePassengerHtmlOrDown(e)) return;
       return;
     } catch (e) {
@@ -399,8 +427,6 @@ class CartService {
     }
   }
 
-  /// DELETE /cart
-  /// ✅ Offline-first: clear locally, best-effort API.
   Future<void> clearCart() async {
     await warmup();
 
@@ -426,62 +452,6 @@ class CartService {
     } catch (e) {
       if (_looksLikePassengerHtmlOrDown(e)) return;
       return;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // WALLET / CHECKOUT HELPERS
-  // ---------------------------------------------------------------------------
-
-  Future<bool> validateCartForCheckout() async {
-    try {
-      final items = await fetchCartItems();
-      if (items.isEmpty) return false;
-
-      for (final item in items) {
-        if (!item.hasValidMerchant) return false;
-      }
-
-      final itemKeys = <String>{};
-      for (final item in items) {
-        final key = '${item.item}_${item.merchantId}';
-        if (itemKeys.contains(key)) return false;
-        itemKeys.add(key);
-      }
-
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  Future<double> getCartTotal() async {
-    try {
-      final items = await fetchCartItems();
-      double total = 0.0;
-      for (final item in items) {
-        total += item.price * item.quantity;
-      }
-      return total;
-    } catch (_) {
-      return 0.0;
-    }
-  }
-
-  Future<Map<String, List<CartModel>>> getItemsByMerchant() async {
-    try {
-      final items = await fetchCartItems();
-      final Map<String, List<CartModel>> merchantGroups = {};
-
-      for (final item in items) {
-        final merchantKey = '${item.merchantId}_${item.serviceType}';
-        merchantGroups.putIfAbsent(merchantKey, () => <CartModel>[]);
-        merchantGroups[merchantKey]!.add(item);
-      }
-
-      return merchantGroups;
-    } catch (_) {
-      return {};
     }
   }
 }

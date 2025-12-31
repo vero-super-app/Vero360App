@@ -857,95 +857,96 @@ class _MarketPageState extends State<MarketPage> {
     return isLoggedIn;
   }
 
-  Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
-    final isLoggedIn = await _requireLoginForCart();
-    if (!isLoggedIn) return;
+void _showQuickLoading(BuildContext context, {String text = 'Adding to cart...'}) {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+            const SizedBox(width: 14),
+            Flexible(
+              child: Text(
+                text,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
 
-    if (!item.hasValidMerchantInfo) {
-      ToastHelper.showCustomToast(
-        context,
-        'This item cannot be added to cart: Missing merchant information.',
-        isSuccess: false,
-        errorMessage: 'Invalid merchant info',
-      );
-      return;
-    }
 
-    _showLoadingDialog();
 
-    try {
-      final token = await _getAuthToken();
-      if (token == null || token.isEmpty) {
-        ToastHelper.showCustomToast(
-          context,
-          'Authentication failed. Please log in again.',
-          isSuccess: false,
-          errorMessage: 'No auth token',
-        );
-        if (mounted) Navigator.of(context).pop();
-        return;
-      }
+Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
+  final isLoggedIn = await _requireLoginForCart();
+  if (!isLoggedIn) return;
 
-      final userId = await _getCurrentUserId() ?? 'unknown';
-
-      final int numericItemId = item.hasValidSqlItemId
-          ? item.sqlItemId!
-          : _stablePositiveIdFromString(item.id);
-
-      final cartItem = CartModel(
-        userId: userId,
-        item: numericItemId,
-        quantity: 1,
-        image: item.image,
-        name: item.name,
-        price: item.price,
-        description: item.description ?? '',
-        merchantId: item.merchantId ?? 'unknown',
-        merchantName: item.merchantName ?? 'Unknown Merchant',
-        serviceType: item.serviceType ?? 'marketplace',
-      );
-
-      await widget.cartService.addToCart(cartItem);
-
-      ToastHelper.showCustomToast(
-        context,
-        '${item.name} added to cart',
-        isSuccess: true,
-        errorMessage: 'OK',
-      );
-    } on TimeoutException {
-      ToastHelper.showCustomToast(
-        context,
-        'Server is taking too long. Please try again.',
-        isSuccess: false,
-        errorMessage: 'Timeout',
-      );
-    } catch (e) {
-      if (e.toString().contains('401') ||
-          e.toString().contains('Unauthorized')) {
-        ToastHelper.showCustomToast(
-          context,
-          'Session expired. Please log in again.',
-          isSuccess: false,
-          errorMessage: 'Auth failed',
-        );
-
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove('token');
-        await prefs.remove('jwt_token');
-        await prefs.remove('firebase_token');
-      } else {
-        ToastHelper.showCustomToast(
-          context,
-          'Failed to add item: $e',
-          isSuccess: false,
-          errorMessage: 'Add to cart failed',
-        );
-      }
-    } finally {
-      if (mounted) Navigator.of(context).pop();
-    }
+  if (!item.hasValidMerchantInfo) {
+    ToastHelper.showCustomToast(
+      context,
+      'This item cannot be added to cart: Missing merchant information.',
+      isSuccess: false,
+      errorMessage: 'Invalid merchant info',
+    );
+    return;
   }
+
+  _showQuickLoading(context); // ✅ show loading immediately
+
+  try {
+    final userId = await _getCurrentUserId() ?? 'unknown';
+
+    final int numericItemId = item.hasValidSqlItemId
+        ? item.sqlItemId!
+        : _stablePositiveIdFromString(item.id);
+
+    final cartItem = CartModel(
+      userId: userId,
+      item: numericItemId,
+      quantity: 1,
+      image: item.image,
+      name: item.name,
+      price: item.price,
+      description: item.description ?? '',
+      merchantId: item.merchantId ?? 'unknown',
+      merchantName: item.merchantName ?? 'Unknown Merchant',
+      serviceType: item.serviceType ?? 'marketplace',
+      comment: note,
+    );
+
+    await widget.cartService.addToCart(cartItem); // Firestore first = fast
+
+    if (mounted) Navigator.of(context).pop(); // ✅ close loading
+
+    ToastHelper.showCustomToast(
+      context,
+      '${item.name} added to cart',
+      isSuccess: true,
+      errorMessage: 'OK',
+    );
+  } catch (e) {
+    if (mounted) Navigator.of(context).pop(); // close loading
+
+    ToastHelper.showCustomToast(
+      context,
+      'Failed to add item: $e',
+      isSuccess: false,
+      errorMessage: 'Add to cart failed',
+    );
+  }
+}
 
   Future<void> _openChatWithMerchant(MarketplaceDetailModel item) async {
     if (!await _requireLoginForChat()) return;

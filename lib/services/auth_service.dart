@@ -188,19 +188,19 @@ class AuthService {
       );
       final user = cred.user;
       if (user == null) {
-        _toast(context, onFailMessage ?? 'Backup login failed (no user).',
+        _toast(context, onFailMessage ?? 'login failed (no user).', //backup
             ok: false);
         return null;
       }
 
-      _toast(context, 'Logged in (backup)', ok: true);
+      _toast(context, 'Logged in successfully', ok: true);
       return _buildFirebaseAuthResult(user, fallbackRole: 'customer');
     } on FirebaseAuthException catch (e) {
       _toast(context, onFailMessage ?? (e.message ?? 'Backup login failed.'),
           ok: false);
       return null;
     } catch (_) {
-      _toast(context, onFailMessage ?? 'Backup login failed.', ok: false);
+      _toast(context, onFailMessage ?? 'login failed.', ok: false);
       return null;
     }
   }

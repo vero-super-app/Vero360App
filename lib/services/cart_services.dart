@@ -1,9 +1,29 @@
 // lib/services/cart_services.dart
+//
+// ✅ Full correct CartService for your NestJS routes:
+//
+//   POST   /vero/cart/add
+//   GET    /vero/cart/me
+//   DELETE /vero/cart/:itemId
+//   DELETE /vero/cart
+//
+// ✅ Offline-first + resilient:
+// - Always writes to Firestore immediately (so "Added to cart" is real)
+// - Background sync to backend
+// - Fetch prefers backend, falls back to Firestore
+// - Never clears Firestore just because backend returns 404
+// - Uses ONE Firestore schema everywhere:
+//     backup_carts/{userKey}/items/{itemId_merchantId}
+//   userKey = FirebaseAuth.uid ?? SharedPreferences.email
+//
+
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:vero360_app/services/api_client.dart';
 import 'package:vero360_app/services/api_config.dart';
 import 'package:vero360_app/services/api_exception.dart';
@@ -21,17 +41,15 @@ class CartService {
   final String _apiPrefix; // kept for compatibility; ApiConfig already applies /vero
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   // Warmup throttling (fast + avoids spamming)
   static bool _warmedUp = false;
   static bool _warmupInFlight = false;
   static DateTime? _lastWarmupAttempt;
 
-  // Cache the working POST endpoint once discovered
-  static String? _workingPostCartEndpoint;
-
   // ---------------------------------------------------------------------------
-  // BASIC HELPERS
+  // AUTH + HEADERS
   // ---------------------------------------------------------------------------
 
   Future<String?> _getToken() async {
@@ -43,7 +61,7 @@ class CartService {
     return null;
   }
 
-  Future<String?> _getUserEmail() async {
+  Future<String?> _getEmail() async {
     final p = await SharedPreferences.getInstance();
     final email = p.getString('email');
     if (email != null && email.isNotEmpty) return email;
@@ -111,82 +129,98 @@ class CartService {
         msg.contains('unexpected error');
   }
 
-  bool _looksLikeNotFound(Object e) {
-    final msg = e.toString().toLowerCase();
-    return msg.contains('404') ||
-        msg.contains('not found') ||
-        msg.contains('cannot post');
+  // ---------------------------------------------------------------------------
+  // FIRESTORE OFFLINE BACKUP (ONE schema everywhere)
+  // backup_carts/{userKey}/items/{itemId_merchantId}
+  // userKey = FirebaseAuth.uid ?? email
+  // ---------------------------------------------------------------------------
+
+  Future<String?> _userKey() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid != null && uid.isNotEmpty) return uid;
+
+    final email = await _getEmail();
+    if (email != null && email.isNotEmpty) return email;
+
+    return null;
   }
 
-  // ---------------------------------------------------------------------------
-  // MINIMAL PAYLOAD (fix 413 forever)
-  // ---------------------------------------------------------------------------
+  String _docIdFor(CartModel item) => '${item.item}_${item.merchantId}';
 
-  Map<String, dynamic> _smallCartPayload(CartModel cartItem) {
+  Map<String, dynamic> _fsMap(CartModel item, {required bool pendingSync}) {
     return <String, dynamic>{
-      'item': cartItem.item,
-      'quantity': cartItem.quantity,
-      'merchantId': cartItem.merchantId,
-      'serviceType': cartItem.serviceType,
+      'itemId': item.item,
+      'name': item.name,
+      'image': item.image,
+      'price': item.price,
+      'quantity': item.quantity,
+      'description': item.description,
+      'comment': item.comment,
+      'merchantId': item.merchantId,
+      'merchantName': item.merchantName,
+      'serviceType': item.serviceType,
+      'updatedAt': FieldValue.serverTimestamp(),
+      'pendingSync': pendingSync,
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // FIRESTORE BACKUP HELPERS
-  // Schema: backup_carts/{userEmail}/items/{itemId}
-  // ---------------------------------------------------------------------------
+  Future<void> _upsertCartItemInFirestore(CartModel item,
+      {required bool pendingSync}) async {
+    final userKey = await _userKey();
+    if (userKey == null || userKey.isEmpty) {
+      throw const ApiException(
+          message: 'No user session found (missing uid/email). Please log in again.');
+    }
 
-  Future<void> _upsertCartItemInFirestore(CartModel item) async {
+    final doc = _firestore
+        .collection('backup_carts')
+        .doc(userKey)
+        .collection('items')
+        .doc(_docIdFor(item));
+
+    await doc.set(_fsMap(item, pendingSync: pendingSync),
+        SetOptions(merge: true));
+  }
+
+  Future<void> _markSynced(CartModel item) async {
     try {
-      final userId = await _getUserEmail();
-      if (userId == null || userId.isEmpty) return;
+      final userKey = await _userKey();
+      if (userKey == null || userKey.isEmpty) return;
 
       final doc = _firestore
           .collection('backup_carts')
-          .doc(userId)
+          .doc(userKey)
           .collection('items')
-          .doc(item.item.toString());
+          .doc(_docIdFor(item));
 
-      await doc.set(
-        {
-          'itemId': item.item,
-          'name': item.name,
-          'image': item.image,
-          'price': item.price,
-          'quantity': item.quantity,
-          'description': item.description,
-          'comment': item.comment,
-          'merchantId': item.merchantId,
-          'merchantName': item.merchantName,
-          'serviceType': item.serviceType,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
+      await doc.set({'pendingSync': false, 'updatedAt': FieldValue.serverTimestamp()},
+          SetOptions(merge: true));
     } catch (_) {}
   }
 
-  Future<void> _removeFromFirestore(int itemId) async {
+  Future<void> _removeFromFirestoreByKey(int itemId, String merchantId) async {
     try {
-      final userId = await _getUserEmail();
-      if (userId == null || userId.isEmpty) return;
+      final userKey = await _userKey();
+      if (userKey == null || userKey.isEmpty) return;
 
       await _firestore
           .collection('backup_carts')
-          .doc(userId)
+          .doc(userKey)
           .collection('items')
-          .doc(itemId.toString())
+          .doc('${itemId}_$merchantId')
           .delete();
     } catch (_) {}
   }
 
   Future<void> _clearCartInFirestore() async {
     try {
-      final userId = await _getUserEmail();
-      if (userId == null || userId.isEmpty) return;
+      final userKey = await _userKey();
+      if (userKey == null || userKey.isEmpty) return;
 
-      final col =
-          _firestore.collection('backup_carts').doc(userId).collection('items');
+      final col = _firestore
+          .collection('backup_carts')
+          .doc(userKey)
+          .collection('items');
 
       final snap = await col.get();
       final batch = _firestore.batch();
@@ -199,14 +233,17 @@ class CartService {
 
   Future<void> _saveCartListToFirestore(List<CartModel> items) async {
     try {
-      final userId = await _getUserEmail();
-      if (userId == null || userId.isEmpty) return;
+      final userKey = await _userKey();
+      if (userKey == null || userKey.isEmpty) return;
 
-      final col =
-          _firestore.collection('backup_carts').doc(userId).collection('items');
+      final col = _firestore
+          .collection('backup_carts')
+          .doc(userKey)
+          .collection('items');
 
+      // delete anything not in wanted
       final existing = await col.get();
-      final wantedIds = items.map((e) => e.item.toString()).toSet();
+      final wantedIds = items.map((e) => _docIdFor(e)).toSet();
       final batch = _firestore.batch();
 
       for (final doc in existing.docs) {
@@ -214,22 +251,10 @@ class CartService {
       }
 
       for (final it in items) {
-        final docRef = col.doc(it.item.toString());
+        final docRef = col.doc(_docIdFor(it));
         batch.set(
           docRef,
-          {
-            'itemId': it.item,
-            'name': it.name,
-            'image': it.image,
-            'price': it.price,
-            'quantity': it.quantity,
-            'description': it.description,
-            'comment': it.comment,
-            'merchantId': it.merchantId,
-            'merchantName': it.merchantName,
-            'serviceType': it.serviceType,
-            'updatedAt': FieldValue.serverTimestamp(),
-          },
+          _fsMap(it, pendingSync: false),
           SetOptions(merge: true),
         );
       }
@@ -240,31 +265,31 @@ class CartService {
 
   Future<List<CartModel>> _loadCartFromFirestore() async {
     try {
-      final userId = await _getUserEmail();
-      if (userId == null || userId.isEmpty) return [];
+      final userKey = await _userKey();
+      if (userKey == null || userKey.isEmpty) return [];
 
       final snapshot = await _firestore
           .collection('backup_carts')
-          .doc(userId)
+          .doc(userKey)
           .collection('items')
+          .orderBy('updatedAt', descending: true)
           .get();
+
+      int _int(Object? v, {int def = 0}) {
+        if (v is int) return v;
+        if (v is num) return v.toInt();
+        return int.tryParse('${v ?? ''}') ?? def;
+      }
+
+      double _double(Object? v, {double def = 0}) {
+        if (v is num) return v.toDouble();
+        return double.tryParse('${v ?? ''}') ?? def;
+      }
 
       return snapshot.docs.map((d) {
         final data = d.data();
-
-        int _int(Object? v, {int def = 0}) {
-          if (v is int) return v;
-          if (v is num) return v.toInt();
-          return int.tryParse('${v ?? ''}') ?? def;
-        }
-
-        double _double(Object? v, {double def = 0}) {
-          if (v is num) return v.toDouble();
-          return double.tryParse('${v ?? ''}') ?? def;
-        }
-
         return CartModel(
-          userId: userId,
+          userId: userKey,
           item: _int(data['itemId'] ?? data['item']),
           quantity: _int(data['quantity'], def: 1),
           name: (data['name'] ?? '').toString(),
@@ -283,99 +308,105 @@ class CartService {
   }
 
   // ---------------------------------------------------------------------------
-  // CART API + OFFLINE MODE
+  // API PAYLOAD (small => avoids 413)
   // ---------------------------------------------------------------------------
 
+  Map<String, dynamic> _smallCartPayload(CartModel cartItem) {
+    return <String, dynamic>{
+      'item': cartItem.item,
+      'quantity': cartItem.quantity,
+      'merchantId': cartItem.merchantId,
+      'serviceType': cartItem.serviceType,
+      if (cartItem.comment != null && cartItem.comment!.trim().isNotEmpty)
+        'comment': cartItem.comment!.trim(),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // PUBLIC API
+  // ---------------------------------------------------------------------------
+
+  /// Offline-first:
+  /// - writes to Firestore immediately (so UI is truthful)
+  /// - syncs to backend in background
   Future<void> addToCart(CartModel cartItem) async {
     await warmup();
 
     final token = await _getToken();
     if (token == null || token.isEmpty) {
-      throw const ApiException(message: 'You need to be signed in to add items to cart.');
+      throw const ApiException(
+          message: 'You need to be signed in to add items to cart.');
     }
 
-    // offline-first: save immediately
-    await _upsertCartItemInFirestore(cartItem);
+    // ✅ must succeed
+    await _upsertCartItemInFirestore(cartItem, pendingSync: true);
 
-    // background sync
+    // ✅ background sync
     unawaited(_syncAddToCart(token, cartItem));
   }
 
   Future<void> _syncAddToCart(String token, CartModel cartItem) async {
-    final payload = _smallCartPayload(cartItem);
-    final body = jsonEncode(payload);
+    final body = jsonEncode(_smallCartPayload(cartItem));
 
-    // If we already discovered working endpoint, use it
-    final candidates = <String>[
-      if (_workingPostCartEndpoint != null) _workingPostCartEndpoint!,
-      '/cart',
-      '/carts',
-      '/cart/add',
-      '/cart-items',
-      '/cart/item',
-    ].toSet().toList();
+    try {
+      // ignore: avoid_print
+      print('CART POST try=/cart/add bytes=${utf8.encode(body).length}');
 
-    for (final ep in candidates) {
-      try {
-        // ignore: avoid_print
-        print('CART POST try=$ep bytes=${utf8.encode(body).length}');
+      await ApiClient.post(
+        '/cart/add', // ✅ matches NestJS @Post('add')
+        headers: _headers(token: token),
+        body: body,
+        timeout: _kApiTimeout,
+      );
 
-        await ApiClient.post(
-          ep, // ApiConfig will prefix /vero automatically
-          headers: _headers(token: token),
-          body: body,
-          timeout: _kApiTimeout,
-        );
-
-        // ✅ success — remember it
-        _workingPostCartEndpoint = ep;
-        return;
-      } on ApiException catch (e) {
-        if (_looksLikeAuthError(e)) return;
-        if (_looksLikePassengerHtmlOrDown(e)) return;
-
-        // Not found => try next candidate
-        if (_looksLikeNotFound(e)) continue;
-
-        // Other errors: stop (don’t spam)
-        return;
-      } catch (e) {
-        if (_looksLikePassengerHtmlOrDown(e)) return;
-        // unknown error: stop
-        return;
-      }
+      // ✅ mark synced locally
+      await _markSynced(cartItem);
+    } on ApiException catch (e) {
+      if (_looksLikeAuthError(e)) return;
+      if (_looksLikePassengerHtmlOrDown(e)) return;
+      return;
+    } catch (_) {
+      return;
     }
   }
 
+  /// Fetch:
+  /// - tries backend GET /cart/me
+  /// - falls back to Firestore if backend is down or returns HTML
+  /// - NEVER clears Firestore on 404 (route mismatch / server issues)
   Future<List<CartModel>> fetchCartItems() async {
     await warmup();
 
     final token = await _getToken();
     if (token == null || token.isEmpty) {
-      throw const ApiException(message: 'You need to be signed in to view your cart.');
+      throw const ApiException(
+          message: 'You need to be signed in to view your cart.');
     }
 
     final local = await _loadCartFromFirestore();
 
     try {
       final res = await ApiClient.get(
-        '/cart',
+        '/cart/me', // ✅ matches NestJS @Get('me')
         headers: _headers(token: token),
         timeout: _kApiTimeout,
         allowedStatusCodes: {200, 404},
       );
 
       if (res.statusCode == 404) {
-        await _clearCartInFirestore();
-        return <CartModel>[];
+        // ✅ do NOT wipe local cart — return backup
+        return local;
       }
 
       final bodyTrim = res.body.trimLeft().toLowerCase();
       if (bodyTrim.startsWith('<!doctype html') || bodyTrim.startsWith('<html')) {
+        // passenger/hosting html => treat as down
         return local;
       }
 
       final decoded = jsonDecode(res.body);
+
+      // Support: List OR {data: List}
       final list = decoded is List
           ? decoded
           : (decoded is Map && decoded['data'] is List ? decoded['data'] : <dynamic>[]);
@@ -399,19 +430,46 @@ class CartService {
     }
   }
 
-  Future<void> removeFromCart(int itemId) async {
+  /// Remove:
+  /// - removes from Firestore immediately
+  /// - then hits backend DELETE /cart/:itemId
+  ///
+  /// IMPORTANT: if you can have same itemId across different merchants,
+  /// pass merchantId from UI to remove the correct local doc.
+  Future<void> removeFromCart(int itemId, {String? merchantId}) async {
     await warmup();
 
     final token = await _getToken();
     if (token == null || token.isEmpty) {
-      throw const ApiException(message: 'You need to be signed in to modify your cart.');
+      throw const ApiException(
+          message: 'You need to be signed in to modify your cart.');
     }
 
-    await _removeFromFirestore(itemId);
+    if (merchantId != null && merchantId.isNotEmpty) {
+      await _removeFromFirestoreByKey(itemId, merchantId);
+    } else {
+      // Fallback: if merchantId unknown, do a best-effort scan delete
+      // (avoid heavy queries — but this is still safe).
+      try {
+        final userKey = await _userKey();
+        if (userKey != null && userKey.isNotEmpty) {
+          final col = _firestore
+              .collection('backup_carts')
+              .doc(userKey)
+              .collection('items');
+          final snap = await col.where('itemId', isEqualTo: itemId).get();
+          final batch = _firestore.batch();
+          for (final d in snap.docs) {
+            batch.delete(d.reference);
+          }
+          await batch.commit();
+        }
+      } catch (_) {}
+    }
 
     try {
       await ApiClient.delete(
-        '/cart/$itemId',
+        '/cart/$itemId', // ✅ matches NestJS @Delete(':itemId')
         headers: _headers(token: token),
         timeout: _kApiTimeout,
       );
@@ -427,19 +485,23 @@ class CartService {
     }
   }
 
+  /// Clear:
+  /// - clears Firestore immediately
+  /// - then hits backend DELETE /cart
   Future<void> clearCart() async {
     await warmup();
 
     final token = await _getToken();
     if (token == null || token.isEmpty) {
-      throw const ApiException(message: 'You need to be signed in to clear your cart.');
+      throw const ApiException(
+          message: 'You need to be signed in to clear your cart.');
     }
 
     await _clearCartInFirestore();
 
     try {
       await ApiClient.delete(
-        '/cart',
+        '/cart', // ✅ matches NestJS @Delete()
         headers: _headers(token: token),
         timeout: _kApiTimeout,
       );

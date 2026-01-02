@@ -22,6 +22,8 @@ import 'package:geocoding/geocoding.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:http/http.dart' as http;
+import 'package:vero360_app/Pages/PostlatestArrival.dart';
+import 'package:vero360_app/Pages/Postpromotion.dart';
 import 'package:vero360_app/services/api_config.dart';
 import 'package:vero360_app/services/marketplace.service.dart';
 
@@ -2029,6 +2031,12 @@ class _MarketplaceMerchantDashboardState
               color: Colors.green,
               onTap: () => _openBottomSheet(const OrdersPage()),
             ),
+               _QuickActionTile(
+              title: 'Post Arrival',
+              icon: Icons.rocket,
+              color: Colors.orange,
+              onTap: () => _openBottomSheet(const LatestArrivalsCrudPage()),
+            ),
             _QuickActionTile(
               title: 'Shipped',
               icon: Icons.local_shipping_outlined,
@@ -2046,6 +2054,12 @@ class _MarketplaceMerchantDashboardState
               icon: Icons.replay_circle_filled_outlined,
               color: Colors.red,
               onTap: () => _openBottomSheet(const ToRefundPage()),
+            ),
+               _QuickActionTile(
+              title: 'Promotions',
+              icon: Icons.campaign_outlined,
+              color: Colors.orange,
+              onTap: () => _openBottomSheet(const PromotionsCrudPage()),
             ),
           ],
         ),

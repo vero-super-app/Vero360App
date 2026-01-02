@@ -1,8 +1,5 @@
-// lib/Pages/latest_arrivals_crud_page.dart
-import 'dart:io' show File;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -40,7 +37,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
 
   // --- Brand (match Airport/Vero Courier) ---
   static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandSoft   = Color(0xFFFFE8CC);
+  static const Color _brandSoft = Color(0xFFFFE8CC);
 
   @override
   void initState() {
@@ -57,6 +54,12 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
     super.dispose();
   }
 
+  String _shortErr(Object e) {
+    final s = e.toString();
+    if (s.length <= 200) return s;
+    return '${s.substring(0, 200)}...';
+  }
+
   Future<void> _loadMine() async {
     setState(() => _loading = true);
     try {
@@ -65,7 +68,12 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
       setState(() => _items = data);
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showCustomToast(context, 'Failed to load: $e', isSuccess: false, errorMessage: 'Load failed');
+      ToastHelper.showCustomToast(
+        context,
+        'Failed to load: ${_shortErr(e)}',
+        isSuccess: false,
+        errorMessage: 'Load failed',
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -73,19 +81,27 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
 
   // pickers
   Future<void> _pickFromGallery() async {
-    final x = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 90, maxWidth: 2048);
+    final x = await _picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 90,
+      maxWidth: 2048,
+    );
     if (x != null) {
       _picked = x;
-      _pickedBytes = kIsWeb ? await x.readAsBytes() : null;
+      _pickedBytes = await x.readAsBytes();
       setState(() {});
     }
   }
 
   Future<void> _pickFromCamera() async {
-    final x = await _picker.pickImage(source: ImageSource.camera, imageQuality: 90, maxWidth: 2048);
+    final x = await _picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 90,
+      maxWidth: 2048,
+    );
     if (x != null) {
       _picked = x;
-      _pickedBytes = kIsWeb ? await x.readAsBytes() : null;
+      _pickedBytes = await x.readAsBytes();
       setState(() {});
     }
   }
@@ -98,39 +114,63 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
 
   Future<void> _create() async {
     if (!_form.currentState!.validate()) return;
-    if (_picked == null) {
-      ToastHelper.showCustomToast(context, 'Please pick a photo', isSuccess: false, errorMessage: 'Photo required');
+
+    if (_pickedBytes == null || _picked == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please pick a photo',
+        isSuccess: false,
+        errorMessage: 'Photo required',
+      );
       return;
     }
 
     setState(() => _submitting = true);
     try {
-      final imageUrl = !kIsWeb
-          ? await svc.uploadImageFile(File(_picked!.path))
-          : null; // (implement web upload with bytes if needed)
+      final filename = _picked!.name.isNotEmpty ? _picked!.name : 'latest.jpg';
+
+      // ✅ Upload image first (NOW hits /vero/uploads)
+      final imageUrl = await svc.uploadImageBytes(
+        _pickedBytes!,
+        filename: filename,
+      );
 
       final priceVal = double.tryParse(_price.text.trim()) ?? 0;
 
-      await svc.create(LatestArrivalModel(
-        id: 0,
-        image: imageUrl ?? '',
-        name: _name.text.trim(),
-        price: priceVal,
-        createdAt: DateTime.now(),
-      ));
+      // ✅ Create latest arrival (NOW hits /vero/latestarrivals)
+      await svc.create(
+        LatestArrivalModel(
+          id: 0,
+          image: imageUrl,
+          name: _name.text.trim(),
+          price: priceVal,
+          createdAt: DateTime.now(),
+        ),
+      );
 
-      ToastHelper.showCustomToast(context, 'Latest arrival posted', isSuccess: true, errorMessage: 'Created');
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Latest arrival posted',
+        isSuccess: true,
+        errorMessage: 'Created',
+      );
 
       _form.currentState!.reset();
       _name.clear();
       _price.clear();
-      _picked = null;
-      _pickedBytes = null;
-      setState(() {});
+      _clearPicked();
+
       await _loadMine();
-      _tabs.animateTo(1);
+      if (mounted) _tabs.animateTo(1);
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Create failed: $e', isSuccess: false, errorMessage: 'Create failed');
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Create failed: ${_shortErr(e)}',
+        isSuccess: false,
+        errorMessage: 'Create failed',
+      );
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -143,8 +183,15 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
         title: const Text('Delete latest arrival'),
         content: Text('Delete “${it.name}”?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete', style: TextStyle(color: Colors.red))),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child:
+                const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+          ),
         ],
       ),
     );
@@ -153,17 +200,31 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
     setState(() => _busyRow = true);
     try {
       await svc.delete(it.id);
-      ToastHelper.showCustomToast(context, 'Deleted', isSuccess: true, errorMessage: 'Deleted');
+
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Deleted',
+        isSuccess: true,
+        errorMessage: 'Deleted',
+      );
+
       _items.removeWhere((e) => e.id == it.id);
       setState(() {});
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Delete failed: $e', isSuccess: false, errorMessage: 'Delete failed');
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Delete failed: ${_shortErr(e)}',
+        isSuccess: false,
+        errorMessage: 'Delete failed',
+      );
     } finally {
       if (mounted) setState(() => _busyRow = false);
     }
   }
 
-  // ---- UI helpers (no logic changes) ----
+  // ---- UI helpers ----
   InputDecoration _inputDecoration({String? label, String? hint}) {
     return InputDecoration(
       labelText: label,
@@ -172,7 +233,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
       fillColor: Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       enabledBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: Colors.black, width: 1), // black before active
+        borderSide: const BorderSide(color: Colors.black, width: 1),
         borderRadius: BorderRadius.circular(12),
       ),
       focusedBorder: const OutlineInputBorder(
@@ -194,13 +255,13 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
         style: OutlinedButton.styleFrom(
           foregroundColor: Colors.black87,
           side: const BorderSide(color: Colors.black, width: 1),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           textStyle: const TextStyle(fontWeight: FontWeight.w700),
         ),
       );
 
-  // ---- Scaffold ----
   @override
   Widget build(BuildContext context) {
     return Theme(
@@ -246,13 +307,14 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Mini banner for consistency
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
                     color: _brandSoft,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
+                    border:
+                        Border.all(color: _brandOrange.withValues(alpha: 0.35)),
                   ),
                   child: const Text(
                     'Upload a clear product photo and correct price so customers trust your post.',
@@ -260,12 +322,12 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                   ),
                 ),
                 const SizedBox(height: 14),
-
-                const Text('Post Latest Arrival', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                const Text(
+                  'Post Latest Arrival',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
                 const SizedBox(height: 12),
-
                 _FullBleedPicker(
-                  picked: _picked,
                   pickedBytes: _pickedBytes,
                   onPickGallery: _pickFromGallery,
                   onPickCamera: _pickFromCamera,
@@ -273,17 +335,18 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                   filledBtnStyle: _filledBtnStyle(padV: 12),
                 ),
                 const SizedBox(height: 12),
-
                 TextFormField(
                   controller: _name,
                   decoration: _inputDecoration(label: 'Name'),
-                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Name is required' : null,
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Name is required'
+                      : null,
                 ),
                 const SizedBox(height: 12),
-
                 TextFormField(
                   controller: _price,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: false),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: false),
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: _inputDecoration(label: 'Price (MWK)'),
                   validator: (v) {
@@ -293,14 +356,20 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                   },
                 ),
                 const SizedBox(height: 16),
-
                 FilledButton.icon(
                   style: _filledBtnStyle(),
                   onPressed: _submitting ? null : _create,
                   icon: _submitting
-                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
                       : const Icon(Icons.add),
-                  label: const Text('Post Arrival'),
+                  label: Text(_submitting ? 'Posting...' : 'Post Arrival'),
                 ),
               ],
             ),
@@ -312,6 +381,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
 
   Widget _buildManageTab() {
     if (_loading) return const Center(child: CircularProgressIndicator());
+
     if (_items.isEmpty) {
       return RefreshIndicator(
         onRefresh: _loadMine,
@@ -319,7 +389,12 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
           physics: const AlwaysScrollableScrollPhysics(),
           children: const [
             SizedBox(height: 120),
-            Center(child: Text('No items yet. Post one!', style: TextStyle(color: Colors.red))),
+            Center(
+              child: Text(
+                'No items yet. Post one!',
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
           ],
         ),
       );
@@ -330,7 +405,6 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
       child: LayoutBuilder(
         builder: (context, c) {
           final w = c.maxWidth;
-          // Responsive columns + a taller tile on smaller widths
           final cols = w >= 1200 ? 4 : w >= 800 ? 3 : 2;
           final ratio = w >= 1200 ? 0.92 : w >= 800 ? 0.85 : 0.78;
 
@@ -348,22 +422,13 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
               return Card(
                 elevation: 6,
                 shadowColor: Colors.black12,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
                 clipBehavior: Clip.antiAlias,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Image section
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(16), topRight: Radius.circular(16),
-                        ),
-                        child: _NetworkCover(url: it.image),
-                      ),
-                    ),
-
-                    // Title
+                    Expanded(child: _NetworkCover(url: it.image)),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
                       child: Text(
@@ -373,22 +438,23 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
-
-                    // Price + delete
                     Padding(
                       padding: const EdgeInsets.fromLTRB(10, 0, 8, 10),
                       child: Row(
                         children: [
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
                             decoration: BoxDecoration(
                               color: _brandSoft,
                               borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: _brandOrange, width: 1),
+                              border:
+                                  Border.all(color: _brandOrange, width: 1),
                             ),
                             child: Text(
                               'MWK ${it.price.toStringAsFixed(0)}',
-                              style: const TextStyle(fontWeight: FontWeight.w700),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
                             ),
                           ),
                           const Spacer(),
@@ -396,7 +462,8 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                             visualDensity: VisualDensity.compact,
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
-                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            icon: const Icon(Icons.delete_outline,
+                                color: Colors.red),
                             onPressed: _busyRow ? null : () => _delete(it),
                             tooltip: 'Delete',
                           ),
@@ -414,11 +481,10 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
   }
 }
 
-/* ---------- covers & picker (full-bleed, no empty space) ---------- */
+/* ---------- picker (full-bleed, bytes preview, web-safe) ---------- */
 
 class _FullBleedPicker extends StatelessWidget {
   const _FullBleedPicker({
-    required this.picked,
     required this.pickedBytes,
     required this.onPickGallery,
     required this.onPickCamera,
@@ -426,7 +492,6 @@ class _FullBleedPicker extends StatelessWidget {
     required this.filledBtnStyle,
   });
 
-  final XFile? picked;
   final Uint8List? pickedBytes;
   final VoidCallback onPickGallery;
   final VoidCallback onPickCamera;
@@ -435,17 +500,7 @@ class _FullBleedPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final has = picked != null;
-    Widget content;
-    if (has) {
-      if (kIsWeb && pickedBytes != null) {
-        content = Image.memory(pickedBytes!, fit: BoxFit.cover, gaplessPlayback: true);
-      } else {
-        content = Image.file(File(picked!.path), fit: BoxFit.cover, gaplessPlayback: true);
-      }
-    } else {
-      content = const _PlaceholderCover();
-    }
+    final has = pickedBytes != null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -455,7 +510,16 @@ class _FullBleedPicker extends StatelessWidget {
           shadowColor: Colors.black12,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           clipBehavior: Clip.antiAlias,
-          child: AspectRatio(aspectRatio: 16 / 9, child: content),
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: has
+                ? Image.memory(
+                    pickedBytes!,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                  )
+                : const _PlaceholderCover(),
+          ),
         ),
         const SizedBox(height: 10),
         Row(
@@ -501,7 +565,13 @@ class _NetworkCover extends StatelessWidget {
           fit: BoxFit.cover,
           loadingBuilder: (ctx, child, progress) => progress == null
               ? child
-              : const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+              : const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
           errorBuilder: (_, __, ___) => const _PlaceholderCover(),
         ),
       ],
@@ -516,7 +586,9 @@ class _PlaceholderCover extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       color: const Color(0xFFEDEDED),
-      child: const Center(child: Icon(Icons.image_not_supported_outlined, color: Colors.black38)),
+      child: const Center(
+        child: Icon(Icons.image_not_supported_outlined, color: Colors.black38),
+      ),
     );
   }
 }

@@ -2,11 +2,10 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform, debugPrint;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform, debugPrint, ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/foundation.dart';
-
 
 // Deep links
 import 'package:app_links/app_links.dart';
@@ -55,7 +54,8 @@ class AppBootstrap extends StatefulWidget {
 class _AppBootstrapState extends State<AppBootstrap> {
   late Future<_BootState> _bootFuture;
 
-  final ValueNotifier<List<String>> _logs = ValueNotifier<List<String>>(<String>[]);
+  final ValueNotifier<List<String>> _logs =
+      ValueNotifier<List<String>>(<String>[]);
   bool _goMain = false;
   bool _scheduled = false;
 
@@ -262,7 +262,72 @@ class SelfHealPage extends StatefulWidget {
   State<SelfHealPage> createState() => _SelfHealPageState();
 }
 
-class _SelfHealPageState extends State<SelfHealPage> with SingleTickerProviderStateMixin {
+/// ✅ Logo mark that starts small then scales up (modern feel)
+class AnimatedLogoMark extends StatefulWidget {
+  const AnimatedLogoMark({super.key, this.size = 30});
+
+  final double size;
+
+  @override
+  State<AnimatedLogoMark> createState() => _AnimatedLogoMarkState();
+}
+
+class _AnimatedLogoMarkState extends State<AnimatedLogoMark>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 850),
+    );
+
+    _scale = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOutBack, // subtle overshoot
+    );
+
+    _opacity = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeIn,
+    );
+
+    // small delay feels more premium
+    Future.delayed(const Duration(milliseconds: 120), () {
+      if (mounted) _controller.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: ScaleTransition(
+        scale: _scale,
+        child: Image.asset(
+          'assets/logo_mark.png',
+          width: widget.size,
+          height: widget.size,
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
+  }
+}
+
+class _SelfHealPageState extends State<SelfHealPage>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _c;
   late final Animation<double> _pulse;
   final ScrollController _scroll = ScrollController();
@@ -356,11 +421,15 @@ class _SelfHealPageState extends State<SelfHealPage> with SingleTickerProviderSt
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: const [
-                                Icon(Icons.shopping_bag_outlined, size: 30, color: Color(0xFFFF8A00)),
+                                // ✅ replaced icon with animated logo
+                                AnimatedLogoMark(size: 30),
                                 SizedBox(width: 10),
                                 Text(
                                   "Vero360App",
-                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800,
+                                  ),
                                 ),
                               ],
                             ),
@@ -376,7 +445,10 @@ class _SelfHealPageState extends State<SelfHealPage> with SingleTickerProviderSt
                       transitionBuilder: (child, anim) => FadeTransition(
                         opacity: anim,
                         child: SlideTransition(
-                          position: Tween<Offset>(begin: const Offset(0, 0.2), end: Offset.zero).animate(anim),
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.2),
+                            end: Offset.zero,
+                          ).animate(anim),
                           child: child,
                         ),
                       ),
@@ -384,7 +456,10 @@ class _SelfHealPageState extends State<SelfHealPage> with SingleTickerProviderSt
                         _slogans[_sloganIndex],
                         key: ValueKey(_sloganIndex),
                         textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
 
@@ -393,7 +468,10 @@ class _SelfHealPageState extends State<SelfHealPage> with SingleTickerProviderSt
                     Text(
                       widget.title,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Text(
@@ -411,7 +489,9 @@ class _SelfHealPageState extends State<SelfHealPage> with SingleTickerProviderSt
                         child: CircularProgressIndicator(strokeWidth: 3),
                       ),
 
-                    if (!widget.showSpinner && widget.actionLabel != null && widget.onAction != null)
+                    if (!widget.showSpinner &&
+                        widget.actionLabel != null &&
+                        widget.onAction != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 14),
                         child: SizedBox(
@@ -428,6 +508,7 @@ class _SelfHealPageState extends State<SelfHealPage> with SingleTickerProviderSt
                     if (widget.logs != null)
                       TextButton(
                         onPressed: () => setState(() => _showLogs = !_showLogs),
+                        // (keep blank if you want hidden button)
                         child: Text(_showLogs ? "" : ""),
                       ),
 
@@ -439,17 +520,23 @@ class _SelfHealPageState extends State<SelfHealPage> with SingleTickerProviderSt
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: Colors.black.withOpacity(0.06)),
+                            border: Border.all(
+                              color: Colors.black.withOpacity(0.06),
+                            ),
                           ),
                           child: ValueListenableBuilder<List<String>>(
                             valueListenable: widget.logs!,
                             builder: (_, lines, __) {
-                              final text = lines.isEmpty ? "No logs yet…" : lines.join("\n");
+                              final text =
+                                  lines.isEmpty ? "No logs yet…" : lines.join("\n");
                               return SingleChildScrollView(
                                 controller: _scroll,
                                 child: SelectableText(
                                   text,
-                                  style: const TextStyle(fontSize: 12, height: 1.25),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    height: 1.25,
+                                  ),
                                 ),
                               );
                             },
@@ -525,7 +612,9 @@ class _MyAppState extends State<MyApp> {
   String _fixLocalhostIfNeeded(String base) {
     if (kIsWeb) return base;
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return base.replaceFirst('https://heflexitservice.co.za', 'https://heflexitservice.co.za').replaceFirst('localhost', 'https://heflexitservice.co.za');
+      return base
+          .replaceFirst('https://heflexitservice.co.za', 'https://heflexitservice.co.za')
+          .replaceFirst('localhost', 'https://heflexitservice.co.za');
     }
     return base;
   }
@@ -543,7 +632,10 @@ class _MyAppState extends State<MyApp> {
       final resp = await http
           .get(
             Uri.parse('$base/users/me'),
-            headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Accept': 'application/json'
+            },
           )
           .timeout(const Duration(seconds: 6));
 
@@ -551,7 +643,9 @@ class _MyAppState extends State<MyApp> {
         final decoded = json.decode(resp.body);
         final user = (decoded is Map && decoded['data'] is Map)
             ? Map<String, dynamic>.from(decoded['data'])
-            : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
+            : (decoded is Map
+                ? Map<String, dynamic>.from(decoded)
+                : <String, dynamic>{});
 
         await _persistUserToPrefs(prefs, user);
 
@@ -575,7 +669,9 @@ class _MyAppState extends State<MyApp> {
   bool _isMerchant(Map<String, dynamic> u) {
     final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
     final roles = (u['roles'] is List)
-        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
+        ? (u['roles'] as List)
+            .map((e) => e.toString().toLowerCase())
+            .toList()
         : <String>[];
     final flags = {
       'isMerchant': u['isMerchant'] == true,
@@ -585,7 +681,8 @@ class _MyAppState extends State<MyApp> {
     return role == 'merchant' || roles.contains('merchant') || flags.values.any((v) => v == true);
   }
 
-  Future<void> _persistUserToPrefs(SharedPreferences prefs, Map<String, dynamic> u) async {
+  Future<void> _persistUserToPrefs(
+      SharedPreferences prefs, Map<String, dynamic> u) async {
     String join(String? a, String? b) {
       final parts = [a, b]
           .where((x) => x != null && x!.trim().isNotEmpty)
@@ -646,7 +743,10 @@ class _MyAppState extends State<MyApp> {
         navigatorKey: navKey,
         debugShowCheckedModeBanner: false,
         title: 'Vero360',
-        theme: ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFFFF8A00)),
+        theme: ThemeData(
+          useMaterial3: true,
+          colorSchemeSeed: const Color(0xFFFF8A00),
+        ),
 
         // ✅ keep public home
         home: const Bottomnavbar(email: ''),
@@ -717,7 +817,9 @@ class AuthFlow {
   static String _fixLocalhostIfNeeded(String base) {
     if (kIsWeb) return base;
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return base.replaceFirst('https://heflexitservice.co.za', 'https://heflexitservice.co.za').replaceFirst('localhost', 'https://heflexitservice.co.za');
+      return base
+          .replaceFirst('https://heflexitservice.co.za', 'https://heflexitservice.co.za')
+          .replaceFirst('localhost', 'https://heflexitservice.co.za');
     }
     return base;
   }

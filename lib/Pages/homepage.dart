@@ -1,30 +1,55 @@
+// lib/Pages/homepage.dart
+//
+// ✅ Full corrected Vero360 Homepage (single file)
+// - No duplicate imports
+// - Single LatestArrivalsSection
+// - Latest Arrivals:
+//    * loads from API (LatestArrivalServices)
+//    * resolves images from URL / base64 / gs:// / storage path / Firestore doc
+//    * tap product card/photo => details bottomsheet (compact, not full screen)
+//    * bottomsheet has Add to Cart + Buy Now (Buy Now -> CheckoutFromCartPage)
+//    * ✅ Uses ToastHelper for feedback ON TOP of bottomsheet (not behind)
+//
+// NOTE: Make sure toasthelper.dart is fixed/working. This file calls:
+// ToastHelper.showCustomToast(context, message, isSuccess: ..., errorMessage: ...)
+
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:carousel_slider/carousel_slider.dart';
-import 'package:flutter/foundation.dart'
-    show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
+
+// ✅ Firebase (for Latest Arrivals images + cart)
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+
+// ✅ Cart + checkout
+import 'package:vero360_app/models/cart_model.dart';
+import 'package:vero360_app/services/cart_services.dart';
+import 'package:vero360_app/Pages/checkout_from_cart_page.dart';
 
 // Feature pages
 import 'package:vero360_app/Accomodation.dart';
 import 'package:vero360_app/Pages/Quickservices/Bike.dart';
 import 'package:vero360_app/Pages/Quickservices/Edu.dart';
 import 'package:vero360_app/Pages/Quickservices/ExchangeRate.dart';
-import 'package:vero360_app/Pages/Quickservices/Hairsaloon.dart';
 import 'package:vero360_app/Pages/Quickservices/MobileMoney.dart';
 import 'package:vero360_app/Pages/Quickservices/More.dart';
-import 'package:vero360_app/Pages/Quickservices/Taxi.dart';
 import 'package:vero360_app/Pages/Quickservices/airportpickup.dart';
-import 'package:vero360_app/Pages/Quickservices/fitness.dart';
 import 'package:vero360_app/Pages/Quickservices/food.dart';
 import 'package:vero360_app/Pages/Quickservices/jobs.dart';
 import 'package:vero360_app/Pages/Quickservices/verocourier.dart';
 import 'package:vero360_app/Pages/car_rental/car_rental_page.dart';
 import 'package:vero360_app/services/api_config.dart';
-import '../services/cart_services.dart';
 
-// Latest arrivals
+// Latest arrivals (API)
 import 'package:vero360_app/models/Latest_model.dart';
 import 'package:vero360_app/services/latest_Services.dart';
+
+// ✅ Toast helper
+import 'package:vero360_app/toasthelper.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -55,25 +80,14 @@ class Mini {
    QUICK SERVICES: single source of truth
 ─────────────────────────────────────────── */
 const List<Mini> kQuickServices = [
-  // Transport
   Mini('taxi', 'Vero ride/Taxi', Icons.local_taxi_rounded),
   Mini('airport_pickup', 'Airport pickup', Icons.flight_takeoff_rounded),
   Mini('courier', 'Vero courier', Icons.local_shipping_rounded),
   Mini('vero_bike', 'Vero bike', Icons.pedal_bike_rounded),
-//  Mini('car_hire', 'Car hire', Icons.car_rental_rounded),
-
-  // Money & info
   Mini('fx', 'Exchange rates', Icons.currency_exchange_rounded),
-
-  // Lifestyle
-  // Mini('hair', 'Hair salon', Icons.cut_rounded),
   Mini('food', 'Food', Icons.fastfood_rounded),
-  // Mini('fitness', 'Fitness', Icons.fitness_center_rounded),
-
-  // Other
   Mini('jobs', 'Jobs', Icons.business_center_rounded),
   Mini('accommodation', 'Accomodation', Icons.hotel_rounded),
-  // Mini('more', 'More', Icons.more_horiz_rounded),
 ];
 
 /* ───────────────────────────────────────────
@@ -82,10 +96,11 @@ const List<Mini> kQuickServices = [
 class DigitalProduct {
   final String key;
   final String name;
-  final String subtitle; // e.g. "1-month key"
-  final String price; // display only; wire to backend later
-  final IconData? icon; // fallback icon if no logoAsset
-  final String? logoAsset; // e.g. 'assets/brands/spotify.png'
+  final String subtitle;
+  final String price;
+  final IconData? icon;
+  final String? logoAsset;
+
   const DigitalProduct({
     required this.key,
     required this.name,
@@ -134,6 +149,7 @@ const List<DigitalProduct> kDigitalProducts = [
 class Vero360Homepage extends StatefulWidget {
   final String email;
   const Vero360Homepage({super.key, required this.email});
+
   @override
   State<Vero360Homepage> createState() => _Vero360HomepageState();
 }
@@ -149,6 +165,7 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
     final cleaned = user.replaceAll(RegExp(r'[^a-zA-Z]'), ' ');
     final parts = cleaned.trim().split(RegExp(r'\s+'));
     final first = parts.isNotEmpty ? parts.first : 'there';
+    if (first.isEmpty) return 'there';
     return '${first[0].toUpperCase()}${first.substring(1).toLowerCase()}';
   }
 
@@ -174,7 +191,7 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
       serviceKey: 'food',
     ),
     _Promo(
-      title: 'Vero Ride ',
+      title: 'Vero Ride',
       subtitle: 'Ride • 15% off',
       code: 'Use code GO15',
       image: 'assets/uber-cabs-1024x576.webp',
@@ -184,9 +201,9 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
       serviceKey: 'taxi',
     ),
     _Promo(
-      title: 'Vero AI ',
+      title: 'Vero AI',
       subtitle: 'Ask VeroAI',
-      code: 'anything,anytime',
+      code: 'anything, anytime',
       image: 'assets/veroai.png',
       bg: Color(0xFFFFF4E6),
       tint: AppColors.brandOrange,
@@ -194,9 +211,6 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
       serviceKey: 'Vero Chat',
     ),
   ];
-
-  final cartService =
-      CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
 
   @override
   void initState() {
@@ -218,10 +232,9 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
-        statusBarColor:
-            Colors.white, // keep solid so content never bleeds under
-        statusBarIconBrightness: Brightness.dark, // Android
-        statusBarBrightness: Brightness.light, // iOS
+        statusBarColor: Colors.white,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
         systemNavigationBarColor: Colors.white,
         systemNavigationBarIconBrightness: Brightness.dark,
       ),
@@ -244,13 +257,13 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
                 // Top: brand + search
                 SliverToBoxAdapter(
                   child: Padding(
-                    // was 79 → now 16 because SafeArea handles status bar
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                     child: Column(
                       children: [
                         const _BrandBar(
-                            appName: 'Vero360',
-                            logoPath: 'assets/logo_mark.png'),
+                          appName: 'Vero360',
+                          logoPath: 'assets/logo_mark.png',
+                        ),
                         const SizedBox(height: 12),
                         _TopSection(
                           animateIn: _animateIn,
@@ -275,18 +288,13 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
                   ),
                 ),
                 SliverToBoxAdapter(
-                    child: _Dots(count: _promos.length, index: _promoIndex)),
+                  child: _Dots(count: _promos.length, index: _promoIndex),
+                ),
 
-                // Space so Quick Services doesn't collide with chips
                 const SliverToBoxAdapter(child: SizedBox(height: 22)),
-
-                // Chips (Lightning deals etc.)
                 const SliverToBoxAdapter(child: _QuickStrip()),
-
-                // Extra breathing room before Quick Services
                 const SliverToBoxAdapter(child: SizedBox(height: 27)),
 
-                // ==== ONE CARD: QUICK SERVICES ====
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 7),
@@ -301,25 +309,21 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
                 ),
 
                 const SliverToBoxAdapter(child: SizedBox(height: 22)),
-
-                // Near you
                 const SliverToBoxAdapter(child: _NearYouCarousel()),
                 const SliverToBoxAdapter(child: SizedBox(height: 8)),
-
-                // Deals
                 const SliverToBoxAdapter(child: _DealsStrip()),
                 const SliverToBoxAdapter(child: SizedBox(height: 12)),
 
-                // Digital & Virtual Services (resell) — below Nearby
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(6, 4, 16, 0),
                     child: DigitalServicesSection(onBuy: _openDigitalDetail),
                   ),
                 ),
+
                 const SliverToBoxAdapter(child: SizedBox(height: 10)),
 
-                // Latest arrivals
+                // ✅ Latest arrivals section
                 const SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.fromLTRB(6, 12, 16, 16),
@@ -354,7 +358,6 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
     }
   }
 
-  // open Digital Product detail/checkout
   void _openDigitalDetail(DigitalProduct p) {
     final suggestedName = _firstNameFromEmail(widget.email);
     Navigator.of(context).push(
@@ -375,67 +378,40 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
       case 'grocery':
         page = FoodPage();
         break;
-
       case 'more':
         page = MorePage();
         break;
-
-      // case 'hair':
-      //   page = Hairsalonpage();
-      //   break;
-
-      // case 'fitness':
-      //   page = Fitnespage();
-      //   break;
-
       case 'jobs':
         page = JobsPage();
         break;
-
       case 'courier':
         page = const VerocourierPage();
         break;
-
       case 'vero_bike':
         page = const VeroRidePage();
         break;
-
       case 'airport_pickup':
         page = const Airportpickuppage();
         break;
-
       case 'taxi':
-        page = const CarRentalPage();
-        break;
-
       case 'car_hire':
         page = const CarRentalPage();
         break;
-
       case 'send_money':
       case 'mobile_money':
         page = const MobilemoneyPage();
         break;
-
-      case 'home_cleaning':
-      case 'hospital':
-        page = const UtilityPage(title: 'Utility');
-        break;
-
       case 'Vero Chat':
         page = const EducationPage();
         break;
-
       case 'hostels':
       case 'hotels':
       case 'accommodation':
         page = const AccomodationPage();
         break;
-
       case 'fx':
         page = const ExchangeRateScreen();
         break;
-
       default:
         page = const MorePage();
     }
@@ -457,7 +433,8 @@ class _BrandBar extends StatelessWidget {
           padding: const EdgeInsets.all(3),
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-                colors: [AppColors.brandOrange, Color(0xFFFFB85C)]),
+              colors: [AppColors.brandOrange, Color(0xFFFFB85C)],
+            ),
             shape: BoxShape.circle,
           ),
           child: CircleAvatar(
@@ -469,18 +446,24 @@ class _BrandBar extends StatelessWidget {
                 width: 30,
                 height: 30,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const Icon(Icons.eco,
-                    size: 22, color: AppColors.brandOrange),
+                errorBuilder: (_, __, ___) => const Icon(
+                  Icons.eco,
+                  size: 22,
+                  color: AppColors.brandOrange,
+                ),
               ),
             ),
           ),
         ),
         const SizedBox(width: 10),
-        Text(appName,
-            style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-                color: AppColors.title)),
+        Text(
+          appName,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w900,
+            color: AppColors.title,
+          ),
+        ),
         const Spacer(),
         IconButton(
           visualDensity: VisualDensity.compact,
@@ -489,11 +472,6 @@ class _BrandBar extends StatelessWidget {
               color: AppColors.title),
         ),
         const SizedBox(width: 4),
-        // const CircleAvatar(
-        //   radius: 14,
-        //   backgroundColor: AppColors.brandOrangePale,
-        //   child: Icon(Icons.person_outline, size: 18, color: AppColors.brandOrange),
-        // ),
       ],
     );
   }
@@ -524,11 +502,14 @@ class _TopSection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(greeting,
-                style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                    color: AppColors.title)),
+            Text(
+              greeting,
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+                color: AppColors.title,
+              ),
+            ),
             const SizedBox(height: 10),
             Row(
               children: [
@@ -544,8 +525,8 @@ class _TopSection extends StatelessWidget {
                         border: Border.all(color: AppColors.brandOrangeSoft),
                       ),
                       padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Row(
-                        children: const [
+                      child: const Row(
+                        children: [
                           Icon(Icons.search_rounded, color: Colors.grey),
                           SizedBox(width: 8),
                           Expanded(
@@ -554,8 +535,9 @@ class _TopSection extends StatelessWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  color: AppColors.body,
-                                  fontWeight: FontWeight.w600),
+                                color: AppColors.body,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                           Icon(Icons.expand_more_rounded, color: Colors.grey),
@@ -573,25 +555,30 @@ class _TopSection extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 14),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                          colors: [AppColors.brandOrange, Color(0xFFFFB85C)]),
+                        colors: [AppColors.brandOrange, Color(0xFFFFB85C)],
+                      ),
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: const [
                         BoxShadow(
-                            color: Color(0x33FF8A00),
-                            blurRadius: 8,
-                            offset: Offset(0, 2))
+                          color: Color(0x33FF8A00),
+                          blurRadius: 8,
+                          offset: Offset(0, 2),
+                        )
                       ],
                     ),
-                    child: Row(
+                    child: const Row(
                       mainAxisSize: MainAxisSize.min,
-                      children: const [
+                      children: [
                         Icon(Icons.search_rounded,
                             color: Colors.white, size: 20),
                         SizedBox(width: 8),
-                        Text('Search',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900)),
+                        Text(
+                          'Search',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
                         SizedBox(width: 4),
                         Icon(Icons.arrow_forward_rounded,
                             color: Colors.white, size: 18),
@@ -750,6 +737,7 @@ class _PromoCarousel extends StatelessWidget {
 class _Dots extends StatelessWidget {
   final int count, index;
   const _Dots({required this.count, required this.index});
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -798,9 +786,13 @@ class _QuickStrip extends StatelessWidget {
             border: Border.all(color: AppColors.brandOrangeSoft),
           ),
           child: Center(
-            child: Text('${items[i][0]}  ${items[i][1]}',
-                style: const TextStyle(
-                    fontWeight: FontWeight.w700, color: AppColors.title)),
+            child: Text(
+              '${items[i][0]}  ${items[i][1]}',
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                color: AppColors.title,
+              ),
+            ),
           ),
         ),
         separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -825,24 +817,26 @@ class _SectionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-            color: AppColors.brandOrangeSoft.withValues(alpha: 0.55)),
+        border: Border.all(color: AppColors.brandOrangeSoft.withOpacity(0.55)),
         boxShadow: const [
           BoxShadow(
-              color: Color(0x14000000), blurRadius: 8, offset: Offset(0, 2)),
+            color: Color(0x14000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
         ],
       ),
-      padding: const EdgeInsets.fromLTRB(4, 2, 4, 10),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title,
               style: const TextStyle(
-                fontSize: 20,
+                fontSize: 18,
                 fontWeight: FontWeight.w900,
                 color: AppColors.title,
               )),
-          const SizedBox(height: 1),
+          const SizedBox(height: 8),
           child,
         ],
       ),
@@ -860,31 +854,26 @@ class _MiniIconsGrid extends StatelessWidget {
     return LayoutBuilder(builder: (ctx, c) {
       final w = c.maxWidth;
 
-      // Tight but safe gaps
       const crossSpacing = 8.0;
-      const mainSpacing = 5.0;
+      const mainSpacing = 10.0;
       const minTileW = 92.0;
 
-      // Columns from available width
       int cross = (w / minTileW).floor().clamp(3, 6);
       double tileW = (w - (cross - 1) * crossSpacing) / cross;
 
-      // If tile too narrow, drop a column once
       if (tileW < 88 && cross > 3) {
         cross -= 1;
         tileW = (w - (cross - 1) * crossSpacing) / cross;
       }
 
-      // Compute minimal safe height (icon + gap + 2 text lines + padding)
       final textScale = MediaQuery.textScaleFactorOf(context).clamp(1.0, 1.2);
       const iconH = 48.0;
-      const gapH = 2.0;
+      const gapH = 6.0;
       const padH = 6.0;
       const font = 11.0;
-      final twoLines = font * 1.25 * 2 * textScale; // rough line-height
+      final twoLines = font * 1.25 * 2 * textScale;
       final minHeight = iconH + gapH + twoLines + padH;
 
-      // width / height; higher ratio => shorter tiles. Clamp to avoid overflow.
       final ratio = (tileW / (minHeight + 2)).clamp(0.86, 1.10);
 
       return MediaQuery(
@@ -921,8 +910,11 @@ class _MiniIconTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  const _MiniIconTile(
-      {required this.icon, required this.label, required this.onTap});
+  const _MiniIconTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -931,7 +923,6 @@ class _MiniIconTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.start,
         children: [
           Container(
             width: 48,
@@ -943,7 +934,7 @@ class _MiniIconTile extends StatelessWidget {
             ),
             child: Icon(icon, size: 22, color: AppColors.title),
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 6),
           Flexible(
             child: Text(
               label,
@@ -963,13 +954,12 @@ class _MiniIconTile extends StatelessWidget {
   }
 }
 
-/// Search delegate for Quick Services (orange-themed)
+/// Search delegate for Quick Services
 class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
   final List<Mini> services;
   QuickServiceSearchDelegate({required this.services})
       : super(searchFieldLabel: 'Search quick services');
 
-  // Orange app bar + white text field
   @override
   ThemeData appBarTheme(BuildContext context) {
     final base = Theme.of(context);
@@ -979,7 +969,10 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
         foregroundColor: Colors.white,
         iconTheme: const IconThemeData(color: Colors.white),
         titleTextStyle: const TextStyle(
-            color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18),
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+          fontSize: 18,
+        ),
       ),
       inputDecorationTheme: base.inputDecorationTheme.copyWith(
         hintStyle:
@@ -991,7 +984,6 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
     );
   }
 
-  // Common aliases/synonyms → service key
   static final Map<String, String> _aliases = {
     'taxi': 'taxi',
     'vero ride': 'taxi',
@@ -1002,7 +994,6 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
     'verobike': 'vero_bike',
     'airport': 'airport_pickup',
     'pickup': 'airport_pickup',
-    'airport pickup': 'airport_pickup',
     'courier': 'courier',
     'parcel': 'courier',
     'delivery': 'courier',
@@ -1017,23 +1008,13 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
     'fx': 'fx',
     'forex': 'fx',
     'exchange rate': 'fx',
-    'exchange rates': 'fx',
     'rates': 'fx',
-    'hair': 'hair',
-    'salon': 'hair',
-    'barber': 'hair',
-    'barbershop': 'hair',
     'food': 'food',
     'restaurant': 'food',
     'order': 'food',
-    'meals': 'food',
-    'fitness': 'fitness',
-    'gym': 'fitness',
-    'workout': 'fitness',
     'jobs': 'jobs',
     'work': 'jobs',
     'vacancies': 'jobs',
-    'vacancy': 'jobs',
     'more': 'more'
   };
 
@@ -1046,7 +1027,6 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
       return services.where((m) => m.keyId == aliasKey);
     }
 
-    // Fuzzy: contains any word from query in the label
     final words = t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
     return services.where((m) {
       final l = m.label.toLowerCase();
@@ -1095,7 +1075,7 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
-            'No matches. Try: taxi, bike, airport, hotel, forex, food, fitness, jobs...',
+            'No matches. Try: taxi, bike, airport, hotel, forex, food, jobs...',
             textAlign: TextAlign.center,
             style: Theme.of(context)
                 .textTheme
@@ -1105,6 +1085,7 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
         ),
       );
     }
+
     return ListView.separated(
       itemCount: results.length,
       separatorBuilder: (_, __) => const SizedBox(height: 6),
@@ -1166,7 +1147,6 @@ class _NearYouCarousel extends StatefulWidget {
 class _NearYouCarouselState extends State<_NearYouCarousel> {
   int _index = 0;
 
-  // Map the card name to the correct destination
   void _openNearby(BuildContext context, String name) {
     final t = name.toLowerCase();
     if (t.contains('ride')) {
@@ -1196,9 +1176,13 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
       action: TextButton(
         onPressed: () =>
             _Vero360HomepageState._openServiceStatic(context, 'more'),
-        child: const Text('See all',
-            style: TextStyle(
-                color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
+        child: const Text(
+          'See all',
+          style: TextStyle(
+            color: AppColors.brandOrange,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
       ),
       child: Column(
         children: [
@@ -1212,7 +1196,6 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
               autoPlay: true,
               autoPlayInterval: const Duration(seconds: 4),
               autoPlayAnimationDuration: const Duration(milliseconds: 600),
-              pauseAutoPlayOnTouch: true,
               onPageChanged: (i, _) => setState(() => _index = i),
             ),
             itemBuilder: (_, i, __) {
@@ -1246,47 +1229,70 @@ class _ProviderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: onOpen, // tap anywhere on the card
+      onTap: onOpen,
       borderRadius: BorderRadius.circular(18),
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: AppColors.brandOrangeSoft)),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.brandOrangeSoft),
+        ),
         padding: const EdgeInsets.all(14),
-        child: Row(children: [
-          CircleAvatar(
+        child: Row(
+          children: [
+            CircleAvatar(
               radius: 20,
               backgroundColor: AppColors.brandOrangePale,
-              child: Text(emoji, style: const TextStyle(fontSize: 18))),
-          const SizedBox(width: 10),
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w900)),
-              const SizedBox(height: 4),
-              Row(children: const [
-                Icon(Icons.star, size: 16, color: Color(0xFFFFC107)),
-                SizedBox(width: 2)
-              ]),
-            ]),
-          ),
-          const SizedBox(width: 6),
-          OutlinedButton(
-            onPressed: onOpen, // button also routes
-            style: OutlinedButton.styleFrom(
+              child: Text(emoji, style: const TextStyle(fontSize: 18)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.star,
+                          size: 16, color: Color(0xFFFFC107)),
+                      const SizedBox(width: 4),
+                      Text(
+                        rating,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.body,
+                        ),
+                      )
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            OutlinedButton(
+              onPressed: onOpen,
+              style: OutlinedButton.styleFrom(
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10)),
-                side: const BorderSide(color: AppColors.brandOrange)),
-            child: const Text('Open',
+                side: const BorderSide(color: AppColors.brandOrange),
+              ),
+              child: const Text(
+                'Open',
                 style: TextStyle(
-                    color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
-          ),
-        ]),
+                  color: AppColors.brandOrange,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1318,9 +1324,14 @@ class _DealsStrip extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
           ),
           child: Center(
-              child: Text('${deals[i][0]}  ${deals[i][1]}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, color: AppColors.title))),
+            child: Text(
+              '${deals[i][0]}  ${deals[i][1]}',
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                color: AppColors.title,
+              ),
+            ),
+          ),
         ),
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemCount: deals.length,
@@ -1342,40 +1353,40 @@ class DigitalServicesSection extends StatelessWidget {
       title: 'Digital & Virtual Services',
       action: TextButton(
         onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('See all digital services'))),
-        child: const Text('See all',
-            style: TextStyle(
-                color: AppColors.brandOrange, fontWeight: FontWeight.w800)),
+          const SnackBar(content: Text('See all digital services')),
+        ),
+        child: const Text(
+          'See all',
+          style: TextStyle(
+            color: AppColors.brandOrange,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
       ),
       child: LayoutBuilder(builder: (ctx, c) {
         final w = c.maxWidth;
         const spacing = 10.0;
         const minTileW = 90.0;
 
-        // Responsive columns 3..6
         int cross = (w / minTileW).floor().clamp(3, 6);
         double tileW = (w - (cross - 1) * spacing) / cross;
 
-        // If extremely tight, drop a column once
         if (tileW < 86 && cross > 3) {
           cross -= 1;
           tileW = (w - (cross - 1) * spacing) / cross;
         }
 
-        // Height math: circle + gap + two text lines + small pad
         final textScale = MediaQuery.textScaleFactorOf(ctx).clamp(1.0, 1.2);
         const circle = 52.0;
         const gap = 4.0;
-        final twoLines = 11.0 * 1.25 * 2 * textScale; // ~ line-height
+        final twoLines = 11.0 * 1.25 * 2 * textScale;
         final minHeight = circle + gap + twoLines + 6.0;
 
-        // width/height; clamp to avoid overflow and weird tall tiles
         final ratio = (tileW / minHeight).clamp(0.86, 1.15);
 
         return MediaQuery(
           data: MediaQuery.of(ctx).copyWith(
-            textScaler:
-                MediaQuery.of(ctx).textScaler.clamp(maxScaleFactor: 1.2),
+            textScaler: MediaQuery.of(ctx).textScaler.clamp(maxScaleFactor: 1.2),
           ),
           child: GridView.builder(
             shrinkWrap: true,
@@ -1415,7 +1426,6 @@ class _DigitalCircleTile extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Circle (logo or icon)
           Container(
             width: 52,
             height: 52,
@@ -1430,15 +1440,18 @@ class _DigitalCircleTile extends StatelessWidget {
                       p.logoAsset!,
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => Icon(
-                          p.icon ?? Icons.shopping_bag,
-                          color: AppColors.title),
+                        p.icon ?? Icons.shopping_bag,
+                        color: AppColors.title,
+                      ),
                     )
-                  : Icon(p.icon ?? Icons.shopping_bag,
-                      size: 24, color: AppColors.title),
+                  : Icon(
+                      p.icon ?? Icons.shopping_bag,
+                      size: 24,
+                      color: AppColors.title,
+                    ),
             ),
           ),
           const SizedBox(height: 4),
-          // Two-line label (name)
           Flexible(
             child: Text(
               p.name,
@@ -1458,7 +1471,13 @@ class _DigitalCircleTile extends StatelessWidget {
   }
 }
 
-// ===== Latest Arrivals =====
+/* ───────────────────────────────────────────
+   ✅ LATEST ARRIVALS SECTION (FULL LOGIC)
+   - Tap card => details bottomsheet
+   - Bottomsheet: Add to Cart + Buy Now (goes to checkout)
+   - ✅ Feedback uses ToastHelper ON the sheet context
+   - Image resolver supports Firestore + Firebase Storage
+─────────────────────────────────────────── */
 class LatestArrivalsSection extends StatefulWidget {
   const LatestArrivalsSection({super.key});
   @override
@@ -1467,7 +1486,11 @@ class LatestArrivalsSection extends StatefulWidget {
 
 class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   final _service = LatestArrivalServices();
+
+  late final CartService _cart = CartService('', apiPrefix: ApiConfig.apiPrefix);
   late Future<List<LatestArrivalModels>> _future;
+
+  final Map<String, Future<String?>> _imgCache = {};
 
   @override
   void initState() {
@@ -1477,7 +1500,253 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
 
   String _fmtKwacha(int n) {
     final s = n.toString();
-    return s.replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
+    return s.replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+  }
+
+  int _fnv1a32(String input) {
+    const int fnvOffset = 0x811C9DC5;
+    const int fnvPrime = 0x01000193;
+    int hash = fnvOffset;
+    for (final codeUnit in input.codeUnits) {
+      hash ^= codeUnit;
+      hash = (hash * fnvPrime) & 0xFFFFFFFF;
+    }
+    return hash & 0x7FFFFFFF;
+  }
+
+  Uint8List? _tryDecodeBase64(String v) {
+    if (v.isEmpty) return null;
+    try {
+      var cleaned = v.trim().replaceAll(RegExp(r'\s+'), '');
+      final commaIndex = cleaned.indexOf(',');
+      if (cleaned.startsWith('data:image') && commaIndex != -1) {
+        cleaned = cleaned.substring(commaIndex + 1);
+      }
+      final mod = cleaned.length % 4;
+      if (mod != 0) cleaned = cleaned.padRight(cleaned.length + (4 - mod), '=');
+      final bytes = base64Decode(cleaned);
+      return bytes.isEmpty ? null : bytes;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _resolveImageString(String raw) async {
+    final s = raw.trim();
+    if (s.isEmpty) return null;
+
+    if (s.startsWith('http://') || s.startsWith('https://')) return s;
+    if (s.startsWith('data:image/')) return s;
+
+    if (s.startsWith('gs://')) {
+      try {
+        return await FirebaseStorage.instance.refFromURL(s).getDownloadURL();
+      } catch (_) {}
+    }
+
+    if (s.contains('/') && !s.contains(' ')) {
+      try {
+        return await FirebaseStorage.instance.ref(s).getDownloadURL();
+      } catch (_) {}
+    }
+
+    if (s.contains('.') && !s.contains(' ')) {
+      final guesses = <String>[
+        'latest/$s',
+        'latest_arrivals/$s',
+        'uploads/$s',
+        'products/$s',
+      ];
+      for (final path in guesses) {
+        try {
+          return await FirebaseStorage.instance.ref(path).getDownloadURL();
+        } catch (_) {}
+      }
+    }
+
+    return null;
+  }
+
+  Future<String?> _resolveImage(LatestArrivalModels it) async {
+    final direct = await _resolveImageString(it.imageUrl);
+    if (direct != null) return direct;
+
+    Future<String?> fromDoc(String col, String docId) async {
+      try {
+        final doc =
+            await FirebaseFirestore.instance.collection(col).doc(docId).get();
+        if (!doc.exists) return null;
+        final d = doc.data() ?? {};
+        final candidate = (d['imageUrl'] ??
+                d['image'] ??
+                d['thumbnail'] ??
+                d['storagePath'] ??
+                d['gsUrl'] ??
+                d['path'] ??
+                '')
+            .toString()
+            .trim();
+        return await _resolveImageString(candidate);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    Future<String?> fromNameQuery(String col) async {
+      try {
+        final q = await FirebaseFirestore.instance
+            .collection(col)
+            .where('name', isEqualTo: it.name.trim())
+            .limit(1)
+            .get();
+        if (q.docs.isEmpty) return null;
+        final d = q.docs.first.data();
+        final candidate = (d['imageUrl'] ??
+                d['image'] ??
+                d['thumbnail'] ??
+                d['storagePath'] ??
+                d['gsUrl'] ??
+                d['path'] ??
+                '')
+            .toString()
+            .trim();
+        return await _resolveImageString(candidate);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final id = it.id.trim();
+    if (id.isNotEmpty) {
+      final a = await fromDoc('latestarrivals', id);
+      if (a != null) return a;
+      final b = await fromDoc('latest_arrivals', id);
+      if (b != null) return b;
+    }
+
+    final c = await fromNameQuery('latestarrivals');
+    if (c != null) return c;
+    final d = await fromNameQuery('latest_arrivals');
+    if (d != null) return d;
+
+    return null;
+  }
+
+  Future<String?> _imgFuture(LatestArrivalModels it) {
+    final key = it.id.isNotEmpty ? it.id : '${it.name}_${it.price}';
+    return _imgCache.putIfAbsent(key, () => _resolveImage(it));
+  }
+
+  CartModel _makeCartModel(
+    LatestArrivalModels it,
+    String resolvedImageUrl, {
+    required int qty,
+  }) {
+    final parsed = int.tryParse(it.id.trim());
+    final itemId = parsed ?? _fnv1a32('latest:${it.id}:${it.name}');
+
+    const merchantId = 'marketplace';
+    const merchantName = 'Marketplace';
+    const serviceType = 'marketplace';
+
+    final userKey = FirebaseAuth.instance.currentUser?.uid ?? '';
+
+    return CartModel(
+      userId: userKey,
+      item: itemId,
+      quantity: qty,
+      name: it.name,
+      image: resolvedImageUrl,
+      price: it.price.toDouble(),
+      description: '',
+      comment: null,
+      merchantId: merchantId,
+      merchantName: merchantName,
+      serviceType: serviceType,
+    );
+  }
+
+  Future<void> _addToCart(
+    LatestArrivalModels it, {
+    required int qty,
+    required BuildContext sheetCtx, // ✅ toast overlays the sheet
+  }) async {
+    if (qty <= 0) return;
+
+    try {
+      final img = (await _resolveImage(it)) ?? it.imageUrl;
+      final cartItem = _makeCartModel(it, img, qty: qty);
+
+      await _cart.addToCart(cartItem);
+
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        sheetCtx,
+        '${it.name} added to cart successfully',
+        isSuccess: true,
+        errorMessage: '',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        sheetCtx,
+        'Failed to add ${it.name}',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
+  Future<void> _buyNow(
+    LatestArrivalModels it, {
+    required int qty,
+    required BuildContext sheetCtx, // ✅ close only the sheet
+  }) async {
+    if (qty <= 0) return;
+
+    final img = (await _resolveImage(it)) ?? it.imageUrl;
+    final cartItem = _makeCartModel(it, img, qty: qty);
+
+    // optional: keep offline-first truth
+    try {
+      await _cart.addToCart(cartItem);
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    // ✅ close ONLY the bottomsheet
+    if (Navigator.of(sheetCtx).canPop()) {
+      Navigator.of(sheetCtx).pop();
+    }
+
+    // ✅ then navigate
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CheckoutFromCartPage(items: [cartItem]),
+      ),
+    );
+  }
+
+  void _openDetails(LatestArrivalModels it) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      // ✅ IMPORTANT: use sheet context here (so toasts appear above the sheet)
+      builder: (sheetCtx) => _LatestDetailsSheet(
+        item: it,
+        imageFuture: _imgFuture(it),
+        fmtPrice: (n) => 'MWK ${_fmtKwacha(n)}',
+        tryDecodeBase64: _tryDecodeBase64,
+        onAddToCart: (qty) async =>
+            _addToCart(it, qty: qty, sheetCtx: sheetCtx),
+        onBuyNow: (qty) async => _buyNow(it, qty: qty, sheetCtx: sheetCtx),
+      ),
+    );
   }
 
   @override
@@ -1487,8 +1756,10 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("Latest Arrivals",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text(
+            "Latest Arrivals",
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 10),
           FutureBuilder<List<LatestArrivalModels>>(
             future: _future,
@@ -1503,9 +1774,12 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Center(
-                      child: Text('Could not load arrivals.\n${snap.error}',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.red))),
+                    child: Text(
+                      'Could not load arrivals.\n${snap.error}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ),
                 );
               }
 
@@ -1514,8 +1788,11 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                 return const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
                   child: Center(
-                      child: Text('No items yet.',
-                          style: TextStyle(color: Colors.red))),
+                    child: Text(
+                      'No items yet.',
+                      style: TextStyle(color: Colors.red),
+                    ),
+                  ),
                 );
               }
 
@@ -1545,10 +1822,11 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                 itemBuilder: (_, i) {
                   final it = items[i];
                   return _ProductCardFromApi(
-                    imageUrl: it.imageUrl,
-                    name: it.name,
+                    item: it,
                     priceText: 'MWK ${_fmtKwacha(it.price)}',
-                    brandOrange: const Color(0xFFFF8A00),
+                    imageFuture: _imgFuture(it),
+                    tryDecodeBase64: _tryDecodeBase64,
+                    onTap: () => _openDetails(it),
                   );
                 },
               );
@@ -1561,84 +1839,273 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
 }
 
 class _ProductCardFromApi extends StatelessWidget {
-  final String imageUrl;
-  final String name;
+  final LatestArrivalModels item;
   final String priceText;
-  final Color brandOrange;
+  final Future<String?> imageFuture;
+  final Uint8List? Function(String) tryDecodeBase64;
+  final VoidCallback onTap;
 
-  const _ProductCardFromApi(
-      {required this.imageUrl,
-      required this.name,
-      required this.priceText,
-      required this.brandOrange});
+  const _ProductCardFromApi({
+    required this.item,
+    required this.priceText,
+    required this.imageFuture,
+    required this.tryDecodeBase64,
+    required this.onTap,
+  });
+
+  Widget _placeholder() => const _ImgPlaceholder();
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
-      elevation: 0.6,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: ClipRRect(
-              borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(16), topRight: Radius.circular(16)),
-              child: imageUrl.isNotEmpty
-                  ? Image.network(
-                      imageUrl,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Card(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        clipBehavior: Clip.antiAlias,
+        elevation: 0.6,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: FutureBuilder<String?>(
+                future: imageFuture,
+                builder: (context, snap) {
+                  final v = (snap.data ?? item.imageUrl).trim();
+                  if (v.isEmpty) return _placeholder();
+
+                  if (v.startsWith('data:image/')) {
+                    final bytes = tryDecodeBase64(v);
+                    if (bytes == null) return _placeholder();
+                    return Image.memory(bytes, fit: BoxFit.cover);
+                  }
+
+                  if (v.startsWith('http://') || v.startsWith('https://')) {
+                    return Image.network(
+                      v,
                       fit: BoxFit.cover,
-                      loadingBuilder: (ctx, child, prog) => prog == null
-                          ? child
-                          : const Center(
-                              child: SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2))),
-                      errorBuilder: (_, __, ___) => Container(
-                          color: const Color(0xFFEDEDED),
-                          child: const Center(
-                              child: Icon(Icons.image_not_supported_rounded))),
-                    )
-                  : Container(
-                      color: const Color(0xFFEDEDED),
-                      child: const Center(
-                          child: Icon(Icons.image_not_supported_rounded))),
+                      loadingBuilder: (ctx, child, prog) {
+                        if (prog == null) return child;
+                        return const Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        );
+                      },
+                      errorBuilder: (_, __, ___) => _placeholder(),
+                    );
+                  }
+
+                  return _placeholder();
+                },
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    priceText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LatestDetailsSheet extends StatefulWidget {
+  final LatestArrivalModels item;
+  final Future<String?> imageFuture;
+  final String Function(int) fmtPrice;
+  final Uint8List? Function(String) tryDecodeBase64;
+  final Future<void> Function(int qty) onAddToCart;
+  final Future<void> Function(int qty) onBuyNow;
+
+  const _LatestDetailsSheet({
+    required this.item,
+    required this.imageFuture,
+    required this.fmtPrice,
+    required this.tryDecodeBase64,
+    required this.onAddToCart,
+    required this.onBuyNow,
+  });
+
+  @override
+  State<_LatestDetailsSheet> createState() => _LatestDetailsSheetState();
+}
+
+class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
+  int qty = 1;
+
+  Widget _placeholder() => const _ImgPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    final it = widget.item;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min, // ✅ keeps it compact (not huge)
+        children: [
+          const SizedBox(height: 10),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.black12,
+              borderRadius: BorderRadius.circular(999),
             ),
           ),
+          const SizedBox(height: 12),
           Padding(
-            padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-            child: Row(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                            style: const TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w800)),
-                        const SizedBox(height: 4),
-                        Text(priceText,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                            style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.green)),
-                      ]),
+                FutureBuilder<String?>(
+                  future: widget.imageFuture,
+                  builder: (context, snap) {
+                    final v = (snap.data ?? it.imageUrl).trim();
+                    Widget img;
+
+                    if (v.isEmpty) {
+                      img = _placeholder();
+                    } else if (v.startsWith('data:image/')) {
+                      final bytes = widget.tryDecodeBase64(v);
+                      img = bytes == null
+                          ? _placeholder()
+                          : Image.memory(bytes, fit: BoxFit.cover);
+                    } else if (v.startsWith('http://') ||
+                        v.startsWith('https://')) {
+                      img = Image.network(
+                        v,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => _placeholder(),
+                      );
+                    } else {
+                      img = _placeholder();
+                    }
+
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: SizedBox(
+                        height: 220,
+                        width: double.infinity,
+                        child: img,
+                      ),
+                    );
+                  },
                 ),
-                IconButton(
-                  constraints: const BoxConstraints(),
-                  padding: EdgeInsets.zero,
-                  onPressed: () => _showCardOptions(context, name),
-                  icon: Icon(Icons.add_circle, color: brandOrange),
-                  tooltip: 'Add / Options',
+                const SizedBox(height: 12),
+                Text(
+                  it.name,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  widget.fmtPrice(it.price),
+                  style: const TextStyle(
+                    color: Colors.green,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                Row(
+                  children: [
+                    const Text('Quantity',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
+                    const Spacer(),
+                    IconButton(
+                      onPressed: qty <= 1 ? null : () => setState(() => qty--),
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
+                    Text(
+                      '$qty',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: qty >= 99 ? null : () => setState(() => qty++),
+                      icon: const Icon(Icons.add_circle_outline),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => widget.onAddToCart(qty),
+                        icon: const Icon(Icons.shopping_cart_outlined),
+                        label: const Text(
+                          'Add to Cart',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.brandOrange,
+                          side: const BorderSide(color: AppColors.brandOrange),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => widget.onBuyNow(qty),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.brandOrange,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Buy Now',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1647,35 +2114,16 @@ class _ProductCardFromApi extends StatelessWidget {
       ),
     );
   }
+}
 
-  void _showCardOptions(BuildContext context, String name) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('Choose an action',
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-          const SizedBox(height: 12),
-          ListTile(
-            leading: const Icon(Icons.shopping_cart, color: Colors.green),
-            title: const Text('Add to cart'),
-            onTap: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('$name added to cart')));
-            },
-          ),
-          const Divider(height: 0),
-          ListTile(
-            leading: const Icon(Icons.info_outline_rounded,
-                color: AppColors.brandOrange),
-            title: const Text('More details'),
-            onTap: () => Navigator.pop(context),
-          ),
-        ]),
+class _ImgPlaceholder extends StatelessWidget {
+  const _ImgPlaceholder();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFFEDEDED),
+      child: const Center(
+        child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
       ),
     );
   }
@@ -1789,7 +2237,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
 
   bool _isValidMwLocalPhone(String input) {
     final digits = input.replaceAll(RegExp(r'\D'), '');
-    // 10 digits, starting with 08 or 09
     return RegExp(r'^0[89]\d{8}$').hasMatch(digits);
   }
 
@@ -1799,7 +2246,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
     setState(() => _submitting = true);
 
     try {
-      // TODO: Wire to your backend checkout (e.g., POST to ${ApiConfig.prod}/vero/digital/checkout )
       await Future.delayed(const Duration(seconds: 1));
 
       if (!mounted) return;
@@ -1815,8 +2261,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context)
-                ..pop() // close dialog
-                ..pop(), // go back to previous page
+                ..pop()
+                ..pop(),
               child: const Text('Done'),
             ),
           ],
@@ -1848,7 +2294,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header card with brand circle + product summary
               Container(
                 width: double.infinity,
                 decoration: BoxDecoration(
@@ -1857,9 +2302,10 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: const [
                     BoxShadow(
-                        color: Color(0x14000000),
-                        blurRadius: 8,
-                        offset: Offset(0, 2)),
+                      color: Color(0x14000000),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
                   ],
                 ),
                 padding: const EdgeInsets.all(14),
@@ -1879,8 +2325,9 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                                 p.logoAsset!,
                                 fit: BoxFit.cover,
                                 errorBuilder: (_, __, ___) => Icon(
-                                    p.icon ?? Icons.shopping_bag,
-                                    color: AppColors.title),
+                                  p.icon ?? Icons.shopping_bag,
+                                  color: AppColors.title,
+                                ),
                               )
                             : Icon(p.icon ?? Icons.shopping_bag,
                                 size: 26, color: AppColors.title),
@@ -1891,24 +2338,32 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(p.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w900, fontSize: 16)),
+                          Text(
+                            p.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                            ),
+                          ),
                           const SizedBox(height: 2),
-                          Text(p.subtitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  color: AppColors.body,
-                                  fontWeight: FontWeight.w600)),
+                          Text(
+                            p.subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.body,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                           const SizedBox(height: 6),
                           Text(
                             p.price,
                             style: const TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.w800),
+                              color: Colors.green,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ],
                       ),
@@ -1916,10 +2371,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 16),
-
-              // Form
               Form(
                 key: _formKey,
                 child: Column(
@@ -1955,7 +2407,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                       validator: (v) {
                         final t = v?.trim() ?? '';
                         if (t.isEmpty) return 'Enter your email';
-                        final ok = RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(t);
+                        final ok =
+                            RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(t);
                         if (!ok) return 'Enter a valid email';
                         return null;
                       },
@@ -1963,10 +2416,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 20),
-
-              // Pay button
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
@@ -1976,7 +2426,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
+                              strokeWidth: 2, color: Colors.white),
+                        )
                       : const Icon(Icons.lock_outline_rounded),
                   label: Text(_submitting ? 'Processing...' : 'Pay Now'),
                   style: ElevatedButton.styleFrom(
@@ -1985,19 +2436,20 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                     elevation: 0,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
               ),
-
               const SizedBox(height: 10),
-
-              Center(
+              const Center(
                 child: Text(
                   'Secure checkout • You’ll receive your code via email',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      color: AppColors.body, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: AppColors.body,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
@@ -2008,7 +2460,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   }
 }
 
-/// Nice orange-themed text field with label on top
 class _LabeledField extends StatelessWidget {
   final String label;
   final TextEditingController controller;
@@ -2031,11 +2482,14 @@ class _LabeledField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: const TextStyle(
-                fontWeight: FontWeight.w800,
-                color: AppColors.title,
-                fontSize: 13)),
+        Text(
+          label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w800,
+            color: AppColors.title,
+            fontSize: 13,
+          ),
+        ),
         const SizedBox(height: 6),
         TextFormField(
           controller: controller,

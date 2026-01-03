@@ -24,6 +24,7 @@ import 'package:carousel_slider/carousel_slider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:vero360_app/Pages/ride_share/ride_share_map_screen.dart';
 
 // ✅ Cart + checkout
 import 'package:vero360_app/models/cart_model.dart';
@@ -41,7 +42,6 @@ import 'package:vero360_app/Pages/Quickservices/airportpickup.dart';
 import 'package:vero360_app/Pages/Quickservices/food.dart';
 import 'package:vero360_app/Pages/Quickservices/jobs.dart';
 import 'package:vero360_app/Pages/Quickservices/verocourier.dart';
-import 'package:vero360_app/Pages/car_rental/car_rental_page.dart';
 import 'package:vero360_app/services/api_config.dart';
 
 // Latest arrivals (API)
@@ -395,7 +395,7 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
         break;
       case 'taxi':
       case 'car_hire':
-        page = const CarRentalPage();
+        page = const RideShareMapScreen();
         break;
       case 'send_money':
       case 'mobile_money':
@@ -1386,7 +1386,8 @@ class DigitalServicesSection extends StatelessWidget {
 
         return MediaQuery(
           data: MediaQuery.of(ctx).copyWith(
-            textScaler: MediaQuery.of(ctx).textScaler.clamp(maxScaleFactor: 1.2),
+            textScaler:
+                MediaQuery.of(ctx).textScaler.clamp(maxScaleFactor: 1.2),
           ),
           child: GridView.builder(
             shrinkWrap: true,
@@ -1487,7 +1488,8 @@ class LatestArrivalsSection extends StatefulWidget {
 class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   final _service = LatestArrivalServices();
 
-  late final CartService _cart = CartService('', apiPrefix: ApiConfig.apiPrefix);
+  late final CartService _cart =
+      CartService('', apiPrefix: ApiConfig.apiPrefix);
   late Future<List<LatestArrivalModels>> _future;
 
   final Map<String, Future<String?>> _imgCache = {};
@@ -1970,7 +1972,8 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
     final it = widget.item;
 
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min, // ✅ keeps it compact (not huge)
         children: [
@@ -2041,7 +2044,6 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                   ),
                 ),
                 const SizedBox(height: 14),
-
                 Row(
                   children: [
                     const Text('Quantity',
@@ -2065,7 +2067,6 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                   ],
                 ),
                 const SizedBox(height: 14),
-
                 Row(
                   children: [
                     Expanded(
@@ -2407,8 +2408,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                       validator: (v) {
                         final t = v?.trim() ?? '';
                         if (t.isEmpty) return 'Enter your email';
-                        final ok =
-                            RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(t);
+                        final ok = RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(t);
                         if (!ok) return 'Enter a valid email';
                         return null;
                       },

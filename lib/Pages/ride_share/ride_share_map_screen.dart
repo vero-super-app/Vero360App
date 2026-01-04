@@ -8,7 +8,7 @@ import 'package:vero360_app/Pages/ride_share/widgets/bookmarked_places_modal.dar
 import 'package:vero360_app/providers/ride_share_provider.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
-  const RideShareMapScreen({Key? key}) : super(key: key);
+  const RideShareMapScreen({super.key});
 
   @override
   ConsumerState<RideShareMapScreen> createState() => _RideShareMapScreenState();
@@ -87,7 +87,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
 
           // Search Bar
           Positioned(
-            top: 120,
+            top: 130,
             left: 16,
             right: 16,
             child: PlaceSearchWidget(

@@ -7,14 +7,15 @@ class CurrentLocationWidget extends ConsumerWidget {
 
   const CurrentLocationWidget({
     required this.onRefresh,
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentLocation = ref.watch(currentLocationProvider);
 
     return Container(
+      height: 72,
       margin: const EdgeInsets.all(12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -22,7 +23,7 @@ class CurrentLocationWidget extends ConsumerWidget {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -32,11 +33,13 @@ class CurrentLocationWidget extends ConsumerWidget {
         data: (position) {
           if (position == null) {
             return Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.location_off, color: Colors.grey),
+                const Icon(Icons.location_off, color: Colors.grey, size: 20),
                 const SizedBox(width: 12),
                 const Expanded(
                   child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
@@ -56,24 +59,32 @@ class CurrentLocationWidget extends ConsumerWidget {
                     ],
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.refresh, color: Color(0xFFFF8A00)),
-                  onPressed: onRefresh,
+                SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: IconButton(
+                    icon: const Icon(Icons.refresh, color: Color(0xFFFF8A00)),
+                    onPressed: onRefresh,
+                    iconSize: 20,
+                    padding: EdgeInsets.zero,
+                  ),
                 ),
               ],
             );
           }
 
           return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Icon(
                 Icons.location_on,
                 color: Color(0xFFFF8A00),
-                size: 24,
+                size: 20,
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
@@ -83,7 +94,7 @@ class CurrentLocationWidget extends ConsumerWidget {
                         fontSize: 11,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Text(
                       '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}',
                       style: const TextStyle(
@@ -94,34 +105,49 @@ class CurrentLocationWidget extends ConsumerWidget {
                   ],
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.refresh, color: Color(0xFFFF8A00)),
-                onPressed: onRefresh,
-                iconSize: 20,
+              SizedBox(
+                width: 40,
+                height: 40,
+                child: IconButton(
+                  icon: const Icon(Icons.refresh, color: Color(0xFFFF8A00)),
+                  onPressed: onRefresh,
+                  iconSize: 20,
+                  padding: EdgeInsets.zero,
+                ),
               ),
             ],
           );
         },
-        loading: () => const Row(
+        loading: () => Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            SizedBox(
+            const SizedBox(
               width: 20,
               height: 20,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
-            SizedBox(width: 12),
-            Text(
-              'Getting your location...',
-              style: TextStyle(fontSize: 13),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Getting your location...',
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
+            SizedBox(
+              width: 40,
+              height: 40,
+              child: Container(),
             ),
           ],
         ),
         error: (error, stackTrace) => Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, color: Colors.red),
+            const Icon(Icons.error_outline, color: Colors.red, size: 20),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
@@ -139,10 +165,15 @@ class CurrentLocationWidget extends ConsumerWidget {
                 ],
               ),
             ),
-            IconButton(
-              icon: const Icon(Icons.refresh, color: Color(0xFFFF8A00)),
-              onPressed: onRefresh,
-              iconSize: 20,
+            SizedBox(
+              width: 40,
+              height: 40,
+              child: IconButton(
+                icon: const Icon(Icons.refresh, color: Color(0xFFFF8A00)),
+                onPressed: onRefresh,
+                iconSize: 20,
+                padding: EdgeInsets.zero,
+              ),
             ),
           ],
         ),

@@ -1,11 +1,12 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart' show Provider, FutureProvider, StreamProvider, AsyncValue, Ref;
+import 'package:flutter_riverpod/flutter_riverpod.dart' show Provider, FutureProvider, StreamProvider;
 import 'package:flutter_riverpod/legacy.dart' show StateProvider;
 import 'package:geolocator/geolocator.dart';
 import 'package:vero360_app/models/place_model.dart';
-import 'package:vero360_app/models/ride_model.dart';
+import 'package:vero360_app/models/place_prediction_model.dart';
 import 'package:vero360_app/Services/ride_share_service.dart';
 import 'package:vero360_app/services/location_service.dart';
 import 'package:vero360_app/services/place_service.dart';
+import 'package:vero360_app/services/serpapi_places_service.dart';
 
 // ==================== SERVICES ====================
 final rideShareServiceProvider = Provider<RideShareService>((ref) {
@@ -18,6 +19,10 @@ final locationServiceProvider = Provider<LocationService>((ref) {
 
 final placeServiceProvider = Provider<PlaceService>((ref) {
   return PlaceService();
+});
+
+final serpapiPlacesServiceProvider = Provider<SerpapiPlacesService>((ref) {
+  return SerpapiPlacesService();
 });
 
 // ==================== CURRENT LOCATION ====================
@@ -38,6 +43,36 @@ final placeSearchProvider = FutureProvider.family<List<Place>, String>((ref, que
   final placeService = ref.watch(placeServiceProvider);
   return await placeService.searchPlaces(query);
 });
+
+// ==================== SERPAPI PLACES SEARCH ====================
+/// Searches using SerpAPI with fallback to local geocoding
+/// Requires at least 4 characters to search
+final serpapiPlacesAutocompleteProvider = FutureProvider.family<List<PlacePrediction>, String>(
+  (ref, query) async {
+    // Return empty if query is too short (minimum 4 characters)
+    if (query.length < 4) return [];
+    
+    final serpapiService = ref.watch(serpapiPlacesServiceProvider);
+    try {
+      return await serpapiService.searchPlaces(query);
+    } catch (e) {
+      // Fallback to basic geocoding if SerpAPI fails
+      // Convert Place results to PlacePrediction format
+      final placeService = ref.watch(placeServiceProvider);
+      final places = await placeService.searchPlaces(query);
+      
+      return places
+          .map((place) => PlacePrediction(
+                placeId: place.id,
+                mainText: place.name,
+                secondaryText: 'Location',
+                fullText: place.address,
+                types: ['place'],
+              ))
+          .toList();
+    }
+  },
+);
 
 final selectedPickupPlaceProvider = StateProvider<Place?>(
   (ref) => null,

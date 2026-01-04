@@ -5,6 +5,7 @@ import 'package:vero360_app/Pages/ride_share/widgets/current_location_widget.dar
 import 'package:vero360_app/Pages/ride_share/widgets/map_view_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/place_search_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/bookmarked_places_modal.dart';
+import 'package:vero360_app/Pages/ride_share/widgets/vehicle_type_modal.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
@@ -125,8 +126,27 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                     elevation: 4,
                   ),
                   onPressed: () {
-                    // Navigate to vehicle type selection
-                    // TODO: Implement navigation to vehicle type modal
+                    final currentLoc = ref.read(currentLocationProvider);
+                    currentLoc.whenData((position) {
+                      if (position != null && selectedPickupPlace != null) {
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: Colors.transparent,
+                          barrierColor: Colors.black.withOpacity(0.3),
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(20),
+                            ),
+                          ),
+                          builder: (_) => VehicleTypeModal(
+                            pickupPlace: selectedPickupPlace!,
+                            userLat: position.latitude,
+                            userLng: position.longitude,
+                          ),
+                        );
+                      }
+                    });
                   },
                   child: const Text(
                     'Continue to Booking',

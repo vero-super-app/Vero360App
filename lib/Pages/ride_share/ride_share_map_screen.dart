@@ -6,6 +6,7 @@ import 'package:vero360_app/Pages/ride_share/widgets/map_view_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/place_search_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/bookmarked_places_modal.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/vehicle_type_modal.dart';
+import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
@@ -39,7 +40,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
   @override
   Widget build(BuildContext context) {
     final currentLocation = ref.watch(currentLocationProvider);
-    final selectedPickupPlace = ref.watch(selectedPickupPlaceProvider);
+    final selectedDropoffPlace = ref.watch(selectedDropoffPlaceProvider);
 
     return Scaffold(
       body: Stack(
@@ -47,9 +48,23 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
           // Map View
           currentLocation.when(
             data: (position) {
+              // Create pickup place from current location
+              final pickupPlace = position != null
+                  ? Place(
+                      id: 'current_location',
+                      name: 'Your Location',
+                      address: 'Current Location',
+                      latitude: position.latitude,
+                      longitude: position.longitude,
+                      type: PlaceType.RECENT,
+                    )
+                  : null;
+
               return MapViewWidget(
                 onMapCreated: _onMapCreated,
                 initialPosition: position,
+                pickupPlace: pickupPlace,
+                dropoffPlace: selectedDropoffPlace,
               );
             },
             loading: () => const Center(
@@ -108,8 +123,8 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
               ),
             ),
 
-          // Continue to Booking Button (if place selected)
-          if (selectedPickupPlace != null)
+          // Continue to Booking Button (if destination selected)
+          if (selectedDropoffPlace != null)
             Positioned(
               bottom: 24,
               left: 16,
@@ -128,7 +143,16 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                   onPressed: () {
                     final currentLoc = ref.read(currentLocationProvider);
                     currentLoc.whenData((position) {
-                      if (position != null && selectedPickupPlace != null) {
+                      if (position != null && selectedDropoffPlace != null) {
+                        final pickupPlace = Place(
+                          id: 'current_location',
+                          name: 'Your Location',
+                          address: 'Current Location',
+                          latitude: position.latitude,
+                          longitude: position.longitude,
+                          type: PlaceType.RECENT,
+                        );
+
                         showModalBottomSheet(
                           context: context,
                           isScrollControlled: true,
@@ -140,7 +164,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                             ),
                           ),
                           builder: (_) => VehicleTypeModal(
-                            pickupPlace: selectedPickupPlace!,
+                            pickupPlace: pickupPlace,
                             userLat: position.latitude,
                             userLng: position.longitude,
                           ),

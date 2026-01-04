@@ -35,10 +35,11 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
   @override
   Widget build(BuildContext context) {
     final searchResults = ref.watch(serpapiPlacesAutocompleteProvider(_searchQuery));
+    final selectedDropoffPlace = ref.watch(selectedDropoffPlaceProvider);
 
     return Column(
       children: [
-        // Search bar
+        // Search bar for destination
         Container(
           decoration: BoxDecoration(
             color: Colors.white,
@@ -179,8 +180,9 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
                             type: PlaceType.RECENT,
                           );
                           
-                          ref.read(selectedPickupPlaceProvider.notifier).state = place;
+                          ref.read(selectedDropoffPlaceProvider.notifier).state = place;
                           widget.searchController.clear();
+                          
                           setState(() {
                             _searchQuery = '';
                           });

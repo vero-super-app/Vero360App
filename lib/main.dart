@@ -625,8 +625,8 @@ class _MyAppState extends State<MyApp> {
 
     if (token == null || token.trim().isEmpty) return;
 
-    var base = await ApiConfig.readBase();
-    base = _fixLocalhostIfNeeded(base);
+    // ✅ Use ngrok auth endpoint for development
+    const base = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
 
     try {
       final resp = await http
@@ -828,8 +828,8 @@ class AuthFlow {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('jwt_token', token);
 
-    var base = await ApiConfig.readBase();
-    base = _fixLocalhostIfNeeded(base);
+    // ✅ Use ngrok auth endpoint for development
+    const base = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
 
     try {
       final resp = await http.get(

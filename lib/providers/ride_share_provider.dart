@@ -1,9 +1,10 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart' show Provider, FutureProvider, StreamProvider;
+import 'package:flutter_riverpod/flutter_riverpod.dart'
+    show Provider, FutureProvider, StreamProvider;
 import 'package:flutter_riverpod/legacy.dart' show StateProvider;
 import 'package:geolocator/geolocator.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/models/place_prediction_model.dart';
-import 'package:vero360_app/Services/ride_share_service.dart';
+import 'package:vero360_app/services/ride_share_service.dart';
 import 'package:vero360_app/services/location_service.dart';
 import 'package:vero360_app/services/place_service.dart';
 import 'package:vero360_app/services/serpapi_places_service.dart';
@@ -37,9 +38,10 @@ final locationStreamProvider = StreamProvider<Position>((ref) {
 });
 
 // ==================== PLACE SEARCH ====================
-final placeSearchProvider = FutureProvider.family<List<Place>, String>((ref, query) async {
+final placeSearchProvider =
+    FutureProvider.family<List<Place>, String>((ref, query) async {
   if (query.isEmpty) return [];
-  
+
   final placeService = ref.watch(placeServiceProvider);
   return await placeService.searchPlaces(query);
 });
@@ -47,11 +49,12 @@ final placeSearchProvider = FutureProvider.family<List<Place>, String>((ref, que
 // ==================== SERPAPI PLACES SEARCH ====================
 /// Searches using SerpAPI with fallback to local geocoding
 /// Requires at least 4 characters to search
-final serpapiPlacesAutocompleteProvider = FutureProvider.family<List<PlacePrediction>, String>(
+final serpapiPlacesAutocompleteProvider =
+    FutureProvider.family<List<PlacePrediction>, String>(
   (ref, query) async {
     // Return empty if query is too short (minimum 4 characters)
     if (query.length < 4) return [];
-    
+
     final serpapiService = ref.watch(serpapiPlacesServiceProvider);
     try {
       return await serpapiService.searchPlaces(query);
@@ -60,7 +63,7 @@ final serpapiPlacesAutocompleteProvider = FutureProvider.family<List<PlacePredic
       // Convert Place results to PlacePrediction format
       final placeService = ref.watch(placeServiceProvider);
       final places = await placeService.searchPlaces(query);
-      
+
       return places
           .map((place) => PlacePrediction(
                 placeId: place.id,
@@ -103,19 +106,18 @@ class BookmarkedPlacesManager {
   /// Remove a place from bookmarked places
   static Future<void> removePlace(dynamic ref, String placeId) async {
     final places = ref.read(bookmarkedPlacesProvider);
-    ref.read(bookmarkedPlacesProvider.notifier).state = 
+    ref.read(bookmarkedPlacesProvider.notifier).state =
         places.where((p) => p.id != placeId).toList();
     // TODO: Implement local storage persistence
   }
 }
 
 // ==================== RIDE REQUEST ====================
-final rideRequestProvider = FutureProvider.family<
-    Map<String, dynamic>,
-    RideRequestParams
->((ref, params) async {
+final rideRequestProvider =
+    FutureProvider.family<Map<String, dynamic>, RideRequestParams>(
+        (ref, params) async {
   final rideService = ref.watch(rideShareServiceProvider);
-  
+
   return await rideService.requestRide(
     pickupLatitude: params.pickupLatitude,
     pickupLongitude: params.pickupLongitude,
@@ -151,12 +153,11 @@ class RideRequestParams {
 }
 
 // ==================== FARE ESTIMATION ====================
-final fareEstimateProvider = FutureProvider.family<
-    Map<String, dynamic>,
-    FareEstimateParams
->((ref, params) async {
+final fareEstimateProvider =
+    FutureProvider.family<Map<String, dynamic>, FareEstimateParams>(
+        (ref, params) async {
   final rideService = ref.watch(rideShareServiceProvider);
-  
+
   return await rideService.estimateFare(
     pickupLatitude: params.pickupLatitude,
     pickupLongitude: params.pickupLongitude,
@@ -188,10 +189,8 @@ final selectedVehicleClassProvider = StateProvider<String?>(
 );
 
 // ==================== DISTANCE CALCULATION ====================
-final distanceCalculationProvider = Provider.family<
-    double,
-    (double, double, double, double)
->((ref, params) {
+final distanceCalculationProvider =
+    Provider.family<double, (double, double, double, double)>((ref, params) {
   final placeService = ref.watch(placeServiceProvider);
   final (lat1, lng1, lat2, lng2) = params;
   return placeService.calculateDistance(lat1, lng1, lat2, lng2);

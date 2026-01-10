@@ -266,11 +266,32 @@ class AuthService {
     final trimmedId = identifier.trim();
 
     try {
-      final res = await ApiClient.post(
-        '/auth/login',
+      // ✅ Use ngrok auth endpoint for development
+      const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
+      final res = await http.post(
+        Uri.parse('$ngrokBase/vero/auth/login'),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
         body: jsonEncode({'identifier': trimmedId, 'password': password}),
-        timeout: _reqTimeoutWarm,
-      );
+      ).timeout(_reqTimeoutWarm);
+
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        String? backendMsg;
+        try {
+          final decoded = jsonDecode(res.body);
+          if (decoded is Map && decoded['message'] != null) {
+            final m = decoded['message'];
+            if (m is List) {
+              backendMsg = m.join('\n');
+            } else {
+              backendMsg = m.toString();
+            }
+          }
+        } catch (_) {}
+        throw ApiException(
+          message: backendMsg ?? 'Login failed. Please check your details.',
+          statusCode: res.statusCode,
+        );
+      }
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       _toast(context, 'Signed in');
@@ -532,16 +553,37 @@ class AuthService {
         return null;
       }
 
-      final res = await ApiClient.post(
-        '/auth/google',
+      // ✅ Use ngrok auth endpoint for development
+      const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
+      final res = await http.post(
+        Uri.parse('$ngrokBase/vero/auth/google'),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
         body: jsonEncode({
           if (serverAuthCode != null && serverAuthCode.isNotEmpty)
             'serverAuthCode': serverAuthCode,
           if (idToken != null && idToken.isNotEmpty) 'idToken': idToken,
           'email': account.email,
         }),
-        timeout: _reqTimeoutWarm,
-      );
+      ).timeout(_reqTimeoutWarm);
+
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        String? backendMsg;
+        try {
+          final decoded = jsonDecode(res.body);
+          if (decoded is Map && decoded['message'] != null) {
+            final m = decoded['message'];
+            if (m is List) {
+              backendMsg = m.join('\n');
+            } else {
+              backendMsg = m.toString();
+            }
+          }
+        } catch (_) {}
+        throw ApiException(
+          message: backendMsg ?? 'Google sign-in failed.',
+          statusCode: res.statusCode,
+        );
+      }
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       _toast(context, 'Signed in with Google');
@@ -586,15 +628,36 @@ class AuthService {
         credential.familyName ?? '',
       ].where((s) => s.trim().isNotEmpty).join(' ').trim();
 
-      final res = await ApiClient.post(
-        '/auth/apple',
+      // ✅ Use ngrok auth endpoint for development
+      const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
+      final res = await http.post(
+        Uri.parse('$ngrokBase/vero/auth/apple'),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
         body: jsonEncode({
           'identityToken': identityToken,
           'rawNonce': rawNonce,
           if (fullName.isNotEmpty) 'fullName': fullName,
         }),
-        timeout: _reqTimeoutWarm,
-      );
+      ).timeout(_reqTimeoutWarm);
+
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        String? backendMsg;
+        try {
+          final decoded = jsonDecode(res.body);
+          if (decoded is Map && decoded['message'] != null) {
+            final m = decoded['message'];
+            if (m is List) {
+              backendMsg = m.join('\n');
+            } else {
+              backendMsg = m.toString();
+            }
+          }
+        } catch (_) {}
+        throw ApiException(
+          message: backendMsg ?? 'Apple sign-in failed.',
+          statusCode: res.statusCode,
+        );
+      }
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       _toast(context, 'Signed in with Apple');
@@ -616,9 +679,10 @@ class AuthService {
     bool backendDeleted = false;
     if (token != null && token.trim().isNotEmpty) {
       try {
-        final base = await ApiConfig.readBase();
+        // ✅ Use ngrok auth endpoint for development
+        const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
         final resp = await http.delete(
-          Uri.parse('$base/users/me'),
+          Uri.parse('$ngrokBase/users/me'),
           headers: {
             'Authorization': 'Bearer $token',
             'Accept': 'application/json',

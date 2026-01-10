@@ -11,6 +11,7 @@ class VehicleTypeOption {
   final IconData icon;
   final Color color;
   final String estimatedPrice;
+  final double distance;
 
   VehicleTypeOption({
     required this.class_,
@@ -19,16 +20,19 @@ class VehicleTypeOption {
     required this.icon,
     required this.color,
     required this.estimatedPrice,
+    this.distance = 0.0,
   });
 }
 
 class VehicleTypeModal extends ConsumerStatefulWidget {
   final Place pickupPlace;
+  final Place dropoffPlace;
   final double userLat;
   final double userLng;
 
   const VehicleTypeModal({
     required this.pickupPlace,
+    required this.dropoffPlace,
     required this.userLat,
     required this.userLng,
     Key? key,
@@ -42,15 +46,63 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
   String? _selectedVehicleClass;
   bool _isSearching = false;
   String? _errorMessage;
+  double _distance = 0.0;
+  Map<String, dynamic> _estimatedFares = {};
 
-  final List<VehicleTypeOption> _vehicleTypes = [
+  @override
+  void initState() {
+    super.initState();
+    _calculateDistanceAndFares();
+  }
+
+  Future<void> _calculateDistanceAndFares() async {
+    try {
+      final placeService = ref.read(placeServiceProvider);
+      final distance = placeService.calculateDistance(
+        widget.userLat,
+        widget.userLng,
+        widget.dropoffPlace.latitude,
+        widget.dropoffPlace.longitude,
+      );
+
+      setState(() {
+        _distance = distance;
+      });
+
+      // Fetch fare estimates for each vehicle class
+      for (final vehicleType in _baseVehicleTypes) {
+        final fareEstimate =
+            await ref.read(rideShareServiceProvider).estimateFare(
+                  pickupLatitude: widget.userLat,
+                  pickupLongitude: widget.userLng,
+                  dropoffLatitude: widget.dropoffPlace.latitude,
+                  dropoffLongitude: widget.dropoffPlace.longitude,
+                  vehicleClass: vehicleType.class_,
+                );
+
+        if (mounted) {
+          setState(() {
+            _estimatedFares[vehicleType.class_] = fareEstimate;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Failed to calculate fares: $e';
+        });
+      }
+    }
+  }
+
+  final List<VehicleTypeOption> _baseVehicleTypes = [
     VehicleTypeOption(
       class_: VehicleClass.economy,
       name: 'Economy',
       description: 'Affordable & comfortable',
       icon: Icons.directions_car,
       color: const Color(0xFF4CAF50),
-      estimatedPrice: 'MK 500-800',
+      estimatedPrice: 'Calculating...',
     ),
     VehicleTypeOption(
       class_: VehicleClass.comfort,
@@ -58,7 +110,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
       description: 'Premium comfort ride',
       icon: Icons.airport_shuttle,
       color: const Color(0xFF2196F3),
-      estimatedPrice: 'MK 800-1200',
+      estimatedPrice: 'Calculating...',
     ),
     VehicleTypeOption(
       class_: VehicleClass.premium,
@@ -66,7 +118,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
       description: 'Luxury experience',
       icon: Icons.directions_car_filled,
       color: const Color(0xFFFF9800),
-      estimatedPrice: 'MK 1200-1800',
+      estimatedPrice: 'Calculating...',
     ),
     VehicleTypeOption(
       class_: VehicleClass.business,
@@ -74,7 +126,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
       description: 'Executive transport',
       icon: Icons.business_center,
       color: const Color(0xFF9C27B0),
-      estimatedPrice: 'MK 1800-2500',
+      estimatedPrice: 'Calculating...',
     ),
   ];
 
@@ -88,16 +140,14 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
     try {
       final rideService = ref.read(rideShareServiceProvider);
 
-      // TODO: Get dropoff location from user input
-      // For now, using a dummy dropoff location
       final ride = await rideService.requestRide(
         pickupLatitude: widget.userLat,
         pickupLongitude: widget.userLng,
-        dropoffLatitude: widget.userLat + 0.05,
-        dropoffLongitude: widget.userLng + 0.05,
+        dropoffLatitude: widget.dropoffPlace.latitude,
+        dropoffLongitude: widget.dropoffPlace.longitude,
         vehicleClass: vehicleClass,
         pickupAddress: widget.pickupPlace.address,
-        dropoffAddress: 'Destination',
+        dropoffAddress: widget.dropoffPlace.address,
         notes: null,
       );
 
@@ -169,13 +219,54 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'From: ${widget.pickupPlace.name}',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[600],
-                  ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'From: ${widget.pickupPlace.name}',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey[600],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'To: ${widget.dropoffPlace.name}',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey[600],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF8A00).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${_distance.toStringAsFixed(1)} km',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFFF8A00),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -188,7 +279,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: SingleChildScrollView(
               child: Column(
-                children: _vehicleTypes.map((vehicleType) {
+                children: _baseVehicleTypes.map((vehicleType) {
                   return _buildVehicleTypeCard(vehicleType);
                 }).toList(),
               ),
@@ -231,6 +322,15 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
 
   Widget _buildVehicleTypeCard(VehicleTypeOption vehicleType) {
     final isSelected = _selectedVehicleClass == vehicleType.class_;
+    final fareData = _estimatedFares[vehicleType.class_];
+
+    String displayPrice = 'Calculating...';
+    if (fareData != null) {
+      final estimatedFare = fareData['estimatedFare'] as num?;
+      if (estimatedFare != null) {
+        displayPrice = 'MK ${estimatedFare.toStringAsFixed(0)}';
+      }
+    }
 
     return GestureDetector(
       onTap: () => _handleVehicleSelected(vehicleType.class_),
@@ -284,12 +384,12 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
                       color: Colors.grey[600],
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   Text(
-                    vehicleType.estimatedPrice,
+                    displayPrice,
                     style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                       color: vehicleType.color,
                     ),
                   ),

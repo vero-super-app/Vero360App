@@ -95,7 +95,7 @@
 
 
 
-	<!-- 🔸 ATS: allow http://localhost:3000 during development.
+	<!-- 🔸 ATS: allow https://unbigamous-unappositely-kory.ngrok-free.dev during development.
 	     Tighten for production (remove or set exception domains only). -->
 	<key>NSAppTransportSecurity</key>
 	<dict>

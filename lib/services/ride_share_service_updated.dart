@@ -2,11 +2,26 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Enhanced RideShareService with WebSocket integration for real-time updates
 class RideShareService {
-  static const String baseUrl = 'http://localhost:3000/api/v1/ride-share';
+  static const String baseUrl =
+      'https://unbigamous-unappositely-kory.ngrok-free.dev/vero/ride-share';
   late IO.Socket socket;
+
+  // Token management
+  Future<String?> _getAuthToken() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString('jwt_token') ??
+          prefs.getString('token') ??
+          prefs.getString('jwt');
+    } catch (e) {
+      print('Error reading auth token: $e');
+      return null;
+    }
+  }
 
   // Stream controllers for real-time events
   late StreamController<Map<String, dynamic>> _driverLocationController;
@@ -20,8 +35,7 @@ class RideShareService {
   RideShareService() {
     _driverLocationController =
         StreamController<Map<String, dynamic>>.broadcast();
-    _rideStatusController =
-        StreamController<Map<String, dynamic>>.broadcast();
+    _rideStatusController = StreamController<Map<String, dynamic>>.broadcast();
     _connectionStatusController = StreamController<String>.broadcast();
     _initializeSocket();
   }
@@ -43,18 +57,37 @@ class RideShareService {
   // ==================== INITIALIZATION ====================
 
   void _initializeSocket() {
-    socket = IO.io(
-      'http://localhost:3000',
-      IO.OptionBuilder()
-          .setTransports(['websocket'])
-          .disableAutoConnect()
-          .setReconnectionDelay(1000)
-          .setReconnectionDelayMax(5000)
-          .setReconnectionAttempts(5)
-          .build(),
-    );
+    _initializeSocketAsync();
+  }
 
-    socket.connect();
+  /// Initialize socket asynchronously with auth token
+  void _initializeSocketAsync() async {
+    try {
+      final token = await _getAuthToken();
+
+      socket = IO.io(
+        'https://unbigamous-unappositely-kory.ngrok-free.dev',
+        IO.OptionBuilder()
+            .setTransports(['websocket'])
+            .disableAutoConnect()
+            // Include auth token in query parameters
+            .setExtraHeaders({
+              if (token != null && token.isNotEmpty)
+                'Authorization': 'Bearer $token',
+            })
+            .setAuth({
+              if (token != null && token.isNotEmpty) 'token': token,
+            })
+            .setReconnectionDelay(1000)
+            .setReconnectionDelayMax(5000)
+            .setReconnectionAttempts(5)
+            .build(),
+      );
+
+      socket.connect();
+    } catch (e) {
+      print('[WebSocket] Failed to initialize socket: $e');
+    }
 
     socket.onConnect((_) {
       print('[WebSocket] Connected');
@@ -99,17 +132,32 @@ class RideShareService {
     required String vehicleClass,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/estimate-fare'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'pickupLatitude': pickupLatitude,
-          'pickupLongitude': pickupLongitude,
-          'dropoffLatitude': dropoffLatitude,
-          'dropoffLongitude': dropoffLongitude,
-          'vehicleClass': vehicleClass,
-        }),
-      );
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+
+      // Add auth token if available
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/estimate-fare'),
+            headers: headers,
+            body: jsonEncode({
+              'pickupLatitude': pickupLatitude,
+              'pickupLongitude': pickupLongitude,
+              'dropoffLatitude': dropoffLatitude,
+              'dropoffLongitude': dropoffLongitude,
+              'vehicleClass': vehicleClass,
+            }),
+          )
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () => throw Exception('Fare estimation request timeout'),
+          );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -161,20 +209,35 @@ class RideShareService {
     String? notes,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/rides'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'pickupLatitude': pickupLatitude,
-          'pickupLongitude': pickupLongitude,
-          'pickupAddress': pickupAddress,
-          'dropoffLatitude': dropoffLatitude,
-          'dropoffLongitude': dropoffLongitude,
-          'dropoffAddress': dropoffAddress,
-          'preferredVehicleClass': vehicleClass,
-          'notes': notes,
-        }),
-      );
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+
+      // Add auth token if available
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/rides'),
+            headers: headers,
+            body: jsonEncode({
+              'pickupLatitude': pickupLatitude,
+              'pickupLongitude': pickupLongitude,
+              'pickupAddress': pickupAddress,
+              'dropoffLatitude': dropoffLatitude,
+              'dropoffLongitude': dropoffLongitude,
+              'dropoffAddress': dropoffAddress,
+              'preferredVehicleClass': vehicleClass,
+              'notes': notes,
+            }),
+          )
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () => throw Exception('Ride request timeout'),
+          );
 
       if (response.statusCode == 201) {
         return jsonDecode(response.body);

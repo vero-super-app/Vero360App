@@ -2,11 +2,13 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class RideShareService {
-  static const String baseUrl = 'http://localhost:3000/api/v1/ride-share';
+  static const String baseUrl =
+      'https://unbigamous-unappositely-kory.ngrok-free.dev/vero/ride-share';
   late IO.Socket socket;
-  
+
   // Stream controllers for WebSocket events
   late StreamController<String> _connectionStatusController;
   late StreamController<Map<String, dynamic>> _driverLocationController;
@@ -16,26 +18,43 @@ class RideShareService {
     _initializeControllers();
     _initializeSocket();
   }
-  
+
+  /// Get auth token from shared preferences
+  Future<String?> _getAuthToken() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString('jwt_token') ??
+          prefs.getString('token') ??
+          prefs.getString('jwt');
+    } catch (e) {
+      print('Error reading auth token: $e');
+      return null;
+    }
+  }
+
   /// Initialize stream controllers
   void _initializeControllers() {
     _connectionStatusController = StreamController<String>.broadcast();
-    _driverLocationController = StreamController<Map<String, dynamic>>.broadcast();
+    _driverLocationController =
+        StreamController<Map<String, dynamic>>.broadcast();
     _rideStatusController = StreamController<Map<String, dynamic>>.broadcast();
   }
-  
+
   /// Get connection status stream
-  Stream<String> get connectionStatusStream => _connectionStatusController.stream;
-  
+  Stream<String> get connectionStatusStream =>
+      _connectionStatusController.stream;
+
   /// Get driver location stream
-  Stream<Map<String, dynamic>> get driverLocationStream => _driverLocationController.stream;
-  
+  Stream<Map<String, dynamic>> get driverLocationStream =>
+      _driverLocationController.stream;
+
   /// Get ride status stream
-  Stream<Map<String, dynamic>> get rideStatusStream => _rideStatusController.stream;
+  Stream<Map<String, dynamic>> get rideStatusStream =>
+      _rideStatusController.stream;
 
   void _initializeSocket() {
     socket = IO.io(
-      'http://localhost:3000',
+      'https://unbigamous-unappositely-kory.ngrok-free.dev',
       IO.OptionBuilder()
           .setTransports(['websocket'])
           .disableAutoConnect()
@@ -52,7 +71,7 @@ class RideShareService {
       print('Socket disconnected');
       _connectionStatusController.add('disconnected');
     });
-    
+
     socket.onError((error) {
       print('Socket error: $error');
       _connectionStatusController.add('error');
@@ -99,7 +118,8 @@ class RideShareService {
     double radiusKm = 5,
   }) async {
     try {
-      String url = '$baseUrl/vehicles?latitude=$latitude&longitude=$longitude&radiusKm=$radiusKm';
+      String url =
+          '$baseUrl/vehicles?latitude=$latitude&longitude=$longitude&radiusKm=$radiusKm';
       if (vehicleClass != null) {
         url += '&vehicleClass=$vehicleClass';
       }
@@ -129,9 +149,19 @@ class RideShareService {
     String? notes,
   }) async {
     try {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+
+      // Add auth token if available
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await http.post(
         Uri.parse('$baseUrl/rides'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: jsonEncode({
           'pickupLatitude': pickupLatitude,
           'pickupLongitude': pickupLongitude,
@@ -231,7 +261,7 @@ class RideShareService {
   void disconnect() {
     socket.disconnect();
   }
-  
+
   /// Reconnect websocket with retry logic
   Future<void> reconnectWebSocket() async {
     try {
@@ -246,7 +276,7 @@ class RideShareService {
       rethrow;
     }
   }
-  
+
   /// Dispose resources
   void dispose() {
     _connectionStatusController.close();

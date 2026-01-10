@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart' show Provider, StreamProvider, FutureProvider, AsyncValue, Ref;
+import 'package:flutter_riverpod/flutter_riverpod.dart'
+    show Provider, StreamProvider, FutureProvider, AsyncValue, Ref;
 import 'package:flutter_riverpod/legacy.dart' show StateProvider;
-import 'package:vero360_app/Services/ride_share_service.dart';
+import 'package:vero360_app/services/ride_share_service.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
 
 // ==================== CONNECTION STATE ====================

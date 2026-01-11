@@ -19,12 +19,14 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:carousel_slider/carousel_slider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 // ✅ Firebase (for Latest Arrivals images + cart)
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/Pages/ride_share/ride_share_map_screen.dart';
+import 'package:vero360_app/Pages/ride_share/driver_dashboard.dart';
 
 // ✅ Cart + checkout
 import 'package:vero360_app/models/cart_model.dart';
@@ -50,6 +52,9 @@ import 'package:vero360_app/services/latest_Services.dart';
 
 // ✅ Toast helper
 import 'package:vero360_app/toasthelper.dart';
+
+// ✅ Providers
+import 'package:vero360_app/providers/driver_provider.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -146,15 +151,15 @@ const List<DigitalProduct> kDigitalProducts = [
   ),
 ];
 
-class Vero360Homepage extends StatefulWidget {
+class Vero360Homepage extends ConsumerStatefulWidget {
   final String email;
   const Vero360Homepage({super.key, required this.email});
 
   @override
-  State<Vero360Homepage> createState() => _Vero360HomepageState();
+  ConsumerState<Vero360Homepage> createState() => _Vero360HomepageState();
 }
 
-class _Vero360HomepageState extends State<Vero360Homepage> {
+class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   final _search = TextEditingController();
   int _promoIndex = 0;
   bool _animateIn = false;
@@ -302,7 +307,7 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
                       title: 'Discover Our Quick Services',
                       child: _MiniIconsGrid(
                         items: kQuickServices,
-                        onOpen: (key) => _openServiceStatic(context, key),
+                        onOpen: (key) => key == 'taxi' ? _openService(key) : _openServiceStatic(context, key),
                       ),
                     ),
                   ),
@@ -344,13 +349,13 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
       delegate: QuickServiceSearchDelegate(services: kQuickServices),
     );
     if (picked != null) {
-      _openServiceStatic(context, picked.keyId);
+      picked.keyId == 'taxi' ? _openService(picked.keyId) : _openServiceStatic(context, picked.keyId);
     }
   }
 
   void _onPromoTap(_Promo p) {
     if (p.serviceKey != null && p.serviceKey!.isNotEmpty) {
-      _openServiceStatic(context, p.serviceKey!);
+      p.serviceKey == 'taxi' ? _openService(p.serviceKey!) : _openServiceStatic(context, p.serviceKey!);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Coming soon')),
@@ -369,6 +374,32 @@ class _Vero360HomepageState extends State<Vero360Homepage> {
         ),
       ),
     );
+  }
+
+  void _openService(String key) {
+    // Special handling for taxi service with driver check
+    if (key == 'taxi' || key == 'car_hire') {
+      final isDriver = ref.watch(isCurrentUserDriverProvider);
+      
+      isDriver.when(
+        data: (isDriver) {
+          final page = isDriver ? const DriverDashboard() : const RideShareMapScreen();
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+        },
+        loading: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Loading...')),
+          );
+        },
+        error: (_, __) {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const RideShareMapScreen()),
+          );
+        },
+      );
+    } else {
+      _openServiceStatic(context, key);
+    }
   }
 
   static void _openServiceStatic(BuildContext context, String key) {
@@ -1149,15 +1180,17 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
 
   void _openNearby(BuildContext context, String name) {
     final t = name.toLowerCase();
+    String serviceKey;
     if (t.contains('ride')) {
-      _Vero360HomepageState._openServiceStatic(context, 'taxi');
+      serviceKey = 'taxi';
     } else if (t.contains('food')) {
-      _Vero360HomepageState._openServiceStatic(context, 'food');
+      serviceKey = 'food';
     } else if (t.contains('accom')) {
-      _Vero360HomepageState._openServiceStatic(context, 'accommodation');
+      serviceKey = 'accommodation';
     } else {
-      _Vero360HomepageState._openServiceStatic(context, 'more');
+      serviceKey = 'more';
     }
+    _Vero360HomepageState._openServiceStatic(context, serviceKey);
   }
 
   @override

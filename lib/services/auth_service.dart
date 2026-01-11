@@ -84,7 +84,8 @@ class AuthService {
     }
   }
 
-  Map<String, dynamic> _normalizeBackendAuthResponse(Map<String, dynamic> data) {
+  Map<String, dynamic> _normalizeBackendAuthResponse(
+      Map<String, dynamic> data) {
     final token = data['access_token'] ?? data['token'] ?? data['jwt'];
 
     final rawUser = data['user'] ?? data;
@@ -92,8 +93,9 @@ class AuthService {
         ? Map<String, dynamic>.from(rawUser)
         : <String, dynamic>{'raw': rawUser};
 
-    final role =
-        (user['role'] ?? user['userRole'] ?? 'customer').toString().toLowerCase();
+    final role = (user['role'] ?? user['userRole'] ?? 'customer')
+        .toString()
+        .toLowerCase();
     user['role'] = role;
 
     return {
@@ -150,8 +152,9 @@ class AuthService {
     final name =
         (profile['name'] ?? fallbackName ?? user.displayName ?? '').toString();
     final phone = (profile['phone'] ?? fallbackPhone ?? '').toString();
-    final role =
-        (profile['role'] ?? fallbackRole ?? 'customer').toString().toLowerCase();
+    final role = (profile['role'] ?? fallbackRole ?? 'customer')
+        .toString()
+        .toLowerCase();
 
     final token = await user.getIdToken();
 
@@ -248,7 +251,8 @@ class AuthService {
             cred.user!,
             name: backendUser?['name']?.toString(),
             phone: backendUser?['phone']?.toString(),
-            role: (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
+            role:
+                (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
             merchantData: merchantData,
           );
         }
@@ -268,11 +272,16 @@ class AuthService {
     try {
       // ✅ Use ngrok auth endpoint for development
       const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
-      final res = await http.post(
-        Uri.parse('$ngrokBase/vero/auth/login'),
-        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-        body: jsonEncode({'identifier': trimmedId, 'password': password}),
-      ).timeout(_reqTimeoutWarm);
+      final res = await http
+          .post(
+            Uri.parse('$ngrokBase/vero/auth/login'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: jsonEncode({'identifier': trimmedId, 'password': password}),
+          )
+          .timeout(_reqTimeoutWarm);
 
       if (res.statusCode < 200 || res.statusCode >= 300) {
         String? backendMsg;
@@ -341,7 +350,8 @@ class AuthService {
         );
         if (fb != null) return fb;
       }
-      _toast(context, _looksLikeServerDown(e) ? 'Server unreachable.' : 'Login failed.',
+      _toast(context,
+          _looksLikeServerDown(e) ? 'Server unreachable.' : 'Login failed.',
           ok: false);
       return null;
     }
@@ -525,7 +535,8 @@ class AuthService {
       await _ensureGoogleInit();
 
       if (!_google.supportsAuthenticate()) {
-        _toast(context, 'Google Sign-In not supported on this platform', ok: false);
+        _toast(context, 'Google Sign-In not supported on this platform',
+            ok: false);
         return null;
       }
 
@@ -535,7 +546,8 @@ class AuthService {
       // Prefer server auth code for backend exchange
       GoogleSignInServerAuthorization? serverAuth;
       try {
-        serverAuth = await account.authorizationClient.authorizeServer(_googleScopes);
+        serverAuth =
+            await account.authorizationClient.authorizeServer(_googleScopes);
       } catch (_) {}
 
       final serverAuthCode = serverAuth?.serverAuthCode;
@@ -555,16 +567,21 @@ class AuthService {
 
       // ✅ Use ngrok auth endpoint for development
       const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
-      final res = await http.post(
-        Uri.parse('$ngrokBase/vero/auth/google'),
-        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-        body: jsonEncode({
-          if (serverAuthCode != null && serverAuthCode.isNotEmpty)
-            'serverAuthCode': serverAuthCode,
-          if (idToken != null && idToken.isNotEmpty) 'idToken': idToken,
-          'email': account.email,
-        }),
-      ).timeout(_reqTimeoutWarm);
+      final res = await http
+          .post(
+            Uri.parse('$ngrokBase/vero/auth/google'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: jsonEncode({
+              if (serverAuthCode != null && serverAuthCode.isNotEmpty)
+                'serverAuthCode': serverAuthCode,
+              if (idToken != null && idToken.isNotEmpty) 'idToken': idToken,
+              'email': account.email,
+            }),
+          )
+          .timeout(_reqTimeoutWarm);
 
       if (res.statusCode < 200 || res.statusCode >= 300) {
         String? backendMsg;
@@ -630,15 +647,20 @@ class AuthService {
 
       // ✅ Use ngrok auth endpoint for development
       const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
-      final res = await http.post(
-        Uri.parse('$ngrokBase/vero/auth/apple'),
-        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-        body: jsonEncode({
-          'identityToken': identityToken,
-          'rawNonce': rawNonce,
-          if (fullName.isNotEmpty) 'fullName': fullName,
-        }),
-      ).timeout(_reqTimeoutWarm);
+      final res = await http
+          .post(
+            Uri.parse('$ngrokBase/vero/auth/apple'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: jsonEncode({
+              'identityToken': identityToken,
+              'rawNonce': rawNonce,
+              if (fullName.isNotEmpty) 'fullName': fullName,
+            }),
+          )
+          .timeout(_reqTimeoutWarm);
 
       if (res.statusCode < 200 || res.statusCode >= 300) {
         String? backendMsg;
@@ -673,7 +695,8 @@ class AuthService {
 
   // -------------------- Delete Account Everywhere --------------------
 
-  Future<DeleteAccountStatus> deleteAccountEverywhere(BuildContext context) async {
+  Future<DeleteAccountStatus> deleteAccountEverywhere(
+      BuildContext context) async {
     final token = await _readAnyToken();
 
     bool backendDeleted = false;
@@ -682,7 +705,7 @@ class AuthService {
         // ✅ Use ngrok auth endpoint for development
         const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
         final resp = await http.delete(
-          Uri.parse('$ngrokBase/users/me'),
+          Uri.parse('$ngrokBase/vero/users/me'),
           headers: {
             'Authorization': 'Bearer $token',
             'Accept': 'application/json',

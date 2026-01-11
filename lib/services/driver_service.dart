@@ -1,14 +1,13 @@
 import 'package:dio/dio.dart';
 import 'package:vero360_app/services/auth_storage.dart';
-import 'package:vero360_app/settings/Settings.dart';
+import 'package:vero360_app/services/api_config.dart';
 
 class DriverService {
   late Dio _dio;
-  static const String baseUrl = 'http://localhost:3000';
 
   DriverService() {
     _dio = Dio(BaseOptions(
-      baseUrl: baseUrl,
+      baseUrl: ApiConfig.baseUrl,
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 10),
     ));
@@ -27,7 +26,7 @@ class DriverService {
   // ==================== DRIVER PROFILE ====================
   Future<Map<String, dynamic>> getDriverByUserId(int userId) async {
     try {
-      final response = await _dio.get('/drivers/user/$userId');
+      final response = await _dio.get('/vero/drivers/user/$userId');
       return response.data as Map<String, dynamic>;
     } catch (e) {
       throw _handleError(e);
@@ -38,7 +37,7 @@ class DriverService {
       Map<String, dynamic> driverData) async {
     try {
       final response = await _dio.post(
-        '/drivers',
+        '/vero/drivers',
         data: driverData,
       );
       return response.data as Map<String, dynamic>;
@@ -53,7 +52,7 @@ class DriverService {
   ) async {
     try {
       final response = await _dio.put(
-        '/drivers/$driverId',
+        '/vero/drivers/$driverId',
         data: updateData,
       );
       return response.data as Map<String, dynamic>;
@@ -65,7 +64,7 @@ class DriverService {
   // ==================== TAXI MANAGEMENT ====================
   Future<List<Map<String, dynamic>>> getTaxisByDriver(int driverId) async {
     try {
-      final response = await _dio.get('/taxis/driver/$driverId');
+      final response = await _dio.get('/vero/taxis/driver/$driverId');
       final data = response.data;
       if (data is List) {
         return List<Map<String, dynamic>>.from(data);
@@ -81,7 +80,7 @@ class DriverService {
   Future<Map<String, dynamic>> createTaxi(Map<String, dynamic> taxiData) async {
     try {
       final response = await _dio.post(
-        '/taxis',
+        '/vero/taxis',
         data: taxiData,
       );
       return response.data as Map<String, dynamic>;
@@ -96,7 +95,7 @@ class DriverService {
   ) async {
     try {
       final response = await _dio.put(
-        '/taxis/$taxiId',
+        '/vero/taxis/$taxiId',
         data: updateData,
       );
       return response.data as Map<String, dynamic>;
@@ -112,7 +111,7 @@ class DriverService {
   ) async {
     try {
       final response = await _dio.put(
-        '/taxis/$taxiId/location',
+        '/vero/taxis/$taxiId/location',
         data: {
           'latitude': latitude,
           'longitude': longitude,
@@ -130,7 +129,7 @@ class DriverService {
   ) async {
     try {
       final response = await _dio.put(
-        '/taxis/$taxiId/availability',
+        '/vero/taxis/$taxiId/availability',
         data: {'isAvailable': isAvailable},
       );
       return response.data as Map<String, dynamic>;
@@ -141,7 +140,7 @@ class DriverService {
 
   Future<Map<String, dynamic>> deleteTaxi(int taxiId) async {
     try {
-      final response = await _dio.delete('/taxis/$taxiId');
+      final response = await _dio.delete('/vero/taxis/$taxiId');
       return response.data as Map<String, dynamic>;
     } catch (e) {
       throw _handleError(e);
@@ -156,7 +155,7 @@ class DriverService {
   ) async {
     try {
       final response = await _dio.get(
-        '/drivers/nearby/search',
+        '/vero/drivers/nearby/search',
         queryParameters: {
           'lat': latitude,
           'lng': longitude,
@@ -179,7 +178,7 @@ class DriverService {
   }) async {
     try {
       final response = await _dio.get(
-        '/drivers/verified/list',
+        '/vero/drivers/verified/list',
         queryParameters: {
           'skip': skip,
           'take': take,
@@ -199,7 +198,7 @@ class DriverService {
 
   Future<Map<String, dynamic>> getTaxisByClass(String taxiClass) async {
     try {
-      final response = await _dio.get('/taxis/class/$taxiClass');
+      final response = await _dio.get('/vero/taxis/class/$taxiClass');
       return response.data as Map<String, dynamic>;
     } catch (e) {
       throw _handleError(e);
@@ -209,7 +208,7 @@ class DriverService {
   // ==================== DRIVER VERIFICATION ====================
   Future<Map<String, dynamic>> verifyDriver(int driverId) async {
     try {
-      final response = await _dio.post('/drivers/$driverId/verify');
+      final response = await _dio.post('/vero/drivers/$driverId/verify');
       return response.data as Map<String, dynamic>;
     } catch (e) {
       throw _handleError(e);
@@ -218,7 +217,7 @@ class DriverService {
 
   Future<Map<String, dynamic>> suspendDriver(int driverId) async {
     try {
-      final response = await _dio.post('/drivers/$driverId/suspend');
+      final response = await _dio.post('/vero/drivers/$driverId/suspend');
       return response.data as Map<String, dynamic>;
     } catch (e) {
       throw _handleError(e);

@@ -3,7 +3,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart'
-    show kIsWeb, defaultTargetPlatform, TargetPlatform, debugPrint, ValueListenable;
+    show
+        kIsWeb,
+        defaultTargetPlatform,
+        TargetPlatform,
+        debugPrint,
+        ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -345,7 +350,8 @@ class _SelfHealPageState extends State<SelfHealPage>
   void initState() {
     super.initState();
 
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200))
+    _c = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1200))
       ..repeat(reverse: true);
     _pulse = CurvedAnimation(parent: _c, curve: Curves.easeInOut);
 
@@ -437,9 +443,7 @@ class _SelfHealPageState extends State<SelfHealPage>
                         );
                       },
                     ),
-
                     const SizedBox(height: 14),
-
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 350),
                       transitionBuilder: (child, anim) => FadeTransition(
@@ -462,9 +466,7 @@ class _SelfHealPageState extends State<SelfHealPage>
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 18),
-
                     Text(
                       widget.title,
                       textAlign: TextAlign.center,
@@ -479,16 +481,13 @@ class _SelfHealPageState extends State<SelfHealPage>
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontSize: 13),
                     ),
-
                     const SizedBox(height: 16),
-
                     if (widget.showSpinner)
                       const SizedBox(
                         height: 26,
                         width: 26,
                         child: CircularProgressIndicator(strokeWidth: 3),
                       ),
-
                     if (!widget.showSpinner &&
                         widget.actionLabel != null &&
                         widget.onAction != null)
@@ -502,16 +501,13 @@ class _SelfHealPageState extends State<SelfHealPage>
                           ),
                         ),
                       ),
-
                     const SizedBox(height: 14),
-
                     if (widget.logs != null)
                       TextButton(
                         onPressed: () => setState(() => _showLogs = !_showLogs),
                         // (keep blank if you want hidden button)
                         child: Text(_showLogs ? "" : ""),
                       ),
-
                     if (_showLogs && widget.logs != null)
                       Expanded(
                         child: Container(
@@ -527,8 +523,9 @@ class _SelfHealPageState extends State<SelfHealPage>
                           child: ValueListenableBuilder<List<String>>(
                             valueListenable: widget.logs!,
                             builder: (_, lines, __) {
-                              final text =
-                                  lines.isEmpty ? "No logs yet…" : lines.join("\n");
+                              final text = lines.isEmpty
+                                  ? "No logs yet…"
+                                  : lines.join("\n");
                               return SingleChildScrollView(
                                 controller: _scroll,
                                 child: SelectableText(
@@ -613,7 +610,8 @@ class _MyAppState extends State<MyApp> {
     if (kIsWeb) return base;
     if (defaultTargetPlatform == TargetPlatform.android) {
       return base
-          .replaceFirst('https://heflexitservice.co.za', 'https://heflexitservice.co.za')
+          .replaceFirst(
+              'https://heflexitservice.co.za', 'https://heflexitservice.co.za')
           .replaceFirst('localhost', 'https://heflexitservice.co.za');
     }
     return base;
@@ -629,15 +627,13 @@ class _MyAppState extends State<MyApp> {
     const base = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
 
     try {
-      final resp = await http
-          .get(
-            Uri.parse('$base/users/me'),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Accept': 'application/json'
-            },
-          )
-          .timeout(const Duration(seconds: 6));
+      final resp = await http.get(
+        Uri.parse('$base/vero/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json'
+        },
+      ).timeout(const Duration(seconds: 6));
 
       if (resp.statusCode == 200) {
         final decoded = json.decode(resp.body);
@@ -664,21 +660,23 @@ class _MyAppState extends State<MyApp> {
   }
 
   String? _readToken(SharedPreferences p) =>
-      p.getString('jwt_token') ?? p.getString('token') ?? p.getString('authToken');
+      p.getString('jwt_token') ??
+      p.getString('token') ??
+      p.getString('authToken');
 
   bool _isMerchant(Map<String, dynamic> u) {
     final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
     final roles = (u['roles'] is List)
-        ? (u['roles'] as List)
-            .map((e) => e.toString().toLowerCase())
-            .toList()
+        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
         : <String>[];
     final flags = {
       'isMerchant': u['isMerchant'] == true,
       'merchant': u['merchant'] == true,
       'merchantId': (u['merchantId'] ?? '').toString().isNotEmpty,
     };
-    return role == 'merchant' || roles.contains('merchant') || flags.values.any((v) => v == true);
+    return role == 'merchant' ||
+        roles.contains('merchant') ||
+        flags.values.any((v) => v == true);
   }
 
   Future<void> _persistUserToPrefs(
@@ -718,7 +716,8 @@ class _MyAppState extends State<MyApp> {
     if (!mounted) return;
     _currentShell = 'merchant';
     navKey.currentState?.pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => MarketplaceMerchantDashboard(email: email)),
+      MaterialPageRoute(
+          builder: (_) => MarketplaceMerchantDashboard(email: email)),
       (_) => false,
     );
   }
@@ -736,7 +735,8 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     // Use same cart service config as your Bottomnavbar (kept)
-    final cartSvc = CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
+    final cartSvc =
+        CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
 
     return ProviderScope(
       child: MaterialApp(
@@ -761,7 +761,8 @@ class _MyAppState extends State<MyApp> {
               return MaterialPageRoute(builder: (_) => const RegisterScreen());
 
             case '/marketplace':
-              return MaterialPageRoute(builder: (_) => const Bottomnavbar(email: ''));
+              return MaterialPageRoute(
+                  builder: (_) => const Bottomnavbar(email: ''));
 
             case '/cartpage':
               return MaterialPageRoute(
@@ -799,7 +800,9 @@ class _MyAppState extends State<MyApp> {
 /// -------- Helpers to call from Login / Logout screens ---------------
 class AuthFlow {
   static String? _readToken(SharedPreferences p) =>
-      p.getString('jwt_token') ?? p.getString('token') ?? p.getString('authToken');
+      p.getString('jwt_token') ??
+      p.getString('token') ??
+      p.getString('authToken');
 
   static bool _isMerchant(Map<String, dynamic> u) {
     final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
@@ -811,14 +814,17 @@ class AuthFlow {
       'merchant': u['merchant'] == true,
       'merchantId': (u['merchantId'] ?? '').toString().isNotEmpty,
     };
-    return role == 'merchant' || roles.contains('merchant') || flags.values.any((v) => v == true);
+    return role == 'merchant' ||
+        roles.contains('merchant') ||
+        flags.values.any((v) => v == true);
   }
 
   static String _fixLocalhostIfNeeded(String base) {
     if (kIsWeb) return base;
     if (defaultTargetPlatform == TargetPlatform.android) {
       return base
-          .replaceFirst('https://heflexitservice.co.za', 'https://heflexitservice.co.za')
+          .replaceFirst(
+              'https://heflexitservice.co.za', 'https://heflexitservice.co.za')
           .replaceFirst('localhost', 'https://heflexitservice.co.za');
     }
     return base;
@@ -833,15 +839,20 @@ class AuthFlow {
 
     try {
       final resp = await http.get(
-        Uri.parse('$base/users/me'),
-        headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+        Uri.parse('$base/vero/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json'
+        },
       );
 
       if (resp.statusCode == 200) {
         final decoded = json.decode(resp.body);
         final user = (decoded is Map && decoded['data'] is Map)
             ? Map<String, dynamic>.from(decoded['data'])
-            : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
+            : (decoded is Map
+                ? Map<String, dynamic>.from(decoded)
+                : <String, dynamic>{});
 
         final role = _isMerchant(user) ? 'merchant' : 'customer';
         await prefs.setString('user_role', role);
@@ -850,7 +861,8 @@ class AuthFlow {
 
         if (role == 'merchant') {
           navKey.currentState?.pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => MarketplaceMerchantDashboard(email: email)),
+            MaterialPageRoute(
+                builder: (_) => MarketplaceMerchantDashboard(email: email)),
             (_) => false,
           );
         } else {

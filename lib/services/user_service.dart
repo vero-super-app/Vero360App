@@ -27,7 +27,7 @@ class UserService {
       throw Exception('No auth token found (please log in).');
     }
 
-    final url = Uri.parse('${await _base()}/users/me');
+    final url = Uri.parse('${await _base()}/vero/users/me');
     final res = await http.get(url, headers: {
       'Accept': 'application/json',
       'Authorization': 'Bearer $token',

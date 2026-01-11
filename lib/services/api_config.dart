@@ -11,6 +11,9 @@ class ApiConfig {
   /// PROD root (as you requested)
   static const String _defaultProdRoot = 'https://heflexitservice.co.za';
 
+  // static const String _defaultProdRoot =
+  //     'https://unbigamous-unappositely-kory.ngrok-free.dev';
+
   /// Optional override at build time:
   /// flutter run --dart-define=API_BASE_URL=http://127.0.0.1:3000
   static const String baseUrl = String.fromEnvironment(
@@ -178,10 +181,26 @@ class ApiConfig {
 
     // Probes that actually reflect your API is running (not just “host responds”).
     final probes = <Uri>[
-      Uri(scheme: u.scheme, host: u.host, port: u.hasPort ? u.port : null, path: '$apiPrefix/healthz'),
-      Uri(scheme: u.scheme, host: u.host, port: u.hasPort ? u.port : null, path: '$apiPrefix/health'),
-      Uri(scheme: u.scheme, host: u.host, port: u.hasPort ? u.port : null, path: '$apiPrefix/'),
-      Uri(scheme: u.scheme, host: u.host, port: u.hasPort ? u.port : null, path: '/'),
+      Uri(
+          scheme: u.scheme,
+          host: u.host,
+          port: u.hasPort ? u.port : null,
+          path: '$apiPrefix/healthz'),
+      Uri(
+          scheme: u.scheme,
+          host: u.host,
+          port: u.hasPort ? u.port : null,
+          path: '$apiPrefix/health'),
+      Uri(
+          scheme: u.scheme,
+          host: u.host,
+          port: u.hasPort ? u.port : null,
+          path: '$apiPrefix/'),
+      Uri(
+          scheme: u.scheme,
+          host: u.host,
+          port: u.hasPort ? u.port : null,
+          path: '/'),
     ];
 
     for (final uri in probes) {

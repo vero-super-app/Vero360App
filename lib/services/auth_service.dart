@@ -270,11 +270,10 @@ class AuthService {
     final trimmedId = identifier.trim();
 
     try {
-      // ✅ Use ngrok auth endpoint for development
-      const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
+      // ✅ Use ApiConfig for production-ready endpoint
       final res = await http
           .post(
-            Uri.parse('$ngrokBase/vero/auth/login'),
+            ApiConfig.endpoint('/auth/login'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json'
@@ -565,11 +564,10 @@ class AuthService {
         return null;
       }
 
-      // ✅ Use ngrok auth endpoint for development
-      const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
+      // ✅ Use ApiConfig for production-ready endpoint
       final res = await http
           .post(
-            Uri.parse('$ngrokBase/vero/auth/google'),
+            ApiConfig.endpoint('/auth/google'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json'
@@ -645,11 +643,10 @@ class AuthService {
         credential.familyName ?? '',
       ].where((s) => s.trim().isNotEmpty).join(' ').trim();
 
-      // ✅ Use ngrok auth endpoint for development
-      const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
+      // ✅ Use ApiConfig for production-ready endpoint
       final res = await http
           .post(
-            Uri.parse('$ngrokBase/vero/auth/apple'),
+            ApiConfig.endpoint('/auth/apple'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json'
@@ -702,10 +699,9 @@ class AuthService {
     bool backendDeleted = false;
     if (token != null && token.trim().isNotEmpty) {
       try {
-        // ✅ Use ngrok auth endpoint for development
-        const ngrokBase = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
+        // ✅ Use ApiConfig for production-ready endpoint
         final resp = await http.delete(
-          Uri.parse('$ngrokBase/vero/users/me'),
+          ApiConfig.endpoint('/users/me'),
           headers: {
             'Authorization': 'Bearer $token',
             'Accept': 'application/json',

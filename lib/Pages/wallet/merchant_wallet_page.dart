@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:vero360_app/services/firebase_wallet_service.dart';
 import 'package:vero360_app/models/wallet_model.dart';
 import 'package:vero360_app/toasthelper.dart';
+import 'package:vero360_app/config/paychangu_config.dart';
 
 class MerchantWalletPage extends StatefulWidget {
   final String merchantId;
@@ -612,12 +613,11 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
       };
     }
     
-    // Call PayChangu payout API
-    const payoutUrl = 'https://api.paychangu.com/transfer';
+    // ✅ Call PayChangu payout API using centralized config
     const secretKey = 'SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u';
     
     final response = await http.post(
-      Uri.parse(payoutUrl),
+      PayChanguConfig.transferUri(),
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',

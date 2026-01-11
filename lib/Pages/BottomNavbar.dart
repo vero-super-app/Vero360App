@@ -12,7 +12,7 @@ import '../Pages/cartpage.dart';
 import 'package:vero360_app/screens/chat_list_page.dart';
 
 import '../services/cart_services.dart';
-
+import 'package:vero360_app/providers/cart_service_provider.dart';
 
 // Merchant dashboards
 import 'package:vero360_app/Pages/MerchantDashboards/marketplace_merchant_dashboard.dart';
@@ -38,8 +38,8 @@ class _BottomnavbarState extends State<Bottomnavbar> with WidgetsBindingObserver
 
   late List<Widget> _pages;
 
-  final cartService =
-      CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
+  // ✅ Use CartService singleton from provider
+  final cartService = CartServiceProvider.getInstance();
 
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandOrangeDark = Color(0xFFE07000);

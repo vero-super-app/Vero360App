@@ -12,6 +12,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/models/cart_model.dart';
 import 'package:vero360_app/toasthelper.dart';
+import 'package:vero360_app/config/paychangu_config.dart';
 
 class CheckoutFromCartPage extends StatefulWidget {
   final List<CartModel> items;
@@ -168,7 +169,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
       final response = await http
           .post(
-            Uri.parse('https://api.paychangu.com/payment'),
+            PayChanguConfig.paymentUri(),
             headers: {
               'Accept': 'application/json',
               'Content-Type': 'application/json',
@@ -183,8 +184,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               'currency': 'MWK',
               'amount': _total.round().toString(),
               'payment_methods': ['card', 'mobile_money', 'bank'],
-              'callback_url': 'https://webhook.site/your-webhook',
-              'return_url': 'https://your-app.com/payment-success',
+              'callback_url': PayChanguConfig.callbackUrl,
+              'return_url': PayChanguConfig.returnUrl,
               'customization': {
                 'title': 'Vero 360 Payment',
                 'description': 'Order checkout',
@@ -502,7 +503,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   Future<void> _checkPaymentStatus() async {
     try {
       final response = await http.get(
-        Uri.parse('https://api.paychangu.com/transaction/verify/${widget.txRef}'),
+        PayChanguConfig.verifyUri(widget.txRef),
         headers: {
           'Accept': 'application/json',
           'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',

@@ -10,6 +10,7 @@ import 'package:vero360_app/Pages/Home/Profilepage.dart';
 import 'package:vero360_app/screens/chat_list_page.dart';
 import 'package:vero360_app/Pages/cartpage.dart';
 import 'package:vero360_app/services/cart_services.dart';
+import 'package:vero360_app/providers/cart_service_provider.dart';
 import 'package:vero360_app/Pages/BottomNavbar.dart';
 import 'package:vero360_app/Pages/MerchantDashboards/merchant_wallet.dart';
 import 'package:vero360_app/Pages/homepage.dart';
@@ -29,7 +30,8 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final MerchantServiceHelper _helper = MerchantServiceHelper();
-  final CartService _cartService = CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
+  // ✅ Use CartService singleton from provider
+  final CartService _cartService = CartServiceProvider.getInstance();
 
   Map<String, dynamic>? _merchantData;
   List<dynamic> _recentBookings = [];

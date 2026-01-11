@@ -39,6 +39,7 @@ import 'package:vero360_app/screens/register_screen.dart';
 import 'package:vero360_app/services/auth_guard.dart';
 import 'package:vero360_app/services/cart_services.dart';
 import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/providers/cart_service_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
@@ -623,12 +624,10 @@ class _MyAppState extends State<MyApp> {
 
     if (token == null || token.trim().isEmpty) return;
 
-    // ✅ Use ngrok auth endpoint for development
-    const base = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
-
+    // ✅ Use ApiConfig for production-ready endpoint
     try {
       final resp = await http.get(
-        Uri.parse('$base/vero/users/me'),
+        ApiConfig.endpoint('/users/me'),
         headers: {
           'Authorization': 'Bearer $token',
           'Accept': 'application/json'
@@ -734,9 +733,8 @@ class _MyAppState extends State<MyApp> {
   // ---------- App ----------
   @override
   Widget build(BuildContext context) {
-    // Use same cart service config as your Bottomnavbar (kept)
-    final cartSvc =
-        CartService('https://heflexitservice.co.za', apiPrefix: 'vero');
+    // ✅ Use CartService singleton from provider
+    final cartSvc = CartServiceProvider.getInstance();
 
     return ProviderScope(
       child: MaterialApp(
@@ -834,12 +832,10 @@ class AuthFlow {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('jwt_token', token);
 
-    // ✅ Use ngrok auth endpoint for development
-    const base = 'https://unbigamous-unappositely-kory.ngrok-free.dev';
-
+    // ✅ Use ApiConfig for production-ready endpoint
     try {
       final resp = await http.get(
-        Uri.parse('$base/vero/users/me'),
+        ApiConfig.endpoint('/users/me'),
         headers: {
           'Authorization': 'Bearer $token',
           'Accept': 'application/json'

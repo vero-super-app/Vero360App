@@ -15,6 +15,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   web_socket_channel: ^3.0.3
   http: ^1.2.2
+  dio: ^5.4.0
   intl: ^0.20.2
   shared_preferences: ^2.2.2
   fluttertoast: ^9.0.0

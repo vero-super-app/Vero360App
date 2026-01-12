@@ -60,7 +60,7 @@
         <!-- Google Maps key -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyAz15g-v5kTGyIYUV7LmFweonk0JnyNAPI"/>
+            android:value="AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk"/>
     </application>
 
     <queries>

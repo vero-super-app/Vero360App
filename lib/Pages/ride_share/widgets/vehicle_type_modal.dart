@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/models/ride_model.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
+import 'package:vero360_app/services/firebase_ride_share_service.dart';
+import 'package:vero360_app/services/auth_storage.dart';
 
 class VehicleTypeOption {
   final String class_;
@@ -29,12 +31,14 @@ class VehicleTypeModal extends ConsumerStatefulWidget {
   final Place dropoffPlace;
   final double userLat;
   final double userLng;
+  final Function(String) onRideRequested;
 
   const VehicleTypeModal({
     required this.pickupPlace,
     required this.dropoffPlace,
     required this.userLat,
     required this.userLng,
+    required this.onRideRequested,
     Key? key,
   }) : super(key: key);
 
@@ -138,35 +142,43 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
     });
 
     try {
-      final rideService = ref.read(rideShareServiceProvider);
+      // Get current user ID from your existing auth system (JWT token)
+      final userId = await AuthStorage.userIdFromToken();
+      if (userId == null) {
+        throw Exception('User not authenticated. Please log in first.');
+      }
+      final userIdStr = userId.toString();
 
-      final ride = await rideService.requestRide(
-        pickupLatitude: widget.userLat,
-        pickupLongitude: widget.userLng,
-        dropoffLatitude: widget.dropoffPlace.latitude,
-        dropoffLongitude: widget.dropoffPlace.longitude,
-        vehicleClass: vehicleClass,
+      // Get fare estimate
+      final fareEstimate = _estimatedFares[vehicleClass];
+      final estimatedFare = fareEstimate != null
+          ? (fareEstimate['estimatedFare'] as num?)?.toDouble() ?? 0.0
+          : 0.0;
+
+      // Calculate distance
+      final distance = widget.userLat == widget.dropoffPlace.latitude &&
+              widget.userLng == widget.dropoffPlace.longitude
+          ? 0.0
+          : _distance;
+
+      // Create Firebase ride request
+      final rideId = await FirebaseRideShareService.createRideRequest(
+        passengerId: userIdStr,
+        pickupLat: widget.userLat,
+        pickupLng: widget.userLng,
+        dropoffLat: widget.dropoffPlace.latitude,
+        dropoffLng: widget.dropoffPlace.longitude,
         pickupAddress: widget.pickupPlace.address,
         dropoffAddress: widget.dropoffPlace.address,
-        notes: null,
+        estimatedTime: 25, // TODO: calculate based on distance
+        estimatedDistance: distance,
+        estimatedFare: estimatedFare,
       );
 
       if (mounted) {
-        // Show searching state for 3 seconds then navigate to ride details
-        await Future.delayed(const Duration(seconds: 3));
-
-        if (mounted) {
-          Navigator.pop(context); // Close this modal
-          Navigator.pop(context); // Close bookmarked places modal
-
-          // TODO: Navigate to ride details/tracking screen
-          // Navigator.push(
-          //   context,
-          //   MaterialPageRoute(
-          //     builder: (context) => RideTrackingScreen(rideId: ride.id),
-          //   ),
-          // );
-        }
+        // Close modal and trigger callback
+        Navigator.pop(context);
+        widget.onRideRequested(rideId);
       }
     } catch (e) {
       if (mounted) {
@@ -254,7 +266,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
                         vertical: 8,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFF8A00).withOpacity(0.1),
+                        color: const Color(0xFFFF8A00).withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
@@ -343,7 +355,9 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
             width: isSelected ? 2 : 1,
           ),
           borderRadius: BorderRadius.circular(12),
-          color: isSelected ? vehicleType.color.withOpacity(0.1) : Colors.white,
+          color: isSelected
+              ? vehicleType.color.withValues(alpha: 0.1)
+              : Colors.white,
         ),
         child: Row(
           children: [
@@ -352,7 +366,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
               width: 50,
               height: 50,
               decoration: BoxDecoration(
-                color: vehicleType.color.withOpacity(0.2),
+                color: vehicleType.color.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
@@ -437,13 +451,11 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const SizedBox(height: 48),
-
-          // Animated loader
           Container(
             width: 80,
             height: 80,
             decoration: BoxDecoration(
-              color: const Color(0xFFFF8A00).withOpacity(0.1),
+              color: const Color(0xFFFF8A00).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(40),
             ),
             child: const Center(
@@ -454,10 +466,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
               ),
             ),
           ),
-
           const SizedBox(height: 24),
-
-          // Searching message
           Text(
             'Finding ${_selectedVehicleClass ?? 'drivers'}...',
             style: const TextStyle(

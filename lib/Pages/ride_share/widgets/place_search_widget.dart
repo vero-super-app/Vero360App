@@ -22,7 +22,7 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
 
   @override
   void dispose() {
-    widget.searchController.dispose();
+    // Don't dispose the controller - it's owned by the parent widget
     super.dispose();
   }
 
@@ -34,8 +34,8 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final searchResults = ref.watch(serpapiPlacesAutocompleteProvider(_searchQuery));
-    final selectedDropoffPlace = ref.watch(selectedDropoffPlaceProvider);
+    final searchResults =
+        ref.watch(serpapiPlacesAutocompleteProvider(_searchQuery));
 
     return Column(
       children: [
@@ -125,104 +125,109 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
               ),
               constraints: const BoxConstraints(maxHeight: 300),
               child: searchResults.when(
-              data: (predictions) {
-                if (predictions.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        const Icon(Icons.location_off, color: Colors.grey),
-                        const SizedBox(height: 8),
-                        Text(
-                          'No results found for "$_searchQuery"',
-                          style: const TextStyle(color: Colors.grey),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Searching in Malawi. Try a different search term',
-                          style: TextStyle(color: Colors.grey, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                return ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: predictions.length,
-                  itemBuilder: (context, index) {
-                    final prediction = predictions[index];
-
-                    return ListTile(
-                      leading: const Icon(Icons.location_on),
-                      title: Text(
-                        prediction.mainText,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w500,
-                        ),
+                data: (predictions) {
+                  if (predictions.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          const Icon(Icons.location_off, color: Colors.grey),
+                          const SizedBox(height: 8),
+                          Text(
+                            'No results found for "$_searchQuery"',
+                            style: const TextStyle(color: Colors.grey),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Searching in Malawi. Try a different search term',
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                        ],
                       ),
-                      subtitle: Text(
-                        prediction.secondaryText.isNotEmpty
-                            ? prediction.secondaryText
-                            : prediction.fullText,
-                        maxLines: 1,
+                    );
+                  }
+
+                  return ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: predictions.length,
+                    itemBuilder: (context, index) {
+                      final prediction = predictions[index];
+
+                      return ListTile(
+                        leading: const Icon(Icons.location_on),
+                        title: Text(
+                          prediction.mainText,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        subtitle: Text(
+                          prediction.secondaryText.isNotEmpty
+                              ? prediction.secondaryText
+                              : prediction.fullText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () {
+                          // Use coordinates from prediction (already available from search)
+                          if (prediction.latitude != null &&
+                              prediction.longitude != null) {
+                            final place = Place(
+                              id: prediction.placeId,
+                              name: prediction.mainText,
+                              address: prediction.fullText,
+                              latitude: prediction.latitude!,
+                              longitude: prediction.longitude!,
+                              type: PlaceType.RECENT,
+                            );
+
+                            ref
+                                .read(selectedDropoffPlaceProvider.notifier)
+                                .state = place;
+                            widget.searchController.clear();
+
+                            setState(() {
+                              _searchQuery = '';
+                            });
+                          } else {
+                            // Fallback: show error if coordinates not available
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      'Unable to get location coordinates')),
+                            );
+                          }
+                        },
+                      );
+                    },
+                  );
+                },
+                loading: () => const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: CircularProgressIndicator(),
+                ),
+                error: (error, stackTrace) => Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.red),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Error searching places',
+                        style: TextStyle(color: Colors.red[700]),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        error.toString(),
+                        style: TextStyle(color: Colors.red[600], fontSize: 11),
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      onTap: () {
-                        // Use coordinates from prediction (already available from search)
-                        if (prediction.latitude != null && prediction.longitude != null) {
-                          final place = Place(
-                            id: prediction.placeId,
-                            name: prediction.mainText,
-                            address: prediction.fullText,
-                            latitude: prediction.latitude!,
-                            longitude: prediction.longitude!,
-                            type: PlaceType.RECENT,
-                          );
-                          
-                          ref.read(selectedDropoffPlaceProvider.notifier).state = place;
-                          widget.searchController.clear();
-                          
-                          setState(() {
-                            _searchQuery = '';
-                          });
-                        } else {
-                          // Fallback: show error if coordinates not available
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Unable to get location coordinates')),
-                          );
-                        }
-                      },
-                    );
-                  },
-                );
-              },
-              loading: () => const Padding(
-                padding: EdgeInsets.all(16),
-                child: CircularProgressIndicator(),
-              ),
-              error: (error, stackTrace) => Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    const Icon(Icons.error_outline, color: Colors.red),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Error searching places',
-                      style: TextStyle(color: Colors.red[700]),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      error.toString(),
-                      style: TextStyle(color: Colors.red[600], fontSize: 11),
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
             ),
           ),
       ],

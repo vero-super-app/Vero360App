@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'dart:async' show unawaited;
 import 'package:vero360_app/Pages/ride_share/widgets/current_location_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/map_view_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/place_search_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/bookmarked_places_modal.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/vehicle_type_modal.dart';
+import 'package:vero360_app/Pages/ride_share/widgets/ride_waiting_screen.dart';
+import 'package:vero360_app/Pages/ride_share/widgets/ride_active_dialog.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
 import 'package:vero360_app/services/auth_storage.dart';
+import 'package:vero360_app/services/firebase_ride_share_service.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
   const RideShareMapScreen({super.key});
@@ -21,6 +25,12 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
   late GoogleMapController mapController;
   final TextEditingController _searchController = TextEditingController();
   bool _showBookmarkedPlaces = false;
+  bool _isLoadingRide = false;
+
+  @override
+  void initState() {
+    super.initState();
+  }
 
   @override
   void dispose() {
@@ -36,6 +46,88 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
     setState(() {
       _showBookmarkedPlaces = !_showBookmarkedPlaces;
     });
+  }
+
+  Future<void> _handleContinueToBooking(
+      WidgetRef ref, Place? dropoffPlace) async {
+    // Clear search controller to prevent disposal issues
+    _searchController.clear();
+
+    final currentLoc = ref.read(currentLocationProvider);
+
+    currentLoc.whenData((position) {
+      if (position != null && dropoffPlace != null) {
+        final pickupPlace = Place(
+          id: 'current_location',
+          name: 'Your Location',
+          address: 'Current Location',
+          latitude: position.latitude,
+          longitude: position.longitude,
+          type: PlaceType.RECENT,
+        );
+
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          barrierColor: Colors.black.withValues(alpha: 0.3),
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(20),
+            ),
+          ),
+          builder: (_) => VehicleTypeModal(
+            pickupPlace: pickupPlace,
+            dropoffPlace: dropoffPlace,
+            userLat: position.latitude,
+            userLng: position.longitude,
+            onRideRequested: (rideId) {
+              setState(() {
+                _isLoadingRide = true;
+              });
+              _showWaitingForDriverScreen(rideId);
+            },
+          ),
+        );
+      }
+    });
+  }
+
+  void _showWaitingForDriverScreen(String rideId) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      backgroundColor: Colors.transparent,
+      builder: (_) => RideWaitingScreen(
+        rideId: rideId,
+        onRideAccepted: (driver) {
+          setState(() {
+            _isLoadingRide = false;
+          });
+          _showRideActiveScreen(driver);
+        },
+        onCancelRide: () {
+          setState(() {
+            _isLoadingRide = false;
+          });
+          Navigator.pop(context);
+        },
+      ),
+    );
+  }
+
+  void _showRideActiveScreen(Driver driver) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => RideActiveDialog(
+        driver: driver,
+        onRideCompleted: () {
+          Navigator.pop(context);
+        },
+      ),
+    );
   }
 
   @override
@@ -140,7 +232,8 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                       const SizedBox(height: 16),
                       ElevatedButton(
                         onPressed: () {
-                          ref.refresh(currentLocationProvider);
+                          unawaited(
+                              ref.refresh(currentLocationProvider.future));
                         },
                         child: const Text('Retry'),
                       ),
@@ -157,7 +250,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                 child: SafeArea(
                   child: CurrentLocationWidget(
                     onRefresh: () {
-                      ref.refresh(currentLocationProvider);
+                      unawaited(ref.refresh(currentLocationProvider.future));
                     },
                   ),
                 ),
@@ -202,48 +295,29 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                         ),
                         elevation: 4,
                       ),
-                      onPressed: () {
-                        final currentLoc = ref.read(currentLocationProvider);
-                        currentLoc.whenData((position) {
-                          if (position != null &&
-                              selectedDropoffPlace != null) {
-                            final pickupPlace = Place(
-                              id: 'current_location',
-                              name: 'Your Location',
-                              address: 'Current Location',
-                              latitude: position.latitude,
-                              longitude: position.longitude,
-                              type: PlaceType.RECENT,
-                            );
-
-                            showModalBottomSheet(
-                              context: context,
-                              isScrollControlled: true,
-                              backgroundColor: Colors.transparent,
-                              barrierColor: Colors.black.withOpacity(0.3),
-                              shape: const RoundedRectangleBorder(
-                                borderRadius: BorderRadius.vertical(
-                                  top: Radius.circular(20),
+                      onPressed: _isLoadingRide
+                          ? null
+                          : () => _handleContinueToBooking(
+                              ref, selectedDropoffPlace),
+                      child: _isLoadingRide
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation(
+                                  Colors.white,
                                 ),
                               ),
-                              builder: (_) => VehicleTypeModal(
-                                pickupPlace: pickupPlace,
-                                dropoffPlace: selectedDropoffPlace,
-                                userLat: position.latitude,
-                                userLng: position.longitude,
+                            )
+                          : const Text(
+                              'Continue to Booking',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
                               ),
-                            );
-                          }
-                        });
-                      },
-                      child: const Text(
-                        'Continue to Booking',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
+                            ),
                     ),
                   ),
                 ),

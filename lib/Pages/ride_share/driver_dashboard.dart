@@ -278,12 +278,13 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: () {
-                // TODO: Navigate to ride requests screen
+                // Navigate to driver request screen
+                // Implement navigation when ready
               },
               icon: const Icon(Icons.local_taxi_outlined),
               label: const Text('View Ride Requests'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
+                backgroundColor: const Color(0xFFFF8A00),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),

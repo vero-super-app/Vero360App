@@ -61,6 +61,7 @@ dependencies:
   geocoding: ^4.0.0
   paychangu_flutter: ^0.0.1
   firebase_database: ^12.1.1
+  firebase_messaging: ^16.1.0
   socket_io_client: ^2.0.2
 
   # WebView support

@@ -28,6 +28,8 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
   bool _isCancelling = false;
   bool _callbackTriggered = false;
 
+  static const Color primaryColor = Color(0xFFFF8A00);
+
   @override
   void initState() {
     super.initState();
@@ -63,8 +65,8 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
           if (!_callbackTriggered) {
             _callbackTriggered = true;
             return StreamBuilder<Driver?>(
-              stream:
-                  FirebaseRideShareService.getDriverProfileStream(ride.driverId!),
+              stream: FirebaseRideShareService.getDriverProfileStream(
+                  ride.driverId!),
               builder: (context, driverSnapshot) {
                 if (driverSnapshot.hasData && driverSnapshot.data != null) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -82,200 +84,275 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
           }
         }
 
-        return DraggableScrollableSheet(
-          initialChildSize: 0.4,
-          minChildSize: 0.4,
-          maxChildSize: 0.6,
-          builder: (context, scrollController) {
+        return PopScope(
+          canPop: false,
+          child: GestureDetector(
+            onTap: () {}, // Prevent dismissal by tapping outside
+            child: DraggableScrollableSheet(
+              initialChildSize: 0.80,
+              minChildSize: 0.80,
+              maxChildSize: 0.80,
+              builder: (context, scrollController) {
             return Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.vertical(
+                borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(24),
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black12,
-                    blurRadius: 10,
-                    spreadRadius: 2,
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 24,
+                    offset: const Offset(0, -4),
                   ),
                 ],
               ),
               child: SingleChildScrollView(
                 controller: scrollController,
                 child: Padding(
-                  padding: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(20),
                   child: Column(
                     children: [
                       // Drag Handle
                       Container(
-                        width: 40,
+                        width: 36,
                         height: 4,
+                        margin: const EdgeInsets.only(bottom: 20),
                         decoration: BoxDecoration(
                           color: Colors.grey[300],
                           borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-                      const SizedBox(height: 24),
 
-                      // Animated Search Pulse
-                      ScaleTransition(
-                        scale: Tween<double>(begin: 1, end: 1.3).animate(
-                          CurvedAnimation(
-                            parent: _pulseController,
-                            curve: Curves.easeInOut,
-                          ),
-                        ),
-                        child: Container(
-                          width: 80,
-                          height: 80,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: const Color(0xFFFF8A00).withOpacity(0.1),
-                          ),
-                          child: const Icon(
-                            Icons.car_rental,
-                            size: 40,
-                            color: Color(0xFFFF8A00),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-
-                      // Status Text
-                      const Text(
-                        'Finding Driver',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-
-                      // Loading Dots
-                      SizedBox(
-                        height: 20,
-                        child: LoadingDots(controller: _dotController),
-                      ),
-                      const SizedBox(height: 32),
-
-                      // Ride Info Card
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[50],
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Colors.grey[200]!,
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            if (ride != null) ...[
-                              _buildInfoRow(
-                                'Pickup',
-                                ride.pickupAddress,
-                                Icons.location_on_outlined,
-                              ),
-                              const SizedBox(height: 12),
-                              _buildInfoRow(
-                                'Dropoff',
-                                ride.dropoffAddress,
-                                Icons.location_on,
-                              ),
-                              const SizedBox(height: 12),
-                              _buildInfoRow(
-                                'Estimated Fare',
-                                'MWK${ride.estimatedFare.toStringAsFixed(2)}',
-                                Icons.wallet_outlined,
-                              ),
-                              const SizedBox(height: 12),
-                              _buildInfoRow(
-                                'Estimated Time',
-                                '${ride.estimatedTime} mins',
-                                Icons.schedule,
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-
-                      // Cancel Button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: OutlinedButton(
-                          onPressed: _isCancelling
-                              ? null
-                              : () {
-                                  setState(() => _isCancelling = true);
-                                  FirebaseRideShareService.cancelRideRequest(
-                                    widget.rideId,
-                                  ).then((_) {
-                                    widget.onCancelRide();
-                                  }).catchError((_) {
-                                    if (mounted) {
-                                      setState(() => _isCancelling = false);
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            'Failed to cancel ride. Please try again.',
-                                          ),
-                                        ),
-                                      );
-                                    }
-                                  });
-                                },
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(
-                              color: Color(0xFFFF8A00),
+                      // Main content
+                      Column(
+                        children: [
+                          // Title
+                          const Text(
+                            'Finding your driver',
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black,
                             ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                            textAlign: TextAlign.center,
                           ),
-                          child: _isCancelling
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation(
-                                      Color(0xFFFF8A00),
-                                    ),
+
+                          const SizedBox(height: 24),
+
+                          // Animated Search Pulse with larger size
+                          ScaleTransition(
+                            scale: Tween<double>(begin: 1, end: 1.2).animate(
+                              CurvedAnimation(
+                                parent: _pulseController,
+                                curve: Curves.easeInOut,
+                              ),
+                            ),
+                            child: Container(
+                              width: 100,
+                              height: 100,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: primaryColor.withOpacity(0.08),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: primaryColor.withOpacity(0.15),
+                                    blurRadius: 20,
+                                    offset: const Offset(0, 4),
                                   ),
-                                )
-                              : const Text(
-                                  'Cancel Ride',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFFFF8A00),
+                                ],
+                              ),
+                              child: const Icon(
+                                Icons.directions_car_rounded,
+                                size: 48,
+                                color: primaryColor,
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 24),
+
+                          // Loading Dots
+                          SizedBox(
+                            height: 12,
+                            child: LoadingDots(controller: _dotController),
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          // Subtitle
+                          Text(
+                            'We\'re searching for nearby drivers',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[600],
+                              fontWeight: FontWeight.w500,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+
+                          const SizedBox(height: 32),
+
+                          // Ride Info Card
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[50],
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: Colors.grey[200]!,
+                                width: 1,
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                if (ride != null) ...[
+                                  _buildInfoRow(
+                                    'Pickup Location',
+                                    ride.pickupAddress,
+                                    Icons.location_on_rounded,
+                                    primaryColor,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Divider(color: Colors.grey[200]),
+                                  const SizedBox(height: 16),
+                                  _buildInfoRow(
+                                    'Dropoff Location',
+                                    ride.dropoffAddress,
+                                    Icons.location_on_rounded,
+                                    primaryColor,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Divider(color: Colors.grey[200]),
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildInfoRow(
+                                          'Estimated Fare',
+                                          'MK${ride.estimatedFare.toStringAsFixed(0)}',
+                                          Icons.wallet_giftcard_rounded,
+                                          primaryColor,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Expanded(
+                                        child: _buildInfoRow(
+                                          'Estimated Time',
+                                          '~${ride.estimatedTime} min',
+                                          Icons.schedule_rounded,
+                                          primaryColor,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(height: 24),
+
+                          // Cancel Button
+                          SizedBox(
+                            width: double.infinity,
+                            height: 52,
+                            child: ElevatedButton(
+                              onPressed: _isCancelling
+                                  ? null
+                                  : () {
+                                      setState(() => _isCancelling = true);
+                                      FirebaseRideShareService
+                                          .cancelRideRequest(
+                                        widget.rideId,
+                                      ).then((_) {
+                                        widget.onCancelRide();
+                                      }).catchError((_) {
+                                        if (mounted) {
+                                          setState(() => _isCancelling = false);
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            SnackBar(
+                                              content: const Text(
+                                                'Failed to cancel ride',
+                                              ),
+                                              backgroundColor: Colors.red[400],
+                                              behavior:
+                                                  SnackBarBehavior.floating,
+                                              margin: const EdgeInsets.all(16),
+                                            ),
+                                          );
+                                        }
+                                      });
+                                    },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  side: const BorderSide(
+                                    color: primaryColor,
+                                    width: 2,
                                   ),
                                 ),
-                        ),
+                                disabledBackgroundColor: Colors.grey[100],
+                              ),
+                              child: _isCancelling
+                                  ? const SizedBox(
+                                      height: 20,
+                                      width: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                        valueColor: AlwaysStoppedAnimation(
+                                          primaryColor,
+                                        ),
+                                      ),
+                                    )
+                                  : const Text(
+                                      'Cancel Ride',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: primaryColor,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
               ),
             );
-          },
+              },
+            ),
+          ),
         );
       },
     );
   }
 
-  Widget _buildInfoRow(String label, String value, IconData icon) {
+  Widget _buildInfoRow(
+    String label,
+    String value,
+    IconData icon,
+    Color iconColor,
+  ) {
     return Row(
       children: [
-        Icon(
-          icon,
-          size: 20,
-          color: const Color(0xFFFF8A00),
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: iconColor,
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -285,7 +362,7 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 11,
                   color: Colors.grey[600],
                   fontWeight: FontWeight.w500,
                 ),
@@ -332,10 +409,10 @@ class LoadingDots extends StatelessWidget {
             ),
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 5),
             child: Container(
-              width: 8,
-              height: 8,
+              width: 10,
+              height: 10,
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
                 color: Color(0xFFFF8A00),

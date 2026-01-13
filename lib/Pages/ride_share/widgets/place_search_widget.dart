@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
 import 'package:vero360_app/models/place_model.dart';
+import 'skeleton_loader.dart';
 
 class PlaceSearchWidget extends ConsumerStatefulWidget {
   final TextEditingController searchController;
@@ -21,10 +22,10 @@ class PlaceSearchWidget extends ConsumerStatefulWidget {
 
 class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
   String _searchQuery = '';
+  bool _isFocused = false;
 
   @override
   void dispose() {
-    // Don't dispose the controller - it's owned by the parent widget
     super.dispose();
   }
 
@@ -36,58 +37,95 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final searchResults =
-        ref.watch(serpapiPlacesAutocompleteProvider(_searchQuery));
+    final searchResults = ref.watch(serpapiPlacesAutocompleteProvider(_searchQuery));
 
     return Column(
       children: [
-        // Search bar for destination
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.1),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
+        // Modern search bar with glassmorphism effect
+        Focus(
+          onFocusChange: (focused) {
+            setState(() => _isFocused = focused);
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: _isFocused ? const Color(0xFFFF8A00) : Colors.grey[200]!,
+                width: _isFocused ? 2 : 1,
               ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: widget.searchController,
-                  focusNode: widget.focusNode,
-                  decoration: InputDecoration(
-                    hintText: 'Search destination...',
-                    hintStyle: TextStyle(color: Colors.grey[400]),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
+              boxShadow: [
+                if (_isFocused)
+                  BoxShadow(
+                    color: const Color(0xFFFF8A00).withOpacity(0.15),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  )
+                else
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.06),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(left: 12),
+                  child: Icon(
+                    Icons.location_on_rounded,
+                    color: _isFocused ? const Color(0xFFFF8A00) : Colors.grey[400],
+                    size: 22,
+                  ),
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: widget.searchController,
+                    focusNode: widget.focusNode,
+                    decoration: InputDecoration(
+                      hintText: 'Where to?',
+                      hintStyle: TextStyle(
+                        color: Colors.grey[400],
+                        fontSize: 15,
+                        fontWeight: FontWeight.w400,
+                      ),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 14,
+                      ),
                     ),
-                    prefixIcon: const Icon(
-                      Icons.location_on,
-                      color: Color(0xFFFF8A00),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    onChanged: _onSearchChanged,
+                  ),
+                ),
+                if (_searchQuery.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      color: Colors.grey[600],
+                      onPressed: () {
+                        widget.searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
                     ),
                   ),
-                  onChanged: _onSearchChanged,
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: IconButton(
-                  icon: const Icon(
-                    Icons.bookmark_outline,
-                    color: Color(0xFFFF8A00),
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: IconButton(
+                    icon: const Icon(Icons.bookmark_outline, size: 22),
+                    color: _isFocused ? const Color(0xFFFF8A00) : Colors.grey[600],
+                    onPressed: widget.onToggleBookmarkedPlaces,
+                    tooltip: 'Saved places',
                   ),
-                  onPressed: widget.onToggleBookmarkedPlaces,
-                  tooltip: 'Bookmarked places',
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
 
@@ -96,14 +134,14 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
         // Minimum length hint
         if (_searchQuery.isNotEmpty && _searchQuery.length < 4)
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Row(
               children: [
-                const Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                Icon(Icons.info_outline, color: Colors.orange[600], size: 16),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Type at least 4 characters to search',
+                    'Type at least 4 characters',
                     style: TextStyle(color: Colors.orange[700], fontSize: 12),
                   ),
                 ),
@@ -115,125 +153,182 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
         if (_searchQuery.isNotEmpty && _searchQuery.length >= 4)
           SingleChildScrollView(
             child: Container(
+              margin: const EdgeInsets.only(top: 4),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
                   ),
                 ],
               ),
-              constraints: const BoxConstraints(maxHeight: 300),
+              constraints: const BoxConstraints(maxHeight: 320),
               child: searchResults.when(
                 data: (predictions) {
                   if (predictions.isEmpty) {
-                    return Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        children: [
-                          const Icon(Icons.location_off, color: Colors.grey),
-                          const SizedBox(height: 8),
-                          Text(
-                            'No results found for "$_searchQuery"',
-                            style: const TextStyle(color: Colors.grey),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Searching in Malawi. Try a different search term',
-                            style: TextStyle(color: Colors.grey, fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    );
+                    return _buildEmptyState();
                   }
 
-                  return ListView.builder(
+                  return ListView.separated(
                     shrinkWrap: true,
                     itemCount: predictions.length,
+                    separatorBuilder: (_, __) => Divider(
+                      height: 1,
+                      color: Colors.grey[200],
+                      indent: 52,
+                    ),
                     itemBuilder: (context, index) {
                       final prediction = predictions[index];
 
-                      return ListTile(
-                        leading: const Icon(Icons.location_on),
-                        title: Text(
-                          prediction.mainText,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        subtitle: Text(
-                          prediction.secondaryText.isNotEmpty
-                              ? prediction.secondaryText
-                              : prediction.fullText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        onTap: () {
-                          // Use coordinates from prediction (already available from search)
-                          if (prediction.latitude != null &&
-                              prediction.longitude != null) {
-                            final place = Place(
-                              id: prediction.placeId,
-                              name: prediction.mainText,
-                              address: prediction.fullText,
-                              latitude: prediction.latitude!,
-                              longitude: prediction.longitude!,
-                              type: PlaceType.RECENT,
-                            );
-
-                            ref
-                                .read(selectedDropoffPlaceProvider.notifier)
-                                .state = place;
-                            widget.searchController.clear();
-
-                            setState(() {
-                              _searchQuery = '';
-                            });
-                          } else {
-                            // Fallback: show error if coordinates not available
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text(
-                                      'Unable to get location coordinates')),
-                            );
-                          }
-                        },
-                      );
+                      return _buildResultTile(prediction, context);
                     },
                   );
                 },
-                loading: () => const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: CircularProgressIndicator(),
+                loading: () => Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: SearchResultSkeletonLoader(),
                 ),
-                error: (error, stackTrace) => Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      const Icon(Icons.error_outline, color: Colors.red),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Error searching places',
-                        style: TextStyle(color: Colors.red[700]),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        error.toString(),
-                        style: TextStyle(color: Colors.red[600], fontSize: 11),
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
+                error: (error, stackTrace) => _buildErrorState(error),
               ),
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildResultTile(dynamic prediction, BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          if (prediction.latitude != null && prediction.longitude != null) {
+            final place = Place(
+              id: prediction.placeId,
+              name: prediction.mainText,
+              address: prediction.fullText,
+              latitude: prediction.latitude!,
+              longitude: prediction.longitude!,
+              type: PlaceType.RECENT,
+            );
+
+            ref.read(selectedDropoffPlaceProvider.notifier).state = place;
+            widget.searchController.clear();
+
+            setState(() {
+              _searchQuery = '';
+            });
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Unable to get location coordinates'),
+                behavior: SnackBarBehavior.floating,
+                margin: EdgeInsets.all(16),
+              ),
+            );
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF8A00).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.location_on_rounded,
+                  color: Color(0xFFFF8A00),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      prediction.mainText,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      prediction.secondaryText.isNotEmpty
+                          ? prediction.secondaryText
+                          : prediction.fullText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.location_off_outlined, size: 40, color: Colors.grey[400]),
+          const SizedBox(height: 12),
+          Text(
+            'No results found',
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Try searching for a different location',
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(Object error) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.error_outline, color: Colors.red[400], size: 40),
+          const SizedBox(height: 12),
+          Text(
+            'Search error',
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Please try again',
+            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
     );
   }
 }

@@ -6,6 +6,7 @@ import 'package:vero360_app/Pages/ride_share/widgets/current_location_widget.dar
 import 'package:vero360_app/Pages/ride_share/widgets/map_view_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/place_search_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/bookmarked_places_modal.dart';
+import 'package:vero360_app/Pages/ride_share/widgets/trip_selector_card.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/vehicle_type_modal.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/ride_waiting_screen.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/user_awaiting_driver_screen.dart';
@@ -80,7 +81,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
           barrierColor: Colors.black.withOpacity(0.3),
           shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.vertical(
-              top: Radius.circular(20),
+              top: Radius.circular(24),
             ),
           ),
           builder: (_) => VehicleTypeModal(
@@ -133,14 +134,14 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
 
     currentLoc.whenData((position) {
       print('DEBUG: Current position - ${position?.latitude}, ${position?.longitude}');
-      
+
       if (mounted && position != null && selectedDropoffPlace != null) {
         print('DEBUG: Navigating to UserAwaitingDriverScreen');
-        
+
         if (Navigator.canPop(context)) {
           Navigator.pop(context); // Close waiting screen
         }
-        
+
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -246,7 +247,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
     final selectedDropoffPlace = ref.watch(selectedDropoffPlaceProvider);
 
     return Scaffold(
-      resizeToAvoidBottomInset: true, // ✅ Keeps keyboard from hiding
+      resizeToAvoidBottomInset: true,
       body: FutureBuilder<bool>(
         future: AuthStorage.isLoggedIn(),
         builder: (context, authSnapshot) {
@@ -255,59 +256,12 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
           }
 
           if (!(authSnapshot.data ?? false)) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.lock_outline, size: 64, color: Colors.grey),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Authentication Required',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Please sign up or log in to use the ride-sharing service',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  ElevatedButton(
-                    onPressed: () => Navigator.pushNamedAndRemoveUntil(
-                      context,
-                      '/login',
-                      (route) => false,
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF8A00),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 32,
-                        vertical: 12,
-                      ),
-                    ),
-                    child: const Text(
-                      'Go to Login',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            );
+            return _buildAuthRequiredScreen();
           }
 
           return Stack(
             children: [
-              // ✅ Isolated map rebuilds to prevent keyboard loss
+              // Map section
               Consumer(
                 builder: (context, ref, _) {
                   final currentLocation = ref.watch(currentLocationProvider);
@@ -331,21 +285,27 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                         dropoffPlace: selectedDropoffPlace,
                       );
                     },
-                    loading: () =>
-                        const Center(child: CircularProgressIndicator()),
+                    loading: () => const Center(child: CircularProgressIndicator()),
                     error: (_, __) => Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Text('Error loading location'),
+                          const Icon(Icons.location_off, size: 48, color: Colors.grey),
                           const SizedBox(height: 16),
-                          ElevatedButton(
+                          const Text(
+                            'Unable to load location',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
                             onPressed: () {
-                              unawaited(
-                                ref.refresh(currentLocationProvider.future),
-                              );
+                              unawaited(ref.refresh(currentLocationProvider.future));
                             },
-                            child: const Text('Retry'),
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Retry'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFFF8A00),
+                            ),
                           ),
                         ],
                       ),
@@ -354,29 +314,48 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                 },
               ),
 
-              // Top container
+              // Top unified trip selector card
               Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: SafeArea(
-                  child: CurrentLocationWidget(
-                    onRefresh: () {
-                      unawaited(ref.refresh(currentLocationProvider.future));
-                    },
-                  ),
-                ),
-              ),
-
-              // ✅ Stable Search Bar (does not rebuild)
-              Positioned(
-                top: 130,
+                top: 16,
                 left: 16,
                 right: 16,
-                child: PlaceSearchWidget(
-                  searchController: _searchController,
-                  focusNode: _searchFocusNode,
-                  onToggleBookmarkedPlaces: _toggleBookmarkedPlacesModal,
+                child: SafeArea(
+                  child: Consumer(
+                    builder: (context, ref, _) {
+                      final currentLocation = ref.watch(currentLocationProvider);
+                      return currentLocation.when(
+                        data: (position) {
+                          return Column(
+                            children: [
+                              // Trip selector card
+                              TripSelectorCard(
+                                currentLocation: 'Your Location',
+                                selectedDropoffPlace: selectedDropoffPlace,
+                                onSelectDropoff: _focusSearchBar,
+                              ),
+                              const SizedBox(height: 12),
+                              // Search results below
+                              PlaceSearchWidget(
+                                searchController: _searchController,
+                                focusNode: _searchFocusNode,
+                                onToggleBookmarkedPlaces: _toggleBookmarkedPlacesModal,
+                              ),
+                            ],
+                          );
+                        },
+                        loading: () => TripSelectorCard(
+                          currentLocation: 'Loading location...',
+                          selectedDropoffPlace: selectedDropoffPlace,
+                          onSelectDropoff: _focusSearchBar,
+                        ),
+                        error: (_, __) => TripSelectorCard(
+                          currentLocation: 'Location error',
+                          selectedDropoffPlace: selectedDropoffPlace,
+                          onSelectDropoff: _focusSearchBar,
+                        ),
+                      );
+                    },
+                  ),
                 ),
               ),
 
@@ -391,58 +370,216 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                   ),
                 ),
 
-              // Continue / Search Button
+              // Modern bottom action sheet with glassmorphism
               Positioned(
-                bottom: 24,
-                left: 16,
-                right: 16,
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF8A00),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 4,
-                    ),
-                    onPressed: _isLoadingRide
-                        ? null
-                        : () => _handleBottomButtonPressed(
-                            ref, selectedDropoffPlace),
-                    icon: _isLoadingRide
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor:
-                                  AlwaysStoppedAnimation<Color>(Colors.white),
-                            ),
-                          )
-                        : Icon(
-                            selectedDropoffPlace == null
-                                ? Icons.search
-                                : Icons.arrow_forward_rounded,
-                            color: Colors.white,
-                          ),
-                    label: Text(
-                      selectedDropoffPlace == null
-                          ? 'Search Destination'
-                          : 'Continue to Booking',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: _buildModernBottomSheet(selectedDropoffPlace),
               ),
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildAuthRequiredScreen() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            const Color(0xFFFF8A00).withOpacity(0.1),
+            Colors.white,
+          ],
+        ),
+      ),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF8A00).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Icon(
+                  Icons.lock_outline,
+                  size: 40,
+                  color: Color(0xFFFF8A00),
+                ),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Sign in to continue',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Book rides and explore our ride-sharing service',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: Colors.grey[600],
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pushNamedAndRemoveUntil(
+                    context,
+                    '/login',
+                    (route) => false,
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF8A00),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                  ),
+                  child: const Text(
+                    'Go to Login',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () => Navigator.pushNamedAndRemoveUntil(
+                  context,
+                  '/signup',
+                  (route) => false,
+                ),
+                child: const Text(
+                  'Create an account',
+                  style: TextStyle(
+                    color: Color(0xFFFF8A00),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModernBottomSheet(Place? selectedDropoffPlace) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 24,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+
+            // Action button
+            SizedBox(
+              width: double.infinity,
+              height: 56,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF8A00),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  elevation: 0,
+                  disabledBackgroundColor: Colors.grey[300],
+                ),
+                onPressed: _isLoadingRide
+                    ? null
+                    : () => _handleBottomButtonPressed(ref, selectedDropoffPlace),
+                icon: _isLoadingRide
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : Icon(
+                        selectedDropoffPlace == null ? Icons.search : Icons.arrow_forward_rounded,
+                        color: Colors.white,
+                        size: 22,
+                      ),
+                label: Text(
+                  selectedDropoffPlace == null ? 'Search Destination' : 'Continue to Booking',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+
+            // Quick info
+            if (selectedDropoffPlace != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF8A00).withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 16, color: Colors.grey[700]),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Select a vehicle type to proceed',
+                          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

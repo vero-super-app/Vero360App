@@ -24,6 +24,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
   final TextEditingController _messageController = TextEditingController();
   late ScrollController _scrollController;
   bool _isSending = false;
+  static const Color primaryColor = Color(0xFFFF8A00);
 
   @override
   void initState() {
@@ -58,7 +59,6 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
         senderAvatar: widget.driverAvatar,
       );
 
-      // Scroll to bottom
       Future.delayed(const Duration(milliseconds: 100), () {
         if (_scrollController.hasClients) {
           _scrollController.animateTo(
@@ -70,7 +70,12 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
       });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send: $e')),
+        SnackBar(
+          content: Text('Failed to send: $e'),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+        ),
       );
       _messageController.text = text;
     } finally {
@@ -83,10 +88,12 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: const Text('Chat with Passenger'),
-        backgroundColor: const Color(0xFFFF8A00),
+        backgroundColor: primaryColor,
         elevation: 0,
+        centerTitle: false,
       ),
       body: Column(
         children: [
@@ -116,10 +123,25 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
         final ride = snapshot.data!;
 
         return Container(
-          color: Colors.grey[50],
-          padding: const EdgeInsets.all(12),
+          color: Colors.white,
+          padding: const EdgeInsets.all(16),
+          margin: const EdgeInsets.only(bottom: 1),
           child: Row(
             children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: primaryColor.withOpacity(0.1),
+                ),
+                child: const Icon(
+                  Icons.person,
+                  color: primaryColor,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -128,26 +150,48 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
                       ride.passengerName,
                       style: const TextStyle(
                         fontSize: 14,
-                        fontWeight: FontWeight.bold,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black87,
                       ),
                     ),
-                    Text(
-                      'Status: ${ride.status}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: _getStatusColor(ride.status),
-                        fontWeight: FontWeight.w600,
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _getStatusColor(ride.status).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: _getStatusColor(ride.status).withOpacity(0.3),
+                        ),
+                      ),
+                      child: Text(
+                        ride.status.toUpperCase(),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: _getStatusColor(ride.status),
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
               if (ride.passengerPhone != null)
-                IconButton(
-                  icon: const Icon(Icons.phone, color: Color(0xFFFF8A00)),
-                  onPressed: () {
-                    // Implement phone call
-                  },
+                Container(
+                  decoration: BoxDecoration(
+                    color: primaryColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.phone, color: primaryColor),
+                    onPressed: () {
+                      // Implement phone call
+                    },
+                    iconSize: 20,
+                  ),
                 ),
             ],
           ),
@@ -166,7 +210,32 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
 
         if (snapshot.hasError) {
           return Center(
-            child: Text('Error: ${snapshot.error}'),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.error_outline,
+                    size: 32,
+                    color: Colors.red.shade400,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Error: ${snapshot.error}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Colors.black87,
+                  ),
+                ),
+              ],
+            ),
           );
         }
 
@@ -177,17 +246,34 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.chat_outlined,
-                  size: 48,
-                  color: Colors.grey[400],
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.chat_outlined,
+                    size: 32,
+                    color: Colors.grey[400],
+                  ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 Text(
                   'No messages yet',
                   style: TextStyle(
                     fontSize: 14,
+                    fontWeight: FontWeight.w600,
                     color: Colors.grey[600],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Start a conversation with the passenger',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[500],
                   ),
                 ),
               ],
@@ -225,7 +311,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
 
     if (isSystem) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: 12),
         child: Center(
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -239,6 +325,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
                 fontSize: 12,
                 color: Colors.grey[700],
                 fontStyle: FontStyle.italic,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ),
@@ -249,19 +336,29 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(vertical: 6),
         child: Column(
           crossAxisAlignment:
               isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           children: [
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color: isMe
-                    ? const Color(0xFFFF8A00)
-                    : Colors.grey[200],
-                borderRadius: BorderRadius.circular(12),
+                color: isMe ? primaryColor : Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: isMe
+                    ? null
+                    : Border.all(
+                        color: Colors.grey[200]!,
+                      ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               child: ConstrainedBox(
                 constraints: BoxConstraints(
@@ -272,17 +369,19 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
                   style: TextStyle(
                     fontSize: 14,
                     color: isMe ? Colors.white : Colors.black87,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               child: Text(
                 _formatTime(message.sentAt),
                 style: TextStyle(
                   fontSize: 10,
-                  color: Colors.grey[600],
+                  color: Colors.grey[500],
+                  fontWeight: FontWeight.w400,
                 ),
               ),
             ),
@@ -301,44 +400,80 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
           top: BorderSide(color: Colors.grey[200]!),
         ),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _messageController,
-              decoration: InputDecoration(
-                hintText: 'Type a message...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _messageController,
+                decoration: InputDecoration(
+                  hintText: 'Type a message...',
+                  hintStyle: TextStyle(
+                    color: Colors.grey[500],
+                    fontWeight: FontWeight.w400,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                    borderSide: BorderSide(color: Colors.grey[200]!),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                    borderSide: const BorderSide(color: primaryColor, width: 2),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[50],
                 ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
+                maxLines: null,
                 enabled: !_isSending,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: Colors.black87,
+                ),
               ),
-              maxLines: null,
-              enabled: !_isSending,
             ),
-          ),
-          const SizedBox(width: 8),
-          FloatingActionButton(
-            onPressed: _isSending ? null : _sendMessage,
-            backgroundColor: const Color(0xFFFF8A00),
-            mini: true,
-            child: _isSending
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(Colors.white),
-                    ),
-                  )
-                : const Icon(Icons.send),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: _isSending ? Colors.grey[300] : primaryColor,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _isSending ? null : _sendMessage,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: _isSending
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor:
+                                  AlwaysStoppedAnimation(Colors.white),
+                            ),
+                          )
+                        : const Icon(
+                            Icons.send_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

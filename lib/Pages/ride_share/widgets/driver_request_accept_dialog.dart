@@ -34,6 +34,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
   late AnimationController _pulseController;
   bool _isAccepting = false;
   bool _isRejecting = false;
+  static const Color primaryColor = Color(0xFFFF8A00);
 
   @override
   void initState() {
@@ -54,7 +55,6 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
     setState(() => _isAccepting = true);
 
     try {
-      // Accept the ride request
       await DriverRequestService.acceptRideRequest(
         rideId: widget.request.id,
         driverId: widget.driverId,
@@ -63,7 +63,6 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         driverAvatar: widget.driverAvatar,
       );
 
-      // Create messaging thread
       await DriverMessagingService.ensureRideThread(
         rideId: widget.request.id,
         passengerId: widget.request.passengerId,
@@ -74,7 +73,6 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         driverAvatar: widget.driverAvatar,
       );
 
-      // Send system message
       await DriverMessagingService.sendSystemMessage(
         rideId: widget.request.id,
         message: '${widget.driverName} accepted your ride request',
@@ -82,8 +80,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
 
       if (mounted) {
         Navigator.of(context).pop(true);
-        
-        // Navigate to driver pickup route screen
+
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (context) => DriverPickupRouteScreen(
@@ -93,11 +90,10 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
               pickupAddress: widget.request.pickupAddress,
               pickupLat: widget.request.pickupLat,
               pickupLng: widget.request.pickupLng,
-              driverLat: 0.0, // Get current driver location
-              driverLng: 0.0, // Get current driver location
+              driverLat: 0.0,
+              driverLng: 0.0,
               estimatedFare: widget.request.estimatedFare,
               onArrived: () {
-                // Navigate to driver ride active screen
                 Navigator.of(context).pushReplacement(
                   MaterialPageRoute(
                     builder: (context) => DriverRideActiveScreen(
@@ -112,7 +108,8 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                       estimatedFare: widget.request.estimatedFare,
                       onRideCompleted: () {
                         widget.onAccepted?.call();
-                        Navigator.of(context).popUntil((route) => route.isFirst);
+                        Navigator.of(context)
+                            .popUntil((route) => route.isFirst);
                       },
                     ),
                   ),
@@ -123,7 +120,12 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         );
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ride request accepted')),
+          SnackBar(
+            content: const Text('Ride request accepted! Navigate to pickup.'),
+            backgroundColor: Colors.green.shade600,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
         );
       }
     } catch (e) {
@@ -132,7 +134,9 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to accept ride: ${e.toString()}'),
-            backgroundColor: Colors.red,
+            backgroundColor: Colors.red.shade600,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
           ),
         );
       }
@@ -150,7 +154,12 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         widget.onRejected?.call();
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ride request rejected')),
+          SnackBar(
+            content: const Text('Ride request rejected'),
+            backgroundColor: Colors.orange.shade600,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
         );
       }
     } catch (e) {
@@ -159,7 +168,9 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to reject ride: ${e.toString()}'),
-            backgroundColor: Colors.red,
+            backgroundColor: Colors.red.shade600,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
           ),
         );
       }
@@ -169,157 +180,202 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Alert Icon with pulse animation
-            Padding(
-              padding: const EdgeInsets.only(top: 24),
-              child: ScaleTransition(
-                scale: Tween<double>(begin: 1.0, end: 1.2).animate(
-                  CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+            // Top colored header
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [primaryColor, primaryColor.withOpacity(0.8)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
-                child: Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: const Color(0xFFFF8A00).withOpacity(0.1),
-                  ),
-                  child: const Icon(
-                    Icons.local_taxi,
-                    size: 40,
-                    color: Color(0xFFFF8A00),
-                  ),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(20),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-
-            // Title
-            const Text(
-              'New Ride Request',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Passenger Info
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Card(
-                color: Colors.grey[50],
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Passenger name
-                      Text(
-                        'Passenger: ${widget.request.passengerName}',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-
-                      // Pickup
-                      _buildLocationRow(
-                        icon: Icons.location_on_outlined,
-                        label: 'Pickup',
-                        address: widget.request.pickupAddress,
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Dropoff
-                      _buildLocationRow(
-                        icon: Icons.location_on,
-                        label: 'Dropoff',
-                        address: widget.request.dropoffAddress,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // Fare and Time Info
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
+              child: Column(
                 children: [
-                  Expanded(
-                    child: _buildInfoBox(
-                      icon: Icons.wallet_outlined,
-                      label: 'Estimated Fare',
-                      value: 'MWK${widget.request.estimatedFare.toStringAsFixed(2)}',
+                  // Animated Icon
+                  ScaleTransition(
+                    scale: Tween<double>(begin: 1.0, end: 1.15).animate(
+                      CurvedAnimation(
+                        parent: _pulseController,
+                        curve: Curves.easeInOut,
+                      ),
+                    ),
+                    child: Container(
+                      width: 70,
+                      height: 70,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.2),
+                      ),
+                      child: const Icon(
+                        Icons.local_taxi,
+                        size: 36,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildInfoBox(
-                      icon: Icons.schedule,
-                      label: 'Est. Time',
-                      value: '${widget.request.estimatedTime} mins',
+                  const SizedBox(height: 16),
+                  const Text(
+                    'New Ride Request',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
 
-            // Distance info
+            // Content
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _buildInfoBox(
-                icon: Icons.straighten,
-                label: 'Distance',
-                value: '${widget.request.estimatedDistance.toStringAsFixed(2)} km',
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // Action Buttons
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.all(24),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Accept Button
+                  // Passenger Info
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[50],
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey[200]!),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: primaryColor.withOpacity(0.1),
+                              ),
+                              child: Icon(
+                                Icons.person,
+                                color: primaryColor,
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    widget.request.passengerName,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.black87,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Passenger',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Container(height: 1, color: Colors.grey[200]),
+                        const SizedBox(height: 16),
+                        _buildLocationRow(
+                          icon: Icons.location_on_outlined,
+                          label: 'Pickup',
+                          address: widget.request.pickupAddress,
+                          color: Colors.green,
+                        ),
+                        const SizedBox(height: 12),
+                        _buildLocationRow(
+                          icon: Icons.location_on,
+                          label: 'Dropoff',
+                          address: widget.request.dropoffAddress,
+                          color: Colors.red,
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Metrics Row
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildMetricBox(
+                          icon: Icons.wallet_outlined,
+                          label: 'Estimated Fare',
+                          value: 'MK${widget.request.estimatedFare.toStringAsFixed(0)}',
+                          color: Colors.blue,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildMetricBox(
+                          icon: Icons.schedule,
+                          label: 'Est. Time',
+                          value: '${widget.request.estimatedTime} min',
+                          color: Colors.orange,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildMetricBox(
+                          icon: Icons.straighten,
+                          label: 'Distance',
+                          value:
+                              '${widget.request.estimatedDistance.toStringAsFixed(1)} km',
+                          color: Colors.purple,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // Action Buttons
                   SizedBox(
                     width: double.infinity,
-                    height: 48,
+                    height: 56,
                     child: ElevatedButton.icon(
                       onPressed: _isAccepting || _isRejecting
                           ? null
                           : _acceptRequest,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF8A00),
+                        backgroundColor: primaryColor,
                         foregroundColor: Colors.white,
                         disabledBackgroundColor: Colors.grey[300],
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
+                        elevation: 0,
                       ),
                       icon: _isAccepting
                           ? const SizedBox(
                               height: 20,
                               width: 20,
                               child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor:
-                                    AlwaysStoppedAnimation(Colors.white),
+                                strokeWidth: 2.5,
+                                valueColor: AlwaysStoppedAnimation(Colors.white),
                               ),
                             )
                           : const Icon(Icons.check_circle_outline),
@@ -327,47 +383,50 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                         _isAccepting ? 'Accepting...' : 'Accept Ride',
                         style: const TextStyle(
                           fontSize: 16,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
                   ),
+
                   const SizedBox(height: 12),
 
-                  // Reject Button
                   SizedBox(
                     width: double.infinity,
-                    height: 48,
+                    height: 56,
                     child: OutlinedButton.icon(
                       onPressed: _isAccepting || _isRejecting
                           ? null
                           : _rejectRequest,
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(
-                          color: Color(0xFFFF8A00),
+                        side: BorderSide(
+                          color: _isRejecting ? Colors.grey : primaryColor,
+                          width: 2,
                         ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
+                        disabledForegroundColor: Colors.grey,
                       ),
                       icon: _isRejecting
                           ? const SizedBox(
                               height: 20,
                               width: 20,
                               child: CircularProgressIndicator(
-                                strokeWidth: 2,
+                                strokeWidth: 2.5,
                                 valueColor: AlwaysStoppedAnimation(
-                                  Color(0xFFFF8A00),
+                                  primaryColor,
                                 ),
                               ),
                             )
                           : const Icon(Icons.close_outlined),
                       label: Text(
                         _isRejecting ? 'Rejecting...' : 'Reject Ride',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFFFF8A00),
+                          fontWeight: FontWeight.w700,
+                          color:
+                              _isRejecting ? Colors.grey : primaryColor,
                         ),
                       ),
                     ),
@@ -375,7 +434,6 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                 ],
               ),
             ),
-            const SizedBox(height: 24),
           ],
         ),
       ),
@@ -386,11 +444,20 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
     required IconData icon,
     required String label,
     required String address,
+    required Color color,
   }) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 18, color: const Color(0xFFFF8A00)),
-        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 16, color: color),
+        ),
+        const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -403,11 +470,11 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 4),
               Text(
                 address,
                 style: const TextStyle(
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: Colors.black87,
                 ),
@@ -421,37 +488,39 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
     );
   }
 
-  Widget _buildInfoBox({
+  Widget _buildMetricBox({
     required IconData icon,
     required String label,
     required String value,
+    required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[200]!),
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
       ),
       child: Column(
         children: [
-          Icon(icon, size: 16, color: const Color(0xFFFF8A00)),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 2),
+          Icon(icon, size: 18, color: color),
+          const SizedBox(height: 6),
           Text(
             value,
             style: const TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w700,
               color: Colors.black87,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 9,
+              color: Colors.grey[600],
+              fontWeight: FontWeight.w500,
             ),
             textAlign: TextAlign.center,
           ),

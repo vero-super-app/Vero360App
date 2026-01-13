@@ -35,6 +35,7 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
   GoogleMapController? mapController;
   final Set<Marker> markers = {};
   final Set<Polyline> polylines = {};
+  static const Color primaryColor = Color(0xFFFF8A00);
 
   @override
   void initState() {
@@ -78,7 +79,7 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
             LatLng(widget.driverLat, widget.driverLng),
             LatLng(widget.pickupLat, widget.pickupLng),
           ],
-          color: const Color(0xFFFF8A00),
+          color: primaryColor,
           width: 5,
         ),
       );
@@ -89,14 +90,32 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Mark as Arrived?'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Mark as Arrived?',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+          ),
+        ),
         content: const Text(
           'Confirm that you have arrived at the pickup location.',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.black87,
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Not Yet'),
+            child: const Text(
+              'Not Yet',
+              style: TextStyle(
+                color: Colors.grey,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
           ElevatedButton(
             onPressed: () {
@@ -104,9 +123,19 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
               widget.onArrived();
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50),
+              backgroundColor: Colors.green.shade600,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              elevation: 0,
             ),
-            child: const Text('Yes, Arrived'),
+            child: const Text(
+              'Yes, Arrived',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
@@ -146,10 +175,17 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
             left: 16,
             right: 16,
             child: SafeArea(
-              child: Card(
-                elevation: 4,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 20,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -161,18 +197,28 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey[600],
-                          fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 12),
                       Row(
                         children: [
-                          CircleAvatar(
-                            radius: 24,
-                            backgroundColor: Colors.grey[200],
-                            child: const Icon(
-                              Icons.person,
-                              color: Colors.grey,
+                          Container(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: primaryColor.withOpacity(0.2),
+                                width: 2,
+                              ),
+                            ),
+                            child: CircleAvatar(
+                              radius: 24,
+                              backgroundColor: primaryColor.withOpacity(0.1),
+                              child: Icon(
+                                Icons.person,
+                                color: primaryColor,
+                                size: 24,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -184,7 +230,8 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
                                   widget.passengerName,
                                   style: const TextStyle(
                                     fontSize: 16,
-                                    fontWeight: FontWeight.bold,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.black87,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
@@ -193,6 +240,7 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
                                   style: TextStyle(
                                     fontSize: 13,
                                     color: Colors.grey[600],
+                                    fontWeight: FontWeight.w500,
                                   ),
                                 ),
                               ],
@@ -204,15 +252,18 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
                               vertical: 6,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFFF8A00).withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(6),
+                              color: primaryColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: primaryColor.withOpacity(0.3),
+                              ),
                             ),
                             child: Text(
                               'MK${widget.estimatedFare.toStringAsFixed(0)}',
                               style: const TextStyle(
                                 fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFFFF8A00),
+                                fontWeight: FontWeight.w700,
+                                color: primaryColor,
                               ),
                             ),
                           ),
@@ -230,10 +281,17 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
             bottom: 16,
             left: 16,
             right: 16,
-            child: Card(
-              elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 20,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -246,7 +304,7 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
                             color: Colors.green.shade50,
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(10),
                           ),
                           child: Icon(
                             Icons.location_on,
@@ -273,6 +331,7 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
                                 style: const TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
+                                  color: Colors.black87,
                                 ),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
@@ -285,20 +344,21 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
                     const SizedBox(height: 16),
                     SizedBox(
                       width: double.infinity,
-                      height: 48,
+                      height: 52,
                       child: ElevatedButton(
                         onPressed: _handleArrived,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4CAF50),
+                          backgroundColor: Colors.green.shade600,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
+                          elevation: 0,
                         ),
                         child: const Text(
                           'I Have Arrived',
                           style: TextStyle(
                             fontSize: 16,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w700,
                             color: Colors.white,
                           ),
                         ),
@@ -320,12 +380,20 @@ class _DriverPickupRouteScreenState extends State<DriverPickupRouteScreen> {
     try {
       LatLngBounds bounds = LatLngBounds(
         southwest: LatLng(
-          widget.pickupLat < widget.driverLat ? widget.pickupLat : widget.driverLat,
-          widget.pickupLng < widget.driverLng ? widget.pickupLng : widget.driverLng,
+          widget.pickupLat < widget.driverLat
+              ? widget.pickupLat
+              : widget.driverLat,
+          widget.pickupLng < widget.driverLng
+              ? widget.pickupLng
+              : widget.driverLng,
         ),
         northeast: LatLng(
-          widget.pickupLat > widget.driverLat ? widget.pickupLat : widget.driverLat,
-          widget.pickupLng > widget.driverLng ? widget.pickupLng : widget.driverLng,
+          widget.pickupLat > widget.driverLat
+              ? widget.pickupLat
+              : widget.driverLat,
+          widget.pickupLng > widget.driverLng
+              ? widget.pickupLng
+              : widget.driverLng,
         ),
       );
 

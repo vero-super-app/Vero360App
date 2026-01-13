@@ -35,6 +35,7 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
   final Set<Marker> markers = {};
   final Set<Polyline> polylines = {};
   bool _isCompletingRide = false;
+  static const Color primaryColor = Color(0xFFFF8A00);
 
   @override
   void initState() {
@@ -75,7 +76,7 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
             LatLng(widget.pickupLat, widget.pickupLng),
             LatLng(widget.dropoffLat, widget.dropoffLng),
           ],
-          color: const Color(0xFFFF8A00),
+          color: primaryColor,
           width: 5,
           geodesic: true,
         ),
@@ -88,14 +89,32 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text('Complete Ride?'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Complete Ride?',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+          ),
+        ),
         content: const Text(
           'Confirm that the passenger has reached their destination.',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.black87,
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Not Yet'),
+            child: const Text(
+              'Not Yet',
+              style: TextStyle(
+                color: Colors.grey,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
           ElevatedButton(
             onPressed: () {
@@ -108,9 +127,19 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
               });
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50),
+              backgroundColor: Colors.green.shade600,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              elevation: 0,
             ),
-            child: const Text('Yes, Complete'),
+            child: const Text(
+              'Yes, Complete',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
@@ -150,10 +179,17 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
             left: 16,
             right: 16,
             child: SafeArea(
-              child: Card(
-                elevation: 4,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 20,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -165,18 +201,28 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey[600],
-                          fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 12),
                       Row(
                         children: [
-                          CircleAvatar(
-                            radius: 24,
-                            backgroundColor: Colors.grey[200],
-                            child: const Icon(
-                              Icons.person,
-                              color: Colors.grey,
+                          Container(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: primaryColor.withOpacity(0.2),
+                                width: 2,
+                              ),
+                            ),
+                            child: CircleAvatar(
+                              radius: 24,
+                              backgroundColor: primaryColor.withOpacity(0.1),
+                              child: Icon(
+                                Icons.person,
+                                color: primaryColor,
+                                size: 24,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -185,7 +231,8 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
                               widget.passengerName,
                               style: const TextStyle(
                                 fontSize: 16,
-                                fontWeight: FontWeight.bold,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.black87,
                               ),
                             ),
                           ),
@@ -195,15 +242,18 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
                               vertical: 6,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF4CAF50).withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(6),
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: Colors.green.shade200,
+                              ),
                             ),
-                            child: const Text(
+                            child: Text(
                               'In Progress',
                               style: TextStyle(
                                 fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF4CAF50),
+                                fontWeight: FontWeight.w600,
+                                color: Colors.green.shade600,
                               ),
                             ),
                           ),
@@ -221,60 +271,29 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
             bottom: 16,
             left: 16,
             right: 16,
-            child: Card(
-              elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 20,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.green.shade50,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            Icons.location_on,
-                            color: Colors.green.shade600,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Pickup',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                widget.pickupAddress,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                    _buildLocationRow(
+                      icon: Icons.location_on,
+                      label: 'Pickup',
+                      address: widget.pickupAddress,
+                      color: Colors.green,
                     ),
                     const SizedBox(height: 12),
-
                     Padding(
                       padding: const EdgeInsets.only(left: 20),
                       child: Container(
@@ -284,70 +303,33 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade50,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            Icons.location_on,
-                            color: Colors.red.shade600,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Dropoff',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                widget.dropoffAddress,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                    _buildLocationRow(
+                      icon: Icons.location_on,
+                      label: 'Dropoff',
+                      address: widget.dropoffAddress,
+                      color: Colors.red,
                     ),
                     const SizedBox(height: 16),
-
                     SizedBox(
                       width: double.infinity,
-                      height: 48,
+                      height: 52,
                       child: ElevatedButton(
                         onPressed:
                             _isCompletingRide ? null : _handleCompleteRide,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4CAF50),
+                          backgroundColor: Colors.green.shade600,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
+                          elevation: 0,
+                          disabledBackgroundColor: Colors.grey[300],
                         ),
                         child: _isCompletingRide
                             ? const SizedBox(
                                 height: 20,
                                 width: 20,
                                 child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                                  strokeWidth: 2.5,
                                   valueColor: AlwaysStoppedAnimation<Color>(
                                     Colors.white,
                                   ),
@@ -357,7 +339,7 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
                                 'Complete Ride',
                                 style: TextStyle(
                                   fontSize: 16,
-                                  fontWeight: FontWeight.bold,
+                                  fontWeight: FontWeight.w700,
                                   color: Colors.white,
                                 ),
                               ),
@@ -373,18 +355,78 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
     );
   }
 
+  Widget _buildLocationRow({
+    required IconData icon,
+    required String label,
+    required String address,
+    required Color color,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            icon,
+            color: color,
+            size: 20,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                address,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _fitMarkersOnScreen() async {
     if (mapController == null) return;
 
     try {
       LatLngBounds bounds = LatLngBounds(
         southwest: LatLng(
-          widget.pickupLat < widget.dropoffLat ? widget.pickupLat : widget.dropoffLat,
-          widget.pickupLng < widget.dropoffLng ? widget.pickupLng : widget.dropoffLng,
+          widget.pickupLat < widget.dropoffLat
+              ? widget.pickupLat
+              : widget.dropoffLat,
+          widget.pickupLng < widget.dropoffLng
+              ? widget.pickupLng
+              : widget.dropoffLng,
         ),
         northeast: LatLng(
-          widget.pickupLat > widget.dropoffLat ? widget.pickupLat : widget.dropoffLat,
-          widget.pickupLng > widget.dropoffLng ? widget.pickupLng : widget.dropoffLng,
+          widget.pickupLat > widget.dropoffLat
+              ? widget.pickupLat
+              : widget.dropoffLat,
+          widget.pickupLng > widget.dropoffLng
+              ? widget.pickupLng
+              : widget.dropoffLng,
         ),
       );
 

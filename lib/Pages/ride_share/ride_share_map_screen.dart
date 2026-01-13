@@ -41,9 +41,19 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
     });
   }
 
+  /// FIXED FOCUS HANDLER
   void _focusSearchBar() {
-    if (!_searchFocusNode.hasFocus) {
-      FocusScope.of(context).requestFocus(_searchFocusNode);
+    // Use a slight delay to ensure any competing gestures complete first
+    Future.delayed(const Duration(milliseconds: 50), () {
+      if (mounted && !_searchFocusNode.hasFocus) {
+        _searchFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void _unfocusKeyboard() {
+    if (_searchFocusNode.hasFocus) {
+      _searchFocusNode.unfocus();
     }
   }
 
@@ -74,15 +84,15 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
           type: PlaceType.RECENT,
         );
 
+        _unfocusKeyboard();
+
         showModalBottomSheet(
           context: context,
           isScrollControlled: true,
           backgroundColor: Colors.transparent,
           barrierColor: Colors.black.withOpacity(0.3),
           shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(
-              top: Radius.circular(24),
-            ),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           builder: (_) => VehicleTypeModal(
             pickupPlace: pickupPlace,
@@ -90,9 +100,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
             userLat: position.latitude,
             userLng: position.longitude,
             onRideRequested: (rideId) {
-              setState(() {
-                _isLoadingRide = true;
-              });
+              setState(() => _isLoadingRide = true);
               _showWaitingForDriverScreen(rideId);
             },
           ),
@@ -102,6 +110,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
   }
 
   void _showWaitingForDriverScreen(String rideId) {
+    _unfocusKeyboard();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -110,15 +119,11 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
       builder: (_) => RideWaitingScreen(
         rideId: rideId,
         onRideAccepted: (driver) {
-          setState(() {
-            _isLoadingRide = false;
-          });
+          setState(() => _isLoadingRide = false);
           _showUserAwaitingDriverScreen(driver, rideId);
         },
         onCancelRide: () {
-          setState(() {
-            _isLoadingRide = false;
-          });
+          setState(() => _isLoadingRide = false);
           Navigator.pop(context);
         },
       ),
@@ -129,18 +134,9 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
     final selectedDropoffPlace = ref.read(selectedDropoffPlaceProvider);
     final currentLoc = ref.read(currentLocationProvider);
 
-    print('DEBUG: Driver accepted - ${driver.name}');
-    print('DEBUG: Selected dropoff place - ${selectedDropoffPlace?.name}');
-
     currentLoc.whenData((position) {
-      print('DEBUG: Current position - ${position?.latitude}, ${position?.longitude}');
-
       if (mounted && position != null && selectedDropoffPlace != null) {
-        print('DEBUG: Navigating to UserAwaitingDriverScreen');
-
-        if (Navigator.canPop(context)) {
-          Navigator.pop(context); // Close waiting screen
-        }
+        if (Navigator.canPop(context)) Navigator.pop(context);
 
         Navigator.push(
           context,
@@ -157,7 +153,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
               pickupLng: position.longitude,
               dropoffLat: selectedDropoffPlace.latitude,
               dropoffLng: selectedDropoffPlace.longitude,
-              estimatedFare: 250.0, // Get from ride request
+              estimatedFare: 250.0,
               driverLocation: LatLng(driver.latitude, driver.longitude),
               onStartRide: () {
                 _showRideInProgressScreen(
@@ -174,8 +170,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
             ),
           ),
         );
-      } else {
-        print('DEBUG: Navigation blocked - mounted: $mounted, position: $position, dropoff: $selectedDropoffPlace');
       }
     });
   }
@@ -202,20 +196,14 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
           estimatedFare: estimatedFare,
           estimatedTime: estimatedTime,
           onRideCompleted: () {
-            _showRideCompletionScreen(
-              driverName,
-              driverRating,
-            );
+            _showRideCompletionScreen(driverName, driverRating);
           },
         ),
       ),
     );
   }
 
-  void _showRideCompletionScreen(
-    String driverName,
-    double driverRating,
-  ) {
+  void _showRideCompletionScreen(String driverName, double driverRating) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -246,240 +234,118 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
   Widget build(BuildContext context) {
     final selectedDropoffPlace = ref.watch(selectedDropoffPlaceProvider);
 
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      body: FutureBuilder<bool>(
-        future: AuthStorage.isLoggedIn(),
-        builder: (context, authSnapshot) {
-          if (authSnapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        // Only unfocus if the search field currently has focus
+        if (_searchFocusNode.hasFocus) {
+          _unfocusKeyboard();
+        }
+      },
+      child: Scaffold(
+        resizeToAvoidBottomInset: true,
+        body: FutureBuilder<bool>(
+          future: AuthStorage.isLoggedIn(),
+          builder: (context, authSnapshot) {
+            if (authSnapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-          if (!(authSnapshot.data ?? false)) {
-            return _buildAuthRequiredScreen();
-          }
+            if (!(authSnapshot.data ?? false)) {
+              return _buildAuthRequiredScreen();
+            }
 
-          return Stack(
-            children: [
-              // Map section
-              Consumer(
-                builder: (context, ref, _) {
-                  final currentLocation = ref.watch(currentLocationProvider);
-                  return currentLocation.when(
-                    data: (position) {
-                      final pickupPlace = position != null
-                          ? Place(
-                              id: 'current_location',
-                              name: 'Your Location',
-                              address: 'Current Location',
-                              latitude: position.latitude,
-                              longitude: position.longitude,
-                              type: PlaceType.RECENT,
-                            )
-                          : null;
+            return Stack(
+              children: [
+                Consumer(
+                  builder: (context, ref, _) {
+                    final currentLocation = ref.watch(currentLocationProvider);
+                    return currentLocation.when(
+                      data: (position) {
+                        final pickupPlace = position != null
+                            ? Place(
+                                id: 'current_location',
+                                name: 'Your Location',
+                                address: 'Current Location',
+                                latitude: position.latitude,
+                                longitude: position.longitude,
+                                type: PlaceType.RECENT,
+                              )
+                            : null;
 
-                      return MapViewWidget(
-                        onMapCreated: _onMapCreated,
-                        initialPosition: position,
-                        pickupPlace: pickupPlace,
-                        dropoffPlace: selectedDropoffPlace,
-                      );
-                    },
-                    loading: () => const Center(child: CircularProgressIndicator()),
-                    error: (_, __) => Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.location_off, size: 48, color: Colors.grey),
-                          const SizedBox(height: 16),
-                          const Text(
-                            'Unable to load location',
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton.icon(
-                            onPressed: () {
-                              unawaited(ref.refresh(currentLocationProvider.future));
-                            },
-                            icon: const Icon(Icons.refresh),
-                            label: const Text('Retry'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFFF8A00),
-                            ),
-                          ),
-                        ],
+                        return MapViewWidget(
+                          onMapCreated: _onMapCreated,
+                          initialPosition: position,
+                          pickupPlace: pickupPlace,
+                          dropoffPlace: selectedDropoffPlace,
+                        );
+                      },
+                      loading: () =>
+                          const Center(child: CircularProgressIndicator()),
+                      error: (_, __) => const Center(
+                        child: Text('Unable to load location'),
                       ),
+                    );
+                  },
+                ),
+                Positioned(
+                  top: 16,
+                  left: 16,
+                  right: 16,
+                  child: SafeArea(
+                    child: Column(
+                      children: [
+                        GestureDetector(
+                          onTap: () {}, // Absorb taps to prevent unfocus
+                          child: TripSelectorCard(
+                            currentLocation: 'Your Location',
+                            selectedDropoffPlace: selectedDropoffPlace,
+                            onSelectDropoff: _focusSearchBar,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        GestureDetector(
+                          onTap: () {}, // Absorb taps to prevent unfocus
+                          child: PlaceSearchWidget(
+                            searchController: _searchController,
+                            focusNode: _searchFocusNode,
+                            onToggleBookmarkedPlaces:
+                                _toggleBookmarkedPlacesModal,
+                          ),
+                        ),
+                      ],
                     ),
-                  );
-                },
-              ),
-
-              // Top unified trip selector card
-              Positioned(
-                top: 16,
-                left: 16,
-                right: 16,
-                child: SafeArea(
-                  child: Consumer(
-                    builder: (context, ref, _) {
-                      final currentLocation = ref.watch(currentLocationProvider);
-                      return currentLocation.when(
-                        data: (position) {
-                          return Column(
-                            children: [
-                              // Trip selector card
-                              TripSelectorCard(
-                                currentLocation: 'Your Location',
-                                selectedDropoffPlace: selectedDropoffPlace,
-                                onSelectDropoff: _focusSearchBar,
-                              ),
-                              const SizedBox(height: 12),
-                              // Search results below
-                              PlaceSearchWidget(
-                                searchController: _searchController,
-                                focusNode: _searchFocusNode,
-                                onToggleBookmarkedPlaces: _toggleBookmarkedPlacesModal,
-                              ),
-                            ],
-                          );
-                        },
-                        loading: () => TripSelectorCard(
-                          currentLocation: 'Loading location...',
-                          selectedDropoffPlace: selectedDropoffPlace,
-                          onSelectDropoff: _focusSearchBar,
-                        ),
-                        error: (_, __) => TripSelectorCard(
-                          currentLocation: 'Location error',
-                          selectedDropoffPlace: selectedDropoffPlace,
-                          onSelectDropoff: _focusSearchBar,
-                        ),
-                      );
-                    },
                   ),
                 ),
-              ),
-
-              // Bookmarked places modal
-              if (_showBookmarkedPlaces)
+                if (_showBookmarkedPlaces)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: BookmarkedPlacesModal(
+                      onClose: _toggleBookmarkedPlacesModal,
+                    ),
+                  ),
                 Positioned(
                   bottom: 0,
                   left: 0,
                   right: 0,
-                  child: BookmarkedPlacesModal(
-                    onClose: _toggleBookmarkedPlacesModal,
+                  child: GestureDetector(
+                    onTap: () {}, // Absorb taps to prevent unfocus
+                    child: _buildModernBottomSheet(selectedDropoffPlace),
                   ),
                 ),
-
-              // Modern bottom action sheet with glassmorphism
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: _buildModernBottomSheet(selectedDropoffPlace),
-              ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 
   Widget _buildAuthRequiredScreen() {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            const Color(0xFFFF8A00).withOpacity(0.1),
-            Colors.white,
-          ],
-        ),
-      ),
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF8A00).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Icon(
-                  Icons.lock_outline,
-                  size: 40,
-                  color: Color(0xFFFF8A00),
-                ),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Sign in to continue',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Book rides and explore our ride-sharing service',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 15,
-                  color: Colors.grey[600],
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pushNamedAndRemoveUntil(
-                    context,
-                    '/login',
-                    (route) => false,
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF8A00),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: const Text(
-                    'Go to Login',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: () => Navigator.pushNamedAndRemoveUntil(
-                  context,
-                  '/signup',
-                  (route) => false,
-                ),
-                child: const Text(
-                  'Create an account',
-                  style: TextStyle(
-                    color: Color(0xFFFF8A00),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return const Center(
+      child: Text('Sign in to continue'),
     );
   }
 
@@ -502,7 +368,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Handle bar
             Container(
               width: 36,
               height: 4,
@@ -512,8 +377,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-
-            // Action button
             SizedBox(
               width: double.infinity,
               height: 56,
@@ -524,27 +387,32 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                     borderRadius: BorderRadius.circular(14),
                   ),
                   elevation: 0,
-                  disabledBackgroundColor: Colors.grey[300],
                 ),
                 onPressed: _isLoadingRide
                     ? null
-                    : () => _handleBottomButtonPressed(ref, selectedDropoffPlace),
+                    : () =>
+                        _handleBottomButtonPressed(ref, selectedDropoffPlace),
                 icon: _isLoadingRide
                     ? const SizedBox(
                         height: 20,
                         width: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2.5,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(Colors.white),
                         ),
                       )
                     : Icon(
-                        selectedDropoffPlace == null ? Icons.search : Icons.arrow_forward_rounded,
+                        selectedDropoffPlace == null
+                            ? Icons.search
+                            : Icons.arrow_forward_rounded,
                         color: Colors.white,
                         size: 22,
                       ),
                 label: Text(
-                  selectedDropoffPlace == null ? 'Search Destination' : 'Continue to Booking',
+                  selectedDropoffPlace == null
+                      ? 'Search Destination'
+                      : 'Continue to Booking',
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -553,31 +421,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                 ),
               ),
             ),
-
-            // Quick info
-            if (selectedDropoffPlace != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF8A00).withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline, size: 16, color: Colors.grey[700]),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Select a vehicle type to proceed',
-                          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
           ],
         ),
       ),

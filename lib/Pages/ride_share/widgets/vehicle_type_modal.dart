@@ -92,13 +92,14 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       });
 
       for (final vehicleType in _baseVehicleTypes) {
-        final fareEstimate = await ref.read(rideShareServiceProvider).estimateFare(
-          pickupLatitude: widget.userLat,
-          pickupLongitude: widget.userLng,
-          dropoffLatitude: widget.dropoffPlace.latitude,
-          dropoffLongitude: widget.dropoffPlace.longitude,
-          vehicleClass: vehicleType.class_,
-        );
+        final fareEstimate =
+            await ref.read(rideShareServiceProvider).estimateFare(
+                  pickupLatitude: widget.userLat,
+                  pickupLongitude: widget.userLng,
+                  dropoffLatitude: widget.dropoffPlace.latitude,
+                  dropoffLongitude: widget.dropoffPlace.longitude,
+                  vehicleClass: vehicleType.class_,
+                );
 
         if (mounted) {
           setState(() {
@@ -161,10 +162,16 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
   List<VehicleTypeOption> get _filteredVehicles {
     if (_filterType == 'all') return _baseVehicleTypes;
     if (_filterType == 'budget') {
-      return _baseVehicleTypes.where((v) => v.class_ == VehicleClass.economy).toList();
+      return _baseVehicleTypes
+          .where((v) => v.class_ == VehicleClass.economy)
+          .toList();
     }
     if (_filterType == 'premium') {
-      return _baseVehicleTypes.where((v) => v.class_ == VehicleClass.premium || v.class_ == VehicleClass.business).toList();
+      return _baseVehicleTypes
+          .where((v) =>
+              v.class_ == VehicleClass.premium ||
+              v.class_ == VehicleClass.business)
+          .toList();
     }
     return _baseVehicleTypes;
   }
@@ -193,7 +200,8 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
           ? 0.0
           : _distance;
 
-      final passengerName = await AuthStorage.userNameFromToken() ?? 'Passenger';
+      final passengerName =
+          await AuthStorage.userNameFromToken() ?? 'Passenger';
 
       final rideId = await FirebaseRideShareService.createRideRequest(
         passengerId: userIdStr,
@@ -264,7 +272,8 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                     children: [
                       // Header
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -300,7 +309,8 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                       // Error message
                       if (_errorMessage != null)
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 16),
                           child: Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
@@ -310,12 +320,14 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.error_outline, color: Colors.red[600], size: 20),
+                                Icon(Icons.error_outline,
+                                    color: Colors.red[600], size: 20),
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: Text(
                                     _errorMessage ?? '',
-                                    style: TextStyle(color: Colors.red[700], fontSize: 13),
+                                    style: TextStyle(
+                                        color: Colors.red[700], fontSize: 13),
                                   ),
                                 ),
                               ],
@@ -482,9 +494,10 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       children: vehicles.asMap().entries.map((entry) {
         final index = entry.key;
         final vehicleType = entry.value;
-        
+
         return Padding(
-          padding: EdgeInsets.only(bottom: index < vehicles.length - 1 ? 12 : 0),
+          padding:
+              EdgeInsets.only(bottom: index < vehicles.length - 1 ? 12 : 0),
           child: _buildVehicleCard(vehicleType),
         );
       }).toList(),
@@ -514,7 +527,8 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
             width: isSelected ? 2 : 1,
           ),
           borderRadius: BorderRadius.circular(14),
-          color: isSelected ? vehicleType.color.withOpacity(0.04) : Colors.white,
+          color:
+              isSelected ? vehicleType.color.withOpacity(0.04) : Colors.white,
           boxShadow: isSelected
               ? [
                   BoxShadow(
@@ -650,7 +664,8 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                   ],
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     color: vehicleType.color.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
@@ -694,125 +709,125 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
 
     const Color primaryColor = Color(0xFFFF8A00);
 
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.max,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Handle bar
-            Container(
-              width: 36,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
+    return DraggableScrollableSheet(
+      initialChildSize: 0.80,
+      minChildSize: 0.80,
+      maxChildSize: 0.80,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(24),
             ),
-
-            // Main content centered
-            Expanded(
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 24,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: SingleChildScrollView(
+            controller: scrollController,
+            physics: const NeverScrollableScrollPhysics(),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Large animated spinner
+                  // Drag Handle
                   Container(
-                    width: 100,
-                    height: 100,
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 20),
                     decoration: BoxDecoration(
-                      color: primaryColor.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(50),
-                      boxShadow: [
-                        BoxShadow(
-                          color: primaryColor.withOpacity(0.1),
-                          blurRadius: 20,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
                     ),
-                    child: const Center(
-                      child: CircularProgressIndicator(
-                        strokeWidth: 4,
-                        valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+                  ),
+
+                  // Centered content with fixed height to match waiting screen
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.65,
+                    child: TweenAnimationBuilder<double>(
+                      duration: const Duration(milliseconds: 400),
+                      tween: Tween(begin: 0.0, end: 1.0),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, value, child) {
+                        return Opacity(
+                          opacity: value,
+                          child: Transform.scale(
+                            scale: 0.8 + (0.2 * value),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // Large animated spinner
+                          Container(
+                            width: 100,
+                            height: 100,
+                            decoration: BoxDecoration(
+                              color: primaryColor.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(50),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: primaryColor.withOpacity(0.1),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: const Center(
+                              child: CircularProgressIndicator(
+                                strokeWidth: 4,
+                                valueColor:
+                                    AlwaysStoppedAnimation<Color>(primaryColor),
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 36),
+
+                          // Primary text
+                          Text(
+                            'Finding your ${vehicleType.name.toLowerCase()} ride',
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+
+                          const SizedBox(height: 12),
+
+                          // Secondary text
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            child: Text(
+                              'We\'re connecting you with nearby drivers',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 15,
+                                color: Colors.grey[600],
+                                height: 1.5,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 36),
-
-                  // Primary text
-                  Text(
-                    'Finding your ${vehicleType.name.toLowerCase()} ride',
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.black,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  // Secondary text
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    child: Text(
-                      'We\'re connecting you with nearby drivers',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: Colors.grey[600],
-                        height: 1.5,
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 32),
-
-                  // Status indicators
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Column(
-                      children: [
-                        _buildLoadingStep(
-                          'Finding drivers',
-                          true,
-                          primaryColor,
-                        ),
-                        const SizedBox(height: 12),
-                        _buildLoadingStep(
-                          'Confirming details',
-                          false,
-                          Colors.grey[300]!,
-                        ),
-                        const SizedBox(height: 12),
-                        _buildLoadingStep(
-                          'Ready to ride',
-                          false,
-                          Colors.grey[300]!,
-                        ),
-                      ],
                     ),
                   ),
                 ],
               ),
             ),
-
-            // Bottom padding
-            const SizedBox(height: 32),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 

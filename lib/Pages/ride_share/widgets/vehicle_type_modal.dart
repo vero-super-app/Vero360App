@@ -161,9 +161,13 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal> {
           ? 0.0
           : _distance;
 
+      // Get passenger name from storage or use default
+      final passengerName = await AuthStorage.userNameFromToken() ?? 'Passenger';
+
       // Create Firebase ride request
       final rideId = await FirebaseRideShareService.createRideRequest(
         passengerId: userIdStr,
+        passengerName: passengerName,
         pickupLat: widget.userLat,
         pickupLng: widget.userLng,
         dropoffLat: widget.dropoffPlace.latitude,

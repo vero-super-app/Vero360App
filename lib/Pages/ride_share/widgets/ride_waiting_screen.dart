@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:vero360_app/services/firebase_ride_share_service.dart';
 
 class RideWaitingScreen extends StatefulWidget {
   final String rideId;
   final Function(Driver) onRideAccepted;
   final VoidCallback onCancelRide;
+  final double? pickupLat;
+  final double? pickupLng;
 
   const RideWaitingScreen({
     required this.rideId,
     required this.onRideAccepted,
     required this.onCancelRide,
+    this.pickupLat,
+    this.pickupLng,
   });
 
   @override
@@ -21,6 +26,7 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
   late AnimationController _pulseController;
   late AnimationController _dotController;
   bool _isCancelling = false;
+  bool _callbackTriggered = false;
 
   @override
   void initState() {
@@ -54,19 +60,26 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
         if (ride != null &&
             ride.driverId != null &&
             ride.status == 'accepted') {
-          return StreamBuilder<Driver?>(
-            stream:
-                FirebaseRideShareService.getDriverProfileStream(ride.driverId!),
-            builder: (context, driverSnapshot) {
-              if (driverSnapshot.hasData && driverSnapshot.data != null) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  widget.onRideAccepted(driverSnapshot.data!);
-                  Navigator.pop(context);
-                });
-              }
-              return const SizedBox.shrink();
-            },
-          );
+          if (!_callbackTriggered) {
+            _callbackTriggered = true;
+            return StreamBuilder<Driver?>(
+              stream:
+                  FirebaseRideShareService.getDriverProfileStream(ride.driverId!),
+              builder: (context, driverSnapshot) {
+                if (driverSnapshot.hasData && driverSnapshot.data != null) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) {
+                      widget.onRideAccepted(driverSnapshot.data!);
+                      Navigator.pop(context);
+                    }
+                  });
+                }
+                return const SizedBox.shrink();
+              },
+            );
+          } else {
+            return const SizedBox.shrink();
+          }
         }
 
         return DraggableScrollableSheet(

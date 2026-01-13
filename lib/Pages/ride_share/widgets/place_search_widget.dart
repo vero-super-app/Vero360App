@@ -5,10 +5,12 @@ import 'package:vero360_app/models/place_model.dart';
 
 class PlaceSearchWidget extends ConsumerStatefulWidget {
   final TextEditingController searchController;
+  final FocusNode? focusNode;
   final VoidCallback onToggleBookmarkedPlaces;
 
   const PlaceSearchWidget({
     required this.searchController,
+    this.focusNode,
     required this.onToggleBookmarkedPlaces,
     Key? key,
   }) : super(key: key);
@@ -57,6 +59,7 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
               Expanded(
                 child: TextField(
                   controller: widget.searchController,
+                  focusNode: widget.focusNode,
                   decoration: InputDecoration(
                     hintText: 'Search destination...',
                     hintStyle: TextStyle(color: Colors.grey[400]),

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/services/driver_request_service.dart';
 import 'package:vero360_app/services/driver_messaging_service.dart';
+import 'package:vero360_app/Pages/ride_share/widgets/driver_pickup_route_screen.dart';
+import 'package:vero360_app/Pages/ride_share/widgets/driver_ride_active_screen.dart';
 
 class DriverRequestAcceptDialog extends StatefulWidget {
   final DriverRideRequest request;
@@ -80,7 +82,45 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
 
       if (mounted) {
         Navigator.of(context).pop(true);
-        widget.onAccepted?.call();
+        
+        // Navigate to driver pickup route screen
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => DriverPickupRouteScreen(
+              rideId: widget.request.id,
+              passengerName: widget.request.passengerName,
+              passengerPhone: widget.driverPhone,
+              pickupAddress: widget.request.pickupAddress,
+              pickupLat: widget.request.pickupLat,
+              pickupLng: widget.request.pickupLng,
+              driverLat: 0.0, // Get current driver location
+              driverLng: 0.0, // Get current driver location
+              estimatedFare: widget.request.estimatedFare,
+              onArrived: () {
+                // Navigate to driver ride active screen
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (context) => DriverRideActiveScreen(
+                      rideId: widget.request.id,
+                      passengerName: widget.request.passengerName,
+                      pickupAddress: widget.request.pickupAddress,
+                      dropoffAddress: widget.request.dropoffAddress,
+                      pickupLat: widget.request.pickupLat,
+                      pickupLng: widget.request.pickupLng,
+                      dropoffLat: widget.request.dropoffLat,
+                      dropoffLng: widget.request.dropoffLng,
+                      estimatedFare: widget.request.estimatedFare,
+                      onRideCompleted: () {
+                        widget.onAccepted?.call();
+                        Navigator.of(context).popUntil((route) => route.isFirst);
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Ride request accepted')),

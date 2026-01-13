@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/providers/driver_provider.dart';
 import 'package:vero360_app/services/auth_storage.dart';
+import 'driver_request_screen.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
   const DriverDashboard({super.key});
@@ -278,8 +279,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: () {
-                // Navigate to driver request screen
-                // Implement navigation when ready
+                _navigateToRideRequests(context);
               },
               icon: const Icon(Icons.local_taxi_outlined),
               label: const Text('View Ride Requests'),
@@ -293,6 +293,35 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         ],
       ),
     );
+  }
+
+  void _navigateToRideRequests(BuildContext context) async {
+    final userId = await _getUserId();
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to load user information'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Get driver information from auth token
+    final driverName = await AuthStorage.userNameFromToken() ?? 'Driver';
+
+    if (mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => DriverRequestScreen(
+            driverId: userId.toString(),
+            driverName: driverName,
+            driverPhone: '', // Get from user profile if needed
+            driverAvatar: null,
+          ),
+        ),
+      );
+    }
   }
 
   Widget _buildStatItem(String label, String value) {

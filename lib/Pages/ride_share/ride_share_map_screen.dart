@@ -8,7 +8,9 @@ import 'package:vero360_app/Pages/ride_share/widgets/place_search_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/bookmarked_places_modal.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/vehicle_type_modal.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/ride_waiting_screen.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/ride_active_dialog.dart';
+import 'package:vero360_app/Pages/ride_share/widgets/user_awaiting_driver_screen.dart';
+import 'package:vero360_app/Pages/ride_share/widgets/ride_in_progress_screen.dart';
+import 'package:vero360_app/Pages/ride_share/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
 import 'package:vero360_app/services/auth_storage.dart';
@@ -22,21 +24,11 @@ class RideShareMapScreen extends ConsumerStatefulWidget {
 }
 
 class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
-  late GoogleMapController mapController;
+  GoogleMapController? mapController;
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   bool _showBookmarkedPlaces = false;
   bool _isLoadingRide = false;
-
-  @override
-  void initState() {
-    super.initState();
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
 
   void _onMapCreated(GoogleMapController controller) {
     mapController = controller;
@@ -48,9 +40,24 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
     });
   }
 
+  void _focusSearchBar() {
+    if (!_searchFocusNode.hasFocus) {
+      FocusScope.of(context).requestFocus(_searchFocusNode);
+    }
+  }
+
+  void _handleBottomButtonPressed(WidgetRef ref, Place? dropoffPlace) {
+    if (dropoffPlace == null) {
+      _focusSearchBar();
+    } else {
+      _handleContinueToBooking(ref, dropoffPlace);
+    }
+  }
+
   Future<void> _handleContinueToBooking(
-      WidgetRef ref, Place? dropoffPlace) async {
-    // Clear search controller to prevent disposal issues
+    WidgetRef ref,
+    Place? dropoffPlace,
+  ) async {
     _searchController.clear();
 
     final currentLoc = ref.read(currentLocationProvider);
@@ -70,7 +77,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
           context: context,
           isScrollControlled: true,
           backgroundColor: Colors.transparent,
-          barrierColor: Colors.black.withValues(alpha: 0.3),
+          barrierColor: Colors.black.withOpacity(0.3),
           shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.vertical(
               top: Radius.circular(20),
@@ -105,7 +112,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
           setState(() {
             _isLoadingRide = false;
           });
-          _showRideActiveScreen(driver);
+          _showUserAwaitingDriverScreen(driver, rideId);
         },
         onCancelRide: () {
           setState(() {
@@ -117,35 +124,137 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
     );
   }
 
-  void _showRideActiveScreen(Driver driver) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => RideActiveDialog(
-        driver: driver,
-        onRideCompleted: () {
-          Navigator.pop(context);
-        },
+  void _showUserAwaitingDriverScreen(Driver driver, String rideId) {
+    final selectedDropoffPlace = ref.read(selectedDropoffPlaceProvider);
+    final currentLoc = ref.read(currentLocationProvider);
+
+    print('DEBUG: Driver accepted - ${driver.name}');
+    print('DEBUG: Selected dropoff place - ${selectedDropoffPlace?.name}');
+
+    currentLoc.whenData((position) {
+      print('DEBUG: Current position - ${position?.latitude}, ${position?.longitude}');
+      
+      if (mounted && position != null && selectedDropoffPlace != null) {
+        print('DEBUG: Navigating to UserAwaitingDriverScreen');
+        
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context); // Close waiting screen
+        }
+        
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => UserAwaitingDriverScreen(
+              rideId: rideId,
+              driverName: driver.name,
+              vehicleType: driver.vehicleType,
+              vehiclePlate: driver.vehiclePlate,
+              driverRating: driver.rating,
+              completedRides: driver.completedRides,
+              pickupAddress: 'Your Location',
+              pickupLat: position.latitude,
+              pickupLng: position.longitude,
+              dropoffLat: selectedDropoffPlace.latitude,
+              dropoffLng: selectedDropoffPlace.longitude,
+              estimatedFare: 250.0, // Get from ride request
+              driverLocation: LatLng(driver.latitude, driver.longitude),
+              onStartRide: () {
+                _showRideInProgressScreen(
+                  rideId,
+                  driver.id,
+                  driver.name,
+                  'Your Location',
+                  selectedDropoffPlace.name,
+                  250.0,
+                  25,
+                  driver.rating,
+                );
+              },
+            ),
+          ),
+        );
+      } else {
+        print('DEBUG: Navigation blocked - mounted: $mounted, position: $position, dropoff: $selectedDropoffPlace');
+      }
+    });
+  }
+
+  void _showRideInProgressScreen(
+    String rideId,
+    String driverId,
+    String driverName,
+    String pickupAddress,
+    String dropoffAddress,
+    double estimatedFare,
+    int estimatedTime,
+    double driverRating,
+  ) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RideInProgressScreen(
+          rideId: rideId,
+          driverId: driverId,
+          passengerName: driverName,
+          pickupAddress: pickupAddress,
+          dropoffAddress: dropoffAddress,
+          estimatedFare: estimatedFare,
+          estimatedTime: estimatedTime,
+          onRideCompleted: () {
+            _showRideCompletionScreen(
+              driverName,
+              driverRating,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  void _showRideCompletionScreen(
+    String driverName,
+    double driverRating,
+  ) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RideCompletionScreen(
+          baseFare: 50.0,
+          distanceFare: 200.0,
+          totalFare: 250.0,
+          distance: 5.2,
+          duration: 12,
+          driverName: driverName,
+          driverRating: driverRating,
+          onPaymentCompleted: () {
+            Navigator.pushNamed(context, '/payment');
+          },
+        ),
       ),
     );
   }
 
   @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final currentLocation = ref.watch(currentLocationProvider);
     final selectedDropoffPlace = ref.watch(selectedDropoffPlaceProvider);
 
     return Scaffold(
+      resizeToAvoidBottomInset: true, // ✅ Keeps keyboard from hiding
       body: FutureBuilder<bool>(
         future: AuthStorage.isLoggedIn(),
         builder: (context, authSnapshot) {
-          // Check if user is logged in
           if (authSnapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
           if (!(authSnapshot.data ?? false)) {
-            // User is not logged in
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -196,53 +305,56 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
             );
           }
 
-          // User is logged in, show ride-share UI
           return Stack(
             children: [
-              // Map View
-              currentLocation.when(
-                data: (position) {
-                  // Create pickup place from current location
-                  final pickupPlace = position != null
-                      ? Place(
-                          id: 'current_location',
-                          name: 'Your Location',
-                          address: 'Current Location',
-                          latitude: position.latitude,
-                          longitude: position.longitude,
-                          type: PlaceType.RECENT,
-                        )
-                      : null;
+              // ✅ Isolated map rebuilds to prevent keyboard loss
+              Consumer(
+                builder: (context, ref, _) {
+                  final currentLocation = ref.watch(currentLocationProvider);
+                  return currentLocation.when(
+                    data: (position) {
+                      final pickupPlace = position != null
+                          ? Place(
+                              id: 'current_location',
+                              name: 'Your Location',
+                              address: 'Current Location',
+                              latitude: position.latitude,
+                              longitude: position.longitude,
+                              type: PlaceType.RECENT,
+                            )
+                          : null;
 
-                  return MapViewWidget(
-                    onMapCreated: _onMapCreated,
-                    initialPosition: position,
-                    pickupPlace: pickupPlace,
-                    dropoffPlace: selectedDropoffPlace,
+                      return MapViewWidget(
+                        onMapCreated: _onMapCreated,
+                        initialPosition: position,
+                        pickupPlace: pickupPlace,
+                        dropoffPlace: selectedDropoffPlace,
+                      );
+                    },
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (_, __) => Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text('Error loading location'),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: () {
+                              unawaited(
+                                ref.refresh(currentLocationProvider.future),
+                              );
+                            },
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    ),
                   );
                 },
-                loading: () => const Center(
-                  child: CircularProgressIndicator(),
-                ),
-                error: (error, stackTrace) => Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text('Error loading location'),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: () {
-                          unawaited(
-                              ref.refresh(currentLocationProvider.future));
-                        },
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ),
-                ),
               ),
 
-              // Top Container - Current Location
+              // Top container
               Positioned(
                 top: 0,
                 left: 0,
@@ -256,18 +368,19 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                 ),
               ),
 
-              // Search Bar
+              // ✅ Stable Search Bar (does not rebuild)
               Positioned(
                 top: 130,
                 left: 16,
                 right: 16,
                 child: PlaceSearchWidget(
                   searchController: _searchController,
+                  focusNode: _searchFocusNode,
                   onToggleBookmarkedPlaces: _toggleBookmarkedPlacesModal,
                 ),
               ),
 
-              // Bookmarked Places Modal (Bottom Sheet)
+              // Bookmarked places modal
               if (_showBookmarkedPlaces)
                 Positioned(
                   bottom: 0,
@@ -278,49 +391,55 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                   ),
                 ),
 
-              // Continue to Booking Button (if destination selected)
-              if (selectedDropoffPlace != null)
-                Positioned(
-                  bottom: 24,
-                  left: 16,
-                  right: 16,
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF8A00),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 4,
+              // Continue / Search Button
+              Positioned(
+                bottom: 24,
+                left: 16,
+                right: 16,
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF8A00),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      onPressed: _isLoadingRide
-                          ? null
-                          : () => _handleContinueToBooking(
-                              ref, selectedDropoffPlace),
-                      child: _isLoadingRide
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation(
-                                  Colors.white,
-                                ),
-                              ),
-                            )
-                          : const Text(
-                              'Continue to Booking',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
+                      elevation: 4,
+                    ),
+                    onPressed: _isLoadingRide
+                        ? null
+                        : () => _handleBottomButtonPressed(
+                            ref, selectedDropoffPlace),
+                    icon: _isLoadingRide
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.white),
                             ),
+                          )
+                        : Icon(
+                            selectedDropoffPlace == null
+                                ? Icons.search
+                                : Icons.arrow_forward_rounded,
+                            color: Colors.white,
+                          ),
+                    label: Text(
+                      selectedDropoffPlace == null
+                          ? 'Search Destination'
+                          : 'Continue to Booking',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),
+              ),
             ],
           );
         },

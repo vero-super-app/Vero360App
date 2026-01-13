@@ -28,6 +28,16 @@ class AuthStorage {
     return int.tryParse(raw.toString());
   }
 
+  /// Try to get user name from JWT: payload.name | payload.username | payload.email
+  static Future<String?> userNameFromToken() async {
+    final t = await readToken();
+    if (t == null) return null;
+    final payload = _decodeJwtPayload(t);
+    final name = payload['name'] ?? payload['username'] ?? payload['email'];
+    if (name == null) return null;
+    return name.toString();
+  }
+
   // ---- internals: safe base64url decode
   static Map<String, dynamic> _decodeJwtPayload(String jwt) {
     try {

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 /// Models for Ride Share
 class RideRequest {
@@ -244,6 +245,7 @@ class FirebaseRideShareService {
     required int estimatedTime,
     required double estimatedDistance,
     required double estimatedFare,
+    required String passengerName,
   }) async {
     try {
       final rideId = _rideRequestsRef.push().key ?? '';
@@ -264,9 +266,74 @@ class FirebaseRideShareService {
       );
 
       await _rideRequestsRef.child(rideId).set(rideRequest.toMap());
+      
+      // Send notifications to available drivers
+      // Import will be needed at the top of the file
+      try {
+        await _notifyDriversOfNewRide(
+          rideId: rideId,
+          passengerId: passengerId,
+          passengerName: passengerName,
+          pickupLat: pickupLat,
+          pickupLng: pickupLng,
+          dropoffLat: dropoffLat,
+          dropoffLng: dropoffLng,
+          pickupAddress: pickupAddress,
+          dropoffAddress: dropoffAddress,
+          estimatedFare: estimatedFare,
+          estimatedTime: estimatedTime,
+          estimatedDistance: estimatedDistance,
+        );
+      } catch (e) {
+        print('Warning: Failed to notify drivers: $e');
+        // Don't fail the ride creation if notifications fail
+      }
+      
       return rideId;
     } catch (e) {
       print('Error creating ride request: $e');
+      rethrow;
+    }
+  }
+
+  /// Helper method to notify drivers via Cloud Function
+  static Future<void> _notifyDriversOfNewRide({
+    required String rideId,
+    required String passengerId,
+    required String passengerName,
+    required double pickupLat,
+    required double pickupLng,
+    required double dropoffLat,
+    required double dropoffLng,
+    required String pickupAddress,
+    required String dropoffAddress,
+    required double estimatedFare,
+    required int estimatedTime,
+    required double estimatedDistance,
+  }) async {
+    try {
+      final cloudFunctions = FirebaseFunctions.instance;
+      
+      await cloudFunctions
+          .httpsCallable('notifyDriversOfNewRide')
+          .call({
+        'rideId': rideId,
+        'passengerId': passengerId,
+        'passengerName': passengerName,
+        'pickupLat': pickupLat,
+        'pickupLng': pickupLng,
+        'dropoffLat': dropoffLat,
+        'dropoffLng': dropoffLng,
+        'pickupAddress': pickupAddress,
+        'dropoffAddress': dropoffAddress,
+        'estimatedFare': estimatedFare,
+        'estimatedTime': estimatedTime,
+        'estimatedDistance': estimatedDistance,
+      });
+
+      print('Driver notification triggered for ride: $rideId');
+    } catch (e) {
+      print('Error triggering driver notifications: $e');
       rethrow;
     }
   }
@@ -694,6 +761,42 @@ class FirebaseRideShareService {
       });
     } catch (e) {
       print('Error creating/updating user: $e');
+      rethrow;
+    }
+  }
+
+  /// Stream ride location during active ride
+  static Stream<Map<String, dynamic>?> getRideLocationStream(String rideId) {
+    return _rideRequestsRef.child(rideId).onValue.map((event) {
+      if (!event.snapshot.exists) return null;
+      try {
+        final data = event.snapshot.value as Map<dynamic, dynamic>;
+        return {
+          'latitude': (data['driverLat'] as num?)?.toDouble() ?? 0.0,
+          'longitude': (data['driverLng'] as num?)?.toDouble() ?? 0.0,
+          'status': data['status'] ?? 'pending',
+        };
+      } catch (e) {
+        print('Error parsing ride location: $e');
+        return null;
+      }
+    });
+  }
+
+  /// Update driver location during ride
+  static Future<void> updateRideLocation({
+    required String rideId,
+    required double latitude,
+    required double longitude,
+  }) async {
+    try {
+      await _rideRequestsRef.child(rideId).update({
+        'driverLat': latitude,
+        'driverLng': longitude,
+        'lastLocationUpdate': DateTime.now().millisecondsSinceEpoch,
+      });
+    } catch (e) {
+      print('Error updating ride location: $e');
       rethrow;
     }
   }

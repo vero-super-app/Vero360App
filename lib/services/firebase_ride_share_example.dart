@@ -2,28 +2,29 @@ import 'package:vero360_app/services/firebase_ride_share_service.dart';
 import 'package:flutter/material.dart';
 
 /// EXAMPLE USAGE: Firebase Ride Share Service
-/// 
+///
 /// This file demonstrates how to use the FirebaseRideShareService
 /// for passenger and driver flows.
 
 class RideShareExample {
   // ============== PASSENGER FLOW ==============
-  
+
   /// 1. Passenger initiates a ride request
   static Future<void> passengerRequestRide() async {
     final rideId = await FirebaseRideShareService.createRideRequest(
       passengerId: 'passenger123',
       pickupLat: 6.9271,
-      pickupLng: 3.3955, // Lagos, Nigeria
+      pickupLng: 3.3955,
       dropoffLat: 6.5244,
       dropoffLng: 3.3792,
       pickupAddress: 'Victoria Island, Lagos',
       dropoffAddress: 'Ikoyi, Lagos',
       estimatedTime: 25, // minutes
       estimatedDistance: 12.5, // km
-      estimatedFare: 5000.0, // NGN
+      estimatedFare: 5000.0,
+      passengerName: 'John Banda',
     );
-    
+
     print('Ride request created: $rideId');
   }
 
@@ -50,7 +51,7 @@ class RideShareExample {
       rating: rating,
       feedback: feedback,
     );
-    
+
     // Update passenger rating
     final ride = await FirebaseRideShareService.getRideRequest(rideId);
     if (ride != null) {
@@ -93,7 +94,7 @@ class RideShareExample {
   }) {
     // First get pending rides
     return FirebaseRideShareService.getPendingRideRequestsStream();
-    
+
     // Filter client-side by distance (Firebase RTDB has geo-query limitations)
     // TODO: Implement distance filtering on client
   }
@@ -107,7 +108,7 @@ class RideShareExample {
       rideId: rideId,
       driverId: driverId,
     );
-    
+
     // Driver status becomes 'on_ride'
     print('Ride accepted. Status updated to on_ride');
   }
@@ -127,7 +128,7 @@ class RideShareExample {
       rideId,
       'completed',
     );
-    
+
     // Update to reflect actual fare and mark driver as online again
     await FirebaseRideShareService.updateDriverStatus(driverId, 'online');
   }
@@ -222,7 +223,8 @@ class _AvailableDriverWidgetState extends State<AvailableDriverWidget> {
         }
 
         return StreamBuilder<Driver?>(
-          stream: FirebaseRideShareService.getDriverProfileStream(ride.driverId!),
+          stream:
+              FirebaseRideShareService.getDriverProfileStream(ride.driverId!),
           builder: (context, driverSnapshot) {
             if (!driverSnapshot.hasData) {
               return const Center(child: CircularProgressIndicator());

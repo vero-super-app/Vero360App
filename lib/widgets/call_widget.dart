@@ -2,97 +2,93 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/call_model.dart';
 import 'package:vero360_app/providers/call_provider.dart';
-import 'package:vero360_app/widgets/messaging_colors.dart';
 
-/// Incoming call dialog/widget
-class IncomingCallWidget extends ConsumerStatefulWidget {
+/// Widget for displaying incoming call UI
+class IncomingCallWidget extends ConsumerWidget {
   final CallSession call;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
 
   const IncomingCallWidget({
-    super.key,
+    Key? key,
     required this.call,
-  });
+    required this.onAccept,
+    required this.onDecline,
+  }) : super(key: key);
 
   @override
-  ConsumerState<IncomingCallWidget> createState() =>
-      _IncomingCallWidgetState();
-}
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
 
-class _IncomingCallWidgetState extends ConsumerState<IncomingCallWidget> {
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      elevation: 8,
-      backgroundColor: MessagingColors.background,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    return Material(
+      type: MaterialType.transparency,
       child: Container(
+        decoration: BoxDecoration(
+          color: Colors.black87.withOpacity(0.9),
+          borderRadius: BorderRadius.circular(16),
+        ),
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Avatar
+            // Caller avatar
             CircleAvatar(
-              radius: 48,
-              backgroundColor: MessagingColors.brandOrangePale,
-              backgroundImage: widget.call.initiatorAvatar != null
-                  ? NetworkImage(widget.call.initiatorAvatar!)
+              radius: 50,
+              backgroundImage: call.initiatorAvatar != null
+                  ? NetworkImage(call.initiatorAvatar!)
                   : null,
-              child: widget.call.initiatorAvatar == null
-                  ? const Icon(Icons.person,
-                  size: 48, color: MessagingColors.brandOrange)
+              child: call.initiatorAvatar == null
+                  ? Icon(
+                      call.callType == CallType.video
+                          ? Icons.videocam
+                          : Icons.call,
+                      size: 40,
+                      color: Colors.white,
+                    )
                   : null,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
 
             // Caller name
             Text(
-              widget.call.initiatorName ?? 'Unknown User',
-              style: const TextStyle(
-                fontSize: 20,
+              call.initiatorName ?? 'Unknown',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                color: Colors.white,
                 fontWeight: FontWeight.bold,
-                color: MessagingColors.title,
               ),
             ),
             const SizedBox(height: 8),
 
             // Call type
             Text(
-              widget.call.callType == CallType.video
-                  ? 'Video Call'
-                  : 'Voice Call',
-              style: const TextStyle(
-                fontSize: 14,
-                color: MessagingColors.subtitle,
+              call.callType == CallType.video ? 'Video Call' : 'Voice Call',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: Colors.grey[400],
               ),
             ),
             const SizedBox(height: 32),
 
-            // Answer & Decline buttons
+            // Action buttons
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 // Decline button
                 FloatingActionButton(
-                  onPressed: () async {
-                    await ref
-                        .read(callServiceProvider)
-                        .declineCall(widget.call);
-                    if (context.mounted) Navigator.pop(context);
-                  },
-                  backgroundColor: MessagingColors.error,
-                  child: const Icon(Icons.call_end),
+                  onPressed: onDecline,
+                  backgroundColor: Colors.red,
+                  child: const Icon(Icons.call_end, color: Colors.white),
                 ),
 
-                // Answer button
+                // Accept button
                 FloatingActionButton(
-                  onPressed: () async {
-                    await ref
-                        .read(callServiceProvider)
-                        .answerCall(widget.call);
-                    if (context.mounted) Navigator.pop(context);
-                  },
-                  backgroundColor: MessagingColors.success,
-                  child: const Icon(Icons.call),
+                  onPressed: onAccept,
+                  backgroundColor: Colors.green,
+                  child: Icon(
+                    call.callType == CallType.video
+                        ? Icons.videocam
+                        : Icons.call,
+                    color: Colors.white,
+                  ),
                 ),
               ],
             ),
@@ -103,363 +99,247 @@ class _IncomingCallWidgetState extends ConsumerState<IncomingCallWidget> {
   }
 }
 
-/// Active call screen
-class ActiveCallWidget extends ConsumerStatefulWidget {
+/// Widget for active call UI with controls
+class ActiveCallWidget extends ConsumerWidget {
   final CallSession call;
+  final VoidCallback onEndCall;
+  final VoidCallback onToggleMic;
+  final VoidCallback onToggleCamera;
+  final VoidCallback onToggleSpeaker;
+  final VoidCallback? onSwitchCamera;
 
   const ActiveCallWidget({
-    super.key,
+    Key? key,
     required this.call,
-  });
-
-  @override
-  ConsumerState<ActiveCallWidget> createState() =>
-      _ActiveCallWidgetState();
-}
-
-class _ActiveCallWidgetState extends ConsumerState<ActiveCallWidget> {
-  late int _callDuration;
-
-  @override
-  void initState() {
-    super.initState();
-    _callDuration = 0;
-    _startDurationTimer();
-  }
-
-  void _startDurationTimer() {
-    Future.doWhile(() async {
-      await Future.delayed(const Duration(seconds: 1));
-      if (!mounted) return false;
-
-      setState(() => _callDuration++);
-      ref.read(callServiceProvider).updateCallDuration(_callDuration);
-      return true;
-    });
-  }
-
-  String _formatDuration(int seconds) {
-    final minutes = seconds ~/ 60;
-    final remainingSeconds = seconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isMicEnabled = ref.watch(isMicrophoneEnabledProvider);
-    final isCameraEnabled = ref.watch(isCameraEnabledProvider);
-    final isSpeakerEnabled = ref.watch(isSpeakerEnabledProvider);
-    final callQuality = ref.watch(callQualityProvider);
-
-    return Scaffold(
-      backgroundColor: MessagingColors.title,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Top info bar
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  // Call duration
-                  Text(
-                    _formatDuration(_callDuration),
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-
-                  // Peer name
-                  Text(
-                    widget.call.recipientName ?? 'Unknown',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-
-                  // Call quality indicator
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.signal_cellular_alt,
-                          color: Colors.white, size: 16),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Quality: ${(callQuality * 100).toStringAsFixed(0)}%',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.white70,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            const Spacer(),
-
-            // Peer avatar (placeholder for video)
-            if (widget.call.callType == CallType.video)
-              Expanded(
-                child: Container(
-                  color: Colors.black,
-                  child: Center(
-                    child: CircleAvatar(
-                      radius: 64,
-                      backgroundColor: MessagingColors.brandOrangePale,
-                      backgroundImage:
-                      widget.call.recipientAvatar != null
-                          ? NetworkImage(widget.call.recipientAvatar!)
-                          : null,
-                      child: widget.call.recipientAvatar == null
-                          ? const Icon(Icons.person,
-                          size: 64, color: MessagingColors.brandOrange)
-                          : null,
-                    ),
-                  ),
-                ),
-              ),
-
-            const Spacer(),
-
-            // Control buttons
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  // Microphone toggle
-                  FloatingActionButton(
-                    heroTag: 'mic',
-                    onPressed: () =>
-                        ref.read(callServiceProvider).toggleMicrophone(),
-                    backgroundColor: isMicEnabled
-                        ? MessagingColors.brandOrange
-                        : MessagingColors.grey,
-                    child: Icon(
-                      isMicEnabled ? Icons.mic : Icons.mic_off,
-                    ),
-                  ),
-
-                  // Camera toggle (only for video calls)
-                  if (widget.call.callType == CallType.video)
-                    FloatingActionButton(
-                      heroTag: 'camera',
-                      onPressed: () =>
-                          ref.read(callServiceProvider).toggleCamera(),
-                      backgroundColor: isCameraEnabled
-                          ? MessagingColors.brandOrange
-                          : MessagingColors.grey,
-                      child: Icon(
-                        isCameraEnabled ? Icons.videocam : Icons.videocam_off,
-                      ),
-                    ),
-
-                  // Speaker toggle
-                  FloatingActionButton(
-                    heroTag: 'speaker',
-                    onPressed: () =>
-                        ref.read(callServiceProvider).toggleSpeaker(),
-                    backgroundColor: isSpeakerEnabled
-                        ? MessagingColors.brandOrange
-                        : MessagingColors.grey,
-                    child: Icon(
-                      isSpeakerEnabled ? Icons.volume_up : Icons.volume_off,
-                    ),
-                  ),
-
-                  // End call button
-                  FloatingActionButton(
-                    heroTag: 'end',
-                    onPressed: () async {
-                      await ref.read(callServiceProvider).endCall();
-                      if (context.mounted) Navigator.pop(context);
-                    },
-                    backgroundColor: MessagingColors.error,
-                    child: const Icon(Icons.call_end),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Call initiation button (for message screens)
-class CallInitiationButton extends ConsumerWidget {
-  final String recipientId;
-  final String recipientName;
-  final String? recipientAvatar;
-  final CallType callType;
-
-  const CallInitiationButton({
-    super.key,
-    required this.recipientId,
-    required this.recipientName,
-    this.recipientAvatar,
-    required this.callType,
-  });
+    required this.onEndCall,
+    required this.onToggleMic,
+    required this.onToggleCamera,
+    required this.onToggleSpeaker,
+    this.onSwitchCamera,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return IconButton(
-      icon: Icon(
-        callType == CallType.video ? Icons.videocam : Icons.call,
-        color: MessagingColors.brandOrange,
-      ),
-      onPressed: () async {
-        try {
-          await ref.read(callServiceProvider).initiateCall(
-            recipientId: recipientId,
-            recipientName: recipientName,
-            recipientAvatar: recipientAvatar,
-            initiatorName: 'You', // Get from context
-            initiatorAvatar: null,
-            callType: callType,
-          );
+    final theme = Theme.of(context);
+    final callDuration = ref.watch(callDurationProvider);
+    final isMicEnabled = ref.watch(isMicrophoneEnabledProvider);
+    final isCameraEnabled = ref.watch(isCameraEnabledProvider);
+    final isSpeakerEnabled = ref.watch(isSpeakerEnabledProvider);
 
-          // Show active call widget
-          if (context.mounted) {
-            final activeCall = ref.watch(activeCallProvider);
-            if (activeCall != null) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => ActiveCallWidget(call: activeCall),
+    return Scaffold(
+      body: Stack(
+        children: [
+          // Video/background area
+          Container(
+            color: Colors.black,
+            child: Center(
+              child: call.callType == CallType.video
+                  ? const Icon(
+                      Icons.videocam,
+                      size: 80,
+                      color: Colors.grey,
+                    )
+                  : Icon(
+                      Icons.call,
+                      size: 80,
+                      color: Colors.grey,
+                    ),
+            ),
+          ),
+
+          // Call info overlay
+          Positioned(
+            top: 40,
+            left: 0,
+            right: 0,
+            child: Column(
+              children: [
+                Text(
+                  call.recipientName ?? 'Unknown',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              );
-            }
-          }
-        } catch (e) {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Failed to initiate call: $e')),
-            );
-          }
-        }
-      },
+                const SizedBox(height: 8),
+                Text(
+                  _formatDuration(callDuration),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.grey[300],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Control buttons at bottom
+          Positioned(
+            bottom: 40,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // Microphone toggle
+                  _ControlButton(
+                    icon: isMicEnabled ? Icons.mic : Icons.mic_off,
+                    backgroundColor: isMicEnabled ? Colors.blueGrey : Colors.red,
+                    onPressed: onToggleMic,
+                  ),
+                  const SizedBox(width: 24),
+
+                  // Camera toggle (video calls only)
+                  if (call.callType == CallType.video)
+                    _ControlButton(
+                      icon: isCameraEnabled
+                          ? Icons.videocam
+                          : Icons.videocam_off,
+                      backgroundColor:
+                          isCameraEnabled ? Colors.blueGrey : Colors.red,
+                      onPressed: onToggleCamera,
+                    ),
+                  if (call.callType == CallType.video)
+                    const SizedBox(width: 24),
+
+                  // Speaker toggle
+                  _ControlButton(
+                    icon: isSpeakerEnabled
+                        ? Icons.volume_up
+                        : Icons.volume_off,
+                    backgroundColor:
+                        isSpeakerEnabled ? Colors.blueGrey : Colors.red,
+                    onPressed: onToggleSpeaker,
+                  ),
+                  const SizedBox(width: 24),
+
+                  // Switch camera (video calls only)
+                  if (call.callType == CallType.video && onSwitchCamera != null)
+                    _ControlButton(
+                      icon: Icons.flip_camera_ios,
+                      backgroundColor: Colors.blueGrey,
+                      onPressed: onSwitchCamera!,
+                    ),
+                  if (call.callType == CallType.video && onSwitchCamera != null)
+                    const SizedBox(width: 24),
+
+                  // End call button
+                  FloatingActionButton(
+                    onPressed: onEndCall,
+                    backgroundColor: Colors.red,
+                    child: const Icon(Icons.call_end, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Future<String> _getCurrentUserId() async {
-    // Placeholder - get from auth context
-    return 'current_user_id';
+  String _formatDuration(int seconds) {
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 }
 
-/// Call history list tile
-class CallHistoryTile extends StatelessWidget {
-  final CallHistoryEntry entry;
-  final VoidCallback? onTap;
+/// Small control button for call controls
+class _ControlButton extends StatelessWidget {
+  final IconData icon;
+  final Color backgroundColor;
+  final VoidCallback onPressed;
 
-  const CallHistoryTile({
-    super.key,
-    required this.entry,
-    this.onTap,
+  const _ControlButton({
+    required this.icon,
+    required this.backgroundColor,
+    required this.onPressed,
   });
-
-  Color _getStatusColor() {
-    switch (entry.status) {
-      case CallStatus.missed:
-        return MessagingColors.callMissed;
-      case CallStatus.declined:
-        return MessagingColors.callDeclined;
-      case CallStatus.failed:
-        return MessagingColors.error;
-      case CallStatus.ended:
-        return MessagingColors.callEnded;
-      default:
-        return MessagingColors.body;
-    }
-  }
-
-  IconData _getStatusIcon() {
-    switch (entry.status) {
-      case CallStatus.missed:
-        return Icons.call_missed;
-      case CallStatus.declined:
-        return Icons.call_end;
-      case CallStatus.failed:
-        return Icons.error_outline;
-      case CallStatus.incoming:
-      case CallStatus.active:
-      case CallStatus.ended:
-        return entry.isIncoming ? Icons.call_received : Icons.call_made;
-      default:
-        return Icons.call;
-    }
-  }
-
-  String _getSubtitle() {
-    final date = _formatDate(entry.timestamp);
-    final duration =
-    entry.durationSeconds > 0 ? ' • ${_formatDuration(entry.durationSeconds)}' : '';
-    return '$date$duration';
-  }
-
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final diff = now.difference(date);
-
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-    if (diff.inDays < 1) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-
-    return '${date.month}/${date.day}/${date.year}';
-  }
-
-  String _formatDuration(int seconds) {
-    if (seconds < 60) return '${seconds}s';
-    final minutes = seconds ~/ 60;
-    if (minutes < 60) return '${minutes}m';
-    final hours = minutes ~/ 60;
-    return '${hours}h';
-  }
 
   @override
   Widget build(BuildContext context) {
+    return FloatingActionButton(
+      mini: true,
+      onPressed: onPressed,
+      backgroundColor: backgroundColor,
+      child: Icon(icon, color: Colors.white),
+    );
+  }
+}
+
+/// Call history item widget
+class CallHistoryItemWidget extends StatelessWidget {
+  final CallHistoryEntry entry;
+  final VoidCallback onTap;
+
+  const CallHistoryItemWidget({
+    Key? key,
+    required this.entry,
+    required this.onTap,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final statusColor = _getStatusColor(entry.status);
+
     return ListTile(
       leading: CircleAvatar(
-        backgroundColor: MessagingColors.brandOrangePale,
         backgroundImage: entry.peerAvatar != null
             ? NetworkImage(entry.peerAvatar!)
             : null,
         child: entry.peerAvatar == null
-            ? const Icon(Icons.person,
-            color: MessagingColors.brandOrange)
+            ? const Icon(Icons.person)
             : null,
       ),
-      title: Text(
-        entry.peerName ?? 'Unknown',
-        style: const TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w500,
-          color: MessagingColors.title,
-        ),
-      ),
-      subtitle: Text(
-        _getSubtitle(),
-        style: const TextStyle(
-          fontSize: 12,
-          color: MessagingColors.subtitle,
-        ),
+      title: Text(entry.peerName ?? 'Unknown'),
+      subtitle: Row(
+        children: [
+          Icon(
+            entry.isIncoming
+                ? Icons.call_received
+                : Icons.call_made,
+            size: 16,
+            color: statusColor,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            entry.callType == CallType.video ? 'Video' : 'Voice',
+            style: theme.textTheme.bodySmall,
+          ),
+          if (entry.durationSeconds > 0) ...[
+            const SizedBox(width: 8),
+            Text(
+              '${entry.durationSeconds} sec',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.grey,
+              ),
+            ),
+          ],
+        ],
       ),
       trailing: Icon(
-        _getStatusIcon(),
-        color: _getStatusColor(),
-        size: 20,
+        entry.isIncoming
+            ? Icons.call_received
+            : Icons.call_made,
+        color: statusColor,
       ),
       onTap: onTap,
     );
+  }
+
+  Color _getStatusColor(CallStatus status) {
+    switch (status) {
+      case CallStatus.active:
+      case CallStatus.ended:
+        return Colors.green;
+      case CallStatus.missed:
+      case CallStatus.declined:
+      case CallStatus.failed:
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
   }
 }

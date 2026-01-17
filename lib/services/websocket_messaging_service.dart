@@ -2,6 +2,9 @@ import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:vero360_app/models/messaging_models.dart';
 
+// Forward declaration to avoid circular dependency
+typedef OnReconnectCallback = Future<void> Function();
+
 class WebSocketMessagingService {
   late IO.Socket _socket;
   final String _wsUrl;
@@ -28,6 +31,9 @@ class WebSocketMessagingService {
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 5;
   static const Duration _reconnectDelay = Duration(seconds: 2);
+
+  // Callback for handling reconnection sync
+  OnReconnectCallback? _onReconnectCallback;
 
   WebSocketMessagingService({
     required String wsUrl,
@@ -81,13 +87,27 @@ class WebSocketMessagingService {
     }
   }
 
+  /// Set callback for handling reconnection sync
+  void setOnReconnectCallback(OnReconnectCallback callback) {
+    _onReconnectCallback = callback;
+  }
+
   /// Setup WebSocket event listeners
   void _setupEventListeners() {
-    _socket.on('connect', (_) {
+    _socket.on('connect', (_) async {
       print('[WebSocket] Connected to messaging server');
       _isConnected = true;
       _reconnectAttempts = 0;
       _connectionStatusController.add('connected');
+
+      // Trigger sync on reconnect
+      if (_onReconnectCallback != null) {
+        try {
+          await _onReconnectCallback!();
+        } catch (e) {
+          print('[WebSocket] Error during reconnect callback: $e');
+        }
+      }
     });
 
     _socket.on('message:received', (data) {

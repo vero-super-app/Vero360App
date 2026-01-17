@@ -253,3 +253,73 @@ class MessageReadReceipt {
     );
   }
 }
+
+// Chat Model
+class Chat {
+  final String id;
+  final String? name;
+  final String? description;
+  final List<String> participants;
+  final int? participantCount;
+  final DateTime createdAt;
+  final DateTime? updatedAt;
+
+  Chat({
+    required this.id,
+    this.name,
+    this.description,
+    required this.participants,
+    this.participantCount,
+    required this.createdAt,
+    this.updatedAt,
+  });
+
+  factory Chat.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+    return Chat(
+      id: doc.id,
+      name: data['name'] as String?,
+      description: data['description'] as String?,
+      participants: List<String>.from(data['participants'] ?? []),
+      participantCount: data['participantCount'] as int?,
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
+    );
+  }
+
+  Map<String, dynamic> toFirestore() => {
+    'name': name,
+    'description': description,
+    'participants': participants,
+    'participantCount': participantCount,
+    'createdAt': Timestamp.fromDate(createdAt),
+    'updatedAt': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
+  };
+}
+
+// Message extension for additional helper
+extension MessageHelper on Message {
+  String? get senderName => null; // To be populated from context
+}
+
+// Factory constructor for Message
+extension MessageFactory on Message {
+  static Message fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+    return Message(
+      id: doc.id,
+      chatId: data['chatId'] ?? '',
+      senderId: data['senderId'] ?? '',
+      recipientId: data['recipientId'] ?? '',
+      content: data['content'] ?? '',
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      editedAt: (data['editedAt'] as Timestamp?)?.toDate(),
+      status: MessageStatusExt.fromString(data['status'] ?? 'sent'),
+      isEdited: data['isEdited'] ?? false,
+      isDeleted: data['isDeleted'] ?? false,
+      attachmentUrls: data['attachmentUrls'] != null
+          ? List<String>.from(data['attachmentUrls'] as List)
+          : null,
+    );
+  }
+}

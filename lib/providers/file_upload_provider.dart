@@ -1,184 +1,194 @@
+import 'dart:io';
+import 'dart:developer' as developer;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:vero360_app/models/attachment_model.dart';
-import 'dart:developer' as developer;
+import 'package:vero360_app/services/file_upload_service.dart';
 
-// =============== UPLOAD STATE PROVIDERS ===============
-
-/// Map of ongoing uploads by message ID: {messageId: {attachmentId: progress}}
-final uploadProgressProvider =
-    StateProvider<Map<String, Map<String, double>>>((ref) => {});
-
-/// Currently uploading attachments
-final uploadingAttachmentsProvider =
-    StateProvider<Map<String, Attachment>>((ref) => {});
-
-/// Failed uploads
-final failedUploadsProvider = StateProvider<Map<String, String>>((ref) => {});
-
-/// Upload queue (pending uploads)
-final uploadQueueProvider = StateProvider<List<Attachment>>((ref) => []);
-
-// =============== ACTION PROVIDERS ===============
-
-/// Provider for file upload service methods
+// File upload service provider
 final fileUploadServiceProvider = Provider((ref) {
-  return FileUploadService(ref: ref);
+  return FileUploadServiceImpl();
 });
 
-class FileUploadService {
+// Upload progress tracking by file ID
+final uploadProgressProvider = StateProvider<Map<String, double>>(
+  (ref) => <String, double>{},
+);
+
+// Upload errors by file ID
+final uploadErrorsProvider = StateProvider<Map<String, String>>(
+  (ref) => <String, String>{},
+);
+
+// Current uploads (file IDs)
+final currentUploadsProvider = StateProvider<Set<String>>(
+  (ref) => <String>{},
+);
+
+// Cache for uploaded attachments
+final attachmentCacheProvider = StateProvider<Map<String, Attachment>>(
+  (ref) => <String, Attachment>{},
+);
+
+/// Family provider for individual message attachments
+final messageAttachmentsProvider =
+    StreamProvider.family<List<Attachment>, String>((ref, messageId) {
+  final service = ref.watch(fileUploadServiceProvider);
+  return service.messageAttachmentsStream(messageId);
+});
+
+/// Notifier for managing file uploads
+class FileUploadNotifier extends StateNotifier<Map<String, double>> {
+  final FileUploadServiceImpl _service;
   final Ref ref;
 
-  FileUploadService({required this.ref});
+  FileUploadNotifier(this._service, this.ref) : super(<String, double>{});
 
-  /// Start uploading a file
-  Future<void> uploadFile({
-    required Attachment attachment,
-    required Function(double progress) onProgress,
-  }) async {
-    try {
-      // Add to uploading
-      final uploading = ref.read(uploadingAttachmentsProvider);
-      ref.read(uploadingAttachmentsProvider.notifier).state = {
-        ...uploading,
-        attachment.id: attachment.copyWith(isUploading: true),
-      };
-
-      // Simulate progress updates
-      for (int i = 0; i <= 10; i++) {
-        final progress = i / 10;
-        onProgress(progress);
-
-        // Update provider
-        _updateProgress(
-          messageId: attachment.messageId,
-          attachmentId: attachment.id,
-          progress: progress,
-        );
-
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
-
-      // Mark as complete
-      _updateProgress(
-        messageId: attachment.messageId,
-        attachmentId: attachment.id,
-        progress: 1.0,
-      );
-
-      // Remove from uploading
-      final updated = Map<String, Attachment>.from(
-        ref.read(uploadingAttachmentsProvider),
-      );
-      updated.remove(attachment.id);
-      ref.read(uploadingAttachmentsProvider.notifier).state = updated;
-    } catch (e) {
-      developer.log('[FileUploadService] Upload failed: $e');
-      final failed = ref.read(failedUploadsProvider);
-      ref.read(failedUploadsProvider.notifier).state = {
-        ...failed,
-        attachment.id: e.toString(),
-      };
-
-      // Remove from uploading on error
-      final updated = Map<String, Attachment>.from(
-        ref.read(uploadingAttachmentsProvider),
-      );
-      updated.remove(attachment.id);
-      ref.read(uploadingAttachmentsProvider.notifier).state = updated;
-      rethrow;
-    }
-  }
-
-  /// Retry failed upload
-  Future<void> retryUpload(String attachmentId) async {
-    try {
-      final failed = ref.read(failedUploadsProvider);
-      final updatedFailed = Map<String, String>.from(failed);
-      updatedFailed.remove(attachmentId);
-      ref.read(failedUploadsProvider.notifier).state = updatedFailed;
-    } catch (e) {
-      developer.log('[FileUploadService] Retry failed: $e');
-      rethrow;
-    }
-  }
-
-  /// Cancel upload
-  Future<void> cancelUpload(String attachmentId) async {
-    try {
-      // Remove from uploading
-      final uploading = Map<String, Attachment>.from(
-        ref.read(uploadingAttachmentsProvider),
-      );
-      uploading.remove(attachmentId);
-      ref.read(uploadingAttachmentsProvider.notifier).state = uploading;
-
-      // Remove from progress
-      final progressMap = ref.read(uploadProgressProvider);
-      for (final entry in progressMap.entries) {
-        final msgMap = Map<String, double>.from(entry.value);
-        msgMap.remove(attachmentId);
-        progressMap[entry.key] = msgMap;
-      }
-      ref.read(uploadProgressProvider.notifier).state = progressMap;
-    } catch (e) {
-      developer.log('[FileUploadService] Cancel failed: $e');
-      rethrow;
-    }
-  }
-
-  /// Add to upload queue
-  Future<void> queueUpload(Attachment attachment) async {
-    try {
-      final queue = ref.read(uploadQueueProvider);
-      ref.read(uploadQueueProvider.notifier).state = [...queue, attachment];
-    } catch (e) {
-      developer.log('[FileUploadService] Queue failed: $e');
-      rethrow;
-    }
-  }
-
-  /// Remove from upload queue
-  Future<void> dequeueUpload(String attachmentId) async {
-    try {
-      final queue = ref.read(uploadQueueProvider);
-      ref.read(uploadQueueProvider.notifier).state = [
-        for (final a in queue)
-          if (a.id != attachmentId) a,
-      ];
-    } catch (e) {
-      developer.log('[FileUploadService] Dequeue failed: $e');
-      rethrow;
-    }
-  }
-
-  /// Get upload progress for a specific attachment
-  double getUploadProgress(String messageId, String attachmentId) {
-    final progressMap = ref.read(uploadProgressProvider);
-    return progressMap[messageId]?[attachmentId] ?? 0.0;
-  }
-
-  /// Check if attachment is uploading
-  bool isUploading(String attachmentId) {
-    return ref.read(uploadingAttachmentsProvider).containsKey(attachmentId);
-  }
-
-  /// Check if upload failed
-  bool hasFailed(String attachmentId) {
-    return ref.read(failedUploadsProvider).containsKey(attachmentId);
-  }
-
-  void _updateProgress({
+  /// Upload a file with progress tracking
+  Future<Attachment?> uploadFile({
+    required File file,
     required String messageId,
-    required String attachmentId,
-    required double progress,
-  }) {
-    final progressMap = ref.read(uploadProgressProvider);
-    final msgMap = Map<String, double>.from(progressMap[messageId] ?? {});
-    msgMap[attachmentId] = progress;
-    ref.read(uploadProgressProvider.notifier).state = {
-      ...progressMap,
-      messageId: msgMap,
-    };
+    required String uploadedBy,
+    required AttachmentType type,
+  }) async {
+    final fileId = '${DateTime.now().millisecondsSinceEpoch}_${file.path.split('/').last}';
+
+    try {
+      // Mark as uploading
+      ref.read(currentUploadsProvider.notifier).state = {
+        ...ref.read(currentUploadsProvider),
+        fileId,
+      };
+
+      // Upload with progress callback
+      final attachment = await _service.uploadFile(
+        file: file,
+        messageId: messageId,
+        uploadedBy: uploadedBy,
+        type: type,
+        onProgress: (progress) {
+          // Update progress
+          state = {
+            ...state,
+            fileId: progress,
+          };
+          final currentProgress = ref.read(uploadProgressProvider);
+          ref.read(uploadProgressProvider.notifier).state = {
+            ...currentProgress,
+            fileId: progress,
+          };
+        },
+      );
+
+      // Cache the attachment
+      final currentCache = ref.read(attachmentCacheProvider);
+      ref.read(attachmentCacheProvider.notifier).state = {
+        ...currentCache,
+        attachment.id: attachment,
+      };
+
+      // Clear from current uploads
+      final uploads = ref.read(currentUploadsProvider);
+      uploads.remove(fileId);
+      ref.read(currentUploadsProvider.notifier).state = {...uploads};
+
+      // Clear progress
+      final progressMap = ref.read(uploadProgressProvider);
+      progressMap.remove(fileId);
+      ref.read(uploadProgressProvider.notifier).state = {...progressMap};
+
+      return attachment;
+    } catch (e) {
+      // Store error
+      final currentErrors = ref.read(uploadErrorsProvider);
+      ref.read(uploadErrorsProvider.notifier).state = {
+        ...currentErrors,
+        fileId: e.toString(),
+      };
+
+      // Clear from current uploads
+      final uploads = ref.read(currentUploadsProvider);
+      uploads.remove(fileId);
+      ref.read(currentUploadsProvider.notifier).state = {...uploads};
+
+      return null;
+    }
+  }
+
+  /// Delete an attachment
+  Future<void> deleteAttachment(String attachmentId, String url) async {
+    try {
+      await _service.deleteAttachment(attachmentId, url);
+
+      // Remove from cache
+      final cache = ref.read(attachmentCacheProvider);
+      cache.remove(attachmentId);
+      ref.read(attachmentCacheProvider.notifier).state = {...cache};
+    } catch (e) {
+      developer.log('[FileUploadNotifier] Error deleting attachment: $e');
+    }
+  }
+
+  /// Delete all attachments for a message
+  Future<void> deleteMessageAttachments(String messageId) async {
+    try {
+      await _service.deleteMessageAttachments(messageId);
+
+      // Remove from cache by messageId
+      final cache = ref.read(attachmentCacheProvider);
+      cache.removeWhere((key, value) => value.messageId == messageId);
+      ref.read(attachmentCacheProvider.notifier).state = {...cache};
+    } catch (e) {
+      developer.log('[FileUploadNotifier] Error deleting message attachments: $e');
+    }
+  }
+
+  /// Get attachment from cache or fetch
+  Future<Attachment?> getAttachment(String attachmentId) async {
+    // Check cache first
+    final cached = ref.read(attachmentCacheProvider)[attachmentId];
+    if (cached != null) return cached;
+
+    // Fetch from service
+    try {
+      final attachment = await _service.getAttachment(attachmentId);
+      if (attachment != null) {
+        // Cache it
+        final currentCache = ref.read(attachmentCacheProvider);
+        ref.read(attachmentCacheProvider.notifier).state = {
+          ...currentCache,
+          attachmentId: attachment,
+        };
+      }
+      return attachment;
+    } catch (e) {
+      developer.log('[FileUploadNotifier] Error getting attachment: $e');
+      return null;
+    }
   }
 }
+
+/// Provider for the file upload notifier
+final fileUploadNotifierProvider =
+    StateNotifierProvider<FileUploadNotifier, Map<String, double>>((ref) {
+  final service = ref.watch(fileUploadServiceProvider);
+  return FileUploadNotifier(service, ref);
+});
+
+/// Helper to get upload progress for a specific file
+final uploadProgressFamily = Provider.family<double, String>((ref, fileId) {
+  final progress = ref.watch(uploadProgressProvider);
+  return progress[fileId] ?? 0.0;
+});
+
+/// Helper to get upload error for a specific file
+final uploadErrorFamily = Provider.family<String?, String>((ref, fileId) {
+  final errors = ref.watch(uploadErrorsProvider);
+  return errors[fileId];
+});
+
+/// Helper to check if a file is currently uploading
+final isUploadingFamily = Provider.family<bool, String>((ref, fileId) {
+  final uploads = ref.watch(currentUploadsProvider);
+  return uploads.contains(fileId);
+});

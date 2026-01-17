@@ -82,7 +82,7 @@ class _CallHistoryScreenState extends ConsumerState<CallHistoryScreen> {
                     itemCount: filteredHistory.length,
                     itemBuilder: (context, index) {
                       final entry = filteredHistory[index];
-                      return CallHistoryTile(
+                      return CallHistoryItemWidget(
                         entry: entry,
                         onTap: () {
                           // Could show call details or initiate new call

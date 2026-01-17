@@ -268,6 +268,17 @@ final reconnectionProvider = FutureProvider<void>((ref) async {
   }
 });
 
+// ==================== MESSAGING WEBSOCKET STATE ====================
+
+/// WebSocket connection state for messaging
+final messagingWebSocketConnectedProvider = StateProvider<bool>((ref) => false);
+
+/// Typing indicator debounce timer tracking
+final typingDebounceProvider = StateProvider<Map<String, DateTime>>((ref) => {});
+
+/// Last message read time per chat
+final lastReadTimeProvider = StateProvider<Map<String, DateTime>>((ref) => {});
+
 // ==================== IMPORTS FOR Colors ====================
 // Add these imports at the top of your file:
 // import 'package:flutter/material.dart';

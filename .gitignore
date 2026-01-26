@@ -51,3 +51,8 @@ app.*.map.json
 # All txt and md file for Algorithms and Data Structures
 *.md
 *.txt
+
+# Environment variables
+.env
+.env.*
+!.env.example

@@ -1,4 +1,6 @@
 import org.gradle.api.JavaVersion
+import java.io.File
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -6,6 +8,13 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
     id("com.google.gms.google-services")
     // id("com.google.firebase.crashlytics") // optional
+}
+
+// Load .env file
+val envFile = File(project.rootDir.parentFile, ".env")
+val envProperties = Properties()
+if (envFile.exists()) {
+    envFile.inputStream().use { envProperties.load(it) }
 }
 
 android {
@@ -21,6 +30,10 @@ android {
         versionCode = 10001
         versionName = "1.0.1"
         multiDexEnabled = true
+        
+        // Load Google Maps API key from .env
+        val googleMapsKey = envProperties.getProperty("GOOGLE_MAPS_API_KEY", "")
+        manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = googleMapsKey
     }
 
     compileOptions {

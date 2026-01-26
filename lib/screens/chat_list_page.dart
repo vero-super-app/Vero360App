@@ -4,6 +4,8 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/services/chat_service.dart';
+import 'package:vero360_app/services/chat_service_wrapper.dart';
+import 'package:vero360_app/services/websocket_manager.dart';
 import 'package:vero360_app/Pages/Home/Messages.dart';
 
 class ChatListPage extends StatefulWidget {
@@ -42,6 +44,13 @@ class _ChatListPageState extends State<ChatListPage> {
       try {
         await ChatService.lockUidMapping(appId);
       } catch (_) {}
+
+      // Try to initialize WebSocket (non-blocking)
+      try {
+        await WebSocketManager.initialize();
+      } catch (e) {
+        print('[ChatListPage] WebSocket init failed, will use Firebase: $e');
+      }
 
       if (!mounted) return;
       setState(() {

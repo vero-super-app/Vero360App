@@ -17,6 +17,7 @@ import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:vero360_app/services/chat_service.dart';
+import 'package:vero360_app/services/chat_service_wrapper.dart';
 
 class MessagePage extends StatefulWidget {
   final String peerAppId; // REQUIRED: app user id of the seller
@@ -409,7 +410,7 @@ class _MessagePageState extends State<MessagePage> {
 
           final text = '$_imgPrefix$url${localCaption.isEmpty ? '' : '\n$localCaption'}';
 
-          await ChatService.sendMessage(
+          await ChatServiceWrapper.sendMessage(
             myAppId: _me!,
             peerAppId: widget.peerAppId,
             text: text,
@@ -419,7 +420,7 @@ class _MessagePageState extends State<MessagePage> {
         _pendingImages.clear();
         _input.clear();
       } else {
-        await ChatService.sendMessage(
+        await ChatServiceWrapper.sendMessage(
           myAppId: _me!,
           peerAppId: widget.peerAppId,
           text: caption,
@@ -536,7 +537,7 @@ class _MessagePageState extends State<MessagePage> {
 
       final text = '$_audPrefix$url|$_recordMs';
 
-      await ChatService.sendMessage(
+      await ChatServiceWrapper.sendMessage(
         myAppId: _me!,
         peerAppId: widget.peerAppId,
         text: text,
@@ -580,7 +581,7 @@ class _MessagePageState extends State<MessagePage> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      await ChatService.sendMessage(
+      await ChatServiceWrapper.sendMessage(
         myAppId: _me!,
         peerAppId: widget.peerAppId,
         text: '$_callPrefix$type::${callDoc.id}',

@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:http/http.dart' as http;
 
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/services/api_exception.dart';
 
 class ApiClient {
@@ -110,8 +110,7 @@ class ApiClient {
     final ok = await ApiConfig.ensureBackendUp();
     if (!ok) {
       throw const ApiException(
-        message:
-            'Please check your internet connection and try again.',
+        message: 'Please check your internet connection and try again.',
       );
     }
 
@@ -147,10 +146,11 @@ class ApiClient {
 
       final res = await future.timeout(timeout ?? _defaultTimeout);
 
-      final isExplicitlyAllowed =
-          allowedStatusCodes != null && allowedStatusCodes.contains(res.statusCode);
+      final isExplicitlyAllowed = allowedStatusCodes != null &&
+          allowedStatusCodes.contains(res.statusCode);
 
-      if ((res.statusCode >= 200 && res.statusCode < 300) || isExplicitlyAllowed) {
+      if ((res.statusCode >= 200 && res.statusCode < 300) ||
+          isExplicitlyAllowed) {
         return res;
       }
 

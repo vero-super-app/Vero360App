@@ -12,7 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/models/marketplace.model.dart';
 import 'package:vero360_app/services/api_client.dart';
 import 'package:vero360_app/services/api_exception.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class MarketplaceService {
   // ---------- auth helpers ----------

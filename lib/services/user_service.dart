@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class UserService {
   Future<String?> _readToken() async {
@@ -35,7 +35,9 @@ class UserService {
 
     if (res.statusCode == 200) {
       final data = jsonDecode(res.body);
-      return data is Map<String, dynamic> ? data : <String, dynamic>{'raw': data};
+      return data is Map<String, dynamic>
+          ? data
+          : <String, dynamic>{'raw': data};
     }
     if (res.statusCode == 401 || res.statusCode == 403) {
       throw Exception('Session expired. Please log in again.');

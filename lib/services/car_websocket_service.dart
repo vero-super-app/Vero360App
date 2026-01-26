@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:vero360_app/models/car_model.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 /// WebSocket service for real-time car location updates
 ///

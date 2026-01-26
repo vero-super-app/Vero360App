@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class RideShareService {
   // ✅ Use ApiConfig for ride-share endpoint instead of hardcoded URL
@@ -188,7 +188,8 @@ class RideShareService {
   /// Get ride details
   Future<Map<String, dynamic>> getRideDetails(int rideId) async {
     try {
-      final response = await http.get(ApiConfig.endpoint('/ride-share/rides/$rideId'));
+      final response =
+          await http.get(ApiConfig.endpoint('/ride-share/rides/$rideId'));
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);

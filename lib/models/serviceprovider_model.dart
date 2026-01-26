@@ -1,5 +1,5 @@
 // lib/models/serviceprovider_model.dart
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class ServiceProvider {
   final int? id;
@@ -25,16 +25,20 @@ class ServiceProvider {
   });
 
   factory ServiceProvider.fromJson(Map<String, dynamic> json) {
-    double? _d(v) => v == null ? null : (v is num ? v.toDouble() : double.tryParse('$v'));
+    double? _d(v) =>
+        v == null ? null : (v is num ? v.toDouble() : double.tryParse('$v'));
     String? _logo(Map<String, dynamic> m) {
-      final raw = (m['logoUrl'] ?? m['logourl'] ?? m['logoimage'])?.toString().trim();
+      final raw =
+          (m['logoUrl'] ?? m['logourl'] ?? m['logoimage'])?.toString().trim();
       if (raw == null || raw.isEmpty) return null;
       return raw.startsWith('http') ? raw : '${ApiConfig.prod}$raw';
     }
 
     return ServiceProvider(
       id: json['id'] is int ? json['id'] as int : int.tryParse('${json['id']}'),
-      serviceProviderId: (json['serviceProviderId'] ?? json['ServiceProviderID'] ?? '').toString(),
+      serviceProviderId:
+          (json['serviceProviderId'] ?? json['ServiceProviderID'] ?? '')
+              .toString(),
       businessName: (json['businessName'] ?? '').toString(),
       businessDescription: json['businessDescription']?.toString(),
       status: json['status']?.toString(),

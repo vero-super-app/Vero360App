@@ -5,13 +5,14 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 import 'package:vero360_app/models/Latest_model.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class LatestArrivalsServicess {
   // ---------------- URL builder (adds /vero) ----------------
 
   Future<String> _apiBase() async {
-    final base = await ApiConfig.readBase(); // e.g. https://heflexitservice.co.za
+    final base =
+        await ApiConfig.readBase(); // e.g. https://heflexitservice.co.za
     final root = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
 
     final p = ApiConfig.apiPrefix.trim(); // e.g. /vero
@@ -50,7 +51,8 @@ class LatestArrivalsServicess {
 
   dynamic _decode(http.Response r, {required String where}) {
     if (r.statusCode < 200 || r.statusCode >= 300) {
-      throw Exception('HTTP ${r.statusCode} at $where: ${_compactBody(r.body)}');
+      throw Exception(
+          'HTTP ${r.statusCode} at $where: ${_compactBody(r.body)}');
     }
     if (r.body.isEmpty) return {};
     return json.decode(r.body);
@@ -109,13 +111,13 @@ class LatestArrivalsServicess {
     final base = await _apiBase();
     final url = _u('/latestarrivals', base);
 
-    final r = await http.get(url, headers: const {'Accept': 'application/json'});
+    final r =
+        await http.get(url, headers: const {'Accept': 'application/json'});
     final body = _decode(r, where: 'GET $url');
 
-    final list = body is List ? body : (body is Map ? (body['data'] ?? []) : []);
-    return (list as List)
-        .map((e) => LatestArrivalModel.fromJson(e))
-        .toList();
+    final list =
+        body is List ? body : (body is Map ? (body['data'] ?? []) : []);
+    return (list as List).map((e) => LatestArrivalModel.fromJson(e)).toList();
   }
 
   // ---------------- list mine (NO AUTH) ----------------
@@ -125,13 +127,13 @@ class LatestArrivalsServicess {
     final base = await _apiBase();
     final url = _u('/latestarrivals/me', base);
 
-    final r = await http.get(url, headers: const {'Accept': 'application/json'});
+    final r =
+        await http.get(url, headers: const {'Accept': 'application/json'});
     final body = _decode(r, where: 'GET $url');
 
-    final list = body is List ? body : (body is Map ? (body['data'] ?? []) : []);
-    return (list as List)
-        .map((e) => LatestArrivalModel.fromJson(e))
-        .toList();
+    final list =
+        body is List ? body : (body is Map ? (body['data'] ?? []) : []);
+    return (list as List).map((e) => LatestArrivalModel.fromJson(e)).toList();
   }
 
   // ---------------- create/update/delete (NO AUTH) ----------------
@@ -164,7 +166,8 @@ class LatestArrivalsServicess {
     final base = await _apiBase();
     final url = _u('/latestarrivals/$id', base);
 
-    final r = await http.delete(url, headers: const {'Accept': 'application/json'});
+    final r =
+        await http.delete(url, headers: const {'Accept': 'application/json'});
     _decode(r, where: 'DELETE $url');
   }
 }

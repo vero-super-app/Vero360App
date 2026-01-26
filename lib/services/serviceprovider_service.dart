@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/services/api_exception.dart';
 
 import '../models/serviceprovider_model.dart';
@@ -75,8 +75,7 @@ class ServiceProviderServicess {
 
   static Future<ServiceProvider?> fetchByNumber(String spNumber) async {
     final uri = await _u('/serviceprovider/search/$spNumber');
-    final res =
-        await http.get(uri, headers: {'Accept': 'application/json'});
+    final res = await http.get(uri, headers: {'Accept': 'application/json'});
 
     if (res.statusCode == 200) {
       final body = jsonDecode(res.body);
@@ -241,7 +240,7 @@ class ServiceproviderService {
   Future<Map<String, dynamic>?> fetchMyShopAsMap() async {
     final shop = await fetchMine();
     if (shop == null) return null;
-    
+
     // Convert ServiceProvider to a Map with all required fields
     return _convertServiceProviderToMap(shop);
   }
@@ -327,7 +326,7 @@ class ServiceproviderService {
     try {
       final shop = await fetchMine();
       if (shop == null) return null;
-      
+
       return _convertServiceProviderToMap(shop);
     } catch (e) {
       debugPrint('Error getting merchant info: $e');
@@ -338,10 +337,10 @@ class ServiceproviderService {
   /// Validate merchant info for wallet payments
   bool validateMerchantInfo(Map<String, dynamic> merchantInfo) {
     return merchantInfo['id'] != null &&
-           merchantInfo['id'].toString().isNotEmpty &&
-           merchantInfo['id'] != 'unknown' &&
-           merchantInfo['businessName'] != null &&
-           merchantInfo['businessName'].toString().isNotEmpty &&
-           merchantInfo['businessName'] != 'Unknown Merchant';
+        merchantInfo['id'].toString().isNotEmpty &&
+        merchantInfo['id'] != 'unknown' &&
+        merchantInfo['businessName'] != null &&
+        merchantInfo['businessName'].toString().isNotEmpty &&
+        merchantInfo['businessName'] != 'Unknown Merchant';
   }
 }

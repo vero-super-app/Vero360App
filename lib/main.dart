@@ -38,7 +38,7 @@ import 'package:vero360_app/screens/register_screen.dart';
 // Services
 import 'package:vero360_app/services/auth_guard.dart';
 import 'package:vero360_app/services/cart_services.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/services/messaging_initialization_service.dart';
 import 'package:vero360_app/services/websocket_messaging_service.dart';
 import 'package:vero360_app/services/websocket_manager.dart';
@@ -50,10 +50,10 @@ final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Initialize Google Maps configuration from .env
   await GoogleMapsConfig.initialize();
-  
+
   runApp(const AppBootstrap());
 }
 

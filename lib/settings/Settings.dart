@@ -15,7 +15,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:vero360_app/Pages/BottomNavbar.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/services/auth_service.dart';
 import 'package:vero360_app/toasthelper.dart';
 
@@ -166,12 +166,13 @@ class _SettingsPageState extends State<SettingsPage> {
       if (token.isEmpty) return;
 
       final base = await ApiConfig.readBase();
-      final resp = await http
-          .get(
-            Uri.parse('$base/users/me'),
-            headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 8));
+      final resp = await http.get(
+        Uri.parse('$base/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json'
+        },
+      ).timeout(const Duration(seconds: 8));
 
       if (!mounted) return;
 
@@ -179,7 +180,9 @@ class _SettingsPageState extends State<SettingsPage> {
         final decoded = jsonDecode(resp.body);
         final data = (decoded is Map && decoded['data'] is Map)
             ? Map<String, dynamic>.from(decoded['data'])
-            : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
+            : (decoded is Map
+                ? Map<String, dynamic>.from(decoded)
+                : <String, dynamic>{});
 
         final user = (data['user'] is Map)
             ? Map<String, dynamic>.from(data['user'])
@@ -343,7 +346,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     Expanded(
                       child: Text(
                         'Personalization',
-                        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                        style: TextStyle(
+                            fontWeight: FontWeight.w900, fontSize: 16),
                       ),
                     ),
                   ],
@@ -356,7 +360,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     setState(() => _compactMode = v);
                     await _savePersonalizationPrefs();
                   },
-                  title: const Text('Compact mode', style: TextStyle(fontWeight: FontWeight.w800)),
+                  title: const Text('Compact mode',
+                      style: TextStyle(fontWeight: FontWeight.w800)),
                   subtitle: const Text('Smaller spacing in settings list'),
                 ),
                 SwitchListTile(
@@ -366,7 +371,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     setState(() => _haptics = v);
                     await _savePersonalizationPrefs();
                   },
-                  title: const Text('Haptics', style: TextStyle(fontWeight: FontWeight.w800)),
+                  title: const Text('Haptics',
+                      style: TextStyle(fontWeight: FontWeight.w800)),
                   subtitle: const Text('Vibration feedback when tapping'),
                 ),
                 const SizedBox(height: 8),
@@ -383,7 +389,8 @@ class _SettingsPageState extends State<SettingsPage> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => AboutUsPage(appVersion: _appVersion, buildNumber: _buildNumber),
+        builder: (_) =>
+            AboutUsPage(appVersion: _appVersion, buildNumber: _buildNumber),
       ),
     );
   }
@@ -393,7 +400,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _maybeHaptic();
     final ok = await _confirm(
       title: 'Clear cache',
-      message: 'This will clear temporary cached data and image cache. You will stay logged in.',
+      message:
+          'This will clear temporary cached data and image cache. You will stay logged in.',
       confirmText: 'Clear',
       confirmColor: Colors.red,
     );
@@ -422,9 +430,11 @@ class _SettingsPageState extends State<SettingsPage> {
         if (isCacheKey(k)) await prefs.remove(k);
       }
 
-      ToastHelper.showCustomToast(context, 'Cache cleared', isSuccess: true, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Cache cleared',
+          isSuccess: true, errorMessage: '');
     } catch (_) {
-      ToastHelper.showCustomToast(context, 'Failed to clear cache', isSuccess: false, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Failed to clear cache',
+          isSuccess: false, errorMessage: '');
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -467,7 +477,8 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 8),
             ListTile(
               leading: _roundIcon(Icons.call_outlined),
-              title: const Text('Call support', style: TextStyle(fontWeight: FontWeight.w800)),
+              title: const Text('Call support',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
               subtitle: const Text(_supportPhone),
               onTap: () async {
                 Navigator.pop(context);
@@ -476,20 +487,25 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             ListTile(
               leading: _roundIcon(Icons.chat_bubble_outline),
-              title: const Text('WhatsApp', style: TextStyle(fontWeight: FontWeight.w800)),
+              title: const Text('WhatsApp',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
               subtitle: const Text(_supportWhatsApp),
               onTap: () async {
                 Navigator.pop(context);
-                await _launchWhatsApp(_supportWhatsApp, 'Hello support, I need help.');
+                await _launchWhatsApp(
+                    _supportWhatsApp, 'Hello support, I need help.');
               },
             ),
             ListTile(
               leading: _roundIcon(Icons.email_outlined),
-              title: const Text('Email', style: TextStyle(fontWeight: FontWeight.w800)),
+              title: const Text('Email',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
               subtitle: const Text(_supportEmail),
               onTap: () async {
                 Navigator.pop(context);
-                await _launchEmail(_supportEmail, subject: 'Support request', body: 'Hi, I need help with...');
+                await _launchEmail(_supportEmail,
+                    subject: 'Support request',
+                    body: 'Hi, I need help with...');
               },
             ),
             const SizedBox(height: 8),
@@ -516,7 +532,8 @@ class _SettingsPageState extends State<SettingsPage> {
     await launchUrl(uri);
   }
 
-  Future<void> _launchEmail(String email, {String? subject, String? body}) async {
+  Future<void> _launchEmail(String email,
+      {String? subject, String? body}) async {
     final uri = Uri(
       scheme: 'mailto',
       path: email,
@@ -530,7 +547,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _launchWhatsApp(String phone, String message) async {
     final p = phone.replaceAll(' ', '').replaceAll('+', '');
-    final uri = Uri.parse('https://wa.me/$p?text=${Uri.encodeComponent(message)}');
+    final uri =
+        Uri.parse('https://wa.me/$p?text=${Uri.encodeComponent(message)}');
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
@@ -546,10 +564,14 @@ class _SettingsPageState extends State<SettingsPage> {
         title: Text(title),
         content: Text(message),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(confirmText, style: TextStyle(color: confirmColor, fontWeight: FontWeight.w900)),
+            child: Text(confirmText,
+                style: TextStyle(
+                    color: confirmColor, fontWeight: FontWeight.w900)),
           ),
         ],
       ),
@@ -604,7 +626,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _maybeHaptic();
     final ok = await _confirm(
       title: 'Delete account',
-      message: 'This will permanently delete your account.\n\nThis cannot be undone.',
+      message:
+          'This will permanently delete your account.\n\nThis cannot be undone.',
       confirmText: 'Delete',
       confirmColor: Colors.red,
     );
@@ -618,12 +641,13 @@ class _SettingsPageState extends State<SettingsPage> {
       if (token.isNotEmpty) {
         try {
           final base = await ApiConfig.readBase();
-          await http
-              .delete(
-                Uri.parse('$base/users/me'),
-                headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-              )
-              .timeout(const Duration(seconds: 8));
+          await http.delete(
+            Uri.parse('$base/users/me'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Accept': 'application/json'
+            },
+          ).timeout(const Duration(seconds: 8));
         } catch (_) {}
       }
 
@@ -638,7 +662,10 @@ class _SettingsPageState extends State<SettingsPage> {
           await _firestore.collection('users').doc(u.uid).delete();
 
           if (serviceKey.trim().isNotEmpty) {
-            await _firestore.collection('${serviceKey}_merchants').doc(u.uid).delete();
+            await _firestore
+                .collection('${serviceKey}_merchants')
+                .doc(u.uid)
+                .delete();
           }
         } catch (_) {}
 
@@ -662,7 +689,8 @@ class _SettingsPageState extends State<SettingsPage> {
       // 4) Logout everywhere
       await AuthService().logout(context: context);
 
-      ToastHelper.showCustomToast(context, 'Account deleted', isSuccess: true, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Account deleted',
+          isSuccess: true, errorMessage: '');
       if (!mounted) return;
 
       Navigator.of(context).pushAndRemoveUntil(
@@ -670,7 +698,8 @@ class _SettingsPageState extends State<SettingsPage> {
         (_) => false,
       );
     } catch (_) {
-      ToastHelper.showCustomToast(context, 'Delete failed', isSuccess: false, errorMessage: '');
+      ToastHelper.showCustomToast(context, 'Delete failed',
+          isSuccess: false, errorMessage: '');
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -703,7 +732,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: SizedBox(
                     width: 18,
                     height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
                   ),
                 ),
               ),
@@ -720,7 +750,6 @@ class _SettingsPageState extends State<SettingsPage> {
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 22),
             children: [
               _profileCard(),
-
               const SizedBox(height: 14),
               _sectionTitle('Account'),
               _card([
@@ -732,7 +761,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   onTap: _openAddressBottomSheet,
                 ),
               ]),
-
               const SizedBox(height: 14),
               _sectionTitle('Security'),
               _card([
@@ -744,7 +772,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   onTap: _openChangePassword,
                 ),
               ]),
-
               const SizedBox(height: 14),
               _sectionTitle('Preferences'),
               _card([
@@ -763,7 +790,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   onTap: _clearCache,
                 ),
               ]),
-
               const SizedBox(height: 14),
               _sectionTitle('Support'),
               _card([
@@ -775,7 +801,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   onTap: _openCustomerService,
                 ),
               ]),
-
               const SizedBox(height: 14),
               _sectionTitle('About'),
               _card([
@@ -805,7 +830,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   trailing: const SizedBox.shrink(),
                 ),
               ]),
-
               const SizedBox(height: 14),
               _sectionTitle('Danger zone'),
               _card([
@@ -867,8 +891,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     : Image.network(
                         _photoUrl,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            const Icon(Icons.person, color: Colors.white, size: 30),
+                        errorBuilder: (_, __, ___) => const Icon(Icons.person,
+                            color: Colors.white, size: 30),
                       ),
               ),
             ),
@@ -948,7 +972,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _sectionTitle(String text) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 0, 2, 8),
-      child: Text(text, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+      child: Text(text,
+          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
     );
   }
 
@@ -1007,7 +1032,8 @@ class _SettingsTile extends StatelessWidget {
         ),
         child: Icon(icon, color: iconColor ?? kBrandOrange),
       ),
-      title: Text(title, style: TextStyle(fontWeight: FontWeight.w900, color: titleColor)),
+      title: Text(title,
+          style: TextStyle(fontWeight: FontWeight.w900, color: titleColor)),
       subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: trailing ?? const Icon(Icons.chevron_right),
     );
@@ -1019,7 +1045,8 @@ class AboutUsPage extends StatelessWidget {
   final String appVersion;
   final String buildNumber;
 
-  const AboutUsPage({super.key, required this.appVersion, required this.buildNumber});
+  const AboutUsPage(
+      {super.key, required this.appVersion, required this.buildNumber});
 
   @override
   Widget build(BuildContext context) {
@@ -1042,18 +1069,21 @@ class AboutUsPage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Vero360', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+              const Text('Vero360',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
               const SizedBox(height: 8),
               const Text(
                 'This app helps customers and merchants manage products, orders, and services in one place.',
                 style: TextStyle(height: 1.35),
               ),
               const SizedBox(height: 14),
-              Text('Version: v$appVersion ($buildNumber)', style: const TextStyle(fontWeight: FontWeight.w800)),
+              Text('Version: v$appVersion ($buildNumber)',
+                  style: const TextStyle(fontWeight: FontWeight.w800)),
               const SizedBox(height: 10),
               const Text(
                 'Replace this About text with your official content.',
-                style: TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    color: Colors.black54, fontWeight: FontWeight.w600),
               ),
             ],
           ),
@@ -1089,7 +1119,9 @@ class PolicyPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Privacy Policy', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                Text('Privacy Policy',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
                 SizedBox(height: 8),
                 Text(
                   '• We store basic account details (name, email, phone, address) to run the app.\n'
@@ -1098,7 +1130,9 @@ class PolicyPage extends StatelessWidget {
                   style: TextStyle(height: 1.35),
                 ),
                 SizedBox(height: 14),
-                Text('Terms & Conditions', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                Text('Terms & Conditions',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
                 SizedBox(height: 8),
                 Text(
                   '• Use the app responsibly.\n'

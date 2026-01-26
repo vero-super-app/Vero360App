@@ -5,7 +5,7 @@ import 'dart:io' show File;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class PromoModel {
   final int id;
@@ -40,8 +40,7 @@ class PromoModel {
         serviceProviderId: j['serviceProviderId'],
         title: j['title'] ?? '',
         description: j['description'],
-        price:
-            (j['price'] == null) ? null : (j['price'] as num).toDouble(),
+        price: (j['price'] == null) ? null : (j['price'] as num).toDouble(),
         image: j['image'],
         isActive: j['isActive'] == true,
         freeTrialEndsAt: j['freeTrialEndsAt'] == null

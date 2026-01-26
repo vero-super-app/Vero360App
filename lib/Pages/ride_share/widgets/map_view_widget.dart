@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:vero360_app/models/place_model.dart';
+import 'package:vero360_app/config/google_maps_config.dart';
 
 class MapViewWidget extends StatefulWidget {
   final Function(GoogleMapController) onMapCreated;
@@ -27,6 +29,7 @@ class _MapViewWidgetState extends State<MapViewWidget> {
   late Set<Marker> _markers;
   late Set<Polyline> _polylines;
   late CameraPosition _initialCameraPosition;
+  MapType _mapType = MapType.normal;
 
   @override
   void initState() {
@@ -34,15 +37,49 @@ class _MapViewWidgetState extends State<MapViewWidget> {
     _markers = {};
     _polylines = {};
     _initializeCameraPosition();
+
+    // Initial route draw if both places are provided
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.pickupPlace != null && widget.dropoffPlace != null) {
+        _updateRoutePolyline();
+      }
+    });
   }
 
   @override
   void didUpdateWidget(MapViewWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Redraw route if pickup or dropoff places changed
-    if (oldWidget.pickupPlace != widget.pickupPlace ||
-        oldWidget.dropoffPlace != widget.dropoffPlace) {
+
+    if (kDebugMode) {
+      debugPrint(
+          '[MapViewWidget] ========== didUpdateWidget called ==========');
+      debugPrint(
+          '[MapViewWidget] oldPickup: ${oldWidget.pickupPlace?.name} (${oldWidget.pickupPlace?.id})');
+      debugPrint(
+          '[MapViewWidget] newPickup: ${widget.pickupPlace?.name} (${widget.pickupPlace?.id})');
+      debugPrint(
+          '[MapViewWidget] pickupChanged: ${oldWidget.pickupPlace != widget.pickupPlace}');
+      debugPrint(
+          '[MapViewWidget] oldDropoff: ${oldWidget.dropoffPlace?.name} (${oldWidget.dropoffPlace?.id})');
+      debugPrint(
+          '[MapViewWidget] newDropoff: ${widget.dropoffPlace?.name} (${widget.dropoffPlace?.id})');
+      debugPrint(
+          '[MapViewWidget] dropoffChanged: ${oldWidget.dropoffPlace != widget.dropoffPlace}');
+    }
+
+    final pickupChanged = oldWidget.pickupPlace != widget.pickupPlace;
+    final dropoffChanged = oldWidget.dropoffPlace != widget.dropoffPlace;
+
+    if (pickupChanged || dropoffChanged) {
+      if (kDebugMode) {
+        debugPrint(
+            '[MapViewWidget] ✅ Places changed! Updating route polyline...');
+      }
       _updateRoutePolyline();
+    } else {
+      if (kDebugMode) {
+        debugPrint('[MapViewWidget] ❌ No changes detected');
+      }
     }
   }
 
@@ -120,6 +157,10 @@ class _MapViewWidgetState extends State<MapViewWidget> {
 
   Future<void> _updateRoutePolyline() async {
     if (widget.pickupPlace == null || widget.dropoffPlace == null) {
+      if (kDebugMode) {
+        debugPrint(
+            '[MapViewWidget] Pickup or dropoff is null, clearing polylines');
+      }
       setState(() {
         _polylines.clear();
       });
@@ -127,8 +168,25 @@ class _MapViewWidgetState extends State<MapViewWidget> {
     }
 
     try {
+      if (GoogleMapsConfig.apiKey.isEmpty) {
+        if (kDebugMode) {
+          debugPrint('[MapViewWidget] ERROR: Google Maps API key is empty!');
+        }
+        return;
+      }
+
+      if (kDebugMode) {
+        debugPrint('[MapViewWidget] Starting route calculation');
+        debugPrint(
+            '[MapViewWidget] Pickup: ${widget.pickupPlace!.latitude}, ${widget.pickupPlace!.longitude}');
+        debugPrint(
+            '[MapViewWidget] Dropoff: ${widget.dropoffPlace!.latitude}, ${widget.dropoffPlace!.longitude}');
+        debugPrint(
+            '[MapViewWidget] API Key: ${GoogleMapsConfig.apiKey.substring(0, 10)}...');
+      }
+
       final polylinePoints = PolylinePoints(
-        apiKey: 'AIzaSyB7W-KbHpMHDN7n_MJuV5pS0dTl_rN0H84',
+        apiKey: GoogleMapsConfig.apiKey,
       );
 
       final request = RoutesApiRequest(
@@ -144,9 +202,18 @@ class _MapViewWidgetState extends State<MapViewWidget> {
         routingPreference: RoutingPreference.trafficAware,
       );
 
+      if (kDebugMode) {
+        debugPrint('[MapViewWidget] Making polyline request...');
+      }
+
       final response = await polylinePoints.getRouteBetweenCoordinatesV2(
         request: request,
       );
+
+      if (kDebugMode) {
+        debugPrint(
+            '[MapViewWidget] Response received: ${response.routes.length} routes');
+      }
 
       if (response.routes.isNotEmpty) {
         final route = response.routes.first;
@@ -154,7 +221,17 @@ class _MapViewWidgetState extends State<MapViewWidget> {
             .map((point) => LatLng(point.latitude, point.longitude))
             .toList();
 
+        if (kDebugMode) {
+          debugPrint(
+              '[MapViewWidget] Polyline has ${polylineCoordinates.length} points');
+        }
+
         if (polylineCoordinates.isNotEmpty) {
+          if (kDebugMode) {
+            debugPrint('[MapViewWidget] Polyline added to map');
+          }
+
+          // Animate polyline drawing with smooth transitions
           setState(() {
             _polylines.clear();
             _polylines.add(
@@ -169,14 +246,25 @@ class _MapViewWidgetState extends State<MapViewWidget> {
 
             // Add markers for pickup and dropoff
             _updatePlaceMarkers();
-
-            // Animate camera to fit both locations
-            _fitCameraToBounds(polylineCoordinates);
           });
+
+          // Animate camera to fit both locations with delay for smooth UX
+          _fitCameraToBounds(polylineCoordinates);
+        }
+      } else {
+        if (kDebugMode) {
+          debugPrint('[MapViewWidget] No routes returned from API');
         }
       }
     } catch (e) {
-      print('Error loading route: $e');
+      if (kDebugMode) {
+        debugPrint('[MapViewWidget] Error loading route: $e');
+        debugPrint('[MapViewWidget] Stack trace: $e');
+      }
+      // Clear polylines on error
+      setState(() {
+        _polylines.clear();
+      });
     }
   }
 
@@ -247,31 +335,76 @@ class _MapViewWidgetState extends State<MapViewWidget> {
       northeast: LatLng(maxLat, maxLng),
     );
 
-    _mapController.animateCamera(
-      CameraUpdate.newLatLngBounds(bounds, 100),
-    );
+    // Smooth animation with more padding and longer duration
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) {
+        _mapController.animateCamera(
+          CameraUpdate.newLatLngBounds(bounds, 150),
+        );
+      }
+    });
   }
 
-  void animateToPosition(double latitude, double longitude) {
-    _mapController.animateCamera(
-      CameraUpdate.newLatLng(
-        LatLng(latitude, longitude),
-      ),
-    );
+  void animateToPosition(
+    double latitude,
+    double longitude, {
+    double zoom = 15.0,
+    Duration duration = const Duration(milliseconds: 800),
+  }) {
+    Future.delayed(const Duration(milliseconds: 50), () {
+      if (mounted) {
+        _mapController.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(latitude, longitude),
+              zoom: zoom,
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  void _toggleMapType() {
+    setState(() {
+      _mapType =
+          _mapType == MapType.normal ? MapType.satellite : MapType.normal;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return GoogleMap(
-      onMapCreated: _onMapCreated,
-      initialCameraPosition: _initialCameraPosition,
-      markers: _markers,
-      polylines: _polylines,
-      myLocationEnabled: false,
-      myLocationButtonEnabled: false,
-      zoomControlsEnabled: true,
-      mapToolbarEnabled: false,
-      compassEnabled: true,
+    return Stack(
+      children: [
+        GoogleMap(
+          onMapCreated: _onMapCreated,
+          initialCameraPosition: _initialCameraPosition,
+          markers: _markers,
+          polylines: _polylines,
+          mapType: _mapType,
+          myLocationEnabled: false,
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled: true,
+          mapToolbarEnabled: false,
+          compassEnabled: true,
+        ),
+        // Satellite/Map toggle button
+        Positioned(
+          bottom: 16,
+          right: 16,
+          child: FloatingActionButton.small(
+            onPressed: _toggleMapType,
+            backgroundColor: Colors.white,
+            foregroundColor: const Color(0xFFFF8A00),
+            elevation: 4,
+            child: Icon(
+              _mapType == MapType.satellite
+                  ? Icons.layers_clear_rounded
+                  : Icons.satellite_alt_rounded,
+            ),
+          ),
+        ),
+      ],
     );
   }
 

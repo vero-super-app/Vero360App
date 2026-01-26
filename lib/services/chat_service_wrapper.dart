@@ -9,12 +9,10 @@ class ChatServiceWrapper {
 
   /// Get hybrid service (uses WebSocket if available, falls back to Firebase)
   static HybridChatService getService() {
-    if (_hybrid == null) {
-      _hybrid = HybridChatService(
-        webSocketService: WebSocketManager.instance,
-      );
-    }
-    return _hybrid;
+    _hybrid ??= HybridChatService(
+      webSocketService: WebSocketManager.instance,
+    );
+    return _hybrid!;
   }
 
   /// Send message (auto WebSocket or Firebase)
@@ -66,8 +64,8 @@ class ChatServiceWrapper {
     return getService().editMessage(
       threadId: threadId,
       messageId: messageId,
-      newContent: newContent,
       myAppId: myAppId,
+      newText: '',
     );
   }
 

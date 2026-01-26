@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class PaymentCreateResponse {
   final String? checkoutUrl;
@@ -26,8 +26,7 @@ class PaymentCreateResponse {
 
   factory PaymentCreateResponse.fromJson(Map<String, dynamic> json) {
     return PaymentCreateResponse(
-      checkoutUrl:
-          (json['payment_url'] ?? json['checkout_url'])?.toString(),
+      checkoutUrl: (json['payment_url'] ?? json['checkout_url'])?.toString(),
       transactionId: json['transaction_id']?.toString(),
       txRef: json['tx_ref']?.toString(),
       status: json['status']?.toString(),
@@ -109,8 +108,7 @@ class PaymentsService {
         final decoded = jsonDecode(res.body);
         if (decoded is Map<String, dynamic>) {
           return PaymentCreateResponse.fromJson(decoded);
-        } else if (decoded is Map &&
-            decoded['data'] is Map<String, dynamic>) {
+        } else if (decoded is Map && decoded['data'] is Map<String, dynamic>) {
           return PaymentCreateResponse.fromJson(
               decoded['data'] as Map<String, dynamic>);
         }

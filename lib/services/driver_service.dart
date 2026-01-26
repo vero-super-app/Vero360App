@@ -1,6 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:vero360_app/services/auth_storage.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class DriverService {
   late Dio _dio;

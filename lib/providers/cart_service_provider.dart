@@ -12,7 +12,7 @@
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/services/cart_services.dart';
 
 /// Singleton provider for CartService

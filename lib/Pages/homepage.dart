@@ -44,7 +44,7 @@ import 'package:vero360_app/Pages/Quickservices/airportpickup.dart';
 import 'package:vero360_app/Pages/Quickservices/food.dart';
 import 'package:vero360_app/Pages/Quickservices/jobs.dart';
 import 'package:vero360_app/Pages/Quickservices/verocourier.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 // Latest arrivals (API)
 import 'package:vero360_app/models/Latest_model.dart';
@@ -307,7 +307,9 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
                       title: 'Discover Our Quick Services',
                       child: _MiniIconsGrid(
                         items: kQuickServices,
-                        onOpen: (key) => key == 'taxi' ? _openService(key) : _openServiceStatic(context, key),
+                        onOpen: (key) => key == 'taxi'
+                            ? _openService(key)
+                            : _openServiceStatic(context, key),
                       ),
                     ),
                   ),
@@ -349,13 +351,17 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
       delegate: QuickServiceSearchDelegate(services: kQuickServices),
     );
     if (picked != null) {
-      picked.keyId == 'taxi' ? _openService(picked.keyId) : _openServiceStatic(context, picked.keyId);
+      picked.keyId == 'taxi'
+          ? _openService(picked.keyId)
+          : _openServiceStatic(context, picked.keyId);
     }
   }
 
   void _onPromoTap(_Promo p) {
     if (p.serviceKey != null && p.serviceKey!.isNotEmpty) {
-      p.serviceKey == 'taxi' ? _openService(p.serviceKey!) : _openServiceStatic(context, p.serviceKey!);
+      p.serviceKey == 'taxi'
+          ? _openService(p.serviceKey!)
+          : _openServiceStatic(context, p.serviceKey!);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Coming soon')),
@@ -380,10 +386,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     // Special handling for taxi service with driver check
     if (key == 'taxi' || key == 'car_hire') {
       final isDriver = ref.watch(isCurrentUserDriverProvider);
-      
+
       isDriver.when(
         data: (isDriver) {
-          final page = isDriver ? const DriverDashboard() : const RideShareMapScreen();
+          final page =
+              isDriver ? const DriverDashboard() : const RideShareMapScreen();
           Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
         },
         loading: () {

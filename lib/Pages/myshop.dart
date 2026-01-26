@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:vero360_app/models/serviceprovider_model.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/services/serviceprovider_service.dart';
 
 import 'package:vero360_app/toasthelper.dart';
@@ -15,7 +15,8 @@ import 'package:vero360_app/toasthelper.dart';
 class ServiceProviderCrudPage extends StatefulWidget {
   const ServiceProviderCrudPage({super.key});
   @override
-  State<ServiceProviderCrudPage> createState() => _ServiceProviderCrudPageState();
+  State<ServiceProviderCrudPage> createState() =>
+      _ServiceProviderCrudPageState();
 }
 
 class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
@@ -41,8 +42,9 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
 
   // --- Brand (match Airport/Vero Courier) ---
   static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandSoft   = Color(0xFFFFE8CC);
-  static const Color kActionGreen = Color(0xFF11A661); // kept (not used) to avoid logic churn
+  static const Color _brandSoft = Color(0xFFFFE8CC);
+  static const Color kActionGreen =
+      Color(0xFF11A661); // kept (not used) to avoid logic churn
 
   @override
   void initState() {
@@ -81,6 +83,7 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
             if (h == null || m == null) return null;
             return TimeOfDay(hour: h, minute: m);
           }
+
           _openTime = parse(parts[0]);
           _closeTime = parse(parts[1]);
         }
@@ -88,7 +91,8 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
       setState(() {});
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showCustomToast(context, 'Load failed: $e', isSuccess: false, errorMessage: 'Load failed');
+      ToastHelper.showCustomToast(context, 'Load failed: $e',
+          isSuccess: false, errorMessage: 'Load failed');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -96,7 +100,8 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
 
   // ---------- image pick ----------
   Future<void> _pickFromGallery() async {
-    final x = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 90, maxWidth: 2048);
+    final x = await _picker.pickImage(
+        source: ImageSource.gallery, imageQuality: 90, maxWidth: 2048);
     if (x != null) {
       _picked = x;
       _pickedBytes = kIsWeb ? await x.readAsBytes() : null;
@@ -105,7 +110,8 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
   }
 
   Future<void> _pickFromCamera() async {
-    final x = await _picker.pickImage(source: ImageSource.camera, imageQuality: 90, maxWidth: 2048);
+    final x = await _picker.pickImage(
+        source: ImageSource.camera, imageQuality: 90, maxWidth: 2048);
     if (x != null) {
       _picked = x;
       _pickedBytes = kIsWeb ? await x.readAsBytes() : null;
@@ -152,7 +158,8 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
     try {
       if (_myService == null) {
         if (_picked == null) {
-          ToastHelper.showCustomToast(context, 'Please add a logo photo', isSuccess: false, errorMessage: 'Logo required');
+          ToastHelper.showCustomToast(context, 'Please add a logo photo',
+              isSuccess: false, errorMessage: 'Logo required');
           setState(() => _saving = false);
           return;
         }
@@ -167,7 +174,8 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
         );
         _myService = created;
         if (mounted) {
-          ToastHelper.showCustomToast(context, 'Shop created', isSuccess: true, errorMessage: 'Created');
+          ToastHelper.showCustomToast(context, 'Shop created',
+              isSuccess: true, errorMessage: 'Created');
         }
         _tabs.animateTo(1);
       } else {
@@ -184,14 +192,16 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
         );
         _myService = updated;
         if (mounted) {
-          ToastHelper.showCustomToast(context, 'Shop updated', isSuccess: true, errorMessage: 'Updated');
+          ToastHelper.showCustomToast(context, 'Shop updated',
+              isSuccess: true, errorMessage: 'Updated');
         }
       }
       _clearPicked();
       setState(() {});
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showCustomToast(context, 'Save failed: $e', isSuccess: false, errorMessage: 'Save failed');
+      ToastHelper.showCustomToast(context, 'Save failed: $e',
+          isSuccess: false, errorMessage: 'Save failed');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -203,10 +213,15 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delete your shop?'),
-        content: const Text('This will remove your service. You can create it again later.'),
+        content: const Text(
+            'This will remove your service. You can create it again later.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete', style: TextStyle(color: Colors.red))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete', style: TextStyle(color: Colors.red))),
         ],
       ),
     );
@@ -217,13 +232,15 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
       await ServiceProviderServicess.deleteById(_myService!.id!);
       _myService = null;
       if (mounted) {
-        ToastHelper.showCustomToast(context, 'Shop deleted', isSuccess: true, errorMessage: 'Deleted');
+        ToastHelper.showCustomToast(context, 'Shop deleted',
+            isSuccess: true, errorMessage: 'Deleted');
       }
       _tabs.animateTo(0);
       setState(() {});
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showCustomToast(context, 'Delete failed: $e', isSuccess: false, errorMessage: 'Delete failed');
+      ToastHelper.showCustomToast(context, 'Delete failed: $e',
+          isSuccess: false, errorMessage: 'Delete failed');
     } finally {
       if (mounted) setState(() => _deleting = false);
     }
@@ -238,7 +255,8 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
       fillColor: Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       enabledBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: Colors.black, width: 1), // black before active
+        borderSide: const BorderSide(
+            color: Colors.black, width: 1), // black before active
         borderRadius: BorderRadius.circular(12),
       ),
       focusedBorder: const OutlineInputBorder(
@@ -260,7 +278,8 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
         style: OutlinedButton.styleFrom(
           foregroundColor: Colors.black87,
           side: const BorderSide(color: Colors.black, width: 1),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           textStyle: const TextStyle(fontWeight: FontWeight.w700),
         ),
@@ -323,11 +342,13 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
               children: [
                 // Mini banner for consistency
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
                     color: _brandSoft,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
+                    border:
+                        Border.all(color: _brandOrange.withValues(alpha: 0.35)),
                   ),
                   child: const Text(
                     'Add a clear logo and accurate opening hours so customers can trust your shop.',
@@ -337,7 +358,8 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
                 const SizedBox(height: 14),
 
                 Text(isUpdate ? 'Update Shop' : 'Open Shop Now',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 12),
 
                 _FullBleedPicker(
@@ -353,7 +375,8 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
                 TextFormField(
                   controller: _name,
                   decoration: _inputDecoration(label: 'Business name'),
-                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Required' : null,
                 ),
                 const SizedBox(height: 12),
 
@@ -367,7 +390,8 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
 
                 TextFormField(
                   controller: _status,
-                  decoration: _inputDecoration(label: 'Status (open / closed / busy)'),
+                  decoration:
+                      _inputDecoration(label: 'Status (open / closed / busy)'),
                 ),
                 const SizedBox(height: 12),
 
@@ -377,7 +401,9 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
                       child: OutlinedButton.icon(
                         onPressed: _pickOpenTime,
                         icon: const Icon(Icons.access_time),
-                        label: Text(_openTime != null ? 'Open: ${_formatTime(_openTime!)}' : 'Pick Open Time'),
+                        label: Text(_openTime != null
+                            ? 'Open: ${_formatTime(_openTime!)}'
+                            : 'Pick Open Time'),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -385,7 +411,9 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
                       child: OutlinedButton.icon(
                         onPressed: _pickCloseTime,
                         icon: const Icon(Icons.access_time_outlined),
-                        label: Text(_closeTime != null ? 'Close: ${_formatTime(_closeTime!)}' : 'Pick Close Time'),
+                        label: Text(_closeTime != null
+                            ? 'Close: ${_formatTime(_closeTime!)}'
+                            : 'Pick Close Time'),
                       ),
                     ),
                   ],
@@ -396,7 +424,11 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
                   style: _filledBtnStyle(),
                   onPressed: canSave ? _save : null,
                   icon: _saving
-                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.save),
                   label: Text(isUpdate ? 'Save Changes' : 'Open Shop Now'),
                 ),
@@ -416,7 +448,10 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
           physics: const AlwaysScrollableScrollPhysics(),
           children: const [
             SizedBox(height: 120),
-            Center(child: Text('No shop yet. Create yours in the Shop Details tab.', style: TextStyle(color: Colors.red))),
+            Center(
+                child: Text(
+                    'No shop yet. Create yours in the Shop Details tab.',
+                    style: TextStyle(color: Colors.red))),
           ],
         ),
       );
@@ -473,9 +508,11 @@ class _FullBleedPicker extends StatelessWidget {
 
     if (has) {
       if (kIsWeb && pickedBytes != null) {
-        inner = Image.memory(pickedBytes!, height: 220, width: double.infinity, fit: BoxFit.cover);
+        inner = Image.memory(pickedBytes!,
+            height: 220, width: double.infinity, fit: BoxFit.cover);
       } else {
-        inner = Image.file(File(picked!.path), height: 220, width: double.infinity, fit: BoxFit.cover);
+        inner = Image.file(File(picked!.path),
+            height: 220, width: double.infinity, fit: BoxFit.cover);
       }
     } else {
       inner = Container(
@@ -485,7 +522,8 @@ class _FullBleedPicker extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: Colors.grey.shade300),
         ),
-        child: const Center(child: Icon(Icons.image, size: 64, color: Colors.black38)),
+        child: const Center(
+            child: Icon(Icons.image, size: 64, color: Colors.black38)),
       );
     }
 
@@ -495,7 +533,8 @@ class _FullBleedPicker extends StatelessWidget {
         Card(
           elevation: 8,
           shadowColor: Colors.black12,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           clipBehavior: Clip.antiAlias,
           child: inner,
         ),
@@ -610,7 +649,8 @@ class _ServiceCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(sp.businessDescription ?? '', maxLines: 2, overflow: TextOverflow.ellipsis),
+                Text(sp.businessDescription ?? '',
+                    maxLines: 2, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 6),
                 Text(
                   'Status: ${sp.status ?? 'open'} • Hours: ${sp.openingHours ?? ''}',
@@ -620,7 +660,8 @@ class _ServiceCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 if (sp.serviceProviderId != null)
-                  Text('ServiceProviderID: ${sp.serviceProviderId}', style: const TextStyle(fontSize: 12)),
+                  Text('ServiceProviderID: ${sp.serviceProviderId}',
+                      style: const TextStyle(fontSize: 12)),
               ],
             ),
           ),
@@ -640,12 +681,16 @@ class _ServiceCard extends StatelessWidget {
       onPressed: onPressed,
       style: FilledButton.styleFrom(
         backgroundColor: Colors.white.withValues(alpha: 0.92),
-        foregroundColor: danger ? Colors.red.shade700 : Colors.blueGrey.shade700,
+        foregroundColor:
+            danger ? Colors.red.shade700 : Colors.blueGrey.shade700,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
       icon: busy
-          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2))
           : Icon(icon, size: 18),
       label: Text(label, style: const TextStyle(fontSize: 12)),
     );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
 import 'package:vero360_app/models/place_model.dart';
@@ -37,7 +38,8 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final searchResults = ref.watch(serpapiPlacesAutocompleteProvider(_searchQuery));
+    final searchResults =
+        ref.watch(serpapiPlacesAutocompleteProvider(_searchQuery));
 
     return Column(
       children: [
@@ -75,7 +77,8 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
                   padding: const EdgeInsets.only(left: 12),
                   child: Icon(
                     Icons.location_on_rounded,
-                    color: _isFocused ? const Color(0xFFFF8A00) : Colors.grey[400],
+                    color:
+                        _isFocused ? const Color(0xFFFF8A00) : Colors.grey[400],
                     size: 22,
                   ),
                 ),
@@ -119,7 +122,8 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
                   padding: const EdgeInsets.only(right: 4),
                   child: IconButton(
                     icon: const Icon(Icons.bookmark_outline, size: 22),
-                    color: _isFocused ? const Color(0xFFFF8A00) : Colors.grey[600],
+                    color:
+                        _isFocused ? const Color(0xFFFF8A00) : Colors.grey[600],
                     onPressed: widget.onToggleBookmarkedPlaces,
                     tooltip: 'Saved places',
                   ),
@@ -191,7 +195,13 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
                   padding: const EdgeInsets.all(12),
                   child: SearchResultSkeletonLoader(),
                 ),
-                error: (error, stackTrace) => _buildErrorState(error),
+                error: (error, stackTrace) {
+                  if (kDebugMode) {
+                    debugPrint('[PlaceSearch] Error: $error');
+                    debugPrint('[PlaceSearch] StackTrace: $stackTrace');
+                  }
+                  return _buildErrorState(error);
+                },
               ),
             ),
           ),
@@ -203,14 +213,21 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () {
-          if (prediction.latitude != null && prediction.longitude != null) {
+        onTap: () async {
+          // Fetch place details to get coordinates
+          final placeDetails =
+              await ref.read(placeDetailsProvider(prediction.placeId).future);
+
+          final geometry = placeDetails['geometry'] as Map<String, dynamic>?;
+          final location = geometry?['location'] as Map<String, dynamic>?;
+
+          if (location != null) {
             final place = Place(
               id: prediction.placeId,
               name: prediction.mainText,
               address: prediction.fullText,
-              latitude: prediction.latitude!,
-              longitude: prediction.longitude!,
+              latitude: (location['lat'] as num?)?.toDouble() ?? 0.0,
+              longitude: (location['lng'] as num?)?.toDouble() ?? 0.0,
               type: PlaceType.RECENT,
             );
 
@@ -221,13 +238,15 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
               _searchQuery = '';
             });
           } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Unable to get location coordinates'),
-                behavior: SnackBarBehavior.floating,
-                margin: EdgeInsets.all(16),
-              ),
-            );
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Unable to get location coordinates'),
+                  behavior: SnackBarBehavior.floating,
+                  margin: EdgeInsets.all(16),
+                ),
+              );
+            }
           }
         },
         child: Padding(
@@ -310,6 +329,16 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
   }
 
   Widget _buildErrorState(Object error) {
+    String errorMessage = 'Please try again';
+
+    if (error.toString().contains('API key')) {
+      errorMessage = 'Google Maps API key not configured';
+    } else if (error.toString().contains('billing')) {
+      errorMessage = 'Google Maps billing not enabled';
+    } else if (error.toString().contains('REQUEST_DENIED')) {
+      errorMessage = 'API request denied. Check your API key.';
+    }
+
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -323,10 +352,25 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Please try again',
+            errorMessage,
             style: TextStyle(color: Colors.grey[600], fontSize: 12),
             textAlign: TextAlign.center,
           ),
+          if (kDebugMode)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                error.toString(),
+                style: TextStyle(
+                  color: Colors.red[300],
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                ),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+            ),
         ],
       ),
     );

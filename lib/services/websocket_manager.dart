@@ -15,13 +15,14 @@ class WebSocketManager {
       // Get current user
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) {
-        print('[WebSocketManager] No authenticated user, skipping WebSocket init');
+        print(
+            '[WebSocketManager] No authenticated user, skipping WebSocket init');
         return null;
       }
 
       // Get app user ID from chat service
       final appUserId = await ChatService.myAppUserId();
-      
+
       if (appUserId.isEmpty) {
         print('[WebSocketManager] No app user ID, skipping WebSocket init');
         return null;
@@ -37,7 +38,7 @@ class WebSocketManager {
 
       _instance = WebSocketMessagingService(
         wsUrl: wsUrl,
-        token: idToken,
+        token: idToken!,
         userId: appUserId,
       );
 

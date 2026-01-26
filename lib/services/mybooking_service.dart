@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/models/mybooking_model.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class AuthRequiredException implements Exception {
   final String message;
@@ -24,7 +24,13 @@ class MyBookingService {
 
   Future<String> _token() async {
     final prefs = await SharedPreferences.getInstance();
-    const keys = ['jwt_token', 'token', 'authToken', 'merchant_token', 'merchantToken'];
+    const keys = [
+      'jwt_token',
+      'token',
+      'authToken',
+      'merchant_token',
+      'merchantToken'
+    ];
     for (final k in keys) {
       final t = prefs.getString(k);
       if (t != null && t.isNotEmpty) return t;
@@ -36,7 +42,8 @@ class MyBookingService {
     try {
       final parts = token.split('.');
       if (parts.length != 3) return null;
-      final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+      final payload =
+          utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
       return jsonDecode(payload) as Map<String, dynamic>;
     } catch (_) {
       return null;
@@ -45,8 +52,11 @@ class MyBookingService {
 
   Future<bool> _isMerchant() async {
     final prefs = await SharedPreferences.getInstance();
-    if ((prefs.getBool('is_merchant') ?? prefs.getBool('merchant')) == true) return true;
-    final roleStr = (prefs.getString('role') ?? prefs.getString('userRole') ?? '').toLowerCase();
+    if ((prefs.getBool('is_merchant') ?? prefs.getBool('merchant')) == true)
+      return true;
+    final roleStr =
+        (prefs.getString('role') ?? prefs.getString('userRole') ?? '')
+            .toLowerCase();
     if (roleStr.contains('merchant')) return true;
 
     try {
@@ -57,7 +67,9 @@ class MyBookingService {
         final role = (p['role'] ?? '').toString().toLowerCase();
         if (role.contains('merchant')) return true;
         final roles = p['roles'];
-        if (roles is List && roles.map((e) => '$e'.toLowerCase()).contains('merchant')) return true;
+        if (roles is List &&
+            roles.map((e) => '$e'.toLowerCase()).contains('merchant'))
+          return true;
         final scope = (p['scope'] ?? '').toString().toLowerCase();
         if (scope.contains('merchant')) return true;
       }
@@ -78,12 +90,16 @@ class MyBookingService {
     throw Exception('HTTP ${r.statusCode}: ${r.body}');
   }
 
-  Future<http.Response> _retry(Future<http.Response> Function() run, {int retries = 2}) async {
+  Future<http.Response> _retry(Future<http.Response> Function() run,
+      {int retries = 2}) async {
     int attempt = 0;
     while (true) {
       try {
         final res = await run().timeout(const Duration(seconds: 45));
-        if ((res.statusCode == 502 || res.statusCode == 503 || res.statusCode == 504) && attempt < retries) {
+        if ((res.statusCode == 502 ||
+                res.statusCode == 503 ||
+                res.statusCode == 504) &&
+            attempt < retries) {
           attempt++;
           await Future.delayed(Duration(milliseconds: 500 * attempt));
           continue;
@@ -131,7 +147,10 @@ class MyBookingService {
             ? decoded['data'] as List
             : (decoded is Map ? [decoded] : <dynamic>[]);
 
-    final all = list.whereType<Map<String, dynamic>>().map(BookingItem.fromJson).toList();
+    final all = list
+        .whereType<Map<String, dynamic>>()
+        .map(BookingItem.fromJson)
+        .toList();
 
     if (status != null) {
       return all.where((b) => b.status == status).toList();
@@ -140,10 +159,12 @@ class MyBookingService {
   }
 
   // Create, update, delete remain the same — role is typically enforced by the server.
-  Future<BookingItem> createBooking(BookingCreatePayload payload, {String? overridePath}) async {
+  Future<BookingItem> createBooking(BookingCreatePayload payload,
+      {String? overridePath}) async {
     final u = Uri.parse('${await _base()}${overridePath ?? '/bookings'}');
     final h = await _headers();
-    final r = await _retry(() => http.post(u, headers: h, body: jsonEncode(payload.toJson())));
+    final r = await _retry(
+        () => http.post(u, headers: h, body: jsonEncode(payload.toJson())));
     if (r.statusCode < 200 || r.statusCode >= 300) _bad(r);
 
     final d = jsonDecode(r.body);

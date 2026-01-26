@@ -25,7 +25,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/services/api_client.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/services/api_exception.dart';
 
 import '../models/cart_model.dart';
@@ -36,9 +36,11 @@ const _kWarmupCooldown = Duration(seconds: 45);
 
 class CartService {
   // Keep this EXACT signature (you use it everywhere)
-  CartService(String unused, {required String apiPrefix}) : _apiPrefix = apiPrefix;
+  CartService(String unused, {required String apiPrefix})
+      : _apiPrefix = apiPrefix;
 
-  final String _apiPrefix; // kept for compatibility; ApiConfig already applies /vero
+  final String
+      _apiPrefix; // kept for compatibility; ApiConfig already applies /vero
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -169,7 +171,8 @@ class CartService {
     final userKey = await _userKey();
     if (userKey == null || userKey.isEmpty) {
       throw const ApiException(
-          message: 'No user session found (missing uid/email). Please log in again.');
+          message:
+              'No user session found (missing uid/email). Please log in again.');
     }
 
     final doc = _firestore
@@ -178,8 +181,8 @@ class CartService {
         .collection('items')
         .doc(_docIdFor(item));
 
-    await doc.set(_fsMap(item, pendingSync: pendingSync),
-        SetOptions(merge: true));
+    await doc.set(
+        _fsMap(item, pendingSync: pendingSync), SetOptions(merge: true));
   }
 
   Future<void> _markSynced(CartModel item) async {
@@ -193,7 +196,8 @@ class CartService {
           .collection('items')
           .doc(_docIdFor(item));
 
-      await doc.set({'pendingSync': false, 'updatedAt': FieldValue.serverTimestamp()},
+      await doc.set(
+          {'pendingSync': false, 'updatedAt': FieldValue.serverTimestamp()},
           SetOptions(merge: true));
     } catch (_) {}
   }
@@ -399,7 +403,8 @@ class CartService {
       }
 
       final bodyTrim = res.body.trimLeft().toLowerCase();
-      if (bodyTrim.startsWith('<!doctype html') || bodyTrim.startsWith('<html')) {
+      if (bodyTrim.startsWith('<!doctype html') ||
+          bodyTrim.startsWith('<html')) {
         // passenger/hosting html => treat as down
         return local;
       }
@@ -409,7 +414,9 @@ class CartService {
       // Support: List OR {data: List}
       final list = decoded is List
           ? decoded
-          : (decoded is Map && decoded['data'] is List ? decoded['data'] : <dynamic>[]);
+          : (decoded is Map && decoded['data'] is List
+              ? decoded['data']
+              : <dynamic>[]);
 
       final items = <CartModel>[];
       for (final e in list) {
@@ -422,7 +429,8 @@ class CartService {
       return items;
     } on ApiException catch (e) {
       if (_looksLikeAuthError(e)) {
-        throw const ApiException(message: 'Session expired. Please log in again.');
+        throw const ApiException(
+            message: 'Session expired. Please log in again.');
       }
       return local;
     } catch (_) {
@@ -475,7 +483,8 @@ class CartService {
       );
     } on ApiException catch (e) {
       if (_looksLikeAuthError(e)) {
-        throw const ApiException(message: 'Session expired. Please log in again.');
+        throw const ApiException(
+            message: 'Session expired. Please log in again.');
       }
       if (_looksLikePassengerHtmlOrDown(e)) return;
       return;
@@ -507,7 +516,8 @@ class CartService {
       );
     } on ApiException catch (e) {
       if (_looksLikeAuthError(e)) {
-        throw const ApiException(message: 'Session expired. Please log in again.');
+        throw const ApiException(
+            message: 'Session expired. Please log in again.');
       }
       if (_looksLikePassengerHtmlOrDown(e)) return;
       return;

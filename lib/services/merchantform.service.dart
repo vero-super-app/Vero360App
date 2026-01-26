@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/toasthelper.dart';
 
 class ServiceProviderService {
@@ -72,8 +72,7 @@ class ServiceProviderService {
           req.files.add(http.MultipartFile.fromBytes(
             'logoimage',
             lbytes,
-            filename:
-                logoFile.name.isEmpty ? 'logo.jpg' : logoFile.name,
+            filename: logoFile.name.isEmpty ? 'logo.jpg' : logoFile.name,
           ));
         }
       } else {

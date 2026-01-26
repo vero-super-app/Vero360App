@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'dart:async' show unawaited;
-import 'package:vero360_app/Pages/ride_share/widgets/current_location_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/map_view_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/place_search_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/bookmarked_places_modal.dart';
@@ -30,6 +29,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
   final FocusNode _searchFocusNode = FocusNode();
   bool _showBookmarkedPlaces = false;
   bool _isLoadingRide = false;
+  Place? _cachedPickupPlace;
 
   void _onMapCreated(GoogleMapController controller) {
     mapController = controller;
@@ -260,24 +260,33 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen> {
                 Consumer(
                   builder: (context, ref, _) {
                     final currentLocation = ref.watch(currentLocationProvider);
+                    final dropoffPlace =
+                        ref.watch(selectedDropoffPlaceProvider);
+
                     return currentLocation.when(
                       data: (position) {
-                        final pickupPlace = position != null
-                            ? Place(
-                                id: 'current_location',
-                                name: 'Your Location',
-                                address: 'Current Location',
-                                latitude: position.latitude,
-                                longitude: position.longitude,
-                                type: PlaceType.RECENT,
-                              )
-                            : null;
+                        // Cache pickup place to ensure object identity
+                        if (position != null &&
+                            (_cachedPickupPlace == null ||
+                                _cachedPickupPlace!.latitude !=
+                                    position.latitude ||
+                                _cachedPickupPlace!.longitude !=
+                                    position.longitude)) {
+                          _cachedPickupPlace = Place(
+                            id: 'current_location',
+                            name: 'Your Location',
+                            address: 'Current Location',
+                            latitude: position.latitude,
+                            longitude: position.longitude,
+                            type: PlaceType.RECENT,
+                          );
+                        }
 
                         return MapViewWidget(
                           onMapCreated: _onMapCreated,
                           initialPosition: position,
-                          pickupPlace: pickupPlace,
-                          dropoffPlace: selectedDropoffPlace,
+                          pickupPlace: _cachedPickupPlace,
+                          dropoffPlace: dropoffPlace,
                         );
                       },
                       loading: () =>

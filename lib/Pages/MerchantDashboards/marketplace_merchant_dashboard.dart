@@ -24,7 +24,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'package:vero360_app/Pages/PostlatestArrival.dart';
 import 'package:vero360_app/Pages/Postpromotion.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/services/marketplace.service.dart';
 
 import 'package:vero360_app/services/merchant_service_helper.dart';
@@ -469,10 +469,8 @@ class _MarketplaceMerchantDashboardState
 
     // 1) Firestore marketplace_merchants
     try {
-      final doc = await _firestore
-          .collection('marketplace_merchants')
-          .doc(u.uid)
-          .get();
+      final doc =
+          await _firestore.collection('marketplace_merchants').doc(u.uid).get();
       final data = doc.data();
       if (data != null) {
         resolved =
@@ -512,12 +510,10 @@ class _MarketplaceMerchantDashboardState
           );
           if (resp.statusCode == 200) {
             final decoded = jsonDecode(resp.body);
-            final Map<String, dynamic> payload =
-                (decoded is Map && decoded['data'] is Map)
-                    ? Map<String, dynamic>.from(decoded['data'])
-                    : (decoded is Map
-                        ? Map<String, dynamic>.from(decoded)
-                        : {});
+            final Map<String, dynamic> payload = (decoded is Map &&
+                    decoded['data'] is Map)
+                ? Map<String, dynamic>.from(decoded['data'])
+                : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
             final user = (payload['user'] is Map)
                 ? Map<String, dynamic>.from(payload['user'] as Map)
                 : payload;
@@ -648,10 +644,9 @@ class _MarketplaceMerchantDashboardState
         final emailVal =
             (user['email'] ?? user['userEmail'] ?? '').toString().trim();
         final phoneVal = (user['phone'] ?? '').toString().trim();
-        final picVal =
-            (user['profilepicture'] ?? user['profilePicture'] ?? '')
-                .toString()
-                .trim();
+        final picVal = (user['profilepicture'] ?? user['profilePicture'] ?? '')
+            .toString()
+            .trim();
 
         final apiRating = user['rating'];
         if (apiRating is num) _rating = apiRating.toDouble();
@@ -801,8 +796,7 @@ class _MarketplaceMerchantDashboardState
           (decoded is Map && decoded['data'] is Map)
               ? Map<String, dynamic>.from(decoded['data'])
               : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
-      final user =
-          (payload['user'] is Map) ? payload['user'] as Map : payload;
+      final user = (payload['user'] is Map) ? payload['user'] as Map : payload;
 
       final rawId = user['id'] ?? user['userId'] ?? user['sub'];
       if (rawId == null) return null;
@@ -1108,95 +1102,94 @@ class _MarketplaceMerchantDashboardState
   }
 
   // ----------------- CREATE item -----------------
- Future<void> _create() async {
-  if (_cover == null) {
-    _toastErr('Please pick a cover photo');
-    return;
-  }
-  if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
-    _toastErr('Please fill all required fields');
-    return;
-  }
-
-  setState(() => _submitting = true);
-
-  try {
-    final firebaseUid = _auth.currentUser?.uid ?? _uid;
-    // if (firebaseUid.trim().isEmpty) {
-    //   _toastErr('Please login first');
-    //   return;
-    // }
-
-    final sellerId = await _getNestUserId();
-    final merchantDisplay = _displayBusinessName();
-
-    // ✅ Upload images first (NO base64 in Firestore)
-    final svc = MarketplaceService();
-
-    final coverUrl = await svc.uploadBytes(
-      _cover!.bytes,
-      filename: _cover!.filename ?? 'cover.jpg',
-      mimeType: _cover!.mime,
-    );
-
-    final galleryUrls = <String>[];
-    for (final m in _gallery) {
-      final url = await svc.uploadBytes(
-        m.bytes,
-        filename: m.filename.isNotEmpty ? m.filename : 'gallery.jpg',
-        mimeType: m.mime,
-      );
-      galleryUrls.add(url);
+  Future<void> _create() async {
+    if (_cover == null) {
+      _toastErr('Please pick a cover photo');
+      return;
+    }
+    if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
+      _toastErr('Please fill all required fields');
+      return;
     }
 
-    final data = {
-      'name': _name.text.trim(),
-      'price': double.tryParse(_price.text.trim()) ?? 0,
+    setState(() => _submitting = true);
 
-      // ✅ store URLs only
-      'imageUrl': coverUrl,
-      'galleryUrls': galleryUrls,
+    try {
+      final firebaseUid = _auth.currentUser?.uid ?? _uid;
+      // if (firebaseUid.trim().isEmpty) {
+      //   _toastErr('Please login first');
+      //   return;
+      // }
 
-      'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
-      'location': _location.text.trim(),
-      'isActive': _isActive,
-      'category': _category ?? 'other',
+      final sellerId = await _getNestUserId();
+      final merchantDisplay = _displayBusinessName();
 
-      'createdAt': FieldValue.serverTimestamp(),
-      'sellerUserId': (sellerId != null && sellerId.trim().isNotEmpty)
-          ? sellerId.trim()
-          : 'unknown',
-      'merchantId': firebaseUid,
-      'merchantName': merchantDisplay,
-      'serviceType': 'marketplace',
-    };
+      // ✅ Upload images first (NO base64 in Firestore)
+      final svc = MarketplaceService();
 
-    await _firestore.collection('marketplace_items').add(data);
+      final coverUrl = await svc.uploadBytes(
+        _cover!.bytes,
+        filename: _cover!.filename ?? 'cover.jpg',
+        mimeType: _cover!.mime,
+      );
 
-    if (!mounted) return;
-    _toastOk('Item Posted Successfully!');
+      final galleryUrls = <String>[];
+      for (final m in _gallery) {
+        final url = await svc.uploadBytes(
+          m.bytes,
+          filename: m.filename.isNotEmpty ? m.filename : 'gallery.jpg',
+          mimeType: m.mime,
+        );
+        galleryUrls.add(url);
+      }
 
-    _name.clear();
-    _price.clear();
-    _location.clear();
-    _desc.clear();
-    _cover = null;
-    _gallery.clear();
-    _isActive = true;
-    _category = 'other';
+      final data = {
+        'name': _name.text.trim(),
+        'price': double.tryParse(_price.text.trim()) ?? 0,
 
-    setState(() {});
-    await _loadItems();
-    _marketplaceTabs.animateTo(2);
-  } catch (e) {
-    debugPrint('Create item error: $e');
-    if (!mounted) return;
-    _toastErr('Failed to post item. Please try again.');
-  } finally {
-    if (mounted) setState(() => _submitting = false);
+        // ✅ store URLs only
+        'imageUrl': coverUrl,
+        'galleryUrls': galleryUrls,
+
+        'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+        'location': _location.text.trim(),
+        'isActive': _isActive,
+        'category': _category ?? 'other',
+
+        'createdAt': FieldValue.serverTimestamp(),
+        'sellerUserId': (sellerId != null && sellerId.trim().isNotEmpty)
+            ? sellerId.trim()
+            : 'unknown',
+        'merchantId': firebaseUid,
+        'merchantName': merchantDisplay,
+        'serviceType': 'marketplace',
+      };
+
+      await _firestore.collection('marketplace_items').add(data);
+
+      if (!mounted) return;
+      _toastOk('Item Posted Successfully!');
+
+      _name.clear();
+      _price.clear();
+      _location.clear();
+      _desc.clear();
+      _cover = null;
+      _gallery.clear();
+      _isActive = true;
+      _category = 'other';
+
+      setState(() {});
+      await _loadItems();
+      _marketplaceTabs.animateTo(2);
+    } catch (e) {
+      debugPrint('Create item error: $e');
+      if (!mounted) return;
+      _toastErr('Failed to post item. Please try again.');
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
-}
-
 
   Future<void> _deleteItem(Map<String, dynamic> item) async {
     final ok = await showDialog<bool>(
@@ -1323,8 +1316,9 @@ class _MarketplaceMerchantDashboardState
                   'price': p,
                   'location': loc,
                   'category': category,
-                  'description':
-                      descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+                  'description': descCtrl.text.trim().isEmpty
+                      ? null
+                      : descCtrl.text.trim(),
                   'isActive': isActive,
                   'updatedAt': FieldValue.serverTimestamp(),
                 };
@@ -1584,8 +1578,7 @@ class _MarketplaceMerchantDashboardState
       hintText: hint,
       filled: true,
       fillColor: Colors.white,
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       enabledBorder: OutlineInputBorder(
         borderSide: const BorderSide(color: Colors.black12),
         borderRadius: BorderRadius.circular(14),
@@ -2031,7 +2024,7 @@ class _MarketplaceMerchantDashboardState
               color: Colors.green,
               onTap: () => _openBottomSheet(const OrdersPage()),
             ),
-               _QuickActionTile(
+            _QuickActionTile(
               title: 'Post Arrival',
               icon: Icons.rocket,
               color: Colors.orange,
@@ -2055,7 +2048,7 @@ class _MarketplaceMerchantDashboardState
               color: Colors.red,
               onTap: () => _openBottomSheet(const ToRefundPage()),
             ),
-               _QuickActionTile(
+            _QuickActionTile(
               title: 'Promotions',
               icon: Icons.campaign_outlined,
               color: Colors.orange,
@@ -2162,8 +2155,8 @@ class _MarketplaceMerchantDashboardState
                 ),
               );
             },
-            child:
-                const Text('Open', style: TextStyle(fontWeight: FontWeight.w900)),
+            child: const Text('Open',
+                style: TextStyle(fontWeight: FontWeight.w900)),
           ),
         ],
       ),
@@ -2229,7 +2222,8 @@ class _MarketplaceMerchantDashboardState
                     children: [
                       Text('Customer: ${saleMap['customerName'] ?? 'N/A'}'),
                       Text('Items: ${saleMap['itemCount'] ?? '0'}'),
-                      Text('Total: ${mwk0(saleMap['totalAmount'])}'), // ✅ commas
+                      Text(
+                          'Total: ${mwk0(saleMap['totalAmount'])}'), // ✅ commas
                     ],
                   ),
                 ),
@@ -2342,7 +2336,8 @@ class _MarketplaceMerchantDashboardState
                               FilledButton.icon(
                                 style: FilledButton.styleFrom(
                                     backgroundColor: _brandOrange),
-                                onPressed: () => _pickCover(ImageSource.gallery),
+                                onPressed: () =>
+                                    _pickCover(ImageSource.gallery),
                                 icon: const Icon(Icons.photo_library),
                                 label: const Text('Select Image'),
                               ),
@@ -2558,8 +2553,7 @@ class _MarketplaceMerchantDashboardState
                     borderRadius: BorderRadius.circular(16),
                   ),
                   focusedBorder: OutlineInputBorder(
-                    borderSide:
-                        const BorderSide(color: _brandOrange, width: 2),
+                    borderSide: const BorderSide(color: _brandOrange, width: 2),
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),

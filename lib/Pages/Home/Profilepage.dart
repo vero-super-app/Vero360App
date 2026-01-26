@@ -12,7 +12,7 @@ import 'package:mime/mime.dart' as mime;
 import 'package:http_parser/http_parser.dart' as http_parser;
 
 // ✅ use your existing API base resolver (unchanged)
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 import 'package:vero360_app/Pages/Home/myorders.dart';
 import 'package:vero360_app/Pages/QRcode.dart';
@@ -64,15 +64,17 @@ class _ProfilePageState extends State<ProfilePage> {
     _loadUserData();
     _fetchCurrentUser();
   }
-  
+
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      name      = prefs.getString('fullName') ?? prefs.getString('name') ?? 'Guest User';
-      email     = prefs.getString('email') ?? 'No Email';
-      phone     = prefs.getString('phone') ?? 'No Phone';
-      address   = prefs.getString('address') ?? 'No Address';
-      profileUrl= prefs.getString('profilepicture') ?? '';
+      name = prefs.getString('fullName') ??
+          prefs.getString('name') ??
+          'Guest User';
+      email = prefs.getString('email') ?? 'No Email';
+      phone = prefs.getString('phone') ?? 'No Phone';
+      address = prefs.getString('address') ?? 'No Address';
+      profileUrl = prefs.getString('profilepicture') ?? '';
     });
   }
 
@@ -135,33 +137,40 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _deleteProfilePicture() async {
-  final token = await _getAuthToken();
-  if (token.isEmpty) {
-    if (!mounted) return;
-    ToastHelper.showCustomToast(context, 'Please log in first', isSuccess: false, errorMessage: '');
-    return;
-  }
-  try {
-    setState(() => _loading = true);
-    final base = await ApiConfig.readBase();
-    final resp = await http.delete(
-      Uri.parse('$base/users/me/profile-picture'),
-      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-    );
-    if (resp.statusCode >= 200 && resp.statusCode < 300) {
-      setState(() => profileUrl = '');
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('profilepicture', '');
-      ToastHelper.showCustomToast(context, 'Profile picture removed', isSuccess: true, errorMessage: '');
-    } else {
-      ToastHelper.showCustomToast(context, 'Failed to remove', isSuccess: false, errorMessage: resp.body);
+    final token = await _getAuthToken();
+    if (token.isEmpty) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(context, 'Please log in first',
+          isSuccess: false, errorMessage: '');
+      return;
     }
-  } catch (e) {
-    ToastHelper.showCustomToast(context, 'Failed to remove', isSuccess: false, errorMessage: e.toString());
-  } finally {
-    if (mounted) setState(() => _loading = false);
+    try {
+      setState(() => _loading = true);
+      final base = await ApiConfig.readBase();
+      final resp = await http.delete(
+        Uri.parse('$base/users/me/profile-picture'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json'
+        },
+      );
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        setState(() => profileUrl = '');
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('profilepicture', '');
+        ToastHelper.showCustomToast(context, 'Profile picture removed',
+            isSuccess: true, errorMessage: '');
+      } else {
+        ToastHelper.showCustomToast(context, 'Failed to remove',
+            isSuccess: false, errorMessage: resp.body);
+      }
+    } catch (e) {
+      ToastHelper.showCustomToast(context, 'Failed to remove',
+          isSuccess: false, errorMessage: e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
-}
 
   Future<void> _fetchCurrentUser() async {
     setState(() => _loading = true);
@@ -235,14 +244,13 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             if (profileUrl.isNotEmpty)
               ListTile(
-  leading: const Icon(Icons.remove_circle_outline),
-  title: const Text('Remove current photo'),
-  onTap: () async {
-    Navigator.pop(context);
-    await _deleteProfilePicture(); // ← calls backend & clears local
-  },
-),
-
+                leading: const Icon(Icons.remove_circle_outline),
+                title: const Text('Remove current photo'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _deleteProfilePicture(); // ← calls backend & clears local
+                },
+              ),
           ],
         ),
       ),
@@ -331,9 +339,7 @@ class _ProfilePageState extends State<ProfilePage> {
         final data = (body is Map && body['data'] is Map)
             ? body['data'] as Map
             : (body as Map? ?? {});
-        return (data['profilepicture'] ??
-                data['profilePicture'] ??
-                data['url'])
+        return (data['profilepicture'] ?? data['profilePicture'] ?? data['url'])
             ?.toString();
       }
       if (resp.statusCode == 404) return null; // fall back if route missing
@@ -349,10 +355,13 @@ class _ProfilePageState extends State<ProfilePage> {
       final upSent = await upReq.send();
       final upResp = await http.Response.fromStream(upSent);
       if (upResp.statusCode < 200 || upResp.statusCode >= 300) {
-        throw Exception('Upload URL failed (${upResp.statusCode}) ${upResp.body}');
+        throw Exception(
+            'Upload URL failed (${upResp.statusCode}) ${upResp.body}');
       }
       final upBody = jsonDecode(upResp.body);
-      final url = (upBody is Map ? (upBody['url'] ?? upBody['data']?['url']) : null)?.toString();
+      final url =
+          (upBody is Map ? (upBody['url'] ?? upBody['data']?['url']) : null)
+              ?.toString();
       if (url == null || url.isEmpty) {
         throw Exception('Missing url from /upload');
       }
@@ -375,7 +384,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
     try {
       String? url = await _tryDirectUserUpload(); // prefer single-endpoint
-      url ??= await _uploadGetUrlThenPutUser();   // fallback path
+      url ??= await _uploadGetUrlThenPutUser(); // fallback path
 
       setState(() => profileUrl = url!);
       final prefs = await SharedPreferences.getInstance();
@@ -450,8 +459,8 @@ class _ProfilePageState extends State<ProfilePage> {
               child: SizedBox(
                 width: 18,
                 height: 18,
-                child:
-                    CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
               ),
             ),
           ),
@@ -470,7 +479,8 @@ class _ProfilePageState extends State<ProfilePage> {
       child: CircleAvatar(
         radius: 26,
         backgroundColor: Colors.black12,
-        backgroundImage: profileUrl.isNotEmpty ? NetworkImage(profileUrl) : null,
+        backgroundImage:
+            profileUrl.isNotEmpty ? NetworkImage(profileUrl) : null,
         child: profileUrl.isEmpty
             ? const Icon(Icons.person, size: 28, color: Colors.black45)
             : null,
@@ -559,7 +569,8 @@ class _ProfilePageState extends State<ProfilePage> {
                         enabled: false,
                         child: Row(
                           children: [
-                            const Icon(Icons.circle, size: 10, color: Colors.green),
+                            const Icon(Icons.circle,
+                                size: 10, color: Colors.green),
                             const SizedBox(width: 8),
                             Text(
                               'Active',
@@ -599,8 +610,8 @@ class _ProfilePageState extends State<ProfilePage> {
           children: [
             Container(
               padding: const EdgeInsets.all(10),
-              decoration:
-                  BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+              decoration: BoxDecoration(
+                  color: bg, borderRadius: BorderRadius.circular(12)),
               child: Icon(icon, size: 20, color: _brandNavy),
             ),
             const SizedBox(width: 10),
@@ -803,7 +814,8 @@ class _ProfilePageState extends State<ProfilePage> {
             Text(
               item.label,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+              style:
+                  const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
             ),
           ],
         ),
@@ -831,7 +843,6 @@ class _DetailItem {
 /* ============================
    Latest Arrivals (API-driven)
    ============================ */
-
 
 // ===== Latest Arrivals (unchanged) =====
 class LatestArrivalsSection extends StatefulWidget {
@@ -862,7 +873,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("Latest Arrivals", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text("Latest Arrivals",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           FutureBuilder<List<LatestArrivalModels>>(
             future: _future,
@@ -877,7 +889,9 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Center(
-                    child: Text('Could not load arrivals.\n${snap.error}', textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+                    child: Text('Could not load arrivals.\n${snap.error}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.red)),
                   ),
                 );
               }
@@ -885,14 +899,19 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
               if (items.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: Text('No items yet.', style: TextStyle(color: Colors.red))),
+                  child: Center(
+                      child: Text('No items yet.',
+                          style: TextStyle(color: Colors.red))),
                 );
               }
               return GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2, crossAxisSpacing: 10, mainAxisSpacing: 10, childAspectRatio: 0.78,
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: 0.78,
                 ),
                 itemCount: items.length,
                 itemBuilder: (_, i) {
@@ -936,7 +955,8 @@ class _ProductCardFromApi extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ClipRRect(
-            borderRadius: const BorderRadius.only(topLeft: Radius.circular(16), topRight: Radius.circular(16)),
+            borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16), topRight: Radius.circular(16)),
             child: imageUrl.isNotEmpty
                 ? Image.network(
                     imageUrl,
@@ -944,13 +964,17 @@ class _ProductCardFromApi extends StatelessWidget {
                     width: double.infinity,
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => Container(
-                      height: 140, color: const Color(0xFFEDEDED),
-                      child: const Center(child: Icon(Icons.image_not_supported_rounded)),
+                      height: 140,
+                      color: const Color(0xFFEDEDED),
+                      child: const Center(
+                          child: Icon(Icons.image_not_supported_rounded)),
                     ),
                   )
                 : Container(
-                    height: 140, color: const Color(0xFFEDEDED),
-                    child: const Center(child: Icon(Icons.image_not_supported_rounded)),
+                    height: 140,
+                    color: const Color(0xFFEDEDED),
+                    child: const Center(
+                        child: Icon(Icons.image_not_supported_rounded)),
                   ),
           ),
           Padding(
@@ -958,11 +982,21 @@ class _ProductCardFromApi extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 4),
-                    Text(priceText, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.green)),
-                  ]),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 4),
+                        Text(priceText,
+                            style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.green)),
+                      ]),
                 ),
                 IconButton(
                   onPressed: () => _showCardOptions(context, name),
@@ -979,25 +1013,30 @@ class _ProductCardFromApi extends StatelessWidget {
   void _showCardOptions(BuildContext context, String name) {
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => Padding(
         padding: const EdgeInsets.all(16),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('Choose an action', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+          const Text('Choose an action',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
           const SizedBox(height: 12),
           ListTile(
             leading: const Icon(Icons.shopping_cart, color: Colors.green),
             title: const Text('Add to cart'),
             onTap: () {
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$name added to cart')));
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text('$name added to cart')));
             },
           ),
           const Divider(height: 0),
           ListTile(
             leading: Icon(Icons.info_outline_rounded, color: brandOrange),
             title: const Text('More details'),
-            onTap: () { Navigator.pop(context); },
+            onTap: () {
+              Navigator.pop(context);
+            },
           ),
         ]),
       ),

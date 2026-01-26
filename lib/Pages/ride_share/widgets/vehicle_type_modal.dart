@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/models/ride_model.dart';
@@ -56,6 +57,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
   bool _isSearching = false;
   String? _errorMessage;
   double _distance = 0.0;
+  int _duration = 0; // Duration in minutes
   Map<String, dynamic> _estimatedFares = {};
   late AnimationController _animationController;
   String _filterType = 'all';
@@ -79,16 +81,24 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
 
   Future<void> _calculateDistanceAndFares() async {
     try {
-      final placeService = ref.read(placeServiceProvider);
-      final distance = placeService.calculateDistance(
-        widget.userLat,
-        widget.userLng,
-        widget.dropoffPlace.latitude,
-        widget.dropoffPlace.longitude,
+      // Get accurate distance and duration from Google Directions API
+      final directionsService = ref.read(googleDirectionsServiceProvider);
+      final routeInfo = await directionsService.getRouteInfo(
+        originLat: widget.userLat,
+        originLng: widget.userLng,
+        destLat: widget.dropoffPlace.latitude,
+        destLng: widget.dropoffPlace.longitude,
       );
 
+      if (kDebugMode) {
+        debugPrint('[VehicleTypeModal] Distance: ${routeInfo.distanceKm}km');
+        debugPrint(
+            '[VehicleTypeModal] Duration: ${routeInfo.durationMinutes}min');
+      }
+
       setState(() {
-        _distance = distance;
+        _distance = routeInfo.distanceKm;
+        _duration = routeInfo.durationMinutes;
       });
 
       for (final vehicleType in _baseVehicleTypes) {
@@ -108,6 +118,9 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         }
       }
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[VehicleTypeModal] Error calculating distance: $e');
+      }
       if (mounted) {
         setState(() {
           _errorMessage = 'Failed to calculate fares';
@@ -195,13 +208,27 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
           ? (fareEstimate['estimatedFare'] as num?)?.toDouble() ?? 0.0
           : 0.0;
 
+      // Use accurate distance from Google Directions API
       final distance = widget.userLat == widget.dropoffPlace.latitude &&
               widget.userLng == widget.dropoffPlace.longitude
           ? 0.0
           : _distance;
 
+      // Use accurate duration from Google Directions API
+      final duration = widget.userLat == widget.dropoffPlace.latitude &&
+              widget.userLng == widget.dropoffPlace.longitude
+          ? 0
+          : _duration;
+
       final passengerName =
           await AuthStorage.userNameFromToken() ?? 'Passenger';
+
+      if (kDebugMode) {
+        debugPrint('[VehicleTypeModal] Creating ride:');
+        debugPrint('  Distance: ${distance.toStringAsFixed(2)}km');
+        debugPrint('  Duration: ${duration}min');
+        debugPrint('  Estimated Fare: MWK $estimatedFare');
+      }
 
       final rideId = await FirebaseRideShareService.createRideRequest(
         passengerId: userIdStr,
@@ -212,7 +239,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         dropoffLng: widget.dropoffPlace.longitude,
         pickupAddress: widget.pickupPlace.address,
         dropoffAddress: widget.dropoffPlace.address,
-        estimatedTime: 25,
+        estimatedTime: duration,
         estimatedDistance: distance,
         estimatedFare: estimatedFare,
       );
@@ -682,14 +709,14 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                         ),
                       ),
                       const SizedBox(height: 2),
-                      Text(
-                        '~10 min',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[600],
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
+                       Text(
+                         '~${_duration > 0 ? _duration : 10} min',
+                         style: TextStyle(
+                           fontSize: 11,
+                           color: Colors.grey[600],
+                           fontWeight: FontWeight.w500,
+                         ),
+                       ),
                     ],
                   ),
                 ),

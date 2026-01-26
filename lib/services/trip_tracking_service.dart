@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/models/trip_log_model.dart';
 
 class TripTrackingService {
@@ -68,10 +68,11 @@ class TripTrackingService {
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        final log = data is Map
-            ? data
-            : (data['data'] is Map ? data['data'] : null);
-        return log != null ? TripLogModel.fromJson(log as Map<String, dynamic>) : null;
+        final log =
+            data is Map ? data : (data['data'] is Map ? data['data'] : null);
+        return log != null
+            ? TripLogModel.fromJson(log as Map<String, dynamic>)
+            : null;
       }
       return null;
     } catch (_) {

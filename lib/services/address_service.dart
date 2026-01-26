@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/models/address_model.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class AuthRequiredException implements Exception {
   final String message;
@@ -54,7 +54,9 @@ class AddressService {
       try {
         final res = await fn().timeout(const Duration(seconds: 60));
         // retry on 502/503/504 (cold start)
-        if ((res.statusCode == 502 || res.statusCode == 503 || res.statusCode == 504) &&
+        if ((res.statusCode == 502 ||
+                res.statusCode == 503 ||
+                res.statusCode == 504) &&
             attempt < retries) {
           attempt++;
           await Future.delayed(Duration(milliseconds: 600 * attempt));
@@ -111,34 +113,37 @@ class AddressService {
   }
 
   // lib/services/address_service.dart  (add two helpers)
-Future<List<Map<String, dynamic>>> placesAutocomplete(String q, {String? sessionToken}) async {
-  final base = await _readBase();
-  final h = await _authHeaders();
-  final u = Uri.parse('$base/addresses/places/autocomplete').replace(queryParameters: {
-    'q': q,
-    if (sessionToken != null) 'st': sessionToken,
-  });
+  Future<List<Map<String, dynamic>>> placesAutocomplete(String q,
+      {String? sessionToken}) async {
+    final base = await _readBase();
+    final h = await _authHeaders();
+    final u = Uri.parse('$base/addresses/places/autocomplete')
+        .replace(queryParameters: {
+      'q': q,
+      if (sessionToken != null) 'st': sessionToken,
+    });
 
-  final r = await _sendWithRetry(() => http.get(u, headers: h));
-  if (r.statusCode != 200) _handleBad(r);
-  final data = jsonDecode(r.body);
-  final List preds = (data['predictions'] ?? []) as List;
-  return preds.cast<Map<String, dynamic>>();
-}
+    final r = await _sendWithRetry(() => http.get(u, headers: h));
+    if (r.statusCode != 200) _handleBad(r);
+    final data = jsonDecode(r.body);
+    final List preds = (data['predictions'] ?? []) as List;
+    return preds.cast<Map<String, dynamic>>();
+  }
 
-Future<Map<String, dynamic>?> placeDetails(String placeId, {String? sessionToken}) async {
-  final base = await _readBase();
-  final h = await _authHeaders();
-  final u = Uri.parse('$base/addresses/places/details/$placeId').replace(queryParameters: {
-    if (sessionToken != null) 'st': sessionToken,
-  });
+  Future<Map<String, dynamic>?> placeDetails(String placeId,
+      {String? sessionToken}) async {
+    final base = await _readBase();
+    final h = await _authHeaders();
+    final u = Uri.parse('$base/addresses/places/details/$placeId')
+        .replace(queryParameters: {
+      if (sessionToken != null) 'st': sessionToken,
+    });
 
-  final r = await _sendWithRetry(() => http.get(u, headers: h));
-  if (r.statusCode != 200) _handleBad(r);
-  final data = jsonDecode(r.body);
-  return (data['result'] ?? data) as Map<String, dynamic>?;
-}
-
+    final r = await _sendWithRetry(() => http.get(u, headers: h));
+    if (r.statusCode != 200) _handleBad(r);
+    final data = jsonDecode(r.body);
+    return (data['result'] ?? data) as Map<String, dynamic>?;
+  }
 
   // POST /addresses
   Future<Address> createAddress(AddressPayload payload) async {
@@ -155,7 +160,9 @@ Future<Map<String, dynamic>?> placeDetails(String placeId, {String? sessionToken
     if (r.body.isEmpty) {
       // Some APIs return 204; refetch list and return last
       final all = await getMyAddresses();
-      return all.isNotEmpty ? all.last : throw Exception('Create succeeded but no body/list empty');
+      return all.isNotEmpty
+          ? all.last
+          : throw Exception('Create succeeded but no body/list empty');
     }
 
     final d = jsonDecode(r.body);
@@ -216,11 +223,11 @@ Future<Map<String, dynamic>?> placeDetails(String placeId, {String? sessionToken
   /// Mark one address as default. If your backend has
   /// `POST /addresses/:id/default` use that instead.
   Future<void> setDefaultAddress(String id) async {
-  final base = await _readBase();
-  final h = await _authHeaders();
-  final u = Uri.parse('$base/addresses/$id/default');
+    final base = await _readBase();
+    final h = await _authHeaders();
+    final u = Uri.parse('$base/addresses/$id/default');
 
-  final r = await _sendWithRetry(() => http.post(u, headers: h));
-  if (r.statusCode < 200 || r.statusCode >= 300) _handleBad(r);
-}
+    final r = await _sendWithRetry(() => http.post(u, headers: h));
+    if (r.statusCode < 200 || r.statusCode >= 300) _handleBad(r);
+  }
 }

@@ -8,10 +8,9 @@ import 'package:http_parser/http_parser.dart';
 import 'package:vero360_app/models/food_model.dart';
 import 'package:vero360_app/services/api_client.dart';
 import 'package:vero360_app/services/api_exception.dart';
-import 'package:vero360_app/services/api_config.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class FoodService {
-
   /// GET /marketplace?category=food
   Future<List<FoodModel>> fetchFoodItems() async {
     try {
@@ -28,8 +27,8 @@ class FoodService {
       final List list = decoded is Map && decoded['data'] is List
           ? decoded['data']
           : decoded is List
-            ? decoded
-            : const [];
+              ? decoded
+              : const [];
 
       return list.map<FoodModel>((row) {
         return FoodModel.fromJson(_adaptMarketplaceToFoodJson(row));
@@ -40,7 +39,8 @@ class FoodService {
       );
     }
   }
-    /// Text search by FoodName OR RestrauntName (client-side filter).
+
+  /// Text search by FoodName OR RestrauntName (client-side filter).
   Future<List<FoodModel>> searchFoodByNameOrRestaurant(String query) async {
     final q = query.trim().toLowerCase();
 
@@ -57,7 +57,6 @@ class FoodService {
       return name.contains(q) || restaurant.contains(q);
     }).toList();
   }
-
 
   /// Photo search
   Future<List<FoodModel>> searchFoodByPhoto(File imageFile) async {
@@ -82,8 +81,8 @@ class FoodService {
       final List list = decoded is Map && decoded['data'] is List
           ? decoded['data']
           : decoded is List
-            ? decoded
-            : const [];
+              ? decoded
+              : const [];
 
       final out = <FoodModel>[];
       for (final row in list) {

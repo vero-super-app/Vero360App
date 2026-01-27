@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:vero360_app/services/firebase_ride_share_service.dart';
+import 'package:vero360_app/services/ride_share_http_service.dart';
 
 class RideInProgressScreen extends StatefulWidget {
   final String rideId;
@@ -43,8 +43,9 @@ class _RideInProgressScreenState extends State<RideInProgressScreen> {
   }
 
   void _startLocationTracking() {
-    FirebaseRideShareService.getRideLocationStream(widget.rideId).listen((locationData) {
-      if (mounted && locationData != null) {
+    final httpService = RideShareHttpService();
+    httpService.driverLocationStream.listen((locationData) {
+      if (mounted && locationData.isNotEmpty) {
         final lat = locationData['latitude'] as double?;
         final lng = locationData['longitude'] as double?;
 

@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:vero360_app/services/firebase_ride_share_service.dart';
+import 'package:vero360_app/services/ride_share_http_service.dart';
+import 'package:vero360_app/models/ride_model.dart';
 
 class RideWaitingScreen extends StatefulWidget {
   final String rideId;
-  final Function(Driver) onRideAccepted;
+  final Function(DriverInfo) onRideAccepted;
   final VoidCallback onCancelRide;
   final double? pickupLat;
   final double? pickupLng;
 
   const RideWaitingScreen({
+    super.key,
     required this.rideId,
     required this.onRideAccepted,
     required this.onCancelRide,
@@ -53,35 +54,28 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<RideRequest?>(
-      stream: FirebaseRideShareService.getRideRequestStream(widget.rideId),
+    final httpService = RideShareHttpService();
+    final rideId = int.tryParse(widget.rideId) ?? 0;
+
+    return StreamBuilder<Ride>(
+      stream: httpService.rideUpdateStream,
       builder: (context, snapshot) {
         final ride = snapshot.data;
 
         // If driver accepted the ride
         if (ride != null &&
             ride.driverId != null &&
-            ride.status == 'accepted') {
-          if (!_callbackTriggered) {
+            ride.status == RideStatus.accepted) {
+          if (!_callbackTriggered && ride.driver != null) {
             _callbackTriggered = true;
-            return StreamBuilder<Driver?>(
-              stream: FirebaseRideShareService.getDriverProfileStream(
-                  ride.driverId!),
-              builder: (context, driverSnapshot) {
-                if (driverSnapshot.hasData && driverSnapshot.data != null) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) {
-                      widget.onRideAccepted(driverSnapshot.data!);
-                      Navigator.pop(context);
-                    }
-                  });
-                }
-                return const SizedBox.shrink();
-              },
-            );
-          } else {
-            return const SizedBox.shrink();
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                widget.onRideAccepted(ride.driver!);
+                Navigator.pop(context);
+              }
+            });
           }
+          return const SizedBox.shrink();
         }
 
         return PopScope(
@@ -100,12 +94,12 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
                   top: Radius.circular(24),
                 ),
                 boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 24,
-                    offset: const Offset(0, -4),
-                  ),
-                ],
+                   BoxShadow(
+                     color: Colors.black.withValues(alpha: 0.1),
+                     blurRadius: 24,
+                     offset: const Offset(0, -4),
+                   ),
+                 ],
               ),
               child: SingleChildScrollView(
                 controller: scrollController,
@@ -153,10 +147,10 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
                               height: 100,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: primaryColor.withOpacity(0.08),
+                                color: primaryColor.withValues(alpha: 0.08),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: primaryColor.withOpacity(0.15),
+                                    color: primaryColor.withValues(alpha: 0.15),
                                     blurRadius: 20,
                                     offset: const Offset(0, 4),
                                   ),
@@ -209,7 +203,7 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
                                 if (ride != null) ...[
                                   _buildInfoRow(
                                     'Pickup Location',
-                                    ride.pickupAddress,
+                                    ride.pickupAddress ?? 'Pickup Location',
                                     Icons.location_on_rounded,
                                     primaryColor,
                                   ),
@@ -218,7 +212,7 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
                                   const SizedBox(height: 16),
                                   _buildInfoRow(
                                     'Dropoff Location',
-                                    ride.dropoffAddress,
+                                    ride.dropoffAddress ?? 'Dropoff Location',
                                     Icons.location_on_rounded,
                                     primaryColor,
                                   ),
@@ -238,8 +232,8 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
                                       const SizedBox(width: 16),
                                       Expanded(
                                         child: _buildInfoRow(
-                                          'Estimated Time',
-                                          '~${ride.estimatedTime} min',
+                                          'Estimated Distance',
+                                          '${ride.estimatedDistance.toStringAsFixed(1)} km',
                                           Icons.schedule_rounded,
                                           primaryColor,
                                         ),
@@ -262,26 +256,27 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
                                   ? null
                                   : () {
                                       setState(() => _isCancelling = true);
-                                      FirebaseRideShareService
-                                          .cancelRideRequest(
-                                        widget.rideId,
-                                      ).then((_) {
+                                      httpService
+                                          .cancelRide(rideId)
+                                          .then((_) {
                                         widget.onCancelRide();
                                       }).catchError((_) {
                                         if (mounted) {
                                           setState(() => _isCancelling = false);
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            SnackBar(
-                                              content: const Text(
-                                                'Failed to cancel ride',
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              SnackBar(
+                                                content: const Text(
+                                                  'Failed to cancel ride',
+                                                ),
+                                                backgroundColor: Colors.red[400],
+                                                behavior:
+                                                    SnackBarBehavior.floating,
+                                                margin: const EdgeInsets.all(16),
                                               ),
-                                              backgroundColor: Colors.red[400],
-                                              behavior:
-                                                  SnackBarBehavior.floating,
-                                              margin: const EdgeInsets.all(16),
-                                            ),
-                                          );
+                                            );
+                                          }
                                         }
                                       });
                                     },
@@ -345,7 +340,7 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
           width: 40,
           height: 40,
           decoration: BoxDecoration(
-            color: iconColor.withOpacity(0.12),
+            color: iconColor.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Icon(
@@ -387,9 +382,9 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
 }
 
 class LoadingDots extends StatelessWidget {
-  final AnimationController controller;
-
-  const LoadingDots({required this.controller});
+   final AnimationController controller;
+ 
+   const LoadingDots({super.key, required this.controller});
 
   @override
   Widget build(BuildContext context) {

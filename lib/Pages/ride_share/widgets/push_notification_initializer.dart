@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:vero360_app/services/driver_push_notification_service.dart';
 
-/// Widget to initialize push notifications when driver app loads
+/// Widget to initialize messaging when driver app loads
+/// Note: Push notifications are now handled via WebSocket messaging (driver_messaging_service)
 class PushNotificationInitializer extends StatefulWidget {
   final String driverId;
   final Widget child;
@@ -22,23 +22,16 @@ class _PushNotificationInitializerState
   @override
   void initState() {
     super.initState();
-    _initializeNotifications();
+    _initializeMessaging();
   }
 
-  Future<void> _initializeNotifications() async {
+  Future<void> _initializeMessaging() async {
     try {
-      // Initialize FCM message handlers
-      await DriverPushNotificationService.initializeMessaging(context);
-
-      // Get and store FCM token
-      await DriverPushNotificationService.getAndStoreToken(widget.driverId);
-
-      // Listen for token refresh
-      DriverPushNotificationService.listenToTokenRefresh();
-
-      print('Push notifications initialized for driver: ${widget.driverId}');
+      // Messaging is now handled via WebSocket connection
+      // The WebSocket service will handle incoming messages and notifications
+      print('Messaging initialized for driver: ${widget.driverId}');
     } catch (e) {
-      print('Error initializing notifications: $e');
+      print('Error initializing messaging: $e');
     }
   }
 

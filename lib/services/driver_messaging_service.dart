@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:vero360_app/config/api_config.dart';
 
 /// Message between driver and passenger
 class DriverMessage {
@@ -42,23 +43,23 @@ class DriverMessage {
     };
   }
 
-  factory DriverMessage.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? {};
-    final sentAt = data['sentAt'] is String
-        ? DateTime.parse(data['sentAt'])
-        : (data['sentAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+  factory DriverMessage.fromMap(Map<String, dynamic> map) {
+    final sentAtStr = map['sentAt'] as String?;
+    final sentAt = sentAtStr != null 
+        ? DateTime.parse(sentAtStr)
+        : DateTime.now();
 
     return DriverMessage(
-      id: doc.id,
-      rideId: data['rideId'] ?? '',
-      senderId: data['senderId'] ?? '',
-      senderType: data['senderType'] ?? 'passenger',
-      senderName: data['senderName'] ?? 'Unknown',
-      senderAvatar: data['senderAvatar'],
-      message: data['message'] ?? '',
+      id: map['id'] ?? '',
+      rideId: map['rideId'] ?? '',
+      senderId: map['senderId'] ?? '',
+      senderType: map['senderType'] ?? 'passenger',
+      senderName: map['senderName'] ?? 'Unknown',
+      senderAvatar: map['senderAvatar'],
+      message: map['message'] ?? '',
       sentAt: sentAt,
-      isRead: data['isRead'] ?? false,
-      messageType: data['messageType'] ?? 'text',
+      isRead: map['isRead'] ?? false,
+      messageType: map['messageType'] ?? 'text',
     );
   }
 }
@@ -89,32 +90,29 @@ class DriverRideConversation {
     this.unreadCount = 0,
   });
 
-  factory DriverRideConversation.fromDoc(
-    DocumentSnapshot<Map<String, dynamic>> doc,
-  ) {
-    final data = doc.data() ?? {};
-    final lastMessageAt = data['lastMessageAt'] is String
-        ? DateTime.parse(data['lastMessageAt'])
-        : (data['lastMessageAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+  factory DriverRideConversation.fromMap(Map<String, dynamic> map) {
+    final lastMessageAtStr = map['lastMessageAt'] as String?;
+    final lastMessageAt = lastMessageAtStr != null 
+        ? DateTime.parse(lastMessageAtStr)
+        : DateTime.now();
 
     return DriverRideConversation(
-      rideId: doc.id,
-      passengerId: data['passengerId'] ?? '',
-      driverId: data['driverId'] ?? '',
-      passengerName: data['passengerName'] ?? 'Passenger',
-      driverName: data['driverName'] ?? 'Driver',
-      passengerAvatar: data['passengerAvatar'],
-      driverAvatar: data['driverAvatar'],
-      lastMessage: data['lastMessage'] ?? '',
+      rideId: map['rideId'] ?? '',
+      passengerId: map['passengerId'] ?? '',
+      driverId: map['driverId'] ?? '',
+      passengerName: map['passengerName'] ?? 'Passenger',
+      driverName: map['driverName'] ?? 'Driver',
+      passengerAvatar: map['passengerAvatar'],
+      driverAvatar: map['driverAvatar'],
+      lastMessage: map['lastMessage'] ?? '',
       lastMessageAt: lastMessageAt,
-      unreadCount: data['unreadCount'] ?? 0,
+      unreadCount: map['unreadCount'] ?? 0,
     );
   }
 }
 
 class DriverMessagingService {
-  static final FirebaseFirestore _db = FirebaseFirestore.instance;
-  static final FirebaseAuth _auth = FirebaseAuth.instance;
+  static const String _baseUrl = '/api/messages';
 
   /// Get or create a ride conversation thread
   static Future<void> ensureRideThread({
@@ -127,22 +125,25 @@ class DriverMessagingService {
     String? driverAvatar,
   }) async {
     try {
-      final threadRef = _db.collection('ride_messages').doc(rideId);
+      final response = await http.post(
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/thread'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'rideId': rideId,
+          'passengerId': passengerId,
+          'driverId': driverId,
+          'passengerName': passengerName,
+          'driverName': driverName,
+          'passengerAvatar': passengerAvatar,
+          'driverAvatar': driverAvatar,
+        }),
+      );
 
-      await threadRef.set({
-        'rideId': rideId,
-        'passengerId': passengerId,
-        'driverId': driverId,
-        'passengerName': passengerName,
-        'driverName': driverName,
-        'passengerAvatar': passengerAvatar ?? '',
-        'driverAvatar': driverAvatar ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
-        'lastMessage': 'Conversation started',
-        'lastMessageAt': FieldValue.serverTimestamp(),
-        'lastSenderId': driverId,
-        'unreadCount': 0,
-      }, SetOptions(merge: true));
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception('Failed to create ride thread: ${response.statusCode}');
+      }
     } catch (e) {
       print('Error creating ride thread: $e');
       rethrow;
@@ -158,73 +159,66 @@ class DriverMessagingService {
     String messageType = 'text',
   }) async {
     try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) throw Exception('Not authenticated');
-
-      final messagesRef = _db.collection('ride_messages').doc(rideId);
-      final messageRef = messagesRef.collection('messages').doc();
-
-      await _db.runTransaction((transaction) async {
-        // Add message
-        transaction.set(messageRef, {
-          'rideId': rideId,
-          'senderId': userId,
-          'senderType': 'driver', // Driver-specific
+      final response = await http.post(
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/messages'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'message': message,
           'senderName': senderName ?? 'Driver',
           'senderAvatar': senderAvatar,
-          'message': message,
-          'sentAt': FieldValue.serverTimestamp(),
-          'isRead': false,
           'messageType': messageType,
-        });
+          'senderType': 'driver',
+        }),
+      );
 
-        // Update thread metadata
-        transaction.update(messagesRef, {
-          'lastMessage': message,
-          'lastMessageAt': FieldValue.serverTimestamp(),
-          'lastSenderId': userId,
-        });
-      });
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception('Failed to send message: ${response.statusCode}');
+      }
     } catch (e) {
       print('Error sending message: $e');
       rethrow;
     }
   }
 
-  /// Get messages for a ride
-  static Stream<List<DriverMessage>> getMessagesStream(String rideId) {
-    return _db
-        .collection('ride_messages')
-        .doc(rideId)
-        .collection('messages')
-        .orderBy('sentAt', descending: false)
-        .snapshots()
-        .map((qs) {
-      return qs.docs.map((doc) => DriverMessage.fromDoc(doc)).toList();
-    });
+  /// Get messages for a ride (one-time fetch)
+  static Future<List<DriverMessage>> getMessages(String rideId) async {
+    try {
+      final response = await http.get(
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/messages'),
+      );
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        final messages = decoded is List 
+            ? decoded.cast<Map<String, dynamic>>()
+            : (decoded['messages'] is List 
+                ? (decoded['messages'] as List).cast<Map<String, dynamic>>()
+                : <Map<String, dynamic>>[]);
+        
+        return messages.map((msg) => DriverMessage.fromMap(msg)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error fetching messages: $e');
+      return [];
+    }
   }
 
   /// Mark messages as read
   static Future<void> markMessagesAsRead(String rideId) async {
     try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return;
+      final response = await http.patch(
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/mark-read'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      );
 
-      final batch = _db.batch();
-      final messagesRef = _db
-          .collection('ride_messages')
-          .doc(rideId)
-          .collection('messages')
-          .where('senderType', isEqualTo: 'passenger')
-          .where('isRead', isEqualTo: false);
-
-      final snapshots = await messagesRef.get();
-
-      for (final doc in snapshots.docs) {
-        batch.update(doc.reference, {'isRead': true});
+      if (response.statusCode != 200) {
+        throw Exception('Failed to mark messages as read: ${response.statusCode}');
       }
-
-      await batch.commit();
     } catch (e) {
       print('Error marking messages as read: $e');
     }
@@ -233,15 +227,15 @@ class DriverMessagingService {
   /// Get unread message count for a conversation
   static Future<int> getUnreadCount(String rideId) async {
     try {
-      final messagesRef = _db
-          .collection('ride_messages')
-          .doc(rideId)
-          .collection('messages')
-          .where('senderType', isEqualTo: 'passenger')
-          .where('isRead', isEqualTo: false);
+      final response = await http.get(
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/unread-count'),
+      );
 
-      final snapshot = await messagesRef.count().get();
-      return snapshot.count ?? 0;
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        return decoded['unreadCount'] ?? 0;
+      }
+      return 0;
     } catch (e) {
       print('Error getting unread count: $e');
       return 0;
@@ -254,26 +248,19 @@ class DriverMessagingService {
     required String message,
   }) async {
     try {
-      final messagesRef = _db.collection('ride_messages').doc(rideId);
-      final messageRef = messagesRef.collection('messages').doc();
-
-      await _db.runTransaction((transaction) async {
-        transaction.set(messageRef, {
-          'rideId': rideId,
-          'senderId': 'system',
-          'senderType': 'system',
-          'senderName': 'System',
+      final response = await http.post(
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/system-message'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
           'message': message,
-          'sentAt': FieldValue.serverTimestamp(),
-          'isRead': false,
-          'messageType': 'system',
-        });
+        }),
+      );
 
-        transaction.update(messagesRef, {
-          'lastMessage': message,
-          'lastMessageAt': FieldValue.serverTimestamp(),
-        });
-      });
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception('Failed to send system message: ${response.statusCode}');
+      }
     } catch (e) {
       print('Error sending system message: $e');
       rethrow;
@@ -285,9 +272,13 @@ class DriverMessagingService {
     String rideId,
   ) async {
     try {
-      final doc = await _db.collection('ride_messages').doc(rideId).get();
-      if (doc.exists) {
-        return DriverRideConversation.fromDoc(doc);
+      final response = await http.get(
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId'),
+      );
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        return DriverRideConversation.fromMap(decoded);
       }
       return null;
     } catch (e) {
@@ -296,43 +287,45 @@ class DriverMessagingService {
     }
   }
 
-  /// Stream for ride conversation updates
-  static Stream<DriverRideConversation?> getRideConversationStream(
-    String rideId,
-  ) {
-    return _db
-        .collection('ride_messages')
-        .doc(rideId)
-        .snapshots()
-        .map((snapshot) {
-      if (snapshot.exists) {
-        return DriverRideConversation.fromDoc(snapshot);
-      }
-      return null;
-    });
-  }
-
   /// Get all active conversations for a driver
-  static Stream<List<DriverRideConversation>> getDriverConversationsStream(
+  static Future<List<DriverRideConversation>> getDriverConversations(
     String driverId,
-  ) {
-    return _db
-        .collection('ride_messages')
-        .where('driverId', isEqualTo: driverId)
-        .orderBy('lastMessageAt', descending: true)
-        .snapshots()
-        .map((qs) {
-      return qs.docs.map((doc) => DriverRideConversation.fromDoc(doc)).toList();
-    });
+  ) async {
+    try {
+      final response = await http.get(
+        ApiConfig.endpoint('$_baseUrl/drivers/$driverId/conversations'),
+      );
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        final conversations = decoded is List 
+            ? decoded.cast<Map<String, dynamic>>()
+            : (decoded['conversations'] is List 
+                ? (decoded['conversations'] as List).cast<Map<String, dynamic>>()
+                : <Map<String, dynamic>>[]);
+        
+        return conversations.map((conv) => DriverRideConversation.fromMap(conv)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting driver conversations: $e');
+      return [];
+    }
   }
 
-  /// Delete a conversation (archive it instead)
+  /// Archive a conversation
   static Future<void> archiveConversation(String rideId) async {
     try {
-      await _db.collection('ride_messages').doc(rideId).update({
-        'archived': true,
-        'archivedAt': FieldValue.serverTimestamp(),
-      });
+      final response = await http.patch(
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/archive'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to archive conversation: ${response.statusCode}');
+      }
     } catch (e) {
       print('Error archiving conversation: $e');
       rethrow;

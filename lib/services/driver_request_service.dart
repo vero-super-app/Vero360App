@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'package:firebase_database/firebase_database.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:vero360_app/config/api_config.dart';
 
 /// Model for driver-specific ride request
 class DriverRideRequest {
@@ -58,9 +59,25 @@ class DriverRideRequest {
     };
   }
 
-  factory DriverRideRequest.fromMap(Map<dynamic, dynamic> map, String id) {
+  factory DriverRideRequest.fromMap(Map<String, dynamic> map, String id) {
+    // Handle both ISO string and millisecond timestamps
+    DateTime parseDate(dynamic value) {
+      if (value == null) return DateTime.now();
+      if (value is String) {
+        try {
+          return DateTime.parse(value);
+        } catch (_) {
+          return DateTime.now();
+        }
+      }
+      if (value is int) {
+        return DateTime.fromMillisecondsSinceEpoch(value);
+      }
+      return DateTime.now();
+    }
+
     return DriverRideRequest(
-      id: id,
+      id: map['id'] ?? id,
       passengerId: map['passengerId'] ?? '',
       passengerName: map['passengerName'] ?? 'Unknown',
       pickupLat: (map['pickupLat'] as num?)?.toDouble() ?? 0.0,
@@ -70,8 +87,8 @@ class DriverRideRequest {
       pickupAddress: map['pickupAddress'] ?? '',
       dropoffAddress: map['dropoffAddress'] ?? '',
       status: map['status'] ?? 'pending',
-      createdAt: DateTime.fromMillisecondsSinceEpoch(map['createdAt'] ?? 0),
-      estimatedTime: map['estimatedTime'] ?? 0,
+      createdAt: parseDate(map['createdAt']),
+      estimatedTime: (map['estimatedTime'] as num?)?.toInt() ?? 0,
       estimatedDistance: (map['estimatedDistance'] as num?)?.toDouble() ?? 0.0,
       estimatedFare: (map['estimatedFare'] as num?)?.toDouble() ?? 0.0,
       passengerPhone: map['passengerPhone'],
@@ -116,56 +133,61 @@ class DriverRideRequest {
 }
 
 class DriverRequestService {
-  static final FirebaseDatabase _db = FirebaseDatabase.instance;
-  static final FirebaseAuth _auth = FirebaseAuth.instance;
+  static const String _baseUrl = '/api/rides';
 
-  /// Listen to incoming ride requests for a specific driver
-  /// Only returns pending requests
-  static Stream<List<DriverRideRequest>> getIncomingRequestsStream(
-    String driverId,
-  ) {
-    return _db
-        .ref()
-        .child('ride_requests')
-        .orderByChild('status')
-        .equalTo('pending')
-        .onValue
-        .map((event) {
-      if (event.snapshot.value == null) {
-        return [];
-      }
+  /// Get pending ride requests for a driver
+  /// Note: For real-time updates, use WebSocket instead of polling
+  static Future<List<DriverRideRequest>> getIncomingRequests() async {
+    try {
+      final response = await http.get(
+        ApiConfig.endpoint('$_baseUrl/pending'),
+      );
 
-      final requests = <DriverRideRequest>[];
-      final data = event.snapshot.value as Map<dynamic, dynamic>;
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        final requests = decoded is List
+            ? decoded.cast<Map<String, dynamic>>()
+            : (decoded['requests'] is List
+                ? (decoded['requests'] as List)
+                    .cast<Map<String, dynamic>>()
+                : <Map<String, dynamic>>[]);
 
-      data.forEach((key, value) {
-        if (value is Map<dynamic, dynamic>) {
-          try {
-            final request = DriverRideRequest.fromMap(value, key);
-            // Only include requests that are still pending
-            if (request.status == 'pending') {
-              requests.add(request);
+        // Sort by most recent first
+        requests.sort(
+          (a, b) {
+            final dateA = DateTime.tryParse(a['createdAt'] ?? '');
+            final dateB = DateTime.tryParse(b['createdAt'] ?? '');
+            if (dateA != null && dateB != null) {
+              return dateB.compareTo(dateA);
             }
-          } catch (_) {
-            // Skip malformed requests
-          }
-        }
-      });
+            return 0;
+          },
+        );
 
-      // Sort by most recent first
-      requests.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      return requests;
-    });
+        return requests
+            .map((r) =>
+                DriverRideRequest.fromMap(Map<String, dynamic>.from(r), r['id']))
+            .toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting incoming requests: $e');
+      return [];
+    }
   }
 
   /// Get a single ride request details
   static Future<DriverRideRequest?> getRideRequest(String rideId) async {
     try {
-      final snapshot = await _db.ref().child('ride_requests').child(rideId).get();
+      final response = await http.get(
+        ApiConfig.endpoint('$_baseUrl/$rideId'),
+      );
 
-      if (snapshot.exists && snapshot.value is Map<dynamic, dynamic>) {
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        final data = decoded is Map ? decoded : decoded['ride'];
         return DriverRideRequest.fromMap(
-          snapshot.value as Map<dynamic, dynamic>,
+          Map<String, dynamic>.from(data),
           rideId,
         );
       }
@@ -174,24 +196,6 @@ class DriverRequestService {
       print('Error getting ride request: $e');
       return null;
     }
-  }
-
-  /// Stream for single ride request real-time updates
-  static Stream<DriverRideRequest?> getRideRequestStream(String rideId) {
-    return _db
-        .ref()
-        .child('ride_requests')
-        .child(rideId)
-        .onValue
-        .map((event) {
-      if (event.snapshot.exists && event.snapshot.value is Map<dynamic, dynamic>) {
-        return DriverRideRequest.fromMap(
-          event.snapshot.value as Map<dynamic, dynamic>,
-          rideId,
-        );
-      }
-      return null;
-    });
   }
 
   /// Accept a ride request as a driver
@@ -203,43 +207,23 @@ class DriverRequestService {
     required String? driverAvatar,
   }) async {
     try {
-      final now = DateTime.now();
+      final response = await http.patch(
+        ApiConfig.endpoint('$_baseUrl/$rideId/accept'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'driverId': driverId,
+          'driverName': driverName,
+          'driverPhone': driverPhone,
+          'driverAvatar': driverAvatar,
+        }),
+      );
 
-      // Get current request status first
-      final snapshot = await _db.ref().child('ride_requests').child(rideId).get();
-
-      if (!snapshot.exists) {
-        throw Exception('Ride request not found');
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        final error = jsonDecode(response.body);
+        throw Exception(error['message'] ?? 'Failed to accept ride');
       }
-
-      final data = snapshot.value as Map<dynamic, dynamic>;
-      if (data['status'] != 'pending') {
-        throw Exception('Ride was already accepted by another driver');
-      }
-
-      // Update the ride request with driver info
-      await _db
-          .ref()
-          .child('ride_requests')
-          .child(rideId)
-          .update({
-        'driverId': driverId,
-        'driverName': driverName,
-        'driverPhone': driverPhone,
-        'driverAvatar': driverAvatar ?? '',
-        'status': 'accepted',
-        'acceptedAt': now.millisecondsSinceEpoch,
-      });
-
-      // Add to driver's active rides
-      await _db
-          .ref()
-          .child('drivers')
-          .child(driverId)
-          .child('activeRides')
-          .update({
-        rideId: true,
-      });
     } catch (e) {
       print('Error accepting ride request: $e');
       rethrow;
@@ -249,15 +233,16 @@ class DriverRequestService {
   /// Reject a ride request
   static Future<void> rejectRideRequest(String rideId) async {
     try {
-      // Just mark locally that driver rejected it
-      // The request remains pending for other drivers
-      await _db
-          .ref()
-          .child('ride_requests')
-          .child(rideId)
-          .child('rejectedBy')
-          .child(_auth.currentUser?.uid ?? 'unknown')
-          .set(true);
+      final response = await http.patch(
+        ApiConfig.endpoint('$_baseUrl/$rideId/reject'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        throw Exception('Failed to reject ride');
+      }
     } catch (e) {
       print('Error rejecting ride request: $e');
       rethrow;
@@ -271,17 +256,22 @@ class DriverRequestService {
     Map<String, dynamic>? additionalData,
   }) async {
     try {
-      final updateData = <String, dynamic>{'status': status};
-
+      final body = <String, dynamic>{'status': status};
       if (additionalData != null) {
-        updateData.addAll(additionalData);
+        body.addAll(additionalData);
       }
 
-      await _db
-          .ref()
-          .child('ride_requests')
-          .child(rideId)
-          .update(updateData);
+      final response = await http.patch(
+        ApiConfig.endpoint('$_baseUrl/$rideId/status'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(body),
+      );
+
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        throw Exception('Failed to update ride status');
+      }
     } catch (e) {
       print('Error updating ride status: $e');
       rethrow;
@@ -289,39 +279,44 @@ class DriverRequestService {
   }
 
   /// Get driver's active rides
-  static Stream<List<DriverRideRequest>> getActiveRidesStream(String driverId) {
-    return _db
-        .ref()
-        .child('ride_requests')
-        .orderByChild('driverId')
-        .equalTo(driverId)
-        .onValue
-        .map((event) {
-      if (event.snapshot.value == null) {
-        return [];
-      }
+  static Future<List<DriverRideRequest>> getActiveRides(
+    String driverId,
+  ) async {
+    try {
+      final response = await http.get(
+        ApiConfig.endpoint('$_baseUrl/drivers/$driverId/active'),
+      );
 
-      final rides = <DriverRideRequest>[];
-      final data = event.snapshot.value as Map<dynamic, dynamic>;
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        final rides = decoded is List
+            ? decoded.cast<Map<String, dynamic>>()
+            : (decoded['rides'] is List
+                ? (decoded['rides'] as List).cast<Map<String, dynamic>>()
+                : <Map<String, dynamic>>[]);
 
-      data.forEach((key, value) {
-        if (value is Map<dynamic, dynamic>) {
-          try {
-            final request = DriverRideRequest.fromMap(value, key);
-            // Only include non-completed rides
-            if (request.status != 'completed') {
-              rides.add(request);
+        // Sort by created time (oldest first)
+        rides.sort(
+          (a, b) {
+            final dateA = DateTime.tryParse(a['createdAt'] ?? '');
+            final dateB = DateTime.tryParse(b['createdAt'] ?? '');
+            if (dateA != null && dateB != null) {
+              return dateA.compareTo(dateB);
             }
-          } catch (_) {
-            // Skip malformed requests
-          }
-        }
-      });
+            return 0;
+          },
+        );
 
-      // Sort by accepted time (oldest first)
-      rides.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      return rides;
-    });
+        return rides
+            .map((r) =>
+                DriverRideRequest.fromMap(Map<String, dynamic>.from(r), r['id']))
+            .toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error getting active rides: $e');
+      return [];
+    }
   }
 
   /// Complete a ride and calculate final fare
@@ -332,19 +327,21 @@ class DriverRequestService {
     required double finalFare,
   }) async {
     try {
-      final now = DateTime.now();
+      final response = await http.patch(
+        ApiConfig.endpoint('$_baseUrl/$rideId/complete'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'actualDistance': actualDistance,
+          'actualTime': actualTime,
+          'finalFare': finalFare,
+        }),
+      );
 
-      await _db
-          .ref()
-          .child('ride_requests')
-          .child(rideId)
-          .update({
-        'status': 'completed',
-        'completedAt': now.millisecondsSinceEpoch,
-        'actualDistance': actualDistance,
-        'actualTime': actualTime,
-        'actualFare': finalFare,
-      });
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        throw Exception('Failed to complete ride');
+      }
     } catch (e) {
       print('Error completing ride: $e');
       rethrow;
@@ -357,15 +354,19 @@ class DriverRequestService {
     required String reason,
   }) async {
     try {
-      await _db
-          .ref()
-          .child('ride_requests')
-          .child(rideId)
-          .update({
-        'status': 'cancelled',
-        'cancelledAt': DateTime.now().millisecondsSinceEpoch,
-        'cancelReason': reason,
-      });
+      final response = await http.patch(
+        ApiConfig.endpoint('$_baseUrl/$rideId/cancel'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'reason': reason,
+        }),
+      );
+
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        throw Exception('Failed to cancel ride');
+      }
     } catch (e) {
       print('Error cancelling ride: $e');
       rethrow;

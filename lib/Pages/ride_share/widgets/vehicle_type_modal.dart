@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/models/ride_model.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
-import 'package:vero360_app/services/firebase_ride_share_service.dart';
+import 'package:vero360_app/services/ride_share_http_service.dart';
 import 'package:vero360_app/services/auth_storage.dart';
 
 class VehicleTypeOption {
@@ -220,9 +220,6 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
           ? 0
           : _duration;
 
-      final passengerName =
-          await AuthStorage.userNameFromToken() ?? 'Passenger';
-
       if (kDebugMode) {
         debugPrint('[VehicleTypeModal] Creating ride:');
         debugPrint('  Distance: ${distance.toStringAsFixed(2)}km');
@@ -230,23 +227,21 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         debugPrint('  Estimated Fare: MWK $estimatedFare');
       }
 
-      final rideId = await FirebaseRideShareService.createRideRequest(
-        passengerId: userIdStr,
-        passengerName: passengerName,
-        pickupLat: widget.userLat,
-        pickupLng: widget.userLng,
-        dropoffLat: widget.dropoffPlace.latitude,
-        dropoffLng: widget.dropoffPlace.longitude,
+      final httpService = RideShareHttpService();
+      final ride = await httpService.requestRide(
+        pickupLatitude: widget.userLat,
+        pickupLongitude: widget.userLng,
+        dropoffLatitude: widget.dropoffPlace.latitude,
+        dropoffLongitude: widget.dropoffPlace.longitude,
+        vehicleClass: _selectedVehicleClass ?? VehicleClass.economy,
         pickupAddress: widget.pickupPlace.address,
         dropoffAddress: widget.dropoffPlace.address,
-        estimatedTime: duration,
-        estimatedDistance: distance,
-        estimatedFare: estimatedFare,
+        notes: null,
       );
 
       if (mounted) {
         Navigator.pop(context);
-        widget.onRideRequested(rideId);
+        widget.onRideRequested(ride.id.toString());
       }
     } catch (e) {
       if (mounted) {

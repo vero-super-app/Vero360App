@@ -1,82 +1,10 @@
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'dart:async';
-import 'package:socket_io_client/socket_io_client.dart' as IO;
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/services/ride_share_http_service.dart';
+import 'package:vero360_app/models/ride_model.dart';
 
+/// Facade service that uses RideShareHttpService for all operations
+/// This maintains backward compatibility with existing code
 class RideShareService {
-  // ✅ Use ApiConfig for ride-share endpoint instead of hardcoded URL
-  late IO.Socket socket;
-
-  // Stream controllers for WebSocket events
-  late StreamController<String> _connectionStatusController;
-  late StreamController<Map<String, dynamic>> _driverLocationController;
-  late StreamController<Map<String, dynamic>> _rideStatusController;
-
-  RideShareService() {
-    _initializeControllers();
-    _initializeSocket();
-  }
-
-  /// Get auth token from shared preferences
-  Future<String?> _getAuthToken() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getString('jwt_token') ??
-          prefs.getString('token') ??
-          prefs.getString('jwt');
-    } catch (e) {
-      print('Error reading auth token: $e');
-      return null;
-    }
-  }
-
-  /// Initialize stream controllers
-  void _initializeControllers() {
-    _connectionStatusController = StreamController<String>.broadcast();
-    _driverLocationController =
-        StreamController<Map<String, dynamic>>.broadcast();
-    _rideStatusController = StreamController<Map<String, dynamic>>.broadcast();
-  }
-
-  /// Get connection status stream
-  Stream<String> get connectionStatusStream =>
-      _connectionStatusController.stream;
-
-  /// Get driver location stream
-  Stream<Map<String, dynamic>> get driverLocationStream =>
-      _driverLocationController.stream;
-
-  /// Get ride status stream
-  Stream<Map<String, dynamic>> get rideStatusStream =>
-      _rideStatusController.stream;
-
-  void _initializeSocket() {
-    socket = IO.io(
-      ApiConfig.prod,
-      IO.OptionBuilder()
-          .setTransports(['websocket'])
-          .disableAutoConnect()
-          .build(),
-    );
-
-    socket.connect();
-    socket.onConnect((_) {
-      print('Socket connected');
-      _connectionStatusController.add('connected');
-    });
-
-    socket.onDisconnect((_) {
-      print('Socket disconnected');
-      _connectionStatusController.add('disconnected');
-    });
-
-    socket.onError((error) {
-      print('Socket error: $error');
-      _connectionStatusController.add('error');
-    });
-  }
+  final RideShareHttpService _httpService = RideShareHttpService();
 
   /// Estimate fare for a trip
   Future<Map<String, dynamic>> estimateFare({
@@ -87,23 +15,14 @@ class RideShareService {
     required String vehicleClass,
   }) async {
     try {
-      final response = await http.post(
-        ApiConfig.endpoint('/ride-share/estimate-fare'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'pickupLatitude': pickupLatitude,
-          'pickupLongitude': pickupLongitude,
-          'dropoffLatitude': dropoffLatitude,
-          'dropoffLongitude': dropoffLongitude,
-          'vehicleClass': vehicleClass,
-        }),
+      final fareEstimate = await _httpService.estimateFare(
+        pickupLatitude: pickupLatitude,
+        pickupLongitude: pickupLongitude,
+        dropoffLatitude: dropoffLatitude,
+        dropoffLongitude: dropoffLongitude,
+        vehicleClass: vehicleClass,
       );
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        throw Exception('Failed to estimate fare: ${response.statusCode}');
-      }
+      return fareEstimate.toJson();
     } catch (e) {
       print('Error estimating fare: $e');
       rethrow;
@@ -118,19 +37,13 @@ class RideShareService {
     double radiusKm = 5,
   }) async {
     try {
-      String path =
-          '/ride-share/vehicles?latitude=$latitude&longitude=$longitude&radiusKm=$radiusKm';
-      if (vehicleClass != null) {
-        path += '&vehicleClass=$vehicleClass';
-      }
-
-      final response = await http.get(ApiConfig.endpoint(path));
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        throw Exception('Failed to get vehicles: ${response.statusCode}');
-      }
+      final vehicles = await _httpService.getAvailableVehicles(
+        latitude: latitude,
+        longitude: longitude,
+        vehicleClass: vehicleClass,
+        radiusKm: radiusKm,
+      );
+      return vehicles.map((v) => v.toJson()).toList();
     } catch (e) {
       print('Error getting vehicles: $e');
       rethrow;
@@ -149,36 +62,17 @@ class RideShareService {
     String? notes,
   }) async {
     try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-
-      // Add auth token if available
-      final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await http.post(
-        ApiConfig.endpoint('/ride-share/rides'),
-        headers: headers,
-        body: jsonEncode({
-          'pickupLatitude': pickupLatitude,
-          'pickupLongitude': pickupLongitude,
-          'pickupAddress': pickupAddress,
-          'dropoffLatitude': dropoffLatitude,
-          'dropoffLongitude': dropoffLongitude,
-          'dropoffAddress': dropoffAddress,
-          'preferredVehicleClass': vehicleClass,
-          'notes': notes,
-        }),
+      final ride = await _httpService.requestRide(
+        pickupLatitude: pickupLatitude,
+        pickupLongitude: pickupLongitude,
+        dropoffLatitude: dropoffLatitude,
+        dropoffLongitude: dropoffLongitude,
+        vehicleClass: vehicleClass,
+        pickupAddress: pickupAddress,
+        dropoffAddress: dropoffAddress,
+        notes: notes,
       );
-
-      if (response.statusCode == 201) {
-        return jsonDecode(response.body);
-      } else {
-        throw Exception('Failed to request ride: ${response.statusCode}');
-      }
+      return ride.toJson();
     } catch (e) {
       print('Error requesting ride: $e');
       rethrow;
@@ -188,14 +82,8 @@ class RideShareService {
   /// Get ride details
   Future<Map<String, dynamic>> getRideDetails(int rideId) async {
     try {
-      final response =
-          await http.get(ApiConfig.endpoint('/ride-share/rides/$rideId'));
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        throw Exception('Failed to get ride: ${response.statusCode}');
-      }
+      final ride = await _httpService.getRideDetails(rideId);
+      return ride.toJson();
     } catch (e) {
       print('Error getting ride: $e');
       rethrow;
@@ -205,17 +93,8 @@ class RideShareService {
   /// Cancel a ride
   Future<Map<String, dynamic>> cancelRide(int rideId, {String? reason}) async {
     try {
-      final response = await http.patch(
-        ApiConfig.endpoint('/ride-share/rides/$rideId/cancel'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'reason': reason}),
-      );
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        throw Exception('Failed to cancel ride: ${response.statusCode}');
-      }
+      final ride = await _httpService.cancelRide(rideId, reason: reason);
+      return ride.toJson();
     } catch (e) {
       print('Error cancelling ride: $e');
       rethrow;
@@ -224,65 +103,51 @@ class RideShareService {
 
   /// Subscribe to passenger ride tracking
   void subscribeToRideTracking(int rideId) {
-    socket.emit('passenger:subscribe', {'rideId': rideId});
-
-    // Listen for driver location updates
-    socket.on('driver:location:updated', (data) {
-      print('Driver location updated: $data');
-      _driverLocationController.add(Map<String, dynamic>.from(data));
-    });
-
-    // Listen for ride status updates
-    socket.on('ride:status:updated', (data) {
-      print('Ride status updated: $data');
-      _rideStatusController.add(Map<String, dynamic>.from(data));
-    });
+    _httpService.subscribeToRideTracking(rideId);
   }
 
   /// Unsubscribe from ride tracking
   void unsubscribeFromRideTracking() {
-    socket.emit('passenger:unsubscribe');
+    _httpService.unsubscribeFromRideTracking();
   }
 
   /// Listen to driver location updates
   void onDriverLocationUpdated(Function(Map<String, dynamic>) callback) {
-    socket.on('driver:location:updated', (data) {
-      callback(Map<String, dynamic>.from(data));
-    });
+    _httpService.onDriverLocationUpdated(callback);
   }
 
   /// Listen to ride status changes
   void onRideStatusUpdated(Function(Map<String, dynamic>) callback) {
-    socket.on('ride:status:updated', (data) {
-      callback(Map<String, dynamic>.from(data));
-    });
+    _httpService.onRideStatusUpdated(callback);
   }
+
+  /// Get connection status stream
+  Stream<String> get connectionStatusStream =>
+      _httpService.connectionStatusStream;
+
+  /// Get driver location stream
+  Stream<Map<String, dynamic>> get driverLocationStream =>
+      _httpService.driverLocationStream;
+
+  /// Get ride status stream
+  Stream<Map<String, dynamic>> get rideStatusStream =>
+      _httpService.rideStatusStream;
+
+  /// Get ride update stream (with Ride objects)
+  Stream<Ride> get rideUpdateStream => _httpService.rideUpdateStream;
 
   /// Disconnect socket
   void disconnect() {
-    socket.disconnect();
+    _httpService.disconnect();
   }
 
   /// Reconnect websocket with retry logic
   Future<void> reconnectWebSocket() async {
-    try {
-      if (!socket.connected) {
-        socket.connect();
-        print('WebSocket reconnected');
-        _connectionStatusController.add('connected');
-      }
-    } catch (e) {
-      print('Error reconnecting WebSocket: $e');
-      _connectionStatusController.add('error');
-      rethrow;
-    }
+    await _httpService.reconnectWebSocket();
   }
 
   /// Dispose resources
   void dispose() {
-    _connectionStatusController.close();
-    _driverLocationController.close();
-    _rideStatusController.close();
-    disconnect();
+    _httpService.dispose();
   }
 }

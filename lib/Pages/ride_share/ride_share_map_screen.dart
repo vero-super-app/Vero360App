@@ -11,9 +11,9 @@ import 'package:vero360_app/Pages/ride_share/widgets/user_awaiting_driver_screen
 import 'package:vero360_app/Pages/ride_share/widgets/ride_in_progress_screen.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/models/place_model.dart';
+import 'package:vero360_app/models/ride_model.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
 import 'package:vero360_app/services/auth_storage.dart';
-import 'package:vero360_app/services/firebase_ride_share_service.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
   const RideShareMapScreen({super.key});
@@ -92,7 +92,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
           context: context,
           isScrollControlled: true,
           backgroundColor: Colors.transparent,
-          barrierColor: Colors.black.withOpacity(0.3),
+          barrierColor: Colors.black.withValues(alpha: 0.3),
           shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
@@ -118,6 +118,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       isScrollControlled: true,
       isDismissible: false,
       backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
       builder: (_) => RideWaitingScreen(
         rideId: rideId,
         onRideAccepted: (driver) {
@@ -132,7 +133,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     );
   }
 
-  void _showUserAwaitingDriverScreen(Driver driver, String rideId) {
+  void _showUserAwaitingDriverScreen(DriverInfo driver, String rideId) {
     final selectedDropoffPlace = ref.read(selectedDropoffPlaceProvider);
     final currentLoc = ref.read(currentLocationProvider);
 
@@ -146,8 +147,8 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
             builder: (context) => UserAwaitingDriverScreen(
               rideId: rideId,
               driverName: driver.name,
-              vehicleType: driver.vehicleType,
-              vehiclePlate: driver.vehiclePlate,
+              vehicleType: driver.vehicleType ?? 'Standard',
+              vehiclePlate: driver.vehiclePlate ?? 'N/A',
               driverRating: driver.rating,
               completedRides: driver.completedRides,
               pickupAddress: 'Your Location',
@@ -156,11 +157,11 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
               dropoffLat: selectedDropoffPlace.latitude,
               dropoffLng: selectedDropoffPlace.longitude,
               estimatedFare: 250.0,
-              driverLocation: LatLng(driver.latitude, driver.longitude),
+              driverLocation: LatLng(driver.latitude ?? 0.0, driver.longitude ?? 0.0),
               onStartRide: () {
                 _showRideInProgressScreen(
                   rideId,
-                  driver.id,
+                  driver.id.toString(),
                   driver.name,
                   'Your Location',
                   selectedDropoffPlace.name,
@@ -418,7 +419,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
             width: 80,
             height: 80,
             decoration: BoxDecoration(
-              color: const Color(0xFFFF8A00).withOpacity(0.1),
+              color: const Color(0xFFFF8A00).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(20),
             ),
             child: const Icon(
@@ -477,7 +478,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.12),
+              color: Colors.black.withValues(alpha: 0.12),
               blurRadius: 32,
               offset: const Offset(0, -8),
               spreadRadius: 2,
@@ -508,12 +509,12 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFFF8A00),
                     disabledBackgroundColor:
-                        const Color(0xFFFF8A00).withOpacity(0.5),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    elevation: _isLoadingRide ? 4 : 0,
-                    shadowColor: const Color(0xFFFF8A00).withOpacity(0.4),
+                         const Color(0xFFFF8A00).withValues(alpha: 0.5),
+                     shape: RoundedRectangleBorder(
+                       borderRadius: BorderRadius.circular(16),
+                     ),
+                     elevation: _isLoadingRide ? 4 : 0,
+                     shadowColor: const Color(0xFFFF8A00).withValues(alpha: 0.4),
                   ),
                   onPressed: _isLoadingRide
                       ? null

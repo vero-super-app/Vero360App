@@ -102,12 +102,26 @@ class DriverInfo {
   final String firstName;
   final String lastName;
   final String? phone;
+  final double rating;
+  final int completedRides;
+  final String? vehicleType;
+  final String? vehiclePlate;
+  final double? latitude;
+  final double? longitude;
+  final String avatar;
 
   DriverInfo({
     required this.id,
     required this.firstName,
     required this.lastName,
     this.phone,
+    required this.rating,
+    required this.completedRides,
+    this.vehicleType,
+    this.vehiclePlate,
+    this.latitude,
+    this.longitude,
+    this.avatar = '',
   });
 
   factory DriverInfo.fromJson(Map<String, dynamic> json) {
@@ -116,16 +130,31 @@ class DriverInfo {
       firstName: json['firstName'] as String,
       lastName: json['lastName'] as String,
       phone: json['phone'] as String?,
+      rating: (json['rating'] as num?)?.toDouble() ?? 5.0,
+      completedRides: json['completedRides'] as int? ?? 0,
+      vehicleType: json['vehicleType'] as String?,
+      vehiclePlate: json['vehiclePlate'] as String?,
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
+      avatar: json['avatar'] as String? ?? '',
     );
   }
 
   String get fullName => '$firstName $lastName';
+  String get name => fullName;
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'firstName': firstName,
         'lastName': lastName,
         'phone': phone,
+        'rating': rating,
+        'completedRides': completedRides,
+        'vehicleType': vehicleType,
+        'vehiclePlate': vehiclePlate,
+        'latitude': latitude,
+        'longitude': longitude,
+        'avatar': avatar,
       };
 }
 
@@ -226,7 +255,7 @@ class Ride {
   bool get isCompleted => status == RideStatus.completed;
   bool get isCancelled => status == RideStatus.cancelled;
 
-  String get fareDisplay => '\MK${estimatedFare.toStringAsFixed(2)}';
+  String get fareDisplay => 'MK${estimatedFare.toStringAsFixed(2)}';
   String get distanceDisplay => '${estimatedDistance.toStringAsFixed(1)} km';
 
   Map<String, dynamic> toJson() => {

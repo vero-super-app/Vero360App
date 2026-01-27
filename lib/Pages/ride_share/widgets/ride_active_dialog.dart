@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:vero360_app/services/firebase_ride_share_service.dart';
+import 'package:vero360_app/models/ride_model.dart';
 
 class RideActiveDialog extends StatefulWidget {
-  final Driver driver;
+  final DriverInfo driver;
   final VoidCallback onRideCompleted;
 
   const RideActiveDialog({
+    super.key,
     required this.driver,
     required this.onRideCompleted,
   });
@@ -158,10 +159,10 @@ class _RideActiveDialogState extends State<RideActiveDialog>
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFF8A00).withOpacity(0.1),
+                    color: const Color(0xFFFF8A00).withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: const Color(0xFFFF8A00).withOpacity(0.3),
+                      color: const Color(0xFFFF8A00).withValues(alpha: 0.3),
                     ),
                   ),
                   child: Row(
@@ -177,7 +178,7 @@ class _RideActiveDialogState extends State<RideActiveDialog>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              widget.driver.vehicleType.toUpperCase(),
+                              (widget.driver.vehicleType ?? 'Vehicle').toUpperCase(),
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey,
@@ -186,7 +187,7 @@ class _RideActiveDialogState extends State<RideActiveDialog>
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              widget.driver.vehiclePlate,
+                              widget.driver.vehiclePlate ?? 'N/A',
                               style: const TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,

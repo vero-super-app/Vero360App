@@ -15,10 +15,9 @@ import 'package:flutter/scheduler.dart';
 // Deep links
 import 'package:app_links/app_links.dart';
 
-// Firebase
+// Firebase (Auth only - keep for legacy auth support)
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 // HTTP + prefs
 import 'package:http/http.dart' as http;
@@ -90,7 +89,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
     bool clearedOldCache = false;
 
     _log("Starting Vero360App…");
-    _log("Initializing Firebase…");
+    _log("Initializing Firebase (Auth)…");
 
     try {
       await Firebase.initializeApp(
@@ -104,19 +103,9 @@ class _AppBootstrapState extends State<AppBootstrap> {
         ),
       );
       firebaseOk = true;
-      _log("Firebase OK ✅");
+      _log("Firebase Auth OK ✅");
     } catch (e) {
       _log("Firebase init failed (continuing): $e");
-    }
-
-    if (firebaseOk) {
-      _log("Checking local Firestore cache…");
-      clearedOldCache = await FirestoreSelfHeal.configureSafeMode(
-        disablePersistence: true, // ✅ prevents SQLite CursorWindow crash
-        clearOldPersistenceOnce: true, // ✅ clears corrupted cache once
-        log: _log,
-      );
-      _log("Firestore offline cache: OFF (safe mode)");
     }
 
     _log("Configuring API…");
@@ -211,55 +200,7 @@ class _BootState {
   const _BootState({required this.firebaseOk, required this.clearedOldCache});
 }
 
-/// ----------------- ✅ FIRESTORE SELF-HEAL -----------------
-class FirestoreSelfHeal {
-  static const _clearedKey = 'fs_cleared_persistence_v1';
 
-  static Future<bool> configureSafeMode({
-    required bool disablePersistence,
-    required bool clearOldPersistenceOnce,
-    void Function(String msg)? log,
-  }) async {
-    final prefs = await SharedPreferences.getInstance();
-    bool didClear = false;
-
-    if (clearOldPersistenceOnce && !(prefs.getBool(_clearedKey) ?? false)) {
-      log?.call("First run repair: terminating Firestore…");
-      try {
-        await FirebaseFirestore.instance.terminate();
-        log?.call("Firestore terminated ✅");
-      } catch (e) {
-        log?.call("Terminate skipped: $e");
-      }
-
-      log?.call("Clearing Firestore local persistence…");
-      try {
-        await FirebaseFirestore.instance.clearPersistence();
-        didClear = true;
-        log?.call("Local persistence cleared ✅");
-      } catch (e) {
-        log?.call("Clear persistence failed (continuing): $e");
-      }
-
-      await prefs.setBool(_clearedKey, true);
-      log?.call("Repair flag saved ✅");
-    } else {
-      log?.call("No repair needed (already repaired before).");
-    }
-
-    // Apply settings BEFORE any Firestore usage elsewhere
-    try {
-      FirebaseFirestore.instance.settings = Settings(
-        persistenceEnabled: !disablePersistence,
-      );
-      log?.call("Firestore settings applied ✅");
-    } catch (e) {
-      log?.call("Failed to apply Firestore settings: $e");
-    }
-
-    return didClear;
-  }
-}
 
 /// ----------------- ✅ BRANDED HEALING PAGE (motion + log) -----------------
 class SelfHealPage extends StatefulWidget {

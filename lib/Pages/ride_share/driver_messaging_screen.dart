@@ -9,12 +9,12 @@ class DriverMessagingScreen extends StatefulWidget {
   final String? driverAvatar;
 
   const DriverMessagingScreen({
-    Key? key,
+    super.key,
     required this.rideId,
     required this.driverId,
     required this.driverName,
     this.driverAvatar,
-  }) : super(key: key);
+  });
 
   @override
   State<DriverMessagingScreen> createState() => _DriverMessagingScreenState();
@@ -69,14 +69,16 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
         }
       });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to send: $e'),
-          backgroundColor: Colors.red.shade600,
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.all(16),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send: $e'),
+            backgroundColor: Colors.red.shade600,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
       _messageController.text = text;
     } finally {
       if (mounted) {
@@ -114,7 +116,10 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
 
   Widget _buildRideInfo() {
     return StreamBuilder<DriverRideRequest?>(
-      stream: DriverRequestService.getRideRequestStream(widget.rideId),
+      stream: Stream.periodic(
+        const Duration(seconds: 2),
+        (_) => DriverRequestService.getRideRequest(widget.rideId),
+      ).asyncExpand((future) => Stream.fromFuture(future)),
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.data == null) {
           return const SizedBox.shrink();
@@ -133,7 +138,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
                 height: 48,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: primaryColor.withOpacity(0.1),
+                  color: primaryColor.withValues(alpha: 0.1),
                 ),
                 child: const Icon(
                   Icons.person,
@@ -161,10 +166,10 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: _getStatusColor(ride.status).withOpacity(0.1),
+                        color: _getStatusColor(ride.status).withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
-                          color: _getStatusColor(ride.status).withOpacity(0.3),
+                          color: _getStatusColor(ride.status).withValues(alpha: 0.3),
                         ),
                       ),
                       child: Text(
@@ -182,7 +187,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
               if (ride.passengerPhone != null)
                 Container(
                   decoration: BoxDecoration(
-                    color: primaryColor.withOpacity(0.1),
+                    color: primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: IconButton(
@@ -201,8 +206,8 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
   }
 
   Widget _buildMessagesList() {
-    return StreamBuilder<List<DriverMessage>>(
-      stream: DriverMessagingService.getMessagesStream(widget.rideId),
+    return FutureBuilder<List<DriverMessage>>(
+      future: DriverMessagingService.getMessages(widget.rideId),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -354,7 +359,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
                       ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
+                    color: Colors.black.withValues(alpha: 0.04),
                     blurRadius: 4,
                     offset: const Offset(0, 2),
                   ),

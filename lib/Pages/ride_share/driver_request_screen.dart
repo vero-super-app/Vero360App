@@ -9,12 +9,12 @@ class DriverRequestScreen extends StatefulWidget {
   final String? driverAvatar;
 
   const DriverRequestScreen({
-    Key? key,
+    super.key,
     required this.driverId,
     required this.driverName,
     required this.driverPhone,
     this.driverAvatar,
-  }) : super(key: key);
+  });
 
   @override
   State<DriverRequestScreen> createState() => _DriverRequestScreenState();
@@ -27,9 +27,10 @@ class _DriverRequestScreenState extends State<DriverRequestScreen> {
   @override
   void initState() {
     super.initState();
-    _requestsStream = DriverRequestService.getIncomingRequestsStream(
-      widget.driverId,
-    );
+    _requestsStream = Stream.periodic(
+      const Duration(seconds: 3),
+      (_) => DriverRequestService.getIncomingRequests(),
+    ).asyncExpand((future) => Stream.fromFuture(future));
   }
 
   void _showRequestDialog(DriverRideRequest request) {
@@ -211,7 +212,7 @@ class _DriverRequestScreenState extends State<DriverRequestScreen> {
                         : null,
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(isNew ? 0.08 : 0.04),
+                        color: Colors.black.withValues(alpha: isNew ? 0.08 : 0.04),
                         blurRadius: isNew ? 16 : 8,
                         offset: const Offset(0, 2),
                       ),
@@ -370,7 +371,7 @@ class _DriverRequestScreenState extends State<DriverRequestScreen> {
         Container(
           padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
-            color: primaryColor.withOpacity(0.1),
+            color: primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(icon, size: 16, color: primaryColor),
@@ -417,7 +418,7 @@ class _DriverRequestScreenState extends State<DriverRequestScreen> {
         Container(
           padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
-            color: primaryColor.withOpacity(0.1),
+            color: primaryColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(icon, size: 14, color: primaryColor),

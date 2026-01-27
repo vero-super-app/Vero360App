@@ -210,21 +210,38 @@ class Ride {
   });
 
   factory Ride.fromJson(Map<String, dynamic> json) {
+    // Helper function to safely parse num/string to double
+    double _parseDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+
+    int? _parseInt(dynamic value) {
+      if (value is int) return value;
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
     return Ride(
-      id: json['id'] as int,
-      passengerId: json['passengerId'] as int,
-      driverId: json['driverId'] as int?,
-      vehicleId: json['vehicleId'] as int?,
-      pickupLatitude: (json['pickupLatitude'] as num).toDouble(),
-      pickupLongitude: (json['pickupLongitude'] as num).toDouble(),
+      id: _parseInt(json['id']) ?? 0,
+      passengerId: _parseInt(json['passengerId']) ?? 0,
+      driverId: _parseInt(json['driverId']),
+      vehicleId: _parseInt(json['vehicleId']),
+      pickupLatitude: _parseDouble(json['pickupLatitude']),
+      pickupLongitude: _parseDouble(json['pickupLongitude']),
       pickupAddress: json['pickupAddress'] as String?,
-      dropoffLatitude: (json['dropoffLatitude'] as num).toDouble(),
-      dropoffLongitude: (json['dropoffLongitude'] as num).toDouble(),
+      dropoffLatitude: _parseDouble(json['dropoffLatitude']),
+      dropoffLongitude: _parseDouble(json['dropoffLongitude']),
       dropoffAddress: json['dropoffAddress'] as String?,
-      estimatedDistance: (json['estimatedDistance'] as num).toDouble(),
-      actualDistance: (json['actualDistance'] as num?)?.toDouble(),
-      estimatedFare: (json['estimatedFare'] as num).toDouble(),
-      actualFare: (json['actualFare'] as num?)?.toDouble(),
+      estimatedDistance: _parseDouble(json['estimatedDistance']),
+      actualDistance: json['actualDistance'] != null
+          ? _parseDouble(json['actualDistance'])
+          : null,
+      estimatedFare: _parseDouble(json['estimatedFare']),
+      actualFare: json['actualFare'] != null
+          ? _parseDouble(json['actualFare'])
+          : null,
       status: json['status'] as String,
       startTime: json['startTime'] != null
           ? DateTime.parse(json['startTime'] as String)

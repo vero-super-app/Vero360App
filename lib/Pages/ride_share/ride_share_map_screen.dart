@@ -9,6 +9,7 @@ import 'package:vero360_app/Pages/ride_share/widgets/ride_waiting_screen.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/user_awaiting_driver_screen.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/ride_in_progress_screen.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/ride_completion_screen.dart';
+import 'package:vero360_app/Pages/ride_share/destination_search_screen.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/models/ride_model.dart';
 import 'package:vero360_app/providers/ride_share_provider.dart';
@@ -390,28 +391,28 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                                   _buildPickupLocationCard(),
                                   const SizedBox(height: 14),
                                   if (selectedDropoffPlace == null)
-                                    GestureDetector(
-                                      onTap: () {},
-                                      child: PlaceSearchWidget(
-                                        searchController: _searchController,
-                                        focusNode: _searchFocusNode,
-                                        onToggleBookmarkedPlaces:
-                                            _toggleBookmarkedPlacesModal,
-                                      ),
+                                    PlaceSearchWidget(
+                                      searchController: _searchController,
+                                      focusNode: _searchFocusNode,
+                                      onToggleBookmarkedPlaces:
+                                          _toggleBookmarkedPlacesModal,
+                                      readOnly: true,
+                                      onTap: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                const DestinationSearchScreen(),
+                                          ),
+                                        );
+                                      },
                                     )
                                   else
                                     _buildDropoffLocationCard(selectedDropoffPlace),
-                                ],
-                              ),
-                            ),
-                            if (selectedDropoffPlace == null)
-                              Expanded(
-                                child: Container(
-                                  color: Colors.grey[50],
-                                  child: _buildSearchResultsSection(),
-                                ),
-                              ),
-                            Padding(
+                                  ],
+                                  ),
+                                  ),
+                                  Padding(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16, vertical: 16),
                               child: _buildActionButton(selectedDropoffPlace),

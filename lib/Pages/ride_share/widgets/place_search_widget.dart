@@ -9,11 +9,15 @@ class PlaceSearchWidget extends ConsumerStatefulWidget {
   final TextEditingController searchController;
   final FocusNode? focusNode;
   final VoidCallback onToggleBookmarkedPlaces;
+  final bool readOnly;
+  final VoidCallback? onTap;
 
   const PlaceSearchWidget({
     required this.searchController,
     this.focusNode,
     required this.onToggleBookmarkedPlaces,
+    this.readOnly = false,
+    this.onTap,
     Key? key,
   }) : super(key: key);
 
@@ -86,6 +90,8 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
                   child: TextField(
                     controller: widget.searchController,
                     focusNode: widget.focusNode,
+                    readOnly: widget.readOnly,
+                    onTap: widget.onTap,
                     decoration: InputDecoration(
                       hintText: 'Where to?',
                       hintStyle: TextStyle(
@@ -103,7 +109,7 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
                       fontSize: 15,
                       fontWeight: FontWeight.w500,
                     ),
-                    onChanged: _onSearchChanged,
+                    onChanged: widget.readOnly ? null : _onSearchChanged,
                   ),
                 ),
                 if (_searchQuery.isNotEmpty)

@@ -101,21 +101,27 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         _duration = routeInfo.durationMinutes;
       });
 
-      for (final vehicleType in _baseVehicleTypes) {
-        final fareEstimate =
-            await ref.read(rideShareServiceProvider).estimateFare(
-                  pickupLatitude: widget.userLat,
-                  pickupLongitude: widget.userLng,
-                  dropoffLatitude: widget.dropoffPlace.latitude,
-                  dropoffLongitude: widget.dropoffPlace.longitude,
-                  vehicleClass: vehicleType.class_,
-                );
+      // Fetch all fares in parallel for better performance
+      final rideShareService = ref.read(rideShareServiceProvider);
+      final fareRequests = _baseVehicleTypes.map(
+        (vehicleType) => rideShareService
+            .estimateFare(
+              pickupLatitude: widget.userLat,
+              pickupLongitude: widget.userLng,
+              dropoffLatitude: widget.dropoffPlace.latitude,
+              dropoffLongitude: widget.dropoffPlace.longitude,
+              vehicleClass: vehicleType.class_,
+            )
+            .then((fareEstimate) => MapEntry(vehicleType.class_, fareEstimate)),
+      );
 
-        if (mounted) {
-          setState(() {
-            _estimatedFares[vehicleType.class_] = fareEstimate;
-          });
-        }
+      final results = await Future.wait(fareRequests);
+      final fareMap = Map<String, dynamic>.fromEntries(results);
+
+      if (mounted) {
+        setState(() {
+          _estimatedFares = fareMap;
+        });
       }
     } catch (e) {
       if (kDebugMode) {
@@ -132,60 +138,37 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
   final List<VehicleTypeOption> _baseVehicleTypes = [
     VehicleTypeOption(
       class_: VehicleClass.economy,
-      name: 'Economy',
-      description: 'Budget-friendly',
-      icon: Icons.directions_car,
+      name: 'Bike',
+      description: 'Affordable & quick',
+      icon: Icons.two_wheeler,
       color: const Color(0xFF10B981),
       estimatedPrice: 'Calculating...',
-      subtext: 'Standard ride',
-      capacity: 4,
+      subtext: 'Quick ride',
+      capacity: 1,
     ),
     VehicleTypeOption(
       class_: VehicleClass.comfort,
-      name: 'Comfort',
-      description: 'More spacious',
-      icon: Icons.airport_shuttle,
+      name: 'Standard',
+      description: 'Comfortable & reliable',
+      icon: Icons.directions_car,
       color: const Color(0xFF3B82F6),
       estimatedPrice: 'Calculating...',
-      subtext: 'Extra legroom',
+      subtext: 'Standard car',
       capacity: 4,
     ),
     VehicleTypeOption(
       class_: VehicleClass.premium,
-      name: 'Premium',
-      description: 'Luxury experience',
+      name: 'Executive',
+      description: 'Premium experience',
       icon: Icons.directions_car_filled,
       color: const Color(0xFFFF8A00),
       estimatedPrice: 'Calculating...',
       subtext: 'Premium car',
-      capacity: 4,
-    ),
-    VehicleTypeOption(
-      class_: VehicleClass.business,
-      name: 'Business',
-      description: 'Executive transport',
-      icon: Icons.business_center,
-      color: const Color(0xFF8B5CF6),
-      estimatedPrice: 'Calculating...',
-      subtext: 'Full-size vehicle',
-      capacity: 6,
+      capacity: 5,
     ),
   ];
 
   List<VehicleTypeOption> get _filteredVehicles {
-    if (_filterType == 'all') return _baseVehicleTypes;
-    if (_filterType == 'budget') {
-      return _baseVehicleTypes
-          .where((v) => v.class_ == VehicleClass.economy)
-          .toList();
-    }
-    if (_filterType == 'premium') {
-      return _baseVehicleTypes
-          .where((v) =>
-              v.class_ == VehicleClass.premium ||
-              v.class_ == VehicleClass.business)
-          .toList();
-    }
     return _baseVehicleTypes;
   }
 
@@ -204,9 +187,16 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       final userIdStr = userId.toString();
 
       final fareEstimate = _estimatedFares[vehicleClass];
-      final estimatedFare = fareEstimate != null
-          ? (fareEstimate['estimatedFare'] as num?)?.toDouble() ?? 0.0
-          : 0.0;
+      double estimatedFare = 0.0;
+      
+      if (fareEstimate != null) {
+        final fareValue = fareEstimate['estimatedFare'];
+        if (fareValue is num) {
+          estimatedFare = (fareValue as num).toDouble();
+        } else if (fareValue is String) {
+          estimatedFare = double.tryParse(fareValue) ?? 0.0;
+        }
+      }
 
       // Use accurate distance from Google Directions API
       final distance = widget.userLat == widget.dropoffPlace.latitude &&
@@ -275,56 +265,49 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Handle bar (fixed, not scrolling)
+              // Handle bar
               Container(
                 width: 36,
                 height: 4,
-                margin: const EdgeInsets.symmetric(vertical: 12),
+                margin: const EdgeInsets.only(top: 8, bottom: 8),
                 decoration: BoxDecoration(
                   color: Colors.grey[300],
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
 
-              // Scrollable content
-              Expanded(
-                child: SingleChildScrollView(
+              // Content
+              SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Header
+                      // Header and trip summary
                       Padding(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
+                            horizontal: 16, vertical: 6),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
                               'Choose Your Ride',
                               style: TextStyle(
-                                fontSize: 22,
+                                fontSize: 18,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const SizedBox(height: 12),
+                            const SizedBox(height: 10),
                             _buildTripSummary(),
                           ],
                         ),
                       ),
 
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
 
-                      // Filter tabs
+                      // Vehicle types grid
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: _buildFilterTabs(),
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // Vehicle types list
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: _buildVehicleList(),
                       ),
 
@@ -332,9 +315,9 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                       if (_errorMessage != null)
                         Padding(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 16),
+                              horizontal: 16, vertical: 10),
                           child: Container(
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
                               color: Colors.red[50],
                               borderRadius: BorderRadius.circular(10),
@@ -343,21 +326,19 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                             child: Row(
                               children: [
                                 Icon(Icons.error_outline,
-                                    color: Colors.red[600], size: 20),
-                                const SizedBox(width: 10),
+                                    color: Colors.red[600], size: 18),
+                                const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
                                     _errorMessage ?? '',
                                     style: TextStyle(
-                                        color: Colors.red[700], fontSize: 13),
+                                        color: Colors.red[700], fontSize: 12),
                                   ),
                                 ),
                               ],
                             ),
                           ),
                         ),
-
-                      const SizedBox(height: 16),
                     ],
                   ),
                 ),
@@ -457,46 +438,6 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     );
   }
 
-  Widget _buildFilterTabs() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _buildFilterChip('All', 'all'),
-          const SizedBox(width: 8),
-          _buildFilterChip('Budget', 'budget'),
-          const SizedBox(width: 8),
-          _buildFilterChip('Premium', 'premium'),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFilterChip(String label, String value) {
-    final isSelected = _filterType == value;
-    return GestureDetector(
-      onTap: () => setState(() => _filterType = value),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFFF8A00) : Colors.grey[100],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isSelected ? const Color(0xFFFF8A00) : Colors.transparent,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: isSelected ? Colors.white : Colors.grey[700],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildVehicleList() {
     final vehicles = _filteredVehicles;
 
@@ -505,24 +446,26 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 24),
           child: Text(
-            'No vehicles available in this category',
+            'No vehicles available',
             style: TextStyle(color: Colors.grey[600]),
           ),
         ),
       );
     }
 
-    return Column(
-      children: vehicles.asMap().entries.map((entry) {
-        final index = entry.key;
-        final vehicleType = entry.value;
-
-        return Padding(
-          padding:
-              EdgeInsets.only(bottom: index < vehicles.length - 1 ? 12 : 0),
-          child: _buildVehicleCard(vehicleType),
-        );
-      }).toList(),
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        childAspectRatio: 0.85,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+      ),
+      itemCount: vehicles.length,
+      itemBuilder: (context, index) {
+        return _buildVehicleCard(vehicles[index]);
+      },
     );
   }
 
@@ -530,9 +473,17 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     final isSelected = _selectedVehicleClass == vehicleType.class_;
     final fareData = _estimatedFares[vehicleType.class_];
 
-    String displayPrice = 'Calculating...';
+    String displayPrice = '...';
     if (fareData != null) {
-      final estimatedFare = fareData['estimatedFare'] as num?;
+      final fareValue = fareData['estimatedFare'];
+      double? estimatedFare;
+      
+      if (fareValue is num) {
+        estimatedFare = (fareValue as num).toDouble();
+      } else if (fareValue is String) {
+        estimatedFare = double.tryParse(fareValue);
+      }
+      
       if (estimatedFare != null) {
         displayPrice = 'MK ${estimatedFare.toStringAsFixed(0)}';
       }
@@ -542,7 +493,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       onTap: () => _handleVehicleSelected(vehicleType.class_),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 300),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           border: Border.all(
             color: isSelected ? vehicleType.color : Colors.grey[200]!,
@@ -550,7 +501,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
           ),
           borderRadius: BorderRadius.circular(14),
           color:
-              isSelected ? vehicleType.color.withOpacity(0.04) : Colors.white,
+              isSelected ? vehicleType.color.withOpacity(0.06) : Colors.white,
           boxShadow: isSelected
               ? [
                   BoxShadow(
@@ -562,160 +513,93 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
               : [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.04),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
+                    blurRadius: 6,
+                    offset: const Offset(0, 1),
                   ),
                 ],
         ),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // Top row: Icon, details, selection indicator
-            Row(
+            // Icon background
+            Stack(
+              alignment: Alignment.center,
               children: [
-                // Large icon in colored background
                 Container(
-                  width: 60,
-                  height: 60,
+                  width: 50,
+                  height: 50,
                   decoration: BoxDecoration(
                     color: vehicleType.color.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(
-                    vehicleType.icon,
-                    color: vehicleType.color,
-                    size: 28,
-                  ),
                 ),
-
-                const SizedBox(width: 12),
-
-                // Vehicle info
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        vehicleType.name,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        vehicleType.description,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(Icons.person, size: 12, color: Colors.grey[500]),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${vehicleType.capacity} passengers',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                Icon(
+                  vehicleType.icon,
+                  color: vehicleType.color,
+                  size: 26,
                 ),
-
-                const SizedBox(width: 10),
-
                 // Selection indicator
-                Container(
-                  width: 26,
-                  height: 26,
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: isSelected ? vehicleType.color : Colors.grey[300]!,
-                      width: 2,
-                    ),
-                    borderRadius: BorderRadius.circular(6),
-                    color: isSelected ? vehicleType.color : Colors.white,
-                  ),
-                  child: isSelected
-                      ? Icon(
-                          Icons.check,
-                          size: 14,
+                if (isSelected)
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: vehicleType.color,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
                           color: Colors.white,
-                        )
-                      : null,
+                          width: 2,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.check,
+                        size: 12,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Name and description
+            Column(
+              children: [
+                Text(
+                  vehicleType.name,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  vehicleType.description,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey[500],
+                    fontWeight: FontWeight.w400,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
                 ),
               ],
             ),
-
-            const SizedBox(height: 10),
-
-            // Divider
-            Container(height: 1, color: Colors.grey[200]),
-
-            const SizedBox(height: 10),
-
-            // Bottom row: Price and details
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Estimated fare',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey[600],
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      displayPrice,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: vehicleType.color,
-                      ),
-                    ),
-                  ],
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: vehicleType.color.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        vehicleType.subtext,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: vehicleType.color,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                       Text(
-                         '~${_duration > 0 ? _duration : 10} min',
-                         style: TextStyle(
-                           fontSize: 11,
-                           color: Colors.grey[600],
-                           fontWeight: FontWeight.w500,
-                         ),
-                       ),
-                    ],
-                  ),
-                ),
-              ],
+            const SizedBox(height: 6),
+            // Price
+            Text(
+              displayPrice,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: vehicleType.color,
+              ),
+              textAlign: TextAlign.center,
             ),
           ],
         ),

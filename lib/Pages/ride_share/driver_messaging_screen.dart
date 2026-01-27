@@ -166,10 +166,12 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: _getStatusColor(ride.status).withValues(alpha: 0.1),
+                        color:
+                            _getStatusColor(ride.status).withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
-                          color: _getStatusColor(ride.status).withValues(alpha: 0.3),
+                          color: _getStatusColor(ride.status)
+                              .withValues(alpha: 0.3),
                         ),
                       ),
                       child: Text(
@@ -464,8 +466,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
                             width: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              valueColor:
-                                  AlwaysStoppedAnimation(Colors.white),
+                              valueColor: AlwaysStoppedAnimation(Colors.white),
                             ),
                           )
                         : const Icon(

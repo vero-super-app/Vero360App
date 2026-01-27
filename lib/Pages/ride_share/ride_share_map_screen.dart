@@ -4,7 +4,6 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/map_view_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/place_search_widget.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/bookmarked_places_modal.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/trip_selector_card.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/vehicle_type_modal.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/ride_waiting_screen.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/user_awaiting_driver_screen.dart';
@@ -157,7 +156,8 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
               dropoffLat: selectedDropoffPlace.latitude,
               dropoffLng: selectedDropoffPlace.longitude,
               estimatedFare: 250.0,
-              driverLocation: LatLng(driver.latitude ?? 0.0, driver.longitude ?? 0.0),
+              driverLocation:
+                  LatLng(driver.latitude ?? 0.0, driver.longitude ?? 0.0),
               onStartRide: () {
                 _showRideInProgressScreen(
                   rideId,
@@ -261,8 +261,24 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
         }
       },
       child: Scaffold(
+        appBar: PreferredSize(
+          preferredSize: const Size.fromHeight(70),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildModernBackButton(),
+                  _buildModernTitle(),
+                  _buildModernActionButton(),
+                ],
+              ),
+            ),
+          ),
+        ),
         resizeToAvoidBottomInset: true,
-        backgroundColor: const Color(0xFFFAFAFA),
+        backgroundColor: Colors.white,
         body: FutureBuilder<bool>(
           future: AuthStorage.isLoggedIn(),
           builder: (context, authSnapshot) {
@@ -278,10 +294,12 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
               return _buildAuthRequiredScreen();
             }
 
-            return SafeArea(
-              child: Stack(
-                children: [
-                  Consumer(
+            return Column(
+              children: [
+                // Map view - 60% of screen
+                Expanded(
+                  flex: 3,
+                  child: Consumer(
                     builder: (context, ref, _) {
                       final currentLocation =
                           ref.watch(currentLocationProvider);
@@ -354,57 +372,516 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                       );
                     },
                   ),
-                  Positioned(
-                    top: 16,
-                    left: 16,
-                    right: 16,
-                    child: SafeArea(
-                      child: Column(
-                        children: [
-                          GestureDetector(
-                            onTap: () {}, // Absorb taps to prevent unfocus
-                            child: TripSelectorCard(
-                              currentLocation: 'Your Location',
-                              selectedDropoffPlace: selectedDropoffPlace,
-                              onSelectDropoff: _focusSearchBar,
+                ),
+                // Search and booking section - 45% of screen
+                Expanded(
+                  flex: 2,
+                  child: Container(
+                    color: Colors.white,
+                    child: Stack(
+                      children: [
+                        Column(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                  left: 16, right: 16, top: 20, bottom: 12),
+                              child: Column(
+                                children: [
+                                  _buildPickupLocationCard(),
+                                  const SizedBox(height: 14),
+                                  if (selectedDropoffPlace == null)
+                                    GestureDetector(
+                                      onTap: () {},
+                                      child: PlaceSearchWidget(
+                                        searchController: _searchController,
+                                        focusNode: _searchFocusNode,
+                                        onToggleBookmarkedPlaces:
+                                            _toggleBookmarkedPlacesModal,
+                                      ),
+                                    )
+                                  else
+                                    _buildDropoffLocationCard(selectedDropoffPlace),
+                                ],
+                              ),
+                            ),
+                            if (selectedDropoffPlace == null)
+                              Expanded(
+                                child: Container(
+                                  color: Colors.grey[50],
+                                  child: _buildSearchResultsSection(),
+                                ),
+                              ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 16),
+                              child: _buildActionButton(selectedDropoffPlace),
+                            ),
+                          ],
+                        ),
+                        // Search results popup overlay
+                        if (_showBookmarkedPlaces)
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            top: 0,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 300),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.2),
+                              ),
+                              child: Center(
+                                child: Container(
+                                  width: double.infinity,
+                                  margin: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 40),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(
+                                            alpha: 0.12),
+                                        blurRadius: 24,
+                                        offset: const Offset(0, 8),
+                                        spreadRadius: 2,
+                                      ),
+                                    ],
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: BookmarkedPlacesModal(
+                                      onClose: _toggleBookmarkedPlacesModal,
+                                    ),
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          GestureDetector(
-                            onTap: () {}, // Absorb taps to prevent unfocus
-                            child: PlaceSearchWidget(
-                              searchController: _searchController,
-                              focusNode: _searchFocusNode,
-                              onToggleBookmarkedPlaces:
-                                  _toggleBookmarkedPlacesModal,
-                            ),
-                          ),
-                        ],
-                      ),
+                      ],
                     ),
                   ),
-                  if (_showBookmarkedPlaces)
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: BookmarkedPlacesModal(
-                        onClose: _toggleBookmarkedPlacesModal,
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPickupLocationCard() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.grey.withValues(alpha: 0.1),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.blue.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.my_location_rounded,
+              color: Colors.blue,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Pick-up Location',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
                       ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Your Location',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    'Current Location',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey[500],
+                        ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDropoffLocationCard(Place dropoffPlace) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFFFF8A00).withValues(alpha: 0.2),
+          width: 1.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF8A00).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.location_on_rounded,
+              color: Color(0xFFFF8A00),
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Drop-off Location',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  dropoffPlace.name,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (dropoffPlace.address != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      dropoffPlace.address!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey[500],
+                          ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: GestureDetector(
-                      onTap: () {}, // Absorb taps to prevent unfocus
-                      child: _buildModernBottomSheet(selectedDropoffPlace),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () {
+              _searchController.clear();
+              setState(() {
+                ref.read(selectedDropoffPlaceProvider.notifier).state = null;
+              });
+              _focusSearchBar();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                'Edit',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Colors.black87,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
                     ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchResultsSection() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_searchController.text.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Recent Places',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildPlaceItem(
+                    'Home',
+                    '123 Main Street, Downtown',
+                    Icons.home_outlined,
+                  ),
+                  _buildPlaceItem(
+                    'Office',
+                    '456 Business Ave, Tech Park',
+                    Icons.business_outlined,
+                  ),
+                  _buildPlaceItem(
+                    'Favorite Spot',
+                    '789 Park Lane, Downtown',
+                    Icons.favorite_outline,
                   ),
                 ],
               ),
-            );
-          },
+            )
+          else
+            Column(
+              children: [
+                _buildSearchResultItem(
+                  'Downtown Station',
+                  '0.5 km away',
+                  Icons.location_on_outlined,
+                ),
+                _buildSearchResultItem(
+                  'Central Market',
+                  '1.2 km away',
+                  Icons.location_on_outlined,
+                ),
+                _buildSearchResultItem(
+                  'Airport Terminal',
+                  '8.5 km away',
+                  Icons.location_on_outlined,
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaceItem(String title, String subtitle, IconData icon) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.grey.withValues(alpha: 0.1),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF8A00).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              icon,
+              color: const Color(0xFFFF8A00),
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[500],
+                      ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            Icons.arrow_forward_ios,
+            size: 14,
+            color: Colors.grey[400],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchResultItem(String title, String subtitle, IconData icon) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF8A00).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              icon,
+              color: const Color(0xFFFF8A00),
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[500],
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModernBackButton() {
+    return GestureDetector(
+      onTap: () => Navigator.pop(context),
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 1.0, end: 1.0),
+        duration: const Duration(milliseconds: 200),
+        builder: (context, value, child) {
+          return Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.arrow_back_ios_new,
+              color: Colors.black87,
+              size: 18,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildModernTitle() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Text(
+          'Book Your Ride',
+          style: TextStyle(
+            fontWeight: FontWeight.w900,
+            fontSize: 22,
+            letterSpacing: -0.3,
+            color: Colors.black,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Container(
+          height: 2.5,
+          width: 80,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                const Color(0xFFFF8A00),
+                const Color(0xFFFF8A00).withValues(alpha: 0.4),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildModernActionButton() {
+    return GestureDetector(
+      onTap: () {},
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF8A00),
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFFF8A00).withValues(alpha: 0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: const Icon(
+          Icons.favorite_border,
+          color: Colors.white,
+          size: 20,
         ),
       ),
     );
@@ -468,89 +945,51 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     );
   }
 
-  Widget _buildModernBottomSheet(Place? selectedDropoffPlace) {
-    return AnimatedSlide(
-      duration: const Duration(milliseconds: 400),
-      offset: Offset.zero,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.12),
-              blurRadius: 32,
-              offset: const Offset(0, -8),
-              spreadRadius: 2,
-            ),
-          ],
+  Widget _buildActionButton(Place? selectedDropoffPlace) {
+    final isReady = selectedDropoffPlace != null;
+    
+    return SizedBox(
+      width: double.infinity,
+      height: 56,
+      child: ElevatedButton.icon(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFFFF8A00),
+          disabledBackgroundColor:
+              const Color(0xFFFF8A00).withValues(alpha: 0.5),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          elevation: _isLoadingRide ? 4 : 2,
+          shadowColor: const Color(0xFFFF8A00).withValues(alpha: 0.4),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Drag indicator
-              Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
+        onPressed: _isLoadingRide
+            ? null
+            : () => _handleBottomButtonPressed(ref, selectedDropoffPlace),
+        icon: _isLoadingRide
+            ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
+              )
+            : Icon(
+                isReady
+                    ? Icons.arrow_forward_rounded
+                    : Icons.search,
+                color: Colors.white,
+                size: 24,
               ),
-              // Primary action button with improved styling
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF8A00),
-                    disabledBackgroundColor:
-                         const Color(0xFFFF8A00).withValues(alpha: 0.5),
-                     shape: RoundedRectangleBorder(
-                       borderRadius: BorderRadius.circular(16),
-                     ),
-                     elevation: _isLoadingRide ? 4 : 0,
-                     shadowColor: const Color(0xFFFF8A00).withValues(alpha: 0.4),
-                  ),
-                  onPressed: _isLoadingRide
-                      ? null
-                      : () =>
-                          _handleBottomButtonPressed(ref, selectedDropoffPlace),
-                  icon: _isLoadingRide
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        )
-                      : Icon(
-                          selectedDropoffPlace == null
-                              ? Icons.search
-                              : Icons.arrow_forward_rounded,
-                          color: Colors.white,
-                          size: 24,
-                        ),
-                  label: Text(
-                    selectedDropoffPlace == null
-                        ? 'Search Destination'
-                        : 'Continue to Booking',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+        label: Text(
+          isReady
+              ? 'Continue to Booking'
+              : 'Search Destination',
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.white,
+            letterSpacing: 0.3,
           ),
         ),
       ),

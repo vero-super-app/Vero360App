@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 class BackendChatThread {
   final String id;
@@ -124,25 +125,43 @@ class ChatParticipant {
 }
 
 class BackendChatService {
-  static const String _baseUrl = 'http://localhost:3000/api/v1';
+  /// Uses ApiConfig for base URL (supports dart-define, ngrok, etc.)
+  /// Builds: {ApiConfig.prod}/vero/api/v1
+  static String get _baseUrl => '${ApiConfig.prod}/vero/api/v1';
+  
   static String? _authToken;
   static int? _userId;
 
   static Future<void> ensureAuth() async {
+    // Ensure ApiConfig is initialized
+    await ApiConfig.init();
+    
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      throw Exception('User not authenticated');
+      throw Exception('User not authenticated with Firebase');
     }
 
     _authToken = await user.getIdToken();
     
-    // Try to get userId from shared preferences or Firebase custom claims
-    final sp = await SharedPreferences.getInstance();
-    _userId = sp.getInt('userId') ?? int.tryParse(user.uid);
-    
-    if (_userId == null || _authToken == null) {
-      throw Exception('Missing authentication data');
+    if (_authToken == null || _authToken!.isEmpty) {
+      throw Exception('Failed to get Firebase ID token');
     }
+
+    // Get userId from shared preferences (must be set after login)
+    final sp = await SharedPreferences.getInstance();
+    final userId = sp.getInt('userId');
+    
+    if (userId == null) {
+      print('[BackendChatService] WARNING: userId not found in SharedPreferences');
+      print('[BackendChatService] Make sure to call: SharedPreferences.getInstance().setInt("userId", <numeric_id>)');
+      print('[BackendChatService] after user login with your backend');
+      throw Exception(
+        'User ID not set in SharedPreferences. '
+        'Backend must provide numeric userId after authentication.'
+      );
+    }
+
+    _userId = userId;
   }
 
   static Future<int> getUserId() async {

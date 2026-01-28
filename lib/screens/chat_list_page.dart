@@ -1,11 +1,8 @@
 // lib/screens/chat_list_page.dart
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:vero360_app/services/chat_service.dart';
-import 'package:vero360_app/services/chat_service_wrapper.dart';
-import 'package:vero360_app/services/websocket_manager.dart';
+import 'package:vero360_app/services/backend_chat_service.dart';
 import 'package:vero360_app/Pages/Home/Messages.dart';
 
 class ChatListPage extends StatefulWidget {
@@ -18,7 +15,7 @@ class _ChatListPageState extends State<ChatListPage> {
   static const _brandOrange = Color(0xFFFF8A00);
   static const _bg = Color(0xFFF6F6F6);
 
-  String? _myAppId;
+  int? _myUserId;
   String? _error;
 
   bool _searching = false;
@@ -38,23 +35,13 @@ class _ChatListPageState extends State<ChatListPage> {
 
   Future<void> _boot() async {
     try {
-      await ChatService.ensureFirebaseAuth();
-      final appId = await ChatService.myAppUserId();
-
-      try {
-        await ChatService.lockUidMapping(appId);
-      } catch (_) {}
-
-      // Try to initialize WebSocket (non-blocking)
-      try {
-        await WebSocketManager.initialize();
-      } catch (e) {
-        print('[ChatListPage] WebSocket init failed, will use Firebase: $e');
-      }
+      // Ensure backend authentication
+      await BackendChatService.ensureAuth();
+      final userId = await BackendChatService.getUserId();
 
       if (!mounted) return;
       setState(() {
-        _myAppId = appId;
+        _myUserId = userId;
         _error = null;
       });
     } catch (e) {
@@ -66,7 +53,7 @@ class _ChatListPageState extends State<ChatListPage> {
 
   @override
   Widget build(BuildContext context) {
-    // ✅ removes scrollbars + glow “bars”
+    // ✅ removes scrollbars + glow "bars"
     return ScrollConfiguration(
       behavior: const _NoBarsScrollBehavior(),
       child: _buildBody(context),
@@ -87,7 +74,7 @@ class _ChatListPageState extends State<ChatListPage> {
       );
     }
 
-    final me = _myAppId;
+    final me = _myUserId;
     if (me == null) {
       return Scaffold(
         backgroundColor: _bg,
@@ -99,8 +86,8 @@ class _ChatListPageState extends State<ChatListPage> {
     return Scaffold(
       backgroundColor: _bg,
       appBar: _appBar(),
-      body: StreamBuilder<List<ChatThread>>(
-        stream: ChatService.threadsStream(me),
+      body: StreamBuilder<List<BackendChatThread>>(
+        stream: BackendChatService.threadsStream(),
         builder: (context, snap) {
           if (snap.hasError) {
             final ui = _friendlyChatError(snap.error!);
@@ -116,18 +103,22 @@ class _ChatListPageState extends State<ChatListPage> {
             return const Center(child: CircularProgressIndicator());
           }
 
-          var items = snap.data ?? <ChatThread>[];
+          var items = snap.data ?? <BackendChatThread>[];
           items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
-          // Search filter (name + last message)
+          // Search filter (name + chat type)
           final q = _searchCtrl.text.trim().toLowerCase();
           if (q.isNotEmpty) {
             items = items.where((t) {
-              final otherId = t.otherId(me);
-              final meta = (t.participants[otherId] as Map?) ?? const {};
-              final name = ('${meta['name'] ?? 'Contact'}').toLowerCase();
-              final last = (t.lastText).toString().toLowerCase();
-              return name.contains(q) || last.contains(q);
+              final otherParticipant = t.participants.firstWhere(
+                (p) => p.id != me,
+                orElse: () => t.participants.isNotEmpty
+                    ? t.participants.first
+                    : ChatParticipant(id: 0, name: 'Contact', email: ''),
+              );
+              final name = otherParticipant.name.toLowerCase();
+              final chatName = (t.name ?? '').toLowerCase();
+              return name.contains(q) || chatName.contains(q);
             }).toList();
           }
 
@@ -150,41 +141,40 @@ class _ChatListPageState extends State<ChatListPage> {
               itemCount: items.length,
               separatorBuilder: (_, __) => const SizedBox(height: 8),
               itemBuilder: (_, i) {
-                final t = items[i];
-                final otherId = t.otherId(me);
+                 final t = items[i];
+                 final otherParticipant = t.participants.firstWhere(
+                   (p) => p.id != me,
+                   orElse: () => t.participants.isNotEmpty
+                       ? t.participants.first
+                       : ChatParticipant(id: 0, name: 'Contact', email: ''),
+                 );
 
-                final meta = (t.participants[otherId] as Map?) ?? const {};
-                final name = ('${meta['name'] ?? 'Contact'}').trim();
+                 final name = otherParticipant.name.trim();
+                 final avatarUrl = otherParticipant.profilePicture ?? '';
 
-                // ✅ supports:
-                // - meta['avatars'] as List
-                // - meta['avatar'] as String with "," or "|" separated
-                final avatarUrls = _extractAvatarUrls(meta);
+                 final subtitle = t.type == 'direct'
+                     ? 'Tap to chat'
+                     : (t.name ?? 'Group chat');
 
-                final rawLast = t.lastText.toString().trim();
-                final lastSender = t.lastSenderAppId; // now populated by service
-                final youPrefix = (lastSender != null && lastSender == me) ? 'You: ' : '';
-                final subtitle = rawLast.isEmpty ? 'Tap to chat' : '$youPrefix$rawLast';
-
-                return _ChatRow(
-                  name: name.isEmpty ? 'Contact' : name,
-                  avatarUrls: avatarUrls,
-                  lastText: subtitle,
-                  updatedAt: t.updatedAt,
-                  unreadCount: _safeUnreadCount(t, me),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => MessagePage(
-                        peerAppId: otherId,
-                        peerName: name.isEmpty ? 'Contact' : name,
-                        peerAvatarUrl: avatarUrls.isNotEmpty ? avatarUrls.first : '',
-                        peerId: '',
-                      ),
-                    ),
-                  ),
-                );
-              },
+                 return _ChatRow(
+                   name: name.isEmpty ? 'Contact' : name,
+                   avatarUrls: avatarUrl.isNotEmpty ? [avatarUrl] : [],
+                   lastText: subtitle,
+                   updatedAt: t.updatedAt,
+                   unreadCount: t.unreadCount,
+                   onTap: () => Navigator.push(
+                     context,
+                     MaterialPageRoute(
+                       builder: (_) => MessagePage(
+                         peerAppId: otherParticipant.id.toString(),
+                         peerName: name.isEmpty ? 'Contact' : name,
+                         peerAvatarUrl: avatarUrl,
+                         peerId: t.id,
+                       ),
+                     ),
+                   ),
+                 );
+               },
             ),
           );
         },
@@ -194,7 +184,7 @@ class _ChatListPageState extends State<ChatListPage> {
         foregroundColor: Colors.white,
         onPressed: () {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Add “New chat” action here.')),
+            const SnackBar(content: Text('Add "New chat" action here.')),
           );
         },
         child: const Icon(Icons.chat_rounded),
@@ -261,215 +251,56 @@ class _ChatListPageState extends State<ChatListPage> {
     );
   }
 
-  List<String> _extractAvatarUrls(Map meta) {
-    try {
-      final v = meta['avatars'];
-      if (v is List) {
-        return v.map((e) => '$e').where((s) => s.trim().isNotEmpty).toList();
-      }
-    } catch (_) {}
-
-    final raw = ('${meta['avatar'] ?? ''}').trim();
-    if (raw.isEmpty) return const [];
-
-    if (raw.contains('|')) {
-      return raw.split('|').map((e) => e.trim()).where((s) => s.isNotEmpty).toList();
-    }
-    if (raw.contains(',')) {
-      return raw.split(',').map((e) => e.trim()).where((s) => s.isNotEmpty).toList();
-    }
-    return [raw];
-  }
-
-  int _safeUnreadCount(ChatThread t, String me) {
-    try {
-      final m = t.unread;
-      if (m is Map && m?[me] is int) return m?[me] as int;
-      if (m is Map && m?[me] is num) return (m?[me] as num).toInt();
-    } catch (_) {}
-    return 0;
-  }
-
   _ChatUiError _friendlyChatError(Object e) {
     final raw = e.toString().toLowerCase();
-    final isIndexError =
-        raw.contains('failed-precondition') && raw.contains('requires an index');
 
-    if (e is FirebaseException) {
-      final code = e.code.toLowerCase();
-      final msg = (e.message ?? '').toLowerCase();
-
-      if (code == 'failed-precondition' && (msg.contains('requires an index') || isIndexError)) {
-        return const _ChatUiError(
-          icon: Icons.build_circle_outlined,
-          title: 'Chats unavailable',
-          message: 'Chats are being set up on our side. Please tap Retry in a moment.',
-        );
-      }
-
-      if (code == 'permission-denied') {
-        return const _ChatUiError(
-          icon: Icons.lock_outline,
-          title: 'Access denied',
-          message: 'You don’t have access to chats. Please log in again.',
-        );
-      }
-
-      if (code == 'unavailable') {
-        return const _ChatUiError(
-          icon: Icons.wifi_off_rounded,
-          title: 'No connection',
-          message: 'We can’t reach the chat service. Check your internet and try again.',
-        );
-      }
+    if (raw.contains('unauthorized') || raw.contains('401')) {
+      return const _ChatUiError(
+        icon: Icons.lock_outline,
+        title: 'Authentication failed',
+        message: 'Please log in again to continue.',
+      );
     }
 
     if (raw.contains('socketexception') ||
         raw.contains('network') ||
         raw.contains('timed out') ||
-        raw.contains('timeout')) {
+        raw.contains('timeout') ||
+        raw.contains('connection refused')) {
       return const _ChatUiError(
         icon: Icons.wifi_off_rounded,
         title: 'Connection problem',
-        message: 'Please check your internet connection and try again.',
+        message: 'Cannot reach the server. Check your internet and try again.',
+      );
+    }
+
+    if (raw.contains('failed') || raw.contains('error')) {
+      return const _ChatUiError(
+        icon: Icons.error_outline_rounded,
+        title: 'Chats unavailable',
+        message: 'Something went wrong while loading chats. Please tap Retry.',
       );
     }
 
     return const _ChatUiError(
       icon: Icons.error_outline_rounded,
       title: 'Chats unavailable',
-      message: 'Something went wrong while loading chats. Please tap Retry.',
+      message: 'Something went wrong. Please tap Retry.',
     );
   }
 }
 
-/// ✅ Removes scrollbar + glow bars
-class _NoBarsScrollBehavior extends MaterialScrollBehavior {
-  const _NoBarsScrollBehavior();
-
-  @override
-  Widget buildOverscrollIndicator(BuildContext context, Widget child, ScrollableDetails details) {
-    return child;
+String _fmtTime(DateTime dt) {
+  if (dt.millisecondsSinceEpoch == 0) return '';
+  final now = DateTime.now();
+  final sameDay = dt.year == now.year && dt.month == now.month && dt.day == now.day;
+  if (sameDay) {
+    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final m = dt.minute.toString().padLeft(2, '0');
+    final ap = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$h:$m $ap';
   }
-
-  @override
-  Widget buildScrollbar(BuildContext context, Widget child, ScrollableDetails details) {
-    return child;
-  }
-}
-
-class _ChatUiError {
-  final IconData icon;
-  final String title;
-  final String message;
-  const _ChatUiError({required this.icon, required this.title, required this.message});
-}
-
-// ─────────────────────────────────────────────────────────────
-
-class _ChatRow extends StatelessWidget {
-  const _ChatRow({
-    required this.name,
-    required this.avatarUrls,
-    required this.lastText,
-    required this.updatedAt,
-    required this.unreadCount,
-    required this.onTap,
-  });
-
-  final String name;
-  final List<String> avatarUrls;
-  final String lastText;
-  final DateTime updatedAt;
-  final int unreadCount;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final time = _fmtTime(updatedAt);
-
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      elevation: 2,
-      shadowColor: Colors.black12,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              _AvatarCarousel(urls: avatarUrls, name: name),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15.5),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          time,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade600,
-                            fontWeight: unreadCount > 0 ? FontWeight.w800 : FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            lastText,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: unreadCount > 0 ? Colors.black87 : Colors.grey.shade700,
-                              fontWeight: unreadCount > 0 ? FontWeight.w600 : FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                        if (unreadCount > 0) ...[
-                          const SizedBox(width: 10),
-                          _UnreadPill(count: unreadCount),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _fmtTime(DateTime dt) {
-    if (dt.millisecondsSinceEpoch == 0) return '';
-    final now = DateTime.now();
-    final sameDay = dt.year == now.year && dt.month == now.month && dt.day == now.day;
-    if (sameDay) {
-      final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
-      final m = dt.minute.toString().padLeft(2, '0');
-      final ap = dt.hour >= 12 ? 'PM' : 'AM';
-      return '$h:$m $ap';
-    }
-    return '${dt.month}/${dt.day}/${dt.year % 100}';
-  }
+  return '${dt.month}/${dt.day}/${dt.year % 100}';
 }
 
 class _AvatarCarousel extends StatefulWidget {
@@ -662,6 +493,122 @@ class _EmptyState extends StatelessWidget {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// ✅ Removes scrollbar + glow bars
+class _NoBarsScrollBehavior extends MaterialScrollBehavior {
+  const _NoBarsScrollBehavior();
+
+  @override
+  Widget buildOverscrollIndicator(BuildContext context, Widget child, ScrollableDetails details) {
+    return child;
+  }
+
+  @override
+  Widget buildScrollbar(BuildContext context, Widget child, ScrollableDetails details) {
+    return child;
+  }
+}
+
+class _ChatUiError {
+  final IconData icon;
+  final String title;
+  final String message;
+  const _ChatUiError({required this.icon, required this.title, required this.message});
+}
+
+// ─────────────────────────────────────────────────────────────
+
+class _ChatRow extends StatelessWidget {
+  const _ChatRow({
+    required this.name,
+    required this.avatarUrls,
+    required this.lastText,
+    required this.updatedAt,
+    required this.unreadCount,
+    required this.onTap,
+  });
+
+  final String name;
+  final List<String> avatarUrls;
+  final String lastText;
+  final DateTime updatedAt;
+  final int unreadCount;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final time = _fmtTime(updatedAt);
+
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      elevation: 2,
+      shadowColor: Colors.black12,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              _AvatarCarousel(urls: avatarUrls, name: name),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15.5),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          time,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            fontWeight: unreadCount > 0 ? FontWeight.w800 : FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            lastText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: unreadCount > 0 ? Colors.black87 : Colors.grey.shade700,
+                              fontWeight: unreadCount > 0 ? FontWeight.w600 : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        if (unreadCount > 0) ...[
+                          const SizedBox(width: 10),
+                          _UnreadPill(count: unreadCount),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

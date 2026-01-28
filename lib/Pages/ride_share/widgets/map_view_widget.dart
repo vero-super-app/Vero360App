@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
+import 'package:vero360_app/config/map_style_constants.dart';
 
 class MapViewWidget extends StatefulWidget {
   final Function(GoogleMapController) onMapCreated;
@@ -17,8 +18,8 @@ class MapViewWidget extends StatefulWidget {
     this.initialPosition,
     this.pickupPlace,
     this.dropoffPlace,
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   State<MapViewWidget> createState() => _MapViewWidgetState();
@@ -30,6 +31,7 @@ class _MapViewWidgetState extends State<MapViewWidget> {
   late Set<Polyline> _polylines;
   late CameraPosition _initialCameraPosition;
   MapType _mapType = MapType.normal;
+  String? _mapStyleJson;
 
   @override
   void initState() {
@@ -37,6 +39,9 @@ class _MapViewWidgetState extends State<MapViewWidget> {
     _markers = {};
     _polylines = {};
     _initializeCameraPosition();
+    
+    // Load map style from assets
+    _loadMapStyle();
 
     // Initial route draw if both places are provided
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -44,6 +49,24 @@ class _MapViewWidgetState extends State<MapViewWidget> {
         _updateRoutePolyline();
       }
     });
+  }
+
+  Future<void> _loadMapStyle() async {
+    try {
+      final styleString = await MapStyleConstants.loadMapStyle();
+      if (styleString.isNotEmpty) {
+        setState(() {
+          _mapStyleJson = styleString;
+        });
+        if (kDebugMode) {
+          debugPrint('[MapViewWidget] Map style loaded successfully');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[MapViewWidget] Error loading map style: $e');
+      }
+    }
   }
 
   @override
@@ -382,6 +405,7 @@ class _MapViewWidgetState extends State<MapViewWidget> {
           markers: _markers,
           polylines: _polylines,
           mapType: _mapType,
+          style: _mapStyleJson,
           myLocationEnabled: false,
           myLocationButtonEnabled: false,
           zoomControlsEnabled: true,

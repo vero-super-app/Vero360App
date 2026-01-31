@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/providers/car_hire_provider.dart';
+import 'package:vero360_app/providers/ride_share/car_hire_provider.dart';
 import 'package:vero360_app/services/merchant_service.dart';
 import 'package:vero360_app/utils/error_handler.dart';
 import 'package:vero360_app/utils/formatters.dart';
@@ -10,7 +10,8 @@ class BookingRequestsPage extends ConsumerStatefulWidget {
   const BookingRequestsPage({Key? key}) : super(key: key);
 
   @override
-  ConsumerState<BookingRequestsPage> createState() => _BookingRequestsPageState();
+  ConsumerState<BookingRequestsPage> createState() =>
+      _BookingRequestsPageState();
 }
 
 class _BookingRequestsPageState extends ConsumerState<BookingRequestsPage> {
@@ -131,7 +132,8 @@ class _BookingRequestsPageState extends ConsumerState<BookingRequestsPage> {
             child: CircularProgressIndicator(),
           ),
           error: (error, stack) => Center(
-            child: Text(CarHireErrorHandler.getErrorMessage(error as Exception)),
+            child:
+                Text(CarHireErrorHandler.getErrorMessage(error as Exception)),
           ),
         ),
       ),

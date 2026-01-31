@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/providers/ride_share_provider.dart';
+import 'package:vero360_app/providers/ride_share/ride_share_provider.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'skeleton_loader.dart';
 

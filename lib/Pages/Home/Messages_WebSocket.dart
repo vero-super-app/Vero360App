@@ -14,7 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/services/chat_service.dart';
 import 'package:vero360_app/services/hybrid_chat_service.dart';
 import 'package:vero360_app/models/messaging_models.dart';
-import 'package:vero360_app/providers/messaging_provider.dart';
+import 'package:vero360_app/providers/messaging/messaging_provider.dart';
 
 class MessagePageWebSocket extends ConsumerStatefulWidget {
   final String peerAppId;
@@ -100,7 +100,8 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
       );
 
       // Mark as read
-      await ChatService.markThreadRead(myAppId: me, peerAppId: widget.peerAppId);
+      await ChatService.markThreadRead(
+          myAppId: me, peerAppId: widget.peerAppId);
 
       // Join chat room
       await _hybrid.joinChat(_threadId);
@@ -156,7 +157,8 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to send: ${ChatService.friendlyError(e)}')),
+          SnackBar(
+              content: Text('Failed to send: ${ChatService.friendlyError(e)}')),
         );
       }
     } finally {
@@ -197,7 +199,9 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Image upload failed: ${ChatService.friendlyError(e)}')),
+          SnackBar(
+              content:
+                  Text('Image upload failed: ${ChatService.friendlyError(e)}')),
         );
       }
     } finally {
@@ -224,7 +228,8 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
         }
 
         final tempDir = await getTemporaryDirectory();
-        final audioPath = '${tempDir.path}/voice_note_${DateTime.now().millisecondsSinceEpoch}.m4a';
+        final audioPath =
+            '${tempDir.path}/voice_note_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
         await _recorder.start(
           const RecordConfig(),
@@ -270,7 +275,9 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Voice note error: ${ChatService.friendlyError(e)}')),
+          SnackBar(
+              content:
+                  Text('Voice note error: ${ChatService.friendlyError(e)}')),
         );
       }
     } finally {
@@ -316,8 +323,10 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
           const SizedBox(height: 2),
           Consumer(
             builder: (context, ref, child) {
-              final isOnline = ref.watch(userOnlineStatusProvider(widget.peerAppId));
-              final typingUsers = ref.watch(typingUsersForChatProvider(_threadId));
+              final isOnline =
+                  ref.watch(userOnlineStatusProvider(widget.peerAppId));
+              final typingUsers =
+                  ref.watch(typingUsersForChatProvider(_threadId));
 
               if (typingUsers.isNotEmpty) {
                 return Text(
@@ -363,7 +372,8 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.chat_bubble_outline, size: 44, color: Colors.grey.shade400),
+                    Icon(Icons.chat_bubble_outline,
+                        size: 44, color: Colors.grey.shade400),
                     const SizedBox(height: 12),
                     Text(
                       'No messages yet',
@@ -461,7 +471,8 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
               const SizedBox(width: 8),
               FloatingActionButton(
                 mini: true,
-                backgroundColor: _input.text.isEmpty ? Colors.grey.shade300 : _brandGreen,
+                backgroundColor:
+                    _input.text.isEmpty ? Colors.grey.shade300 : _brandGreen,
                 foregroundColor: Colors.white,
                 onPressed: _input.text.isEmpty ? null : _sendMessage,
                 child: const Icon(Icons.send),
@@ -494,7 +505,8 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Delete failed: ${ChatService.friendlyError(e)}')),
+          SnackBar(
+              content: Text('Delete failed: ${ChatService.friendlyError(e)}')),
         );
       }
     }
@@ -535,7 +547,8 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Edit failed: ${ChatService.friendlyError(e)}')),
+            SnackBar(
+                content: Text('Edit failed: ${ChatService.friendlyError(e)}')),
           );
         }
       }
@@ -572,9 +585,7 @@ class _MessageBubble extends StatelessWidget {
     return Align(
       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
       child: GestureDetector(
-        onLongPress: isMine
-            ? () => _showContextMenu(context)
-            : null,
+        onLongPress: isMine ? () => _showContextMenu(context) : null,
         child: Container(
           constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.75,
@@ -596,7 +607,9 @@ class _MessageBubble extends StatelessWidget {
                   fit: BoxFit.cover,
                 )
               else if (content.isAudio)
-                _AudioBubble(url: content.audioUrl!, durationMs: content.audioDuration ?? 0)
+                _AudioBubble(
+                    url: content.audioUrl!,
+                    durationMs: content.audioDuration ?? 0)
               else if (content.isCall)
                 _CallBubble(callType: content.callType ?? 'audio')
               else

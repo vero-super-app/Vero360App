@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/call_model.dart';
-import 'package:vero360_app/providers/call_provider.dart';
+import 'package:vero360_app/providers/messaging/call_provider.dart';
 
 /// Widget for displaying incoming call UI
 class IncomingCallWidget extends ConsumerWidget {
@@ -184,7 +184,8 @@ class ActiveCallWidget extends ConsumerWidget {
                   // Microphone toggle
                   _ControlButton(
                     icon: isMicEnabled ? Icons.mic : Icons.mic_off,
-                    backgroundColor: isMicEnabled ? Colors.blueGrey : Colors.red,
+                    backgroundColor:
+                        isMicEnabled ? Colors.blueGrey : Colors.red,
                     onPressed: onToggleMic,
                   ),
                   const SizedBox(width: 24),
@@ -192,9 +193,8 @@ class ActiveCallWidget extends ConsumerWidget {
                   // Camera toggle (video calls only)
                   if (call.callType == CallType.video)
                     _ControlButton(
-                      icon: isCameraEnabled
-                          ? Icons.videocam
-                          : Icons.videocam_off,
+                      icon:
+                          isCameraEnabled ? Icons.videocam : Icons.videocam_off,
                       backgroundColor:
                           isCameraEnabled ? Colors.blueGrey : Colors.red,
                       onPressed: onToggleCamera,
@@ -204,9 +204,7 @@ class ActiveCallWidget extends ConsumerWidget {
 
                   // Speaker toggle
                   _ControlButton(
-                    icon: isSpeakerEnabled
-                        ? Icons.volume_up
-                        : Icons.volume_off,
+                    icon: isSpeakerEnabled ? Icons.volume_up : Icons.volume_off,
                     backgroundColor:
                         isSpeakerEnabled ? Colors.blueGrey : Colors.red,
                     onPressed: onToggleSpeaker,
@@ -286,20 +284,15 @@ class CallHistoryItemWidget extends StatelessWidget {
 
     return ListTile(
       leading: CircleAvatar(
-        backgroundImage: entry.peerAvatar != null
-            ? NetworkImage(entry.peerAvatar!)
-            : null,
-        child: entry.peerAvatar == null
-            ? const Icon(Icons.person)
-            : null,
+        backgroundImage:
+            entry.peerAvatar != null ? NetworkImage(entry.peerAvatar!) : null,
+        child: entry.peerAvatar == null ? const Icon(Icons.person) : null,
       ),
       title: Text(entry.peerName ?? 'Unknown'),
       subtitle: Row(
         children: [
           Icon(
-            entry.isIncoming
-                ? Icons.call_received
-                : Icons.call_made,
+            entry.isIncoming ? Icons.call_received : Icons.call_made,
             size: 16,
             color: statusColor,
           ),
@@ -320,9 +313,7 @@ class CallHistoryItemWidget extends StatelessWidget {
         ],
       ),
       trailing: Icon(
-        entry.isIncoming
-            ? Icons.call_received
-            : Icons.call_made,
+        entry.isIncoming ? Icons.call_received : Icons.call_made,
         color: statusColor,
       ),
       onTap: onTap,

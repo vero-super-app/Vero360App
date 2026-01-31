@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/providers/car_hire_provider.dart';
+import 'package:vero360_app/providers/ride_share/car_hire_provider.dart';
 import 'package:vero360_app/utils/error_handler.dart';
 import 'package:vero360_app/utils/formatters.dart';
 import 'package:vero360_app/Pages/car_rental/widgets/status_badge_widget.dart';
@@ -26,11 +26,13 @@ class _RentalHistoryPageState extends ConsumerState<RentalHistoryPage> {
   Widget build(BuildContext context) {
     final historyAsync = widget.carId != null
         ? ref.watch(rentalHistoryFutureProvider(widget.carId!))
-        : ref.watch(activeRentalsFutureProvider); // Fallback: use active rentals
+        : ref
+            .watch(activeRentalsFutureProvider); // Fallback: use active rentals
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.carId != null ? 'Car Rental History' : 'All Rental History'),
+        title: Text(
+            widget.carId != null ? 'Car Rental History' : 'All Rental History'),
         elevation: 0,
         actions: [
           IconButton(
@@ -46,7 +48,8 @@ class _RentalHistoryPageState extends ConsumerState<RentalHistoryPage> {
             Padding(
               padding: const EdgeInsets.all(12),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: Colors.blue[50],
                   borderRadius: BorderRadius.circular(8),
@@ -65,7 +68,8 @@ class _RentalHistoryPageState extends ConsumerState<RentalHistoryPage> {
                       onTap: () {
                         setState(() => _dateRange = null);
                       },
-                      child: Icon(Icons.close, size: 18, color: Colors.blue[700]),
+                      child:
+                          Icon(Icons.close, size: 18, color: Colors.blue[700]),
                     ),
                   ],
                 ),
@@ -76,7 +80,8 @@ class _RentalHistoryPageState extends ConsumerState<RentalHistoryPage> {
           Expanded(
             child: RefreshIndicator(
               onRefresh: () => widget.carId != null
-                  ? ref.refresh(rentalHistoryFutureProvider(widget.carId!).future)
+                  ? ref.refresh(
+                      rentalHistoryFutureProvider(widget.carId!).future)
                   : ref.refresh(activeRentalsFutureProvider.future),
               child: historyAsync.when(
                 data: (rentals) {
@@ -222,12 +227,12 @@ class _RentalHistoryPageState extends ConsumerState<RentalHistoryPage> {
         rentals.sort((a, b) => a.startDate.compareTo(b.startDate));
         break;
       case 'RATING_HIGH':
-        rentals.sort((a, b) =>
-            (b.renterRating ?? 0).compareTo(a.renterRating ?? 0));
+        rentals.sort(
+            (a, b) => (b.renterRating ?? 0).compareTo(a.renterRating ?? 0));
         break;
       case 'RATING_LOW':
-        rentals.sort((a, b) =>
-            (a.renterRating ?? 0).compareTo(b.renterRating ?? 0));
+        rentals.sort(
+            (a, b) => (a.renterRating ?? 0).compareTo(b.renterRating ?? 0));
         break;
       case 'DATE_DESC':
       default:

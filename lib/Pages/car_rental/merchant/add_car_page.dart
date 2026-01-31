@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/providers/car_hire_provider.dart';
+import 'package:vero360_app/providers/ride_share/car_hire_provider.dart';
 import 'package:vero360_app/dto/create_car_dto.dart';
 import 'package:vero360_app/utils/validators.dart';
 import 'package:vero360_app/utils/error_handler.dart';
@@ -22,7 +22,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
   late TextEditingController _dailyRateController;
   late TextEditingController _descriptionController;
   late TextEditingController _seatsController;
-  
+
   String? _selectedFuelType;
   bool _isLoading = false;
 
@@ -78,7 +78,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
       if (mounted) {
         // Refresh the cars list
         ref.refresh(myCarsFutureProvider);
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Car added successfully'),
@@ -121,7 +121,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                     ),
               ),
               const SizedBox(height: 16),
-              
+
               // Make
               TextFormField(
                 controller: _makeController,
@@ -135,7 +135,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                 validator: CarHireValidators.validateMake,
               ),
               const SizedBox(height: 16),
-              
+
               // Model
               TextFormField(
                 controller: _modelController,
@@ -149,7 +149,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                 validator: CarHireValidators.validateModel,
               ),
               const SizedBox(height: 16),
-              
+
               // Year and License Plate
               Row(
                 children: [
@@ -168,7 +168,8 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                         if (value == null || value.isEmpty) {
                           return 'Required';
                         }
-                        return CarHireValidators.validateYear(int.tryParse(value));
+                        return CarHireValidators.validateYear(
+                            int.tryParse(value));
                       },
                     ),
                   ),
@@ -190,7 +191,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                 ],
               ),
               const SizedBox(height: 16),
-              
+
               // Color
               TextFormField(
                 controller: _colorController,
@@ -204,7 +205,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                 validator: CarHireValidators.validateColor,
               ),
               const SizedBox(height: 24),
-              
+
               Text(
                 'Rental Settings',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -212,7 +213,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                     ),
               ),
               const SizedBox(height: 16),
-              
+
               // Daily Rate
               TextFormField(
                 controller: _dailyRateController,
@@ -228,7 +229,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                 validator: CarHireValidators.validateDailyRate,
               ),
               const SizedBox(height: 16),
-              
+
               // Seats and Fuel Type
               Row(
                 children: [
@@ -247,7 +248,8 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                         if (value == null || value.isEmpty) {
                           return 'Required';
                         }
-                        return CarHireValidators.validateSeats(int.tryParse(value));
+                        return CarHireValidators.validateSeats(
+                            int.tryParse(value));
                       },
                     ),
                   ),
@@ -275,7 +277,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                 ],
               ),
               const SizedBox(height: 24),
-              
+
               Text(
                 'Description & Media',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -283,7 +285,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                     ),
               ),
               const SizedBox(height: 16),
-              
+
               // Description
               TextFormField(
                 controller: _descriptionController,
@@ -299,7 +301,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                 validator: CarHireValidators.validateDescription,
               ),
               const SizedBox(height: 24),
-              
+
               // Submit Button
               SizedBox(
                 width: double.infinity,

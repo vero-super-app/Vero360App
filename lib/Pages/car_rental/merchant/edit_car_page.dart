@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/car_model.dart';
-import 'package:vero360_app/providers/car_hire_provider.dart';
+import 'package:vero360_app/providers/ride_share/car_hire_provider.dart';
 import 'package:vero360_app/dto/update_car_dto.dart';
 import 'package:vero360_app/utils/validators.dart';
 import 'package:vero360_app/utils/error_handler.dart';
@@ -36,11 +36,12 @@ class _EditCarPageState extends ConsumerState<EditCarPage> {
   void initState() {
     super.initState();
     _formKey = GlobalKey<FormState>();
-    
+
     // Pre-fill with existing car data
     _makeController = TextEditingController(text: widget.initialCar.brand);
     _modelController = TextEditingController(text: widget.initialCar.model);
-    _colorController = TextEditingController(text: widget.initialCar.color ?? '');
+    _colorController =
+        TextEditingController(text: widget.initialCar.color ?? '');
     _dailyRateController = TextEditingController(
       text: widget.initialCar.dailyRate.toStringAsFixed(0),
     );
@@ -216,7 +217,8 @@ class _EditCarPageState extends ConsumerState<EditCarPage> {
                         if (value == null || value.isEmpty) {
                           return 'Required';
                         }
-                        return CarHireValidators.validateSeats(int.tryParse(value));
+                        return CarHireValidators.validateSeats(
+                            int.tryParse(value));
                       },
                     ),
                   ),
@@ -275,7 +277,8 @@ class _EditCarPageState extends ConsumerState<EditCarPage> {
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: _isLoading ? null : () => Navigator.pop(context),
+                      onPressed:
+                          _isLoading ? null : () => Navigator.pop(context),
                       child: const Text('Cancel'),
                     ),
                   ),

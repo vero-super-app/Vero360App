@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/call_model.dart';
-import 'package:vero360_app/providers/call_provider.dart';
+import 'package:vero360_app/providers/messaging/call_provider.dart';
 import 'package:vero360_app/services/webrtc_service.dart';
 import 'package:vero360_app/widgets/call_widget.dart';
 
@@ -157,9 +157,8 @@ class _CallScreenState extends ConsumerState<CallScreen> {
         onToggleMic: _handleToggleMic,
         onToggleCamera: _handleToggleCamera,
         onToggleSpeaker: _handleToggleSpeaker,
-        onSwitchCamera: widget.call.callType == CallType.video
-            ? _handleSwitchCamera
-            : null,
+        onSwitchCamera:
+            widget.call.callType == CallType.video ? _handleSwitchCamera : null,
       ),
     );
   }
@@ -175,8 +174,7 @@ class IncomingCallScreen extends ConsumerStatefulWidget {
   }) : super(key: key);
 
   @override
-  ConsumerState<IncomingCallScreen> createState() =>
-      _IncomingCallScreenState();
+  ConsumerState<IncomingCallScreen> createState() => _IncomingCallScreenState();
 }
 
 class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen> {
@@ -314,7 +312,8 @@ class CallHistoryScreen extends ConsumerWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Type: ${entry.callType == CallType.video ? "Video" : "Voice"}'),
+                      Text(
+                          'Type: ${entry.callType == CallType.video ? "Video" : "Voice"}'),
                       Text(
                         'Direction: ${entry.isIncoming ? "Incoming" : "Outgoing"}',
                       ),

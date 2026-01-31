@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/providers/car_hire_provider.dart';
+import 'package:vero360_app/providers/ride_share/car_hire_provider.dart';
 import 'package:vero360_app/utils/error_handler.dart';
 import 'package:vero360_app/utils/formatters.dart';
 
@@ -78,7 +78,8 @@ class _AnalyticsPageState extends ConsumerState<AnalyticsPage> {
                         ),
                         GestureDetector(
                           onTap: _selectDateRange,
-                          child: Icon(Icons.edit, size: 18, color: Colors.blue[700]),
+                          child: Icon(Icons.edit,
+                              size: 18, color: Colors.blue[700]),
                         ),
                       ],
                     ),
@@ -230,8 +231,8 @@ class _AnalyticsPageState extends ConsumerState<AnalyticsPage> {
                                     child: Stack(
                                       children: [
                                         Container(
-                                          width: 100 *
-                                              analytics.utilizationRate,
+                                          width:
+                                              100 * analytics.utilizationRate,
                                           height: 8,
                                           decoration: BoxDecoration(
                                             color: Colors.green,

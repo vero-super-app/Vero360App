@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart'
     show Provider, StreamProvider, FutureProvider, AsyncValue, Ref;
 import 'package:flutter_riverpod/legacy.dart' show StateProvider;
 import 'package:vero360_app/services/ride_share_service.dart';
-import 'package:vero360_app/providers/ride_share_provider.dart';
+import 'package:vero360_app/providers/ride_share/ride_share_provider.dart';
 
 // ==================== CONNECTION STATE ====================
 
@@ -274,7 +274,8 @@ final reconnectionProvider = FutureProvider<void>((ref) async {
 final messagingWebSocketConnectedProvider = StateProvider<bool>((ref) => false);
 
 /// Typing indicator debounce timer tracking
-final typingDebounceProvider = StateProvider<Map<String, DateTime>>((ref) => {});
+final typingDebounceProvider =
+    StateProvider<Map<String, DateTime>>((ref) => {});
 
 /// Last message read time per chat
 final lastReadTimeProvider = StateProvider<Map<String, DateTime>>((ref) => {});

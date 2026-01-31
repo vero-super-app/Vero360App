@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/Pages/ride_share/widgets/place_search_widget.dart';
 import 'package:vero360_app/models/place_model.dart';
-import 'package:vero360_app/providers/ride_share_provider.dart';
+import 'package:vero360_app/providers/ride_share/ride_share_provider.dart';
 
 class DestinationSearchScreen extends ConsumerStatefulWidget {
   const DestinationSearchScreen({super.key});
@@ -12,7 +12,8 @@ class DestinationSearchScreen extends ConsumerStatefulWidget {
       _DestinationSearchScreenState();
 }
 
-class _DestinationSearchScreenState extends ConsumerState<DestinationSearchScreen> {
+class _DestinationSearchScreenState
+    extends ConsumerState<DestinationSearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
 
@@ -220,10 +221,11 @@ class _DestinationSearchScreenState extends ConsumerState<DestinationSearchScree
                   Expanded(
                     child: Text(
                       'Where are you going?',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black87,
-                          ),
+                      style:
+                          Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black87,
+                              ),
                     ),
                   ),
                 ],
@@ -327,9 +329,8 @@ class _CustomPlaceSearchWidgetState
                   padding: const EdgeInsets.only(left: 12),
                   child: Icon(
                     Icons.location_on_rounded,
-                    color: _isFocused
-                        ? const Color(0xFFFF8A00)
-                        : Colors.grey[400],
+                    color:
+                        _isFocused ? const Color(0xFFFF8A00) : Colors.grey[400],
                     size: 22,
                   ),
                 ),
@@ -418,10 +419,10 @@ class _CustomPlaceSearchWidgetState
                         onTap: () async {
                           final placeDetails = await ref.read(
                               placeDetailsProvider(prediction.placeId).future);
-                          final geometry = placeDetails['geometry']
-                              as Map<String, dynamic>?;
-                          final location = geometry?['location']
-                              as Map<String, dynamic>?;
+                          final geometry =
+                              placeDetails['geometry'] as Map<String, dynamic>?;
+                          final location =
+                              geometry?['location'] as Map<String, dynamic>?;
 
                           if (location != null) {
                             final place = Place(
@@ -430,8 +431,8 @@ class _CustomPlaceSearchWidgetState
                               address: prediction.fullText,
                               latitude:
                                   (location['lat'] as num?)?.toDouble() ?? 0.0,
-                              longitude: (location['lng'] as num?)?.toDouble() ??
-                                  0.0,
+                              longitude:
+                                  (location['lng'] as num?)?.toDouble() ?? 0.0,
                               type: PlaceType.RECENT,
                             );
 
@@ -447,8 +448,8 @@ class _CustomPlaceSearchWidgetState
                                 width: 40,
                                 height: 40,
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFFF8A00)
-                                      .withOpacity(0.1),
+                                  color:
+                                      const Color(0xFFFF8A00).withOpacity(0.1),
                                   borderRadius: BorderRadius.circular(10),
                                 ),
                                 child: const Icon(
@@ -460,8 +461,7 @@ class _CustomPlaceSearchWidgetState
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
                                       prediction.mainText,
@@ -499,8 +499,8 @@ class _CustomPlaceSearchWidgetState
                   height: 100,
                   child: Center(
                     child: CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                          Colors.grey[400]!),
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(Colors.grey[400]!),
                     ),
                   ),
                 ),

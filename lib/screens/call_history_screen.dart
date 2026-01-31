@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/call_model.dart';
-import 'package:vero360_app/providers/call_provider.dart';
+import 'package:vero360_app/providers/messaging/call_provider.dart';
 import 'package:vero360_app/widgets/call_widget.dart';
 import 'package:vero360_app/widgets/messaging_colors.dart';
 

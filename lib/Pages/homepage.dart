@@ -54,7 +54,7 @@ import 'package:vero360_app/services/latest_Services.dart';
 import 'package:vero360_app/toasthelper.dart';
 
 // ✅ Providers
-import 'package:vero360_app/providers/driver_provider.dart';
+import 'package:vero360_app/providers/ride_share/driver_provider.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);

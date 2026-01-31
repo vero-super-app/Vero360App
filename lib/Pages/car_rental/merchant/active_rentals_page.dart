@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/providers/car_hire_provider.dart';
+import 'package:vero360_app/providers/ride_share/car_hire_provider.dart';
 import 'package:vero360_app/utils/error_handler.dart';
 import 'package:vero360_app/utils/formatters.dart';
 import 'package:vero360_app/Pages/car_rental/widgets/status_badge_widget.dart';
@@ -42,7 +42,7 @@ class _ActiveRentalsPageState extends ConsumerState<ActiveRentalsPage> {
         final service = ref.read(carRentalServiceProvider);
         // TODO: Implement completion with damage inspection
         // await service.completeRentalAsOwner(bookingId, dto);
-        
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -295,7 +295,8 @@ class _ActiveRentalsPageState extends ConsumerState<ActiveRentalsPage> {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.location_on, color: Colors.blue[700], size: 20),
+                      Icon(Icons.location_on,
+                          color: Colors.blue[700], size: 20),
                       const SizedBox(width: 8),
                       Text(
                         'Live Tracking',

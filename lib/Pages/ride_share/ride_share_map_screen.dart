@@ -12,7 +12,7 @@ import 'package:vero360_app/Pages/ride_share/widgets/ride_completion_screen.dart
 import 'package:vero360_app/Pages/ride_share/destination_search_screen.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/models/ride_model.dart';
-import 'package:vero360_app/providers/ride_share_provider.dart';
+import 'package:vero360_app/providers/ride_share/ride_share_provider.dart';
 import 'package:vero360_app/services/auth_storage.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
@@ -408,11 +408,12 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                                       },
                                     )
                                   else
-                                    _buildDropoffLocationCard(selectedDropoffPlace),
-                                  ],
-                                  ),
-                                  ),
-                                  Padding(
+                                    _buildDropoffLocationCard(
+                                        selectedDropoffPlace),
+                                ],
+                              ),
+                            ),
+                            Padding(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16, vertical: 16),
                               child: _buildActionButton(selectedDropoffPlace),
@@ -441,8 +442,8 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                                     borderRadius: BorderRadius.circular(16),
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.black.withValues(
-                                            alpha: 0.12),
+                                        color: Colors.black
+                                            .withValues(alpha: 0.12),
                                         blurRadius: 24,
                                         offset: const Offset(0, 8),
                                         spreadRadius: 2,
@@ -948,7 +949,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
 
   Widget _buildActionButton(Place? selectedDropoffPlace) {
     final isReady = selectedDropoffPlace != null;
-    
+
     return SizedBox(
       width: double.infinity,
       height: 56,
@@ -976,16 +977,12 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                 ),
               )
             : Icon(
-                isReady
-                    ? Icons.arrow_forward_rounded
-                    : Icons.search,
+                isReady ? Icons.arrow_forward_rounded : Icons.search,
                 color: Colors.white,
                 size: 24,
               ),
         label: Text(
-          isReady
-              ? 'Continue to Booking'
-              : 'Search Destination',
+          isReady ? 'Continue to Booking' : 'Search Destination',
           style: const TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,

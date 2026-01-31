@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/place_model.dart';
-import 'package:vero360_app/providers/ride_share_provider.dart';
+import 'package:vero360_app/providers/ride_share/ride_share_provider.dart';
 
 class BookmarkedPlacesModal extends ConsumerStatefulWidget {
   final VoidCallback onClose;
@@ -104,8 +104,9 @@ class _BookmarkedPlacesModalState extends ConsumerState<BookmarkedPlacesModal> {
                                   widget.onClose();
                                 },
                                 onDelete: () {
-                                   BookmarkedPlacesManager.removePlace(ref, place.id);
-                                 },
+                                  BookmarkedPlacesManager.removePlace(
+                                      ref, place.id);
+                                },
                               );
                             },
                           ),
@@ -194,7 +195,8 @@ class _BookmarkedPlacesModalState extends ConsumerState<BookmarkedPlacesModal> {
           fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
         ),
       ),
-      subtitle: Text(place.address, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle:
+          Text(place.address, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: PopupMenuButton<String>(
         onSelected: (value) {
           if (value == 'delete') {

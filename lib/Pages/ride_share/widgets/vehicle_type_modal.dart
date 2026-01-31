@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/models/ride_model.dart';
-import 'package:vero360_app/providers/ride_share_provider.dart';
+import 'package:vero360_app/providers/ride_share/ride_share_provider.dart';
 import 'package:vero360_app/services/ride_share_http_service.dart';
 import 'package:vero360_app/services/auth_storage.dart';
 
@@ -188,7 +188,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
 
       final fareEstimate = _estimatedFares[vehicleClass];
       double estimatedFare = 0.0;
-      
+
       if (fareEstimate != null) {
         final fareValue = fareEstimate['estimatedFare'];
         if (fareValue is num) {
@@ -477,13 +477,13 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     if (fareData != null) {
       final fareValue = fareData['estimatedFare'];
       double? estimatedFare;
-      
+
       if (fareValue is num) {
         estimatedFare = (fareValue as num).toDouble();
       } else if (fareValue is String) {
         estimatedFare = double.tryParse(fareValue);
       }
-      
+
       if (estimatedFare != null) {
         displayPrice = 'MK ${estimatedFare.toStringAsFixed(0)}';
       }

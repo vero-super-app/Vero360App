@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:vero360_app/providers/driver_provider.dart';
+import 'package:vero360_app/providers/ride_share/driver_provider.dart';
 import 'package:vero360_app/services/auth_storage.dart';
 import 'driver_request_screen.dart';
 
@@ -214,10 +214,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                     ),
                     child: CircleAvatar(
                       radius: 32,
-                      backgroundImage:
-                          driver['user']?['profilepicture'] != null
-                              ? NetworkImage(driver['user']['profilepicture'])
-                              : null,
+                      backgroundImage: driver['user']?['profilepicture'] != null
+                          ? NetworkImage(driver['user']['profilepicture'])
+                          : null,
                       backgroundColor: primaryColor.withOpacity(0.1),
                       child: driver['user']?['profilepicture'] == null
                           ? Icon(
@@ -272,9 +271,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                driver['isVerified']
-                                    ? 'Verified'
-                                    : 'Pending',
+                                driver['isVerified'] ? 'Verified' : 'Pending',
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,

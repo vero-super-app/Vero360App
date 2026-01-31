@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/services/chat_service.dart';
-import 'package:vero360_app/providers/chat_threads_provider.dart';
-import 'package:vero360_app/providers/messaging_provider.dart';
+import 'package:vero360_app/providers/messaging/chat_threads_provider.dart';
+import 'package:vero360_app/providers/messaging/messaging_provider.dart';
 import 'package:vero360_app/Pages/Home/Messages.dart';
 
 class ChatListPageRiverpod extends ConsumerStatefulWidget {
@@ -115,18 +115,15 @@ class _ChatListPageRiverpodState extends ConsumerState<ChatListPageRiverpod> {
                     final t = items[i];
                     final otherId = t.getOtherId(myId);
 
-                    final meta =
-                        (t.participants[otherId] as Map?) ?? const {};
+                    final meta = (t.participants[otherId] as Map?) ?? const {};
                     final name = ('${meta['name'] ?? 'Contact'}').trim();
                     final avatarUrls = _extractAvatarUrls(meta);
 
-                    final rawLast =
-                        t.lastMessageContent.toString().trim();
+                    final rawLast = t.lastMessageContent.toString().trim();
                     final lastSender = t.lastSenderId;
-                    final youPrefix =
-                        (lastSender != null && lastSender == myId)
-                            ? 'You: '
-                            : '';
+                    final youPrefix = (lastSender != null && lastSender == myId)
+                        ? 'You: '
+                        : '';
                     final subtitle =
                         rawLast.isEmpty ? 'Tap to chat' : '$youPrefix$rawLast';
                     final unreadCount = t.getUnreadCount(myId);
@@ -137,9 +134,11 @@ class _ChatListPageRiverpodState extends ConsumerState<ChatListPageRiverpod> {
                       lastText: subtitle,
                       updatedAt: t.updatedAt,
                       unreadCount: unreadCount,
-                      isTyping: ref.watch(
-                        typingUsersForChatProvider(t.id),
-                      ).isNotEmpty,
+                      isTyping: ref
+                          .watch(
+                            typingUsersForChatProvider(t.id),
+                          )
+                          .isNotEmpty,
                       onTap: () {
                         Navigator.push(
                           context,
@@ -147,9 +146,8 @@ class _ChatListPageRiverpodState extends ConsumerState<ChatListPageRiverpod> {
                             builder: (_) => MessagePage(
                               peerAppId: otherId,
                               peerName: name.isEmpty ? 'Contact' : name,
-                              peerAvatarUrl: avatarUrls.isNotEmpty
-                                  ? avatarUrls.first
-                                  : '',
+                              peerAvatarUrl:
+                                  avatarUrls.isNotEmpty ? avatarUrls.first : '',
                               peerId: '',
                             ),
                           ),
@@ -272,7 +270,8 @@ class _ChatListPageRiverpodState extends ConsumerState<ChatListPageRiverpod> {
     if (avatarUrls.isEmpty && meta['avatar'] is String) {
       final avatar = (meta['avatar'] as String).trim();
       if (avatar.isNotEmpty) {
-        final urls = avatar.split(RegExp(r'[,|]')).map((u) => u.trim()).toList();
+        final urls =
+            avatar.split(RegExp(r'[,|]')).map((u) => u.trim()).toList();
         avatarUrls.addAll(urls.where((u) => u.isNotEmpty));
       }
     }
@@ -521,7 +520,8 @@ class _AvatarCarouselState extends State<_AvatarCarousel> {
       );
 
   String _initials(String n) {
-    final parts = n.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final parts =
+        n.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
     if (parts.isEmpty) return 'C';
     if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
     return (parts.first.substring(0, 1) + parts.last.substring(0, 1))

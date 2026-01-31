@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/providers/car_hire_provider.dart';
+import 'package:vero360_app/providers/ride_share/car_hire_provider.dart';
 import 'package:vero360_app/utils/error_handler.dart';
 import 'package:vero360_app/utils/formatters.dart';
 
@@ -72,7 +72,8 @@ class _MyCarsPageState extends ConsumerState<MyCarsPage> {
                   child: CircularProgressIndicator(),
                 ),
                 error: (error, stack) => Center(
-                  child: Text(CarHireErrorHandler.getErrorMessage(error as Exception)),
+                  child: Text(
+                      CarHireErrorHandler.getErrorMessage(error as Exception)),
                 ),
               ),
             ),
@@ -113,7 +114,8 @@ class _MyCarsPageState extends ConsumerState<MyCarsPage> {
                 ),
                 child: car.imageUrl != null
                     ? Image.network(car.imageUrl!, fit: BoxFit.cover)
-                    : Icon(Icons.directions_car, size: 64, color: Colors.grey[600]),
+                    : Icon(Icons.directions_car,
+                        size: 64, color: Colors.grey[600]),
               ),
               const SizedBox(height: 12),
               // Car details
@@ -138,9 +140,11 @@ class _MyCarsPageState extends ConsumerState<MyCarsPage> {
                     ],
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: car.isAvailable ? Colors.green[100] : Colors.red[100],
+                      color:
+                          car.isAvailable ? Colors.green[100] : Colors.red[100],
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(

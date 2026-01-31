@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/services/driver_request_service.dart';
-import 'widgets/driver_request_accept_dialog.dart';
+import '../widgets/driver_request_accept_dialog.dart';
 
 class DriverRequestScreen extends StatefulWidget {
   final String driverId;
@@ -48,7 +48,8 @@ class _DriverRequestScreenState extends State<DriverRequestScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: const Text('Ride accepted! Navigate to pickup location.'),
+                content:
+                    const Text('Ride accepted! Navigate to pickup location.'),
                 backgroundColor: Colors.green.shade600,
                 behavior: SnackBarBehavior.floating,
                 margin: const EdgeInsets.all(16),
@@ -212,7 +213,8 @@ class _DriverRequestScreenState extends State<DriverRequestScreen> {
                         : null,
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: isNew ? 0.08 : 0.04),
+                        color:
+                            Colors.black.withValues(alpha: isNew ? 0.08 : 0.04),
                         blurRadius: isNew ? 16 : 8,
                         offset: const Offset(0, 2),
                       ),

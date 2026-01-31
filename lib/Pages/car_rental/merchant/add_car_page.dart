@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/providers/ride_share/car_hire_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/car_hire_provider.dart';
 import 'package:vero360_app/dto/create_car_dto.dart';
 import 'package:vero360_app/utils/validators.dart';
 import 'package:vero360_app/utils/error_handler.dart';

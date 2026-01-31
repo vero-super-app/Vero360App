@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/providers/ride_share/ride_share_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 
 class CurrentLocationWidget extends ConsumerWidget {
   final VoidCallback onRefresh;

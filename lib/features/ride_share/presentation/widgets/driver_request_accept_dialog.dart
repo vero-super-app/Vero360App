@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/services/driver_request_service.dart';
 import 'package:vero360_app/services/driver_messaging_service.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/driver_pickup_route_screen.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/driver_ride_active_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/driver_pickup_route_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/driver_ride_active_screen.dart';
 
 class DriverRequestAcceptDialog extends StatefulWidget {
   final DriverRideRequest request;
@@ -324,7 +324,8 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                         child: _buildMetricBox(
                           icon: Icons.wallet_outlined,
                           label: 'Estimated Fare',
-                          value: 'MK${widget.request.estimatedFare.toStringAsFixed(0)}',
+                          value:
+                              'MK${widget.request.estimatedFare.toStringAsFixed(0)}',
                           color: Colors.blue,
                         ),
                       ),
@@ -357,9 +358,8 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                     width: double.infinity,
                     height: 56,
                     child: ElevatedButton.icon(
-                      onPressed: _isAccepting || _isRejecting
-                          ? null
-                          : _acceptRequest,
+                      onPressed:
+                          _isAccepting || _isRejecting ? null : _acceptRequest,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: primaryColor,
                         foregroundColor: Colors.white,
@@ -375,7 +375,8 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                               width: 20,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2.5,
-                                valueColor: AlwaysStoppedAnimation(Colors.white),
+                                valueColor:
+                                    AlwaysStoppedAnimation(Colors.white),
                               ),
                             )
                           : const Icon(Icons.check_circle_outline),
@@ -395,9 +396,8 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                     width: double.infinity,
                     height: 56,
                     child: OutlinedButton.icon(
-                      onPressed: _isAccepting || _isRejecting
-                          ? null
-                          : _rejectRequest,
+                      onPressed:
+                          _isAccepting || _isRejecting ? null : _rejectRequest,
                       style: OutlinedButton.styleFrom(
                         side: BorderSide(
                           color: _isRejecting ? Colors.grey : primaryColor,
@@ -425,8 +425,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
-                          color:
-                              _isRejecting ? Colors.grey : primaryColor,
+                          color: _isRejecting ? Colors.grey : primaryColor,
                         ),
                       ),
                     ),

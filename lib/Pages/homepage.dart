@@ -25,8 +25,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:vero360_app/Pages/ride_share/ride_share_map_screen.dart';
-import 'package:vero360_app/Pages/ride_share/driver_dashboard.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 
 // ✅ Cart + checkout
 import 'package:vero360_app/models/cart_model.dart';
@@ -54,7 +54,7 @@ import 'package:vero360_app/services/latest_Services.dart';
 import 'package:vero360_app/toasthelper.dart';
 
 // ✅ Providers
-import 'package:vero360_app/providers/ride_share/driver_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);

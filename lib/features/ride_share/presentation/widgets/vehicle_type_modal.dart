@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/models/ride_model.dart';
-import 'package:vero360_app/providers/ride_share/ride_share_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/services/ride_share_http_service.dart';
 import 'package:vero360_app/services/auth_storage.dart';
 

@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/models/place_model.dart';
-import 'package:vero360_app/providers/ride_share/ride_share_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 
 class BookmarkedPlacesModal extends ConsumerStatefulWidget {
   final VoidCallback onClose;
 
   const BookmarkedPlacesModal({
     required this.onClose,
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   ConsumerState<BookmarkedPlacesModal> createState() =>

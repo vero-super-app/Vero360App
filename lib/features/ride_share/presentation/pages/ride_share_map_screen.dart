@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/map_view_widget.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/place_search_widget.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/bookmarked_places_modal.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/vehicle_type_modal.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/ride_waiting_screen.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/user_awaiting_driver_screen.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/ride_in_progress_screen.dart';
-import 'package:vero360_app/Pages/ride_share/widgets/ride_completion_screen.dart';
-import 'package:vero360_app/Pages/ride_share/destination_search_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/place_search_widget.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/bookmarked_places_modal.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/vehicle_type_modal.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_waiting_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/user_awaiting_driver_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_in_progress_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/destination_search_screen.dart';
 import 'package:vero360_app/models/place_model.dart';
 import 'package:vero360_app/models/ride_model.dart';
-import 'package:vero360_app/providers/ride_share/ride_share_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/services/auth_storage.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {

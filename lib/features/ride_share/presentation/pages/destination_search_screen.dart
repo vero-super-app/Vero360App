@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/place_search_widget.dart';
-import 'package:vero360_app/models/place_model.dart';
+import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 
 class DestinationSearchScreen extends ConsumerStatefulWidget {

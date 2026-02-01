@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/models/call_model.dart';
-import 'package:vero360_app/providers/messaging/call_provider.dart';
+import 'package:vero360_app/GeneralModels/call_model.dart';
+import 'package:vero360_app/Gernalproviders/messaging/call_provider.dart';
 
 /// Widget for displaying incoming call UI
 class IncomingCallWidget extends ConsumerWidget {

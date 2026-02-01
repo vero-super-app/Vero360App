@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:vero360_app/services/ride_share_http_service.dart';
-import 'package:vero360_app/models/ride_model.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
+import 'package:vero360_app/GeneralModels/ride_model.dart';
 
 class RideWaitingScreen extends StatefulWidget {
   final String rideId;

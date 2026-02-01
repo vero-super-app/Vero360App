@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:vero360_app/services/driver_messaging_service.dart';
-import 'package:vero360_app/services/driver_request_service.dart';
+import 'package:vero360_app/GernalServices/driver_messaging_service.dart';
+import 'package:vero360_app/GernalServices/driver_request_service.dart';
 
 class DriverMessagingScreen extends StatefulWidget {
   final String rideId;

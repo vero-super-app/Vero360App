@@ -14,14 +14,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'package:vero360_app/Pages/BottomNavbar.dart';
+import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/config/api_config.dart';
-import 'package:vero360_app/services/auth_service.dart';
-import 'package:vero360_app/toasthelper.dart';
+import 'package:vero360_app/GernalServices/auth_service.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 
 // REQUIRED PAGES
-import 'package:vero360_app/Pages/address.dart'; // AddressPage
-import 'package:vero360_app/Pages/changepassword.dart'; // ChangePasswordPage
+import 'package:vero360_app/GeneralPages/address.dart'; // AddressPage
+import 'package:vero360_app/GeneralPages/changepassword.dart'; // ChangePasswordPage
 
 const Color kBrandOrange = Color(0xFFFF8A00);
 const Color kBrandNavy = Color(0xFF16284C);

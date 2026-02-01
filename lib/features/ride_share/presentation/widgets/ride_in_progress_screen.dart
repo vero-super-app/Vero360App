@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:vero360_app/services/ride_share_http_service.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 
 class RideInProgressScreen extends StatefulWidget {
   final String rideId;

@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
-import 'package:vero360_app/models/place_model.dart';
+import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/config/map_style_constants.dart';
 

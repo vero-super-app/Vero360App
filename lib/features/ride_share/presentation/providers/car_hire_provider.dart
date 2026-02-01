@@ -1,11 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/models/car_model.dart';
-import 'package:vero360_app/models/car_booking_model.dart';
-import 'package:vero360_app/models/merchant_model.dart';
-import 'package:vero360_app/models/analytics_model.dart';
-import 'package:vero360_app/services/car_rental_service.dart';
-import 'package:vero360_app/services/merchant_service.dart';
-import 'package:vero360_app/services/analytics_service.dart';
+import 'package:vero360_app/GeneralModels/car_model.dart';
+import 'package:vero360_app/GeneralModels/car_booking_model.dart';
+import 'package:vero360_app/GeneralModels/merchant_model.dart';
+import 'package:vero360_app/GeneralModels/analytics_model.dart';
+import 'package:vero360_app/GernalServices/car_rental_service.dart';
+import 'package:vero360_app/GernalServices/merchant_service.dart';
+import 'package:vero360_app/GernalServices/analytics_service.dart';
 
 // -------------------- Services --------------------
 

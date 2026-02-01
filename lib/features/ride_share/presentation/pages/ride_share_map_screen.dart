@@ -10,10 +10,10 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/user_awaiti
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_in_progress_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/destination_search_screen.dart';
-import 'package:vero360_app/models/place_model.dart';
-import 'package:vero360_app/models/ride_model.dart';
+import 'package:vero360_app/GeneralModels/place_model.dart';
+import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
-import 'package:vero360_app/services/auth_storage.dart';
+import 'package:vero360_app/GernalServices/auth_storage.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
   const RideShareMapScreen({super.key});

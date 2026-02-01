@@ -1,0 +1,459 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
+
+// Import merchant dashboards
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart'; // Add this
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
+
+import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
+import 'package:vero360_app/GernalScreens/register_screen.dart';
+import 'package:vero360_app/GernalServices/auth_service.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/oauth_buttons.dart';
+
+class AppColors {
+  static const brandOrange = Color(0xFFFF8A00);
+  static const title = Color(0xFF101010);
+  static const body = Color(0xFF6B6B6B);
+  static const fieldFill = Color(0xFFF7F7F9);
+}
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  
+  final _identifier = TextEditingController();
+  final _password = TextEditingController();
+  bool _obscure = true;
+  bool _loading = false;
+  bool _socialLoading = false;
+
+  @override
+  void dispose() {
+    _identifier.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  // Helper method to get the appropriate merchant dashboard - ADD MARKETPLACE CASE
+  Widget _getMerchantDashboard(String serviceKey, String email) {
+    switch (serviceKey) {
+      case 'marketplace':  // Add marketplace case
+        return MarketplaceMerchantDashboard(email: email);
+      case 'food':
+        return FoodMerchantDashboard(email: email);
+      case 'taxi':
+        return DriverDashboard();
+      case 'accommodation':
+        return AccommodationMerchantDashboard(email: email);
+      case 'courier':
+        return CourierMerchantDashboard(email: email);
+      // Add more cases for other services as needed
+      default:
+        return MarketplaceMerchantDashboard(email: email);
+    }
+  }
+
+  // Update the _handleAuthResult method
+  Future<void> _handleAuthResult(Map<String, dynamic>? result) async {
+    if (result == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    
+    // Store auth provider
+    final authProvider = (result['authProvider'] ?? 'backend').toString().toLowerCase();
+    await prefs.setString('auth_provider', authProvider);
+
+    // Store token
+    final token = result['token']?.toString();
+    if (token == null || token.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'No token received from $authProvider login',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    await prefs.setString('token', token);
+    await prefs.setString('jwt_token', token);
+
+    // Get user data
+    Map<String, dynamic> user = {};
+    final rawUser = result['user'];
+    if (rawUser is Map<String, dynamic>) {
+      user = Map<String, dynamic>.from(rawUser);
+    }
+
+    final displayId = user['email']?.toString() ??
+        user['phone']?.toString() ??
+        _identifier.text.trim();
+    await prefs.setString('email', displayId);
+
+    // Get role
+    final role = (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
+    await prefs.setString('role', role);
+
+    // Store user ID
+    final uid = user['uid']?.toString() ?? user['id']?.toString() ?? user['firebaseUid']?.toString();
+    if (uid != null && uid.isNotEmpty) {
+      await prefs.setString('uid', uid);
+    }
+
+    // For merchants, store service and business info
+    if (role == 'merchant') {
+      // Get merchant service from multiple possible sources
+      String? merchantService = user['merchantService']?.toString() ??
+          user['serviceType']?.toString() ??
+          user['merchant_service']?.toString();
+
+      // If not in user data, try to fetch from Firebase
+      if (merchantService == null || merchantService.isEmpty) {
+        if (uid != null) {
+          merchantService = await _fetchMerchantServiceFromFirebase(uid);
+        }
+      }
+
+      if (merchantService != null && merchantService.isNotEmpty) {
+        await prefs.setString('merchant_service', merchantService);
+      }
+
+      // Store business info
+      final businessName = user['businessName']?.toString();
+      if (businessName != null && businessName.isNotEmpty) {
+        await prefs.setString('business_name', businessName);
+      }
+
+      final businessAddress = user['businessAddress']?.toString();
+      if (businessAddress != null && businessAddress.isNotEmpty) {
+        await prefs.setString('business_address', businessAddress);
+      }
+    }
+
+    if (!mounted) return;
+
+    // Redirect based on role
+    if (role == 'merchant') {
+      final merchantService = prefs.getString('merchant_service');
+      
+      if (merchantService != null && merchantService.isNotEmpty) {
+        // Navigate to specific merchant dashboard
+        Widget merchantDashboard = _getMerchantDashboard(merchantService, displayId);
+        
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => merchantDashboard),
+          (_) => false,
+        );
+      } else {
+        // No specific service found, go to generic merchant dashboard
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => MarketplaceMerchantDashboard(email: displayId),
+          ),
+          (_) => false,
+        );
+      }
+    } else {
+      // For customers, go to customer bottom navbar
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => Bottomnavbar(email: displayId),
+        ),
+        (_) => false,
+      );
+    }
+  }
+
+  // Fetch merchant service from Firebase - UPDATE FOR MARKETPLACE
+  Future<String?> _fetchMerchantServiceFromFirebase(String uid) async {
+    try {
+      final userDoc = await _firestore.collection('users').doc(uid).get();
+      if (userDoc.exists) {
+        final userData = userDoc.data();
+        return userData?['merchantService']?.toString() ??
+               userData?['merchant_service']?.toString() ??
+               userData?['serviceType']?.toString();
+      }
+      
+      // Also try to find in service-specific collections - ADD MARKETPLACE
+      final services = ['marketplace', 'food', 'taxi', 'accommodation', 'courier'];
+      for (final service in services) {
+        // Special handling for marketplace collection name
+        final collectionName = service == 'marketplace' 
+            ? 'marketplace_merchants'
+            : '${service}_merchants';
+            
+        final merchantDoc = await _firestore
+            .collection(collectionName)
+            .doc(uid)
+            .get();
+        if (merchantDoc.exists) {
+          return service;
+        }
+      }
+    } catch (e) {
+      print('Error fetching merchant service from Firebase: $e');
+    }
+    return null;
+  }
+
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _loading = true);
+    try {
+      final result = await AuthService().loginWithIdentifier(
+        _identifier.text.trim(),
+        _password.text.trim(),
+        context,
+      );
+      await _handleAuthResult(result);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _google() async {
+    setState(() => _socialLoading = true);
+    try {
+      final resp = await AuthService().continueWithGoogle(context);
+      await _handleAuthResult(resp);
+    } finally {
+      if (mounted) setState(() => _socialLoading = false);
+    }
+  }
+
+  Future<void> _apple() async {
+    if (!Platform.isIOS) return;
+    setState(() => _socialLoading = true);
+    try {
+      final resp = await AuthService().continueWithApple(context);
+      await _handleAuthResult(resp);
+    } finally {
+      if (mounted) setState(() => _socialLoading = false);
+    }
+  }
+
+  InputDecoration _fieldDecoration({
+    required String label,
+    required String hint,
+    required IconData icon,
+    Widget? trailing,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      prefixIcon: Icon(icon),
+      suffixIcon: trailing,
+      filled: true,
+      fillColor: AppColors.fieldFill,
+      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: AppColors.brandOrange, width: 1.2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(children: [
+        Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment(0, -1),
+              end: Alignment(0, 1),
+              colors: [Color(0xFFEFF6FF), Colors.white],
+            ),
+          ),
+        ),
+        SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                      radius: 44,
+                      backgroundColor: Colors.white,
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/logo_mark.png',
+                          width: 72,
+                          height: 72,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.eco,
+                            size: 42,
+                            color: AppColors.brandOrange,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'Welcome back',
+                      style: TextStyle(
+                        color: AppColors.title,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
+                    // Logo-only socials (always visible)
+                    OAuthButtonsRow(
+                      onGoogle: _socialLoading ? null : _google,
+                      onApple: _socialLoading ? null : _apple,
+                    ),
+                    const SizedBox(height: 18),
+
+                    // Form card
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white, borderRadius: BorderRadius.circular(20),
+                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, 10))],
+                      ),
+                      padding: const EdgeInsets.all(18),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          children: [
+                            TextFormField(
+                              controller: _identifier,
+                              keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.next,
+                              decoration: _fieldDecoration(
+                                label: 'Email or Phone',
+                                hint: 'you@example.com or +2659XXXXXXXX',
+                                icon: Icons.person_outline,
+                              ),
+                              validator: (v) {
+                                final val = v?.trim() ?? '';
+                                if (val.isEmpty) return 'Email or phone is required';
+                                final isEmail = RegExp(
+                                  r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$',
+                                ).hasMatch(val);
+                                final digits = val.replaceAll(RegExp(r'\D'), '');
+                                final isLocal = RegExp(r'^(08|09)\d{8}$').hasMatch(digits);
+                                final isE164 = RegExp(r'^\+265[89]\d{8}$').hasMatch(val);
+                                if (!isEmail && !isLocal && !isE164) {
+                                  return 'Use email or phone (08/09… or +265…)';
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 14),
+                            TextFormField(
+                              controller: _password,
+                              obscureText: _obscure,
+                              textInputAction: TextInputAction.done,
+                              onFieldSubmitted: (_) => _submit(),
+                              decoration: _fieldDecoration(
+                                label: 'Password',
+                                hint: '••••••••',
+                                icon: Icons.lock_outline,
+                                trailing: IconButton(
+                                  tooltip: _obscure ? 'Show' : 'Hide',
+                                  icon: Icon(
+                                    _obscure ? Icons.visibility : Icons.visibility_off,
+                                  ),
+                                  onPressed: () => setState(() => _obscure = !_obscure),
+                                ),
+                              ),
+                              validator: (v) {
+                                if (v == null || v.isEmpty) return 'Password is required';
+                                if (v.length < 6) return 'Must be at least 6 characters';
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 18),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: ElevatedButton(
+                                onPressed: _loading ? null : _submit,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.brandOrange,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                                child: Text(
+                                  _loading ? 'Signing in…' : 'Sign in',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text(
+                          "Don't have an account?",
+                          style: TextStyle(
+                            color: AppColors.body,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        TextButton(
+                          onPressed: _loading ? null : () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const RegisterScreen(),
+                              ),
+                            );
+                          },
+                          child: const Text(
+                            'Create one',
+                            style: TextStyle(
+                              color: AppColors.brandOrange,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+}

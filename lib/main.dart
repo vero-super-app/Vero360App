@@ -24,24 +24,24 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Pages
-import 'package:vero360_app/Pages/BottomNavbar.dart';
-import 'package:vero360_app/Pages/cartpage.dart';
-import 'package:vero360_app/Pages/profile_from_link_page.dart';
-import 'package:vero360_app/Pages/Home/Profilepage.dart';
-import 'package:vero360_app/screens/chat_list_page.dart';
+import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
+import 'package:vero360_app/features/Cart/CartPresentaztion/pages/cartpage.dart';
+import 'package:vero360_app/GeneralPages/profile_from_link_page.dart';
+import 'package:vero360_app/Home/CustomersProfilepage.dart';
+import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
-import 'package:vero360_app/Pages/MerchantDashboards/marketplace_merchant_dashboard.dart';
-import 'package:vero360_app/screens/login_screen.dart';
-import 'package:vero360_app/screens/register_screen.dart';
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
+import 'package:vero360_app/GernalScreens/login_screen.dart';
+import 'package:vero360_app/GernalScreens/register_screen.dart';
 
 // Services
-import 'package:vero360_app/services/auth_guard.dart';
-import 'package:vero360_app/services/cart_services.dart';
+import 'package:vero360_app/GernalServices/auth_guard.dart';
+import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/config/api_config.dart';
-import 'package:vero360_app/services/messaging_initialization_service.dart';
-import 'package:vero360_app/services/websocket_messaging_service.dart';
-import 'package:vero360_app/services/websocket_manager.dart';
-import 'package:vero360_app/providers/cart_service_provider.dart';
+import 'package:vero360_app/GernalServices/messaging_initialization_service.dart';
+import 'package:vero360_app/GernalServices/websocket_messaging_service.dart';
+import 'package:vero360_app/GernalServices/websocket_manager.dart';
+import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 

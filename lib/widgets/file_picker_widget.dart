@@ -2,8 +2,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:vero360_app/models/attachment_model.dart';
-import 'package:vero360_app/providers/file_upload_provider.dart';
+import 'package:vero360_app/GeneralModels/attachment_model.dart';
+import 'package:vero360_app/Gernalproviders/file_upload_provider.dart';
 
 /// Widget for picking and uploading files
 class FilePickerWidget extends ConsumerStatefulWidget {

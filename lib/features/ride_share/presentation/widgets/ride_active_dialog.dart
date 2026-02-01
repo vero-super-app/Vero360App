@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:vero360_app/models/ride_model.dart';
+import 'package:vero360_app/GeneralModels/ride_model.dart';
 
 class RideActiveDialog extends StatefulWidget {
   final DriverInfo driver;

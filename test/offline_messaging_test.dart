@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
-import 'package:vero360_app/models/messaging_models.dart';
-import 'package:vero360_app/services/local_message_database.dart';
-import 'package:vero360_app/services/offline_message_queue.dart';
-import 'package:vero360_app/services/message_sync_service.dart';
+import 'package:vero360_app/GeneralModels/messaging_models.dart';
+import 'package:vero360_app/GernalServices/local_message_database.dart';
+import 'package:vero360_app/GernalServices/offline_message_queue.dart';
+import 'package:vero360_app/GernalServices/message_sync_service.dart';
 import 'dart:io';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';

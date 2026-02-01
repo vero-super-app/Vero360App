@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
-import 'package:vero360_app/models/place_model.dart';
+import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'skeleton_loader.dart';
 
 class PlaceSearchWidget extends ConsumerStatefulWidget {

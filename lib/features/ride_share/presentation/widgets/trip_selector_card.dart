@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:vero360_app/models/place_model.dart';
+import 'package:vero360_app/GeneralModels/place_model.dart';
 
 class TripSelectorCard extends StatelessWidget {
   final String currentLocation;

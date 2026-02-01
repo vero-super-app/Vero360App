@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:vero360_app/services/car_rental_service.dart';
-import 'package:vero360_app/services/payment_service.dart';
-import 'package:vero360_app/services/merchant_service.dart';
-import 'package:vero360_app/services/analytics_service.dart';
+import 'package:vero360_app/GernalServices/car_rental_service.dart';
+import 'package:vero360_app/GernalServices/payment_service.dart';
+import 'package:vero360_app/GernalServices/merchant_service.dart';
+import 'package:vero360_app/GernalServices/analytics_service.dart';
 
 class CarHireErrorHandler {
   static String getErrorMessage(Exception e) {

@@ -1,24 +1,22 @@
 import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
-import 'package:vero360_app/settings/Settings.dart';
 
 import '../../Home/homepage.dart';
 import '../Marketplace/presentation/pages/main_marketPlace.dart';
 import '../Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
+import 'package:vero360_app/settings/Settings.dart';
 
 import '../Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 
 // Merchant dashboards
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
-
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
 
@@ -30,7 +28,8 @@ class Bottomnavbar extends StatefulWidget {
   State<Bottomnavbar> createState() => _BottomnavbarState();
 }
 
-class _BottomnavbarState extends State<Bottomnavbar> with WidgetsBindingObserver {
+class _BottomnavbarState extends State<Bottomnavbar>
+    with WidgetsBindingObserver {
   int _selectedIndex = 0;
 
   bool _isLoading = true;
@@ -39,7 +38,6 @@ class _BottomnavbarState extends State<Bottomnavbar> with WidgetsBindingObserver
 
   late List<Widget> _pages;
 
-  // ✅ Use CartService singleton from provider
   final cartService = CartServiceProvider.getInstance();
 
   static const Color _brandOrange = Color(0xFFFF8A00);
@@ -50,10 +48,9 @@ class _BottomnavbarState extends State<Bottomnavbar> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-
-    // React immediately when Firebase sign-in/out happens
-    FirebaseAuth.instance.authStateChanges().listen((_) => _refreshAuthState());
-
+    FirebaseAuth.instance
+        .authStateChanges()
+        .listen((_) => _refreshAuthState());
     _initialize();
   }
 
@@ -63,35 +60,7 @@ class _BottomnavbarState extends State<Bottomnavbar> with WidgetsBindingObserver
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // If user logs out in another page, refresh when app resumes
-    if (state == AppLifecycleState.resumed) {
-      _refreshAuthState();
-    }
-  }
-
-  bool _tabIsProtected(int index) => index == 2 || index == 3 || index == 4;
-
-  String _featureName(int index) {
-    switch (index) {
-      case 2:
-        return 'Messages';
-      case 3:
-        return 'Cart';
-      case 4:
-        return 'Dashboard';
-      default:
-        return 'this feature';
-    }
-  }
-
-  String? _readToken(SharedPreferences p) {
-    return p.getString('jwt_token') ??
-        p.getString('token') ??
-        p.getString('authToken') ??
-        p.getString('jwt');
-  }
+  bool _tabIsProtected(int index) => index >= 2;
 
   Future<void> _initialize() async {
     await _refreshAuthState();
@@ -101,16 +70,15 @@ class _BottomnavbarState extends State<Bottomnavbar> with WidgetsBindingObserver
 
   Future<void> _refreshAuthState() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = _readToken(prefs);
+    final token = prefs.getString('jwt_token');
     final fbUser = FirebaseAuth.instance.currentUser;
 
     final loggedIn =
-        (token != null && token.trim().isNotEmpty) || (fbUser != null);
+        (token != null && token.isNotEmpty) || fbUser != null;
 
     if (!mounted) return;
     setState(() => _isLoggedIn = loggedIn);
 
-    // If user logged out while on protected tab, force Home
     if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
       setState(() => _selectedIndex = 0);
     }
@@ -118,94 +86,51 @@ class _BottomnavbarState extends State<Bottomnavbar> with WidgetsBindingObserver
 
   Future<void> _checkUserRoleAndSetup() async {
     final prefs = await SharedPreferences.getInstance();
+    final role =
+        _isLoggedIn ? (prefs.getString('role') ?? '').toLowerCase() : '';
 
-    // If not logged in, do NOT treat as merchant (prevents wrong redirect)
-    final role = _isLoggedIn
-        ? ((prefs.getString('role') ?? prefs.getString('user_role') ?? '')
-            .toLowerCase())
-        : '';
-
-    setState(() => _isMerchant = role == 'merchant');
+    _isMerchant = role == 'merchant';
 
     _pages = [
       Vero360Homepage(email: widget.email),
       MarketPage(cartService: cartService),
-
-      // protected tabs
       const ChatListPage(),
       CartPage(cartService: cartService),
-      SettingsPage(
-        onBackToHomeTab: () => setState(() => _selectedIndex = 0),
-      ),
+      SettingsPage(onBackToHomeTab: () => setState(() => _selectedIndex = 0)),
     ];
 
     if (_isMerchant) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _redirectMerchantToServiceDashboard(prefs);
+        _redirectMerchant(prefs);
       });
     }
   }
 
-  void _redirectMerchantToServiceDashboard(SharedPreferences prefs) {
-    final merchantService =
+  void _redirectMerchant(SharedPreferences prefs) {
+    final service =
         (prefs.getString('merchant_service') ?? '').toLowerCase();
     final email = prefs.getString('email') ?? widget.email;
 
-    Widget merchantDashboard;
-    switch (merchantService) {
-      case 'marketplace':
-        merchantDashboard = MarketplaceMerchantDashboard(email: email);
-        break;
-      case 'food':
-        merchantDashboard = FoodMerchantDashboard(email: email);
-        break;
-      case 'taxi':
-        merchantDashboard = DriverDashboard();
-        break;
-      case 'accommodation':
-        merchantDashboard = AccommodationMerchantDashboard(email: email);
-        break;
-      case 'courier':
-        merchantDashboard = CourierMerchantDashboard(email: email);
-        break;
-      default:
-        merchantDashboard = Bottomnavbar(email: email);
-    }
+    Widget page = switch (service) {
+      'food' => FoodMerchantDashboard(email: email),
+      'taxi' => DriverDashboard(),
+      'accommodation' => AccommodationMerchantDashboard(email: email),
+      'courier' => CourierMerchantDashboard(email: email),
+      _ => MarketplaceMerchantDashboard(email: email),
+    };
 
-    if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => merchantDashboard),
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => page),
       (_) => false,
     );
   }
 
-  Future<bool> _onWillPop() async {
-    // ✅ Android back should go to Home tab first
-    if (_selectedIndex != 0) {
-      setState(() => _selectedIndex = 0);
-      return false;
-    }
-    return true; // now allow app to close
-  }
-
   void _onItemTapped(int index) async {
-    // Always re-check auth state right before decision (fixes “still access after logout”)
     await _refreshAuthState();
 
-    final prefs = await SharedPreferences.getInstance();
-    final role = _isLoggedIn
-        ? ((prefs.getString('role') ?? prefs.getString('user_role') ?? '')
-            .toLowerCase())
-        : '';
-
-    if (role == 'merchant') {
-      _redirectMerchantToServiceDashboard(prefs);
-      return;
-    }
-
-    // ✅ block protected tabs when logged out
     if (!_isLoggedIn && _tabIsProtected(index)) {
-      _showAuthDialog(_featureName(index));
+      _showAuthDialog();
       return;
     }
 
@@ -213,93 +138,56 @@ class _BottomnavbarState extends State<Bottomnavbar> with WidgetsBindingObserver
     setState(() => _selectedIndex = index);
   }
 
-  void _showAuthDialog(String feature) {
+  void _showAuthDialog() {
     showDialog(
       context: context,
-      barrierDismissible: true,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text("Login Required"),
-        content: Text("You need to log in or sign up to access $feature."),
+        content: const Text("Please login to access this feature."),
         actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pushNamed(context, '/login');
-            },
-            child: const Text("Login"),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pushNamed(context, '/signup');
-            },
-            child: const Text("Sign Up"),
-          ),
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/login');
+              },
+              child: const Text("Login")),
         ],
       ),
     );
-  }
-
-  Widget _guardedBody() {
-    // merchant should never stay here
-    if (_isMerchant) {
-      return const Center(child: CircularProgressIndicator(color: _brandOrange));
-    }
-
-    // second line of defense (deep links / weird state)
-    if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _showAuthDialog(_featureName(_selectedIndex));
-          setState(() => _selectedIndex = 0);
-        }
-      });
-      return _pages[0];
-    }
-
-    return _pages[_selectedIndex];
   }
 
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator(color: _brandOrange)),
+        body: Center(child: CircularProgressIndicator()),
       );
     }
 
-    return WillPopScope(
-      onWillPop: _onWillPop,
-      child: Scaffold(
-        body: _guardedBody(),
-        bottomNavigationBar: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: _GlassPillNavBar(
-              selectedIndex: _selectedIndex,
-              onTap: _onItemTapped,
-              items: const [
-                _NavItemData(icon: Icons.home_rounded, label: "Home"),
-                _NavItemData(icon: Icons.store_rounded, label: "Market"),
-                _NavItemData(icon: Icons.message_rounded, label: "Messages"),
-                _NavItemData(icon: Icons.shopping_cart_rounded, label: "Cart"),
-                _NavItemData(icon: Icons.dashboard_rounded, label: "Dashboard"),
-              ],
-              selectedGradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [_brandOrange, _brandOrangeDark],
-              ),
-              glowColor: _brandOrangeGlow,
-              selectedIconColor: Colors.white,
-              unselectedIconColor: Colors.black87,
-              unselectedLabelColor: Colors.black54,
+    return Scaffold(
+      body: _pages[_selectedIndex],
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: _GlassPillNavBar(
+            selectedIndex: _selectedIndex,
+            onTap: _onItemTapped,
+            items: const [
+              _NavItemData(icon: Icons.home_rounded, label: "Home"),
+              _NavItemData(icon: Icons.store_rounded, label: "Market"),
+              _NavItemData(icon: Icons.message_rounded, label: "Messages"),
+              _NavItemData(icon: Icons.shopping_cart_rounded, label: "Cart"),
+              _NavItemData(icon: Icons.dashboard_rounded, label: "Dashboard"),
+            ],
+            selectedGradient: const LinearGradient(
+              colors: [_brandOrange, _brandOrangeDark],
             ),
+            glowColor: _brandOrangeGlow,
+            selectedIconColor: Colors.white,
+            unselectedIconColor: Colors.black87,
+            unselectedLabelColor: Colors.black54,
           ),
         ),
       ),
@@ -307,7 +195,8 @@ class _BottomnavbarState extends State<Bottomnavbar> with WidgetsBindingObserver
   }
 }
 
-/// Glassy container + animated pill buttons
+/// ================= GLASS NAV BAR =================
+
 class _GlassPillNavBar extends StatelessWidget {
   const _GlassPillNavBar({
     required this.selectedIndex,
@@ -338,53 +227,29 @@ class _GlassPillNavBar extends StatelessWidget {
         children: [
           BackdropFilter(
             filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-            child: Container(
-              height: 74,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.55),
-                border: Border.all(
-                  color: Colors.white.withOpacity(0.65),
-                  width: 1,
-                ),
-              ),
-            ),
+            child: Container(height: 82, color: Colors.white.withOpacity(0.55)),
           ),
           Container(
-            height: 74,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.white.withOpacity(0.55),
-                  Colors.white.withOpacity(0.34),
+            height: 82,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: ClipRect(
+              child: Row(
+                children: [
+                  for (int i = 0; i < items.length; i++)
+                    Expanded(
+                      child: _AnimatedNavButton(
+                        data: items[i],
+                        selected: i == selectedIndex,
+                        onTap: () => onTap(i),
+                        selectedGradient: selectedGradient,
+                        glowColor: glowColor,
+                        selectedIconColor: selectedIconColor,
+                        unselectedIconColor: unselectedIconColor,
+                        unselectedLabelColor: unselectedLabelColor,
+                      ),
+                    ),
                 ],
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
-                  blurRadius: 20,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                for (int i = 0; i < items.length; i++)
-                  Expanded(
-                    child: _AnimatedNavButton(
-                      data: items[i],
-                      selected: i == selectedIndex,
-                      onTap: () => onTap(i),
-                      selectedGradient: selectedGradient,
-                      glowColor: glowColor,
-                      selectedIconColor: selectedIconColor,
-                      unselectedIconColor: unselectedIconColor,
-                      unselectedLabelColor: unselectedLabelColor,
-                    ),
-                  ),
-              ],
             ),
           ),
         ],
@@ -416,22 +281,26 @@ class _AnimatedNavButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final double w = constraints.maxWidth;
-          final bool canShowLabel = selected && w >= 84;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final canShowLabel = selected && w >= 92;
 
-          return InkWell(
+        return Center(
+          child: InkWell(
             onTap: onTap,
             splashColor: Colors.transparent,
             highlightColor: Colors.transparent,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 280),
+              duration: const Duration(milliseconds: 260),
               curve: Curves.easeOutCubic,
               padding: EdgeInsets.symmetric(
                 horizontal: canShowLabel ? 14 : 10,
-                vertical: 10,
+                vertical: 8,
+              ),
+              constraints: const BoxConstraints(
+                minHeight: 44,
+                maxHeight: 52,
               ),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
@@ -439,55 +308,49 @@ class _AnimatedNavButton extends StatelessWidget {
                 boxShadow: selected
                     ? [
                         BoxShadow(
-                          color: glowColor.withOpacity(0.55),
-                          blurRadius: 18,
-                          spreadRadius: 1,
+                          color: glowColor.withOpacity(0.45),
+                          blurRadius: 14,
                           offset: const Offset(0, 6),
                         ),
                       ]
                     : null,
               ),
-              constraints: const BoxConstraints(minHeight: 44),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 1.0, end: selected ? 1.18 : 1.0),
+                    tween:
+                        Tween(begin: 1.0, end: selected ? 1.12 : 1.0),
                     duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOutBack,
-                    builder: (context, scale, child) => Transform.scale(
-                      scale: scale,
-                      child: Icon(
-                        data.icon,
-                        size: 26,
-                        color: selected ? selectedIconColor : unselectedIconColor,
-                      ),
+                    builder: (_, scale, child) =>
+                        Transform.scale(scale: scale, child: child),
+                    child: Icon(
+                      data.icon,
+                      size: 26,
+                      color:
+                          selected ? selectedIconColor : unselectedIconColor,
                     ),
                   ),
                   if (canShowLabel) ...[
                     const SizedBox(width: 8),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(maxWidth: w - 40),
-                      child: Text(
-                        data.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.fade,
-                        softWrap: false,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                          letterSpacing: 0.2,
-                        ),
+                    Text(
+                      data.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.fade,
+                      softWrap: false,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
                       ),
                     ),
                   ],
                 ],
               ),
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/auth_storage.dart';
 
@@ -105,20 +106,58 @@ final verifiedDriversProvider =
   return await driverService.getVerifiedDrivers();
 });
 
-// ==================== CHECK IF CURRENT USER IS DRIVER ====================
-final isCurrentUserDriverProvider = FutureProvider<bool>((ref) async {
+// ==================== DRIVER STATUS FROM SHARED PREFERENCES ====================
+/// Loads driver status from SharedPreferences (local cache, no network call)
+final isCurrentUserDriverProvider = Provider<bool?>((ref) {
+  return _isDriverCachedValue;
+});
+
+/// Syncs driver status with backend (call periodically or on demand)
+final syncDriverStatusProvider = FutureProvider<bool>((ref) async {
   try {
     final userId = await AuthStorage.userIdFromToken();
-    if (userId == null) return false;
+    if (userId == null) {
+      await _saveDriverStatusToPrefs(false);
+      return false;
+    }
     
     final driverService = ref.watch(driverServiceProvider);
     try {
       await driverService.getDriverByUserId(userId);
+      await _saveDriverStatusToPrefs(true);
       return true;
     } catch (_) {
+      await _saveDriverStatusToPrefs(false);
       return false;
     }
   } catch (_) {
+    await _saveDriverStatusToPrefs(false);
     return false;
   }
 });
+
+// ==================== SHARED PREFERENCES HELPERS ====================
+bool? _isDriverCachedValue;
+
+/// Load driver status from SharedPreferences
+Future<bool?> loadDriverStatusFromPrefs() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getBool('user_is_driver');
+    _isDriverCachedValue = value;
+    return value;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Save driver status to SharedPreferences
+Future<void> _saveDriverStatusToPrefs(bool isDriver) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('user_is_driver', isDriver);
+    _isDriverCachedValue = isDriver;
+  } catch (_) {
+    // Silent fail
+  }
+}

@@ -387,23 +387,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     if (key == 'taxi' || key == 'car_hire') {
       final isDriver = ref.watch(isCurrentUserDriverProvider);
 
-      isDriver.when(
-        data: (isDriver) {
-          final page =
-              isDriver ? const DriverDashboard() : const RideShareMapScreen();
-          Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
-        },
-        loading: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Loading...')),
-          );
-        },
-        error: (_, __) {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const RideShareMapScreen()),
-          );
-        },
-      );
+      // ✅ INSTANT - uses cached value from SharedPreferences (no network call)
+      final page = (isDriver ?? false) 
+          ? const DriverDashboard() 
+          : const RideShareMapScreen();
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
     } else {
       _openServiceStatic(context, key);
     }

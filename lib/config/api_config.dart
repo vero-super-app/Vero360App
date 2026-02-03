@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiConfig {
-  /// API prefix (your endpoints are /vero/...)
+  /// API prefix (your endpoints are /vero/...)https://unbigamous-unappositely-kory.ngrok-free.dev
   static const String apiPrefix = '/vero';
 
   /// PROD root (as you requested)

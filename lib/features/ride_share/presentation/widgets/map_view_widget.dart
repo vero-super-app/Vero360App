@@ -3,11 +3,14 @@ import 'package:flutter/foundation.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/config/map_style_constants.dart';
+import 'package:vero360_app/providers/ride_share/nearby_vehicles_provider.dart';
+import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
 
-class MapViewWidget extends StatefulWidget {
+class MapViewWidget extends ConsumerStatefulWidget {
   final Function(GoogleMapController) onMapCreated;
   final Position? initialPosition;
   final Place? pickupPlace;
@@ -22,10 +25,10 @@ class MapViewWidget extends StatefulWidget {
   });
 
   @override
-  State<MapViewWidget> createState() => _MapViewWidgetState();
+  ConsumerState<MapViewWidget> createState() => _MapViewWidgetState();
 }
 
-class _MapViewWidgetState extends State<MapViewWidget> {
+class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   late GoogleMapController _mapController;
   late Set<Marker> _markers;
   late Set<Polyline> _polylines;
@@ -395,8 +398,72 @@ class _MapViewWidgetState extends State<MapViewWidget> {
     });
   }
 
+  /// Update vehicle markers on the map from nearby vehicles data
+  void _updateVehicleMarkers(List<NearbyVehicle> vehicles) {
+    // Remove old vehicle markers (keep user, pickup, dropoff, route)
+    _markers.removeWhere((marker) => marker.markerId.value.startsWith('vehicle_'));
+
+    // Add new vehicle markers
+    for (final vehicle in vehicles) {
+      _markers.add(
+        Marker(
+          markerId: MarkerId('vehicle_${vehicle.id}'),
+          position: LatLng(vehicle.latitude, vehicle.longitude),
+          infoWindow: InfoWindow(
+            title: '${vehicle.make} ${vehicle.model}',
+            snippet:
+                '${vehicle.distance.toStringAsFixed(1)}km • ⭐${vehicle.rating}',
+          ),
+          icon: _getVehicleMarkerIcon(vehicle.vehicleClass),
+        ),
+      );
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// Get marker color based on vehicle class
+  BitmapDescriptor _getVehicleMarkerIcon(String vehicleClass) {
+    switch (vehicleClass) {
+      case 'ECONOMY':
+        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
+      case 'COMFORT':
+        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange);
+      case 'PREMIUM':
+        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet);
+      case 'BUSINESS':
+        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
+      default:
+        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Watch nearby vehicles
+    final nearbyVehiclesState = ref.watch(nearbyVehiclesProvider);
+
+    // Update vehicle markers when nearby vehicles change
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (nearbyVehiclesState.vehicles.isNotEmpty) {
+        _updateVehicleMarkers(nearbyVehiclesState.vehicles);
+      }
+    });
+
+    // Start fetching nearby vehicles if user location is available
+    if (widget.initialPosition != null &&
+        nearbyVehiclesState.userLatitude == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
+              latitude: widget.initialPosition!.latitude,
+              longitude: widget.initialPosition!.longitude,
+              radiusKm: 5.0,
+            );
+      });
+    }
+
     return Stack(
       children: [
         GoogleMap(
@@ -412,6 +479,44 @@ class _MapViewWidgetState extends State<MapViewWidget> {
           mapToolbarEnabled: false,
           compassEnabled: true,
         ),
+        // Nearby vehicles indicator
+        if (nearbyVehiclesState.vehicles.isNotEmpty)
+          Positioned(
+            top: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 8,
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.directions_car,
+                    color: Color(0xFFFF8A00),
+                    size: 18,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${nearbyVehiclesState.vehicles.length} nearby',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         // Satellite/Map toggle button
         Positioned(
           bottom: 16,

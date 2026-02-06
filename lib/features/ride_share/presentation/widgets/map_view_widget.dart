@@ -48,10 +48,22 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
     // Initial route draw if both places are provided
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (widget.pickupPlace != null && widget.dropoffPlace != null) {
+      if (mounted && widget.pickupPlace != null && widget.dropoffPlace != null) {
         _updateRoutePolyline();
       }
     });
+
+    if (widget.initialPosition != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
+                latitude: widget.initialPosition!.latitude,
+                longitude: widget.initialPosition!.longitude,
+                radiusKm: 5.0,
+              );
+        }
+      });
+    }
   }
 
   Future<void> _loadMapStyle() async {
@@ -102,11 +114,38 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
             '[MapViewWidget] ✅ Places changed! Updating route polyline...');
       }
       _updateRoutePolyline();
-    } else {
-      if (kDebugMode) {
-        debugPrint('[MapViewWidget] ❌ No changes detected');
-      }
     }
+
+    final oldPos = oldWidget.initialPosition;
+    final newPos = widget.initialPosition;
+    if (newPos != null &&
+        (oldPos == null ||
+            oldPos.latitude != newPos.latitude ||
+            oldPos.longitude != newPos.longitude)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        animateToPosition(newPos.latitude, newPos.longitude);
+        _updateUserMarker(newPos);
+        ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
+              latitude: newPos.latitude,
+              longitude: newPos.longitude,
+              radiusKm: 5.0,
+            );
+      });
+    }
+  }
+
+  void _updateUserMarker(Position position) {
+    _markers.removeWhere((m) => m.markerId == const MarkerId('user_location'));
+    _markers.add(
+      Marker(
+        markerId: const MarkerId('user_location'),
+        position: LatLng(position.latitude, position.longitude),
+        infoWindow: const InfoWindow(title: 'Your Location'),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   void _initializeCameraPosition() {
@@ -187,9 +226,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         debugPrint(
             '[MapViewWidget] Pickup or dropoff is null, clearing polylines');
       }
-      setState(() {
-        _polylines.clear();
-      });
+      if (mounted) setState(() => _polylines.clear());
       return;
     }
 
@@ -252,12 +289,11 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
               '[MapViewWidget] Polyline has ${polylineCoordinates.length} points');
         }
 
-        if (polylineCoordinates.isNotEmpty) {
+        if (polylineCoordinates.isNotEmpty && mounted) {
           if (kDebugMode) {
             debugPrint('[MapViewWidget] Polyline added to map');
           }
 
-          // Animate polyline drawing with smooth transitions
           setState(() {
             _polylines.clear();
             _polylines.add(
@@ -269,12 +305,9 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
                 geodesic: true,
               ),
             );
-
-            // Add markers for pickup and dropoff
             _updatePlaceMarkers();
           });
 
-          // Animate camera to fit both locations with delay for smooth UX
           _fitCameraToBounds(polylineCoordinates);
         }
       } else {
@@ -285,12 +318,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[MapViewWidget] Error loading route: $e');
-        debugPrint('[MapViewWidget] Stack trace: $e');
       }
-      // Clear polylines on error
-      setState(() {
-        _polylines.clear();
-      });
+      if (mounted) setState(() => _polylines.clear());
     }
   }
 
@@ -442,27 +471,15 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // Watch nearby vehicles
     final nearbyVehiclesState = ref.watch(nearbyVehiclesProvider);
 
-    // Update vehicle markers when nearby vehicles change
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (nearbyVehiclesState.vehicles.isNotEmpty) {
-        _updateVehicleMarkers(nearbyVehiclesState.vehicles);
+    ref.listen(nearbyVehiclesProvider, (prev, next) {
+      if (next.vehicles.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _updateVehicleMarkers(next.vehicles);
+        });
       }
     });
-
-    // Start fetching nearby vehicles if user location is available
-    if (widget.initialPosition != null &&
-        nearbyVehiclesState.userLatitude == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
-              latitude: widget.initialPosition!.latitude,
-              longitude: widget.initialPosition!.longitude,
-              radiusKm: 5.0,
-            );
-      });
-    }
 
     return Stack(
       children: [
@@ -473,8 +490,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
           polylines: _polylines,
           mapType: _mapType,
           style: _mapStyleJson,
-          myLocationEnabled: false,
-          myLocationButtonEnabled: false,
+          myLocationEnabled: true,
+          myLocationButtonEnabled: true,
           zoomControlsEnabled: true,
           mapToolbarEnabled: false,
           compassEnabled: true,

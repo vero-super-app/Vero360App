@@ -238,6 +238,11 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       duration: const Duration(milliseconds: 300),
       vsync: this,
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      RecentPlacesManager.loadAndSet(ref);
+      ref.invalidate(currentLocationProvider);
+    });
   }
 
   @override
@@ -381,44 +386,53 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                     color: Colors.white,
                     child: Stack(
                       children: [
-                        Column(
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                  left: 16, right: 16, top: 20, bottom: 12),
-                              child: Column(
-                                children: [
-                                  _buildPickupLocationCard(),
-                                  const SizedBox(height: 14),
-                                  if (selectedDropoffPlace == null)
-                                    PlaceSearchWidget(
-                                      searchController: _searchController,
-                                      focusNode: _searchFocusNode,
-                                      onToggleBookmarkedPlaces:
-                                          _toggleBookmarkedPlacesModal,
-                                      readOnly: true,
-                                      onTap: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) =>
-                                                const DestinationSearchScreen(),
-                                          ),
-                                        );
-                                      },
-                                    )
-                                  else
-                                    _buildDropoffLocationCard(
-                                        selectedDropoffPlace),
-                                ],
+                        SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                    left: 16, right: 16, top: 20, bottom: 12),
+                                child: Column(
+                                  children: [
+                                    _buildPickupLocationCard(),
+                                    const SizedBox(height: 14),
+                                    if (selectedDropoffPlace == null)
+                                      PlaceSearchWidget(
+                                        searchController: _searchController,
+                                        focusNode: _searchFocusNode,
+                                        onToggleBookmarkedPlaces:
+                                            _toggleBookmarkedPlacesModal,
+                                        readOnly: true,
+                                        onTap: () {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) =>
+                                                  const DestinationSearchScreen(),
+                                            ),
+                                          );
+                                        },
+                                      )
+                                    else
+                                      _buildDropoffLocationCard(
+                                          selectedDropoffPlace),
+                                  ],
+                                ),
                               ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 16),
-                              child: _buildActionButton(selectedDropoffPlace),
-                            ),
-                          ],
+                              if (selectedDropoffPlace == null)
+                                ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxHeight: 140),
+                                  child: _buildSearchResultsSection(),
+                                ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 12),
+                                child: _buildActionButton(selectedDropoffPlace),
+                              ),
+                            ],
+                          ),
                         ),
                         // Search results popup overlay
                         if (_showBookmarkedPlaces)
@@ -473,6 +487,27 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   }
 
   Widget _buildPickupLocationCard() {
+    final pickupAsync = ref.watch(pickupDisplayProvider);
+    return pickupAsync.when(
+      data: (pickup) => _buildPickupCardContent(
+        title: pickup.userName,
+        subtitle: pickup.address,
+      ),
+      loading: () => _buildPickupCardContent(
+        title: 'Your Location',
+        subtitle: 'Detecting your location...',
+      ),
+      error: (_, __) => _buildPickupCardContent(
+        title: 'Your Location',
+        subtitle: 'Current Location',
+      ),
+    );
+  }
+
+  Widget _buildPickupCardContent({
+    required String title,
+    required String subtitle,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
@@ -511,16 +546,18 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Your Location',
+                  title,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                         color: Colors.black87,
                       ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
-                    'Current Location',
+                    subtitle,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Colors.grey[500],
                         ),
@@ -583,18 +620,17 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (dropoffPlace.address != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      dropoffPlace.address!,
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    dropoffPlace.address,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: Colors.grey[500],
                           ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                   maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
+                ),
               ],
             ),
           ),
@@ -629,64 +665,49 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   }
 
   Widget _buildSearchResultsSection() {
+    final recentPlaces = ref.watch(recentPlacesProvider);
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_searchController.text.isEmpty)
+          Text(
+            'Recent Places',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+          ),
+          const SizedBox(height: 12),
+          if (recentPlaces.isEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Recent Places',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildPlaceItem(
-                    'Home',
-                    '123 Main Street, Downtown',
-                    Icons.home_outlined,
-                  ),
-                  _buildPlaceItem(
-                    'Office',
-                    '456 Business Ave, Tech Park',
-                    Icons.business_outlined,
-                  ),
-                  _buildPlaceItem(
-                    'Favorite Spot',
-                    '789 Park Lane, Downtown',
-                    Icons.favorite_outline,
-                  ),
-                ],
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'No recent searches. Tap "Where to?" to search.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[500],
+                    ),
               ),
             )
           else
-            Column(
-              children: [
-                _buildSearchResultItem(
-                  'Downtown Station',
-                  '0.5 km away',
-                  Icons.location_on_outlined,
-                ),
-                _buildSearchResultItem(
-                  'Central Market',
-                  '1.2 km away',
-                  Icons.location_on_outlined,
-                ),
-                _buildSearchResultItem(
-                  'Airport Terminal',
-                  '8.5 km away',
-                  Icons.location_on_outlined,
-                ),
-              ],
+            ...recentPlaces.map(
+              (place) => _buildRecentPlaceItem(place),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildRecentPlaceItem(Place place) {
+    return GestureDetector(
+      onTap: () {
+        ref.read(selectedDropoffPlaceProvider.notifier).state = place;
+        _unfocusKeyboard();
+      },
+      child: _buildPlaceItem(
+        place.name,
+        place.address,
+        Icons.history,
       ),
     );
   }
@@ -751,62 +772,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     );
   }
 
-  Widget _buildSearchResultItem(String title, String subtitle, IconData icon) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF8A00).withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              icon,
-              color: const Color(0xFFFF8A00),
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black87,
-                      ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[500],
-                      ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildModernBackButton() {
     return GestureDetector(
       onTap: () => Navigator.pop(context),
@@ -837,7 +802,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         const Text(
-          'Book Your Ride',
+          'Book Your Vero Ride',
           style: TextStyle(
             fontWeight: FontWeight.w900,
             fontSize: 22,
@@ -916,7 +881,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            'You need to be signed in to book a ride',
+            'You need to be signed in to book a Vero ride',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Colors.grey[600],
                 ),

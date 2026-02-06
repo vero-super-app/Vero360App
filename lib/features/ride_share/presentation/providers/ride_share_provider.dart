@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart'
     show Provider, FutureProvider, StreamProvider;
 import 'package:flutter_riverpod/legacy.dart' show StateProvider;
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/place_prediction_model.dart';
 import 'package:vero360_app/GernalServices/ride_share_service.dart';
@@ -10,6 +13,7 @@ import 'package:vero360_app/GernalServices/place_service.dart';
 import 'package:vero360_app/GernalServices/google_places_service.dart';
 import 'package:vero360_app/GernalServices/google_directions_service.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 // ==================== SERVICES ====================
 final rideShareServiceProvider = Provider<RideShareService>((ref) {
@@ -51,6 +55,57 @@ final currentLocationProvider = FutureProvider<Position?>((ref) async {
 final locationStreamProvider = StreamProvider<Position>((ref) {
   final locationService = ref.watch(locationServiceProvider);
   return locationService.getLocationStream();
+});
+
+/// Resolved address for current location (reverse geocoding). Use for pickup card.
+final currentLocationAddressProvider = FutureProvider<String?>((ref) async {
+  final position = await ref.watch(currentLocationProvider.future);
+  if (position == null) return null;
+  final placeService = ref.watch(placeServiceProvider);
+  return placeService.getAddressFromCoordinates(
+    position.latitude,
+    position.longitude,
+  );
+});
+
+/// Pickup display: user's name + address. Prefers saved profile address over GPS reverse geocoding.
+class PickupDisplay {
+  final String userName;
+  final String address;
+
+  PickupDisplay({required this.userName, required this.address});
+}
+
+final pickupDisplayProvider = FutureProvider<PickupDisplay>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  String userName = prefs.getString('fullName') ??
+      prefs.getString('name') ??
+      await AuthStorage.userNameFromToken() ??
+      'Your Location';
+  if (userName.trim().isEmpty) userName = 'Your Location';
+  final savedAddr =
+      prefs.getString('address')?.trim();
+  final useSavedAddress = savedAddr != null &&
+      savedAddr.isNotEmpty &&
+      savedAddr.toLowerCase() != 'no address';
+
+  if (useSavedAddress) {
+    return PickupDisplay(userName: userName, address: savedAddr);
+  }
+
+  final position = await ref.watch(currentLocationProvider.future);
+  if (position == null) {
+    return PickupDisplay(userName: userName, address: 'Current Location');
+  }
+  final placeService = ref.watch(placeServiceProvider);
+  final addr = await placeService.getAddressFromCoordinates(
+    position.latitude,
+    position.longitude,
+  );
+  return PickupDisplay(
+    userName: userName,
+    address: (addr != null && addr.isNotEmpty) ? addr : 'Current Location',
+  );
 });
 
 // ==================== PLACE SEARCH ====================
@@ -115,6 +170,53 @@ final serpapiPlacesAutocompleteProvider =
   final googlePlacesService = ref.watch(googlePlacesServiceProvider);
   return await googlePlacesService.autocompleteSearch(query);
 });
+
+// ==================== RECENT PLACES (from search history) ====================
+const String _recentPlacesStorageKey = 'ride_share_recent_places';
+const int _maxRecentPlaces = 15;
+
+final recentPlacesProvider = StateProvider<List<Place>>((ref) => []);
+
+class RecentPlacesManager {
+  /// Load recent places from SharedPreferences and update provider
+  static Future<void> loadAndSet(dynamic ref) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonList = prefs.getStringList(_recentPlacesStorageKey);
+      if (jsonList == null || jsonList.isEmpty) {
+        return;
+      }
+      final places = <Place>[];
+      for (final jsonStr in jsonList) {
+        try {
+          final map = jsonDecode(jsonStr) as Map<String, dynamic>;
+          places.add(Place.fromJson(map));
+        } catch (_) {
+          // Skip invalid entries
+        }
+      }
+      ref.read(recentPlacesProvider.notifier).state = places;
+    } catch (e) {
+      // Ignore load errors
+    }
+  }
+
+  /// Add a place to recent (e.g. when user selects a destination). Dedupes by id, keeps latest first, caps at [_maxRecentPlaces].
+  static Future<void> addPlace(dynamic ref, Place place) async {
+    final list = ref.read(recentPlacesProvider);
+    final updated = [
+      place.copyWith(type: PlaceType.RECENT),
+      ...list.where((p) => p.id != place.id),
+    ].take(_maxRecentPlaces).toList();
+    ref.read(recentPlacesProvider.notifier).state = updated;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonList =
+          updated.map((p) => jsonEncode(p.toJson())).toList();
+      await prefs.setStringList(_recentPlacesStorageKey, jsonList);
+    } catch (_) {}
+  }
+}
 
 // ==================== BOOKMARKED PLACES ====================
 final bookmarkedPlacesProvider = StateProvider<List<Place>>(

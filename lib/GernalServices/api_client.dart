@@ -122,16 +122,21 @@ class ApiClient {
       ...?headers,
     };
 
-    // 🔐 Auto‑attach Firebase ID token if logged in and no Authorization provided
+    // 🔐 Auto‑attach Firebase ID token (JWT) if logged in and no Authorization provided
     try {
       final hasAuthHeader =
           allHeaders.keys.any((k) => k.toLowerCase() == 'authorization');
       if (!hasAuthHeader) {
         final user = FirebaseAuth.instance.currentUser;
         if (user != null) {
-          final token = await user.getIdToken();
+          final rawToken = await user.getIdToken();
+          final token = rawToken?.trim();
           if (token != null && token.isNotEmpty) {
             allHeaders['Authorization'] = 'Bearer $token';
+            if (kDebugMode) {
+              debugPrint('[JWT] Firebase ID token length: ${token.length}');
+              debugPrint('[JWT] jwt_token: $token');
+            }
           }
         }
       }

@@ -46,16 +46,16 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 
-	<key>CFBundleURLTypes</key>
+<key>CFBundleURLTypes</key>
 <array>
   <dict>
     <key>CFBundleURLSchemes</key>
     <array>
-      <string>vero360</string>
+      <!-- Firebase / Google Sign-In URL scheme -->
+      <string>com.googleusercontent.apps.1010595167807-404sciqkn2mt62srt60tiaa86evvhl59</string>
     </array>
   </dict>
 </array>
-
 
 	<!-- Performance -->
 	<key>CADisableMinimumFrameDurationOnPhone</key>

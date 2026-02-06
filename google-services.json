@@ -1,0 +1,69 @@
+{
+  "project_info": {
+    "project_number": "1010595167807",
+    "firebase_url": "https://vero360app-ca423-default-rtdb.firebaseio.com",
+    "project_id": "vero360app-ca423",
+    "storage_bucket": "vero360app-ca423.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1010595167807:android:87af3098cda575fd1dc28a",
+        "android_client_info": {
+          "package_name": "com.vero.vero360"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1010595167807-vl7asia9e4eep8u68g9c8mp5aa3eotgi.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1010595167807-vl7asia9e4eep8u68g9c8mp5aa3eotgi.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1010595167807:android:f63d7c7959bdb2891dc28a",
+        "android_client_info": {
+          "package_name": "vero.a360_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1010595167807-vl7asia9e4eep8u68g9c8mp5aa3eotgi.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1010595167807-vl7asia9e4eep8u68g9c8mp5aa3eotgi.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

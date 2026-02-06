@@ -1,16 +1,10 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 class UserService {
-  Future<String?> _readToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('jwt_token') ?? prefs.getString('token');
-  }
-
-  Future<String> _base() => ApiConfig.readBase();
-
   String _pretty(String body) {
     try {
       final j = jsonDecode(body);
@@ -21,17 +15,21 @@ class UserService {
     return body;
   }
 
+  /// Calls NestJS /vero/users/me with the Firebase ID token in Authorization header.
   Future<Map<String, dynamic>> getMe() async {
-    final token = await _readToken();
+    final token = await AuthHandler.getFirebaseToken();
     if (token == null || token.isEmpty) {
-      throw Exception('No auth token found (please log in).');
+      throw Exception('No Firebase token found (please log in).');
     }
 
-    final url = Uri.parse('${await _base()}/vero/users/me');
-    final res = await http.get(url, headers: {
-      'Accept': 'application/json',
-      'Authorization': 'Bearer $token',
-    });
+    final url = ApiConfig.endpoint('/users/me');
+    final res = await http.get(
+      url,
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+    );
 
     if (res.statusCode == 200) {
       final data = jsonDecode(res.body);

@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import 'package:vero360_app/GernalServices/auth_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
@@ -16,7 +16,7 @@ import 'package:vero360_app/features/Restraurants/RestraurantPresenter/Restraura
 
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
-import 'package:vero360_app/widgets/oauth_buttons.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -308,7 +308,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         // Fallback to generic merchant dashboard
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => MarketplaceMerchantDashboard(email: displayId),
+            builder: (_) => MarketplaceMerchantDashboard(email: displayId, onBackToHomeTab: () {  },),
           ),
           (_) => false,
         );
@@ -327,7 +327,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget _getMerchantDashboard(String serviceKey, String email) {
     switch (serviceKey) {
       case 'marketplace':  // Add marketplace case
-        return MarketplaceMerchantDashboard(email: email);
+        return MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },);
       case 'food':
         return FoodMerchantDashboard(email: email);
       case 'taxi':
@@ -338,7 +338,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return CourierMerchantDashboard(email: email);
       // Add more cases for other services
       default:
-        return MarketplaceMerchantDashboard(email: email);
+        return MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },);
     }
   }
 

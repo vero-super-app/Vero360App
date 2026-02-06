@@ -33,7 +33,7 @@ import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 // Add login screen import (using your correct path)
-import 'package:vero360_app/GernalScreens/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 
 import 'package:vero360_app/Home/homepage.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
@@ -80,7 +80,7 @@ class LocalMedia {
 
 class MarketplaceMerchantDashboard extends StatefulWidget {
   final String email;
-  const MarketplaceMerchantDashboard({super.key, required this.email});
+  const MarketplaceMerchantDashboard({super.key, required this.email, required void Function() onBackToHomeTab});
 
   @override
   State<MarketplaceMerchantDashboard> createState() =>

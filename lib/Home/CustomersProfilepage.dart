@@ -26,8 +26,8 @@ import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/GeneralPages/changepassword.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/myaccomodation.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
-import 'package:vero360_app/GernalScreens/login_screen.dart';
-import 'package:vero360_app/GernalServices/auth_service.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 
 /* Latest arrivals (API) */
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/latest_Services.dart';

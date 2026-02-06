@@ -5,8 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 
-import 'package:vero360_app/GernalScreens/login_screen.dart';
-import 'package:vero360_app/GernalScreens/register_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 
 class AuthGuard extends StatefulWidget {
   final Widget child;
@@ -14,15 +14,15 @@ class AuthGuard extends StatefulWidget {
   /// Optional label used in the dialog message
   final String featureName;
 
-  /// If true: user can view the page but it will be DISABLED until login (dialog shown)
-  /// This matches your old behavior but prevents real access.
+  /// If true: when not logged in, show child behind a blocking overlay (no real access).
+  /// If false: when not logged in, do not show protected content — redirect only.
   final bool showChildBehindDialog;
 
   const AuthGuard({
     Key? key,
     required this.child,
     this.featureName = 'this feature',
-    this.showChildBehindDialog = true,
+    this.showChildBehindDialog = false,
   }) : super(key: key);
 
   @override
@@ -192,7 +192,9 @@ class _AuthGuardState extends State<AuthGuard> with WidgetsBindingObserver {
       );
     }
 
-    // Or, if you ever want full block screen:
-    return const SizedBox.shrink();
+    // Do not show protected content — blocking screen; dialog is shown by _checkAuthStatus.
+    return const Scaffold(
+      body: Center(child: CircularProgressIndicator()),
+    );
   }
 }

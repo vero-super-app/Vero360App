@@ -13,10 +13,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/config/api_config.dart';
-import 'package:vero360_app/GernalServices/auth_service.dart';
+
 import 'package:vero360_app/utils/toasthelper.dart';
 
 // REQUIRED PAGES
@@ -60,7 +61,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // customer service
   static const String _supportPhone = '+265999955270';
-  static const String _supportWhatsApp = '+265999955270';
+  static const String _supportWhatsApp = '+265992695612';
   static const String _supportEmail = 'support@vero360.app';
 
   @override
@@ -493,7 +494,7 @@ class _SettingsPageState extends State<SettingsPage> {
               onTap: () async {
                 Navigator.pop(context);
                 await _launchWhatsApp(
-                    _supportWhatsApp, 'Hello support, I need help.');
+                    _supportWhatsApp, 'Hello vero support, I need help.');
               },
             ),
             ListTile(
@@ -1040,13 +1041,15 @@ class _SettingsTile extends StatelessWidget {
   }
 }
 
-// -------------------- ABOUT US --------------------
 class AboutUsPage extends StatelessWidget {
   final String appVersion;
   final String buildNumber;
 
-  const AboutUsPage(
-      {super.key, required this.appVersion, required this.buildNumber});
+  const AboutUsPage({
+    super.key,
+    required this.appVersion,
+    required this.buildNumber,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1055,9 +1058,9 @@ class AboutUsPage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: kBrandNavy,
         foregroundColor: Colors.white,
-        title: const Text('About us'),
+        title: const Text('About Us'),
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -1069,21 +1072,108 @@ class AboutUsPage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Vero360',
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-              const SizedBox(height: 8),
+              // App name
               const Text(
-                'This app helps customers and merchants manage products, orders, and services in one place.',
-                style: TextStyle(height: 1.35),
-              ),
-              const SizedBox(height: 14),
-              Text('Version: v$appVersion ($buildNumber)',
-                  style: const TextStyle(fontWeight: FontWeight.w800)),
-              const SizedBox(height: 10),
-              const Text(
-                'Replace this About text with your official content.',
+                'Vero360',
                 style: TextStyle(
-                    color: Colors.black54, fontWeight: FontWeight.w600),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                ),
+              ),
+              const SizedBox(height: 6),
+
+              const Text(
+                'One app. Everything.',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black54,
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // Description
+              const Text(
+                'Vero360 is an all-in-one digital platform designed to connect customers, merchants, and service providers in one secure and convenient ecosystem.',
+                style: TextStyle(height: 1.4),
+              ),
+
+              const SizedBox(height: 14),
+
+              const Text(
+                'Through Vero360, users can access marketplace products, food services, transport, courier services, accommodation bookings, and secure communication — all from a single app.',
+                style: TextStyle(height: 1.4),
+              ),
+
+              const SizedBox(height: 20),
+
+              // Mission
+              const Text(
+                'Our Mission',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'To simplify everyday life by providing a reliable, secure, and unified digital platform for services and commerce.',
+                style: TextStyle(height: 1.4),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Vision
+              const Text(
+                'Our Vision',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'To become Malawi’s leading super app for digital services, empowering businesses and improving customer experiences.',
+                style: TextStyle(height: 1.4),
+              ),
+
+              const SizedBox(height: 20),
+
+              // App version
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF4F5F7),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.black12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Version v$appVersion ($buildNumber)',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+             
+              
+              const SizedBox(height: 10),
+
+              // Footer
+              const Center(
+                child: Text(
+                  '© 2026 Vero360. All rights reserved.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.black54,
+                  ),
+                ),
               ),
             ],
           ),
@@ -1093,7 +1183,11 @@ class AboutUsPage extends StatelessWidget {
   }
 }
 
-// -------------------- POLICY PAGE --------------------
+
+
+// make sure this exists
+// const kBrandNavy = Color(0xFF0B1C2D);
+
 class PolicyPage extends StatelessWidget {
   const PolicyPage({super.key});
 
@@ -1119,26 +1213,80 @@ class PolicyPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Privacy Policy',
-                    style:
-                        TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                // ================= PRIVACY POLICY =================
+                Text(
+                  'Privacy Policy',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
                 SizedBox(height: 8),
                 Text(
-                  '• We store basic account details (name, email, phone, address) to run the app.\n'
-                  '• You can clear cache anytime.\n'
-                  '• You can delete your account from Settings.\n',
+                  'Your privacy matters to us. Vero360 collects only the information necessary to operate and improve the app.',
                   style: TextStyle(height: 1.35),
                 ),
-                SizedBox(height: 14),
-                Text('Terms & Conditions',
-                    style:
-                        TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                SizedBox(height: 10),
+                Text(
+                  '• Basic account details such as name, email, phone number, and address.\n'
+                  '• Google and apple Login and authentication data .\n'
+                  '• Order, booking, and service history for app functionality.\n'
+                  '• Chat messages required for communication between users and merchants.\n'
+                  '• App usage data for performance and security improvements.\n',
+                  style: TextStyle(height: 1.35),
+                ),
                 SizedBox(height: 8),
                 Text(
-                  '• Use the app responsibly.\n'
-                  '• Do not upload illegal content.\n'
-                  '• We may update these terms as features change.\n',
+                  'We do not sell or rent your personal data. Payments are handled securely by trusted third-party providers, and Vero360 does not store your payment credentials.',
                   style: TextStyle(height: 1.35),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'You may clear cached data, update your information, or request account deletion at any time through the Settings section.',
+                  style: TextStyle(height: 1.35),
+                ),
+
+                SizedBox(height: 18),
+
+                // ================= TERMS & CONDITIONS =================
+                Text(
+                  'Terms & Conditions',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'By using Vero360, you agree to the following terms:',
+                  style: TextStyle(height: 1.35),
+                ),
+                SizedBox(height: 10),
+                Text(
+                  '• Use the app in a lawful and responsible manner.\n'
+                  '• Do not upload or share illegal, harmful, or misleading content.\n'
+                  '• Respect other users, merchants, and service providers.\n'
+                  '• The system holds Money untill both parties are satisified with the business.\n'
+                  '• Merchants are responsible for the accuracy of their products and services.\n'
+                  '• Vero360 acts as a technology platform and is not the direct provider of services.\n',
+                  style: TextStyle(height: 1.35),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'We reserve the right to update these terms and policies as the platform evolves. Continued use of the app indicates acceptance of any updates.',
+                  style: TextStyle(height: 1.35),
+                ),
+
+                SizedBox(height: 18),
+
+                // ================= FOOTER =================
+                Text(
+                  'Last updated: February 2026',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.black54,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
             ),

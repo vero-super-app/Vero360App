@@ -5,7 +5,7 @@ import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
-import 'package:vero360_app/GernalServices/auth_storage.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 class VehicleTypeOption {
   final String class_;

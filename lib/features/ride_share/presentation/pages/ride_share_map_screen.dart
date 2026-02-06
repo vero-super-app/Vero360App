@@ -13,7 +13,7 @@ import 'package:vero360_app/features/ride_share/presentation/pages/destination_s
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
-import 'package:vero360_app/GernalServices/auth_storage.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
   const RideShareMapScreen({super.key});

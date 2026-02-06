@@ -1,5 +1,5 @@
 import 'package:dio/dio.dart';
-import 'package:vero360_app/GernalServices/auth_storage.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 class DriverService {

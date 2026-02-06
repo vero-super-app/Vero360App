@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 
 import '../../Home/homepage.dart';
 import '../Marketplace/presentation/pages/main_marketPlace.dart';
@@ -94,9 +95,26 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _pages = [
       Vero360Homepage(email: widget.email),
       MarketPage(cartService: cartService),
-      const ChatListPage(),
-      CartPage(cartService: cartService),
-      SettingsPage(onBackToHomeTab: () => setState(() => _selectedIndex = 0)),
+      const AuthGuard(
+        featureName: 'Messages',
+        showChildBehindDialog: true,
+        child: ChatListPage(),
+      ),
+      AuthGuard(
+        featureName: 'Cart',
+        showChildBehindDialog: true,
+        child: CartPage(cartService: cartService),
+      ),
+      AuthGuard(
+        featureName: 'Dashboard',
+        showChildBehindDialog: true,
+        child: MarketplaceMerchantDashboard(
+          email: widget.email,
+          onBackToHomeTab: () {
+            setState(() => _selectedIndex = 0);
+          },
+        ),
+      ),
     ];
 
     if (_isMerchant) {
@@ -116,7 +134,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
       'taxi' => DriverDashboard(),
       'accommodation' => AccommodationMerchantDashboard(email: email),
       'courier' => CourierMerchantDashboard(email: email),
-      _ => MarketplaceMerchantDashboard(email: email),
+      _ => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },),
     };
 
     Navigator.pushAndRemoveUntil(

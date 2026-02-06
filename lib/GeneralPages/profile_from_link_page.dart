@@ -1,8 +1,8 @@
 // lib/pages/profile_from_link_page.dart
 import 'package:flutter/material.dart';
-import 'package:vero360_app/GernalServices/user_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/user_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
-import 'package:vero360_app/GernalScreens/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 
 class ProfileFromLinkPage extends StatefulWidget {
   const ProfileFromLinkPage({Key? key}) : super(key: key);

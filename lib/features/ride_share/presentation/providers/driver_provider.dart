@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
-import 'package:vero360_app/GernalServices/auth_storage.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 // ==================== SERVICES ====================
 final driverServiceProvider = Provider<DriverService>((ref) {

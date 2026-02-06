@@ -12,11 +12,11 @@ import 'package:vero360_app/features/Restraurants/RestraurantPresenter/Restraura
 
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
-import 'package:vero360_app/GernalScreens/register_screen.dart';
-import 'package:vero360_app/GernalServices/auth_service.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
-import 'package:vero360_app/widgets/oauth_buttons.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -53,7 +53,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _getMerchantDashboard(String serviceKey, String email) {
     switch (serviceKey) {
       case 'marketplace':  // Add marketplace case
-        return MarketplaceMerchantDashboard(email: email);
+        return MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },);
       case 'food':
         return FoodMerchantDashboard(email: email);
       case 'taxi':
@@ -64,7 +64,7 @@ class _LoginScreenState extends State<LoginScreen> {
         return CourierMerchantDashboard(email: email);
       // Add more cases for other services as needed
       default:
-        return MarketplaceMerchantDashboard(email: email);
+        return MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },);
     }
   }
 
@@ -163,7 +163,7 @@ class _LoginScreenState extends State<LoginScreen> {
         // No specific service found, go to generic merchant dashboard
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => MarketplaceMerchantDashboard(email: displayId),
+            builder: (_) => MarketplaceMerchantDashboard(email: displayId, onBackToHomeTab: () {  },),
           ),
           (_) => false,
         );

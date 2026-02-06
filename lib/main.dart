@@ -31,11 +31,11 @@ import 'package:vero360_app/Home/CustomersProfilepage.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
-import 'package:vero360_app/GernalScreens/login_screen.dart';
-import 'package:vero360_app/GernalScreens/register_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 
 // Services
-import 'package:vero360_app/GernalServices/auth_guard.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/messaging_initialization_service.dart';
@@ -699,7 +699,7 @@ class _MyAppState extends State<MyApp> {
     _currentShell = 'merchant';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(
-          builder: (_) => MarketplaceMerchantDashboard(email: email)),
+          builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
       (_) => false,
     );
   }
@@ -844,7 +844,7 @@ class AuthFlow {
         if (role == 'merchant') {
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(
-                builder: (_) => MarketplaceMerchantDashboard(email: email)),
+                builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
             (_) => false,
           );
         } else {

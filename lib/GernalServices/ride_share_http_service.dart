@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 
@@ -19,13 +20,36 @@ class RideShareHttpService {
     _initializeSocket();
   }
 
-  /// Get auth token from shared preferences
+  /// Get auth token - tries Firebase first, then falls back to SharedPreferences
   Future<String?> _getAuthToken() async {
     try {
+      // Try to get fresh Firebase ID token if user is logged in
+      final firebaseUser = FirebaseAuth.instance.currentUser;
+      if (firebaseUser != null) {
+        try {
+          final freshToken = await firebaseUser.getIdToken();
+          if (freshToken != null && freshToken.isNotEmpty) {
+            print('[RideShare] Using fresh Firebase ID token');
+            return freshToken;
+          }
+        } catch (e) {
+          print('[RideShare] Error getting fresh Firebase token: $e');
+        }
+      }
+
+      // Fallback to SharedPreferences if Firebase token not available
       final prefs = await SharedPreferences.getInstance();
-      return prefs.getString('jwt_token') ??
+      final storedToken = prefs.getString('jwt_token') ??
           prefs.getString('token') ??
           prefs.getString('jwt');
+      
+      if (storedToken != null) {
+        print('[RideShare] Using stored token from SharedPreferences');
+        return storedToken;
+      }
+
+      print('[RideShare] No authentication token available');
+      return null;
     } catch (e) {
       print('Error reading auth token: $e');
       return null;

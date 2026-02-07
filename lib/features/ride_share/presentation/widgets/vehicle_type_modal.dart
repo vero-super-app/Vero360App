@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
-import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
-import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 
 class VehicleTypeOption {
   final String class_;
@@ -180,11 +180,29 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     });
 
     try {
-      final userId = await AuthStorage.userIdFromToken();
-      if (userId == null) {
-        throw Exception('User not authenticated. Please log in first.');
+      // Verify user is authenticated with Firebase
+      final firebaseUser = FirebaseAuth.instance.currentUser;
+      if (firebaseUser == null) {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            'Please log in to request a ride',
+            isSuccess: false,
+            errorMessage: 'User not authenticated',
+          );
+        }
+        if (mounted) {
+          setState(() {
+            _isSearching = false;
+            _errorMessage = 'User not authenticated. Please log in first.';
+          });
+        }
+        return;
       }
-      final userIdStr = userId.toString();
+
+      if (kDebugMode) {
+        debugPrint('[VehicleTypeModal] Authenticated user: ${firebaseUser.email}');
+      }
 
       final fareEstimate = _estimatedFares[vehicleClass];
       double estimatedFare = 0.0;
@@ -215,10 +233,12 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         debugPrint('  Distance: ${distance.toStringAsFixed(2)}km');
         debugPrint('  Duration: ${duration}min');
         debugPrint('  Estimated Fare: MWK $estimatedFare');
+        debugPrint('  Vehicle Class: $vehicleClass');
       }
 
-      final httpService = RideShareHttpService();
-      final ride = await httpService.requestRide(
+      // Use RideShareService from Riverpod provider
+      final rideShareService = ref.read(rideShareServiceProvider);
+      final ride = await rideShareService.requestRide(
         pickupLatitude: widget.userLat,
         pickupLongitude: widget.userLng,
         dropoffLatitude: widget.dropoffPlace.latitude,
@@ -229,12 +249,25 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         notes: null,
       );
 
+      if (kDebugMode) {
+        debugPrint('[VehicleTypeModal] ✅ Ride created: ${ride['id']}');
+      }
+
       if (mounted) {
         Navigator.pop(context);
-        widget.onRideRequested(ride.id.toString());
+        widget.onRideRequested(ride['id'].toString());
       }
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[VehicleTypeModal] ❌ Error creating ride: $e');
+      }
       if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Failed to request ride',
+          isSuccess: false,
+          errorMessage: e.toString(),
+        );
         setState(() {
           _isSearching = false;
           _errorMessage = e.toString();

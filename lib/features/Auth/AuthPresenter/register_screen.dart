@@ -43,7 +43,7 @@ class MerchantService {
 const List<MerchantService> kMerchantServices = [
   MerchantService(
     key: 'marketplace',
-    name: 'General Dealers',
+    name: 'Marketplace',
     icon: Icons.store_rounded,
   ),
   MerchantService(

@@ -624,10 +624,10 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
                     dropoffPlace.address,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.grey[500],
-                          ),
-                   maxLines: 1,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey[500],
+                        ),
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -668,33 +668,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     final recentPlaces = ref.watch(recentPlacesProvider);
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Recent Places',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
-          ),
-          const SizedBox(height: 12),
-          if (recentPlaces.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                'No recent searches. Tap "Where to?" to search.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey[500],
-                    ),
-              ),
-            )
-          else
-            ...recentPlaces.map(
-              (place) => _buildRecentPlaceItem(place),
-            ),
-        ],
-      ),
     );
   }
 

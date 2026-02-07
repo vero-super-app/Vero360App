@@ -68,43 +68,67 @@ final currentLocationAddressProvider = FutureProvider<String?>((ref) async {
   );
 });
 
-/// Pickup display: user's name + address. Prefers saved profile address over GPS reverse geocoding.
+/// Pickup display: user's name, profile picture URL, and address (Google reverse-geocoded when available).
 class PickupDisplay {
   final String userName;
+  final String profilePictureUrl;
   final String address;
 
-  PickupDisplay({required this.userName, required this.address});
+  PickupDisplay({
+    required this.userName,
+    required this.profilePictureUrl,
+    required this.address,
+  });
 }
 
 final pickupDisplayProvider = FutureProvider<PickupDisplay>((ref) async {
   final prefs = await SharedPreferences.getInstance();
-  String userName = prefs.getString('fullName') ??
+  final rawName = prefs.getString('fullName') ??
       prefs.getString('name') ??
-      await AuthStorage.userNameFromToken() ??
-      'Your Location';
-  if (userName.trim().isEmpty) userName = 'Your Location';
-  final savedAddr =
-      prefs.getString('address')?.trim();
+      await AuthStorage.userNameFromToken();
+  final String userName = (rawName == null || rawName.trim().isEmpty)
+      ? 'Your Location'
+      : rawName.trim();
+  final String profilePictureUrl =
+      prefs.getString('profilepicture')?.trim() ??
+      prefs.getString('profilePicture')?.trim() ??
+      '';
+
+  // Prefer current location reverse-geocoded (Google-detected) address when we have position
+  final position = await ref.watch(currentLocationProvider.future);
+  if (position != null) {
+    final placeService = ref.watch(placeServiceProvider);
+    final addr = await placeService.getAddressFromCoordinates(
+      position.latitude,
+      position.longitude,
+    );
+    if (addr != null && addr.isNotEmpty) {
+      return PickupDisplay(
+        userName: userName,
+        profilePictureUrl: profilePictureUrl,
+        address: addr,
+      );
+    }
+  }
+
+  // Fallback: saved profile address or "Current Location"
+  final savedAddr = prefs.getString('address')?.trim();
   final useSavedAddress = savedAddr != null &&
       savedAddr.isNotEmpty &&
       savedAddr.toLowerCase() != 'no address';
 
-  if (useSavedAddress) {
-    return PickupDisplay(userName: userName, address: savedAddr);
+  if (useSavedAddress && savedAddr != null) {
+    return PickupDisplay(
+      userName: userName,
+      profilePictureUrl: profilePictureUrl,
+      address: savedAddr,
+    );
   }
 
-  final position = await ref.watch(currentLocationProvider.future);
-  if (position == null) {
-    return PickupDisplay(userName: userName, address: 'Current Location');
-  }
-  final placeService = ref.watch(placeServiceProvider);
-  final addr = await placeService.getAddressFromCoordinates(
-    position.latitude,
-    position.longitude,
-  );
   return PickupDisplay(
     userName: userName,
-    address: (addr != null && addr.isNotEmpty) ? addr : 'Current Location',
+    profilePictureUrl: profilePictureUrl,
+    address: 'Current Location',
   );
 });
 

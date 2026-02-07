@@ -420,12 +420,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                                   ],
                                 ),
                               ),
-                              if (selectedDropoffPlace == null)
-                                ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxHeight: 140),
-                                  child: _buildSearchResultsSection(),
-                                ),
                               Padding(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 16, vertical: 12),
@@ -489,24 +483,29 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   Widget _buildPickupLocationCard() {
     final pickupAsync = ref.watch(pickupDisplayProvider);
     return pickupAsync.when(
+      // Defensive null coalescing for async provider (avoids runtime Null subtype of String)
       data: (pickup) => _buildPickupCardContent(
-        title: pickup.userName,
-        subtitle: pickup.address,
+        userName: pickup.userName ?? 'Your Location', // ignore: unnecessary_null_in_if_null_operators
+        address: pickup.address ?? 'Current Location', // ignore: unnecessary_null_in_if_null_operators
+        profilePictureUrl: pickup.profilePictureUrl ?? '', // ignore: unnecessary_null_in_if_null_operators
       ),
       loading: () => _buildPickupCardContent(
-        title: 'Your Location',
-        subtitle: 'Detecting your location...',
+        userName: 'Your Location',
+        address: 'Detecting your location...',
+        profilePictureUrl: '',
       ),
       error: (_, __) => _buildPickupCardContent(
-        title: 'Your Location',
-        subtitle: 'Current Location',
+        userName: 'Your Location',
+        address: 'Current Location',
+        profilePictureUrl: '',
       ),
     );
   }
 
   Widget _buildPickupCardContent({
-    required String title,
-    required String subtitle,
+    required String userName,
+    required String address,
+    String profilePictureUrl = '',
   }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -520,6 +519,22 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       ),
       child: Row(
         children: [
+          // Profile picture (from profile) or placeholder
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: Colors.blue.withValues(alpha: 0.12),
+            backgroundImage: profilePictureUrl.isNotEmpty
+                ? NetworkImage(profilePictureUrl)
+                : null,
+            child: profilePictureUrl.isEmpty
+                ? const Icon(
+                    Icons.person_rounded,
+                    color: Colors.blue,
+                    size: 24,
+                  )
+                : null,
+          ),
+          const SizedBox(width: 12),
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
@@ -546,7 +561,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  title,
+                  userName,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                         color: Colors.black87,
@@ -557,7 +572,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
-                    subtitle,
+                    address,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Colors.grey[500],
                         ),
@@ -658,114 +673,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                     ),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchResultsSection() {
-    final recentPlaces = ref.watch(recentPlacesProvider);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Recent Places',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
-          ),
-          const SizedBox(height: 12),
-          if (recentPlaces.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                'No recent searches. Tap "Where to?" to search.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey[500],
-                    ),
-              ),
-            )
-          else
-            ...recentPlaces.map(
-              (place) => _buildRecentPlaceItem(place),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecentPlaceItem(Place place) {
-    return GestureDetector(
-      onTap: () {
-        ref.read(selectedDropoffPlaceProvider.notifier).state = place;
-        _unfocusKeyboard();
-      },
-      child: _buildPlaceItem(
-        place.name,
-        place.address,
-        Icons.history,
-      ),
-    );
-  }
-
-  Widget _buildPlaceItem(String title, String subtitle, IconData icon) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: Colors.grey.withValues(alpha: 0.1),
-          width: 1,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF8A00).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              icon,
-              color: const Color(0xFFFF8A00),
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black87,
-                      ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[500],
-                      ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          Icon(
-            Icons.arrow_forward_ios,
-            size: 14,
-            color: Colors.grey[400],
           ),
         ],
       ),

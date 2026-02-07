@@ -23,6 +23,8 @@ import 'package:vero360_app/utils/toasthelper.dart';
 // REQUIRED PAGES
 import 'package:vero360_app/GeneralPages/address.dart'; // AddressPage
 import 'package:vero360_app/GeneralPages/changepassword.dart'; // ChangePasswordPage
+import 'package:vero360_app/GeneralModels/address_model.dart';
+import 'package:vero360_app/GernalServices/address_service.dart';
 
 const Color kBrandOrange = Color(0xFFFF8A00);
 const Color kBrandNavy = Color(0xFF16284C);
@@ -48,12 +50,16 @@ class _SettingsPageState extends State<SettingsPage> {
   String _name = 'Guest User';
   String _email = 'No Email';
   String _phone = 'No Phone';
-  String _address = 'No Address';
+  String _address = 'my address';
   String _photoUrl = '';
 
   // app info
   String _appVersion = '—';
   String _buildNumber = '—';
+
+  // address count + default address for profile header (from API)
+  int _addressCount = -1; // -1 = not loaded yet
+  String _defaultAddressDisplay = ''; // default address line on profile card
 
   // personalization
   bool _compactMode = false;
@@ -81,14 +87,51 @@ class _SettingsPageState extends State<SettingsPage> {
         _loadCachedProfile(),
         _hydrateFromFirebaseAuth(),
       ]);
+      await _loadProfileFromFirestore();
     } catch (_) {}
 
     if (mounted) setState(() => _loading = false);
 
-    // load app info in background (do not block page open)
+    // load app info + address count in background (do not block page open)
     unawaited(_loadAppInfo().then((_) {
       if (mounted) setState(() {});
     }));
+    unawaited(_loadAddressCount());
+  }
+
+  Future<void> _loadAddressCount() async {
+    try {
+      final list = await AddressService().getMyAddresses();
+      Address? defaultOrFirst;
+      for (final a in list) {
+        if (a.isDefault) {
+          defaultOrFirst = a;
+          break;
+        }
+      }
+      defaultOrFirst ??= list.isNotEmpty ? list.first : null;
+      final display = defaultOrFirst?.displayLine ?? '';
+      if (mounted) {
+        setState(() {
+          _addressCount = list.length;
+          _defaultAddressDisplay = display.trim().isEmpty ? _address : display;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _addressCount = 0;
+          _defaultAddressDisplay = _address;
+        });
+      }
+    }
+  }
+
+  String get _addressCountSubtitle {
+    if (_addressCount < 0) return '—';
+    if (_addressCount == 0) return 'No addresses';
+    if (_addressCount == 1) return '1 address';
+    return '$_addressCount addresses';
   }
 
   Future<void> _loadAppInfo() async {
@@ -149,6 +192,50 @@ class _SettingsPageState extends State<SettingsPage> {
     }
 
     if (mounted) setState(() {});
+  }
+
+  /// Load profile (name, phone, address, photo) from Firestore users/{uid}.
+  Future<void> _loadProfileFromFirestore() async {
+    final u = _auth.currentUser;
+    if (u == null) return;
+
+    try {
+      final snap = await _firestore.collection('users').doc(u.uid).get();
+      if (!snap.exists || snap.data() == null) return;
+
+      final data = Map<String, dynamic>.from(snap.data()!);
+      if ((data['name'] ?? '').toString().trim().isNotEmpty) {
+        _name = data['name'].toString().trim();
+      }
+      if ((data['email'] ?? '').toString().trim().isNotEmpty) {
+        _email = data['email'].toString().trim();
+      }
+      if ((data['phone'] ?? '').toString().trim().isNotEmpty) {
+        _phone = data['phone'].toString().trim();
+      }
+      if ((data['address'] ?? '').toString().trim().isNotEmpty) {
+        _address = data['address'].toString().trim();
+      }
+      final pic = (data['profilepicture'] ??
+              data['profilePicture'] ??
+              data['photoURL'] ??
+              '')
+          .toString()
+          .trim();
+      if (pic.isNotEmpty) _photoUrl = pic;
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('fullName', _name);
+      await prefs.setString('name', _name);
+      await prefs.setString('email', _email);
+      await prefs.setString('phone', _phone);
+      await prefs.setString('address', _address);
+      await prefs.setString('profilepicture', _photoUrl);
+
+      if (mounted) setState(() {});
+    } catch (_) {
+      // Silent: keep existing cached values
+    }
   }
 
   Future<String> _getAuthToken() async {
@@ -243,8 +330,10 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _refreshing = true);
     try {
       await _hydrateFromFirebaseAuth();
+      await _loadProfileFromFirestore();
       await _fetchUserMeFromApiQuick(); // optional + quick timeout
       await _loadCachedProfile();
+      await _loadAddressCount();
       ToastHelper.showCustomToast(
         context,
         'Refreshed',
@@ -287,6 +376,139 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  // ---------- Edit profile (Firestore) ----------
+  Future<void> _openEditProfile() async {
+    _maybeHaptic();
+    final nameController = TextEditingController(text: _name);
+    final phoneController = TextEditingController(text: _phone);
+    final addressController = TextEditingController(text: _address);
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(16, 12, 16, 18 + MediaQuery.of(ctx).viewInsets.bottom),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Edit profile',
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  border: OutlineInputBorder(),
+                  hintText: 'Your name',
+                ),
+                textCapitalization: TextCapitalization.words,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: phoneController,
+                decoration: const InputDecoration(
+                  labelText: 'Phone',
+                  border: OutlineInputBorder(),
+                  hintText: 'Phone number',
+                ),
+                keyboardType: TextInputType.phone,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: addressController,
+                decoration: const InputDecoration(
+                  labelText: 'Address',
+                  border: OutlineInputBorder(),
+                  hintText: 'Your address',
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 20),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: kBrandOrange,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('Save', style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (saved != true) return;
+
+    final newName = nameController.text.trim();
+    final newPhone = phoneController.text.trim();
+    final newAddress = addressController.text.trim();
+
+    final u = _auth.currentUser;
+    if (u == null) return;
+
+    setState(() => _refreshing = true);
+    try {
+      await _firestore.collection('users').doc(u.uid).set(
+        {
+          'name': newName.isEmpty ? _name : newName,
+          'phone': newPhone.isEmpty ? _phone : newPhone,
+          'address': newAddress.isEmpty ? _address : newAddress,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      if (newName.isNotEmpty) {
+        await u.updateDisplayName(newName);
+        _name = newName;
+      }
+      if (newPhone.isNotEmpty) _phone = newPhone;
+      if (newAddress.isNotEmpty) _address = newAddress;
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('fullName', _name);
+      await prefs.setString('name', _name);
+      await prefs.setString('phone', _phone);
+      await prefs.setString('address', _address);
+
+      if (mounted) setState(() {});
+      ToastHelper.showCustomToast(context, 'Profile updated', isSuccess: true, errorMessage: '');
+    } catch (e) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Could not update profile',
+          isSuccess: false,
+          errorMessage: e.toString(),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
   // ---------- NAV: Address bottom sheet ----------
   Future<void> _openAddressBottomSheet() async {
     _maybeHaptic();
@@ -304,8 +526,8 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
 
-    // Fast: only reload cached (no server wait)
     await _loadCachedProfile();
+    await _loadAddressCount();
   }
 
   void _openChangePassword() {
@@ -675,19 +897,30 @@ class _SettingsPageState extends State<SettingsPage> {
           await u.delete();
         } on FirebaseAuthException catch (e) {
           if (e.code == 'requires-recent-login') {
-            ToastHelper.showCustomToast(
-              context,
-              'Please login again',
-              isSuccess: false,
-              errorMessage: 'Login again then try deleting your account.',
-            );
+        if (mounted) {
+              ToastHelper.showCustomToast(
+                context,
+                'Please login again',
+                isSuccess: false,
+                errorMessage: 'Login again then try deleting your account.',
+              );
+            }
             await AuthService().logout(context: context);
             return;
           }
+          rethrow;
         }
       }
 
-      // 4) Logout everywhere
+      // 4) Clear local prefs and logout
+      final prefs = await SharedPreferences.getInstance();
+      for (final k in [
+        'fullName', 'name', 'email', 'phone', 'address', 'profilepicture',
+        'uid', 'role', 'user_role', 'merchant_service', 'business_name',
+        'business_address', 'jwt_token', 'token', 'authToken', 'jwt',
+      ]) {
+        await prefs.remove(k);
+      }
       await AuthService().logout(context: context);
 
       ToastHelper.showCustomToast(context, 'Account deleted',
@@ -756,9 +989,16 @@ class _SettingsPageState extends State<SettingsPage> {
               _card([
                 _SettingsTile(
                   compact: _compactMode,
+                  icon: Icons.person_outline,
+                  title: 'Edit profile',
+                  subtitle: 'Name, phone, address',
+                  onTap: _openEditProfile,
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
                   icon: Icons.location_on_outlined,
                   title: 'My address',
-                  subtitle: _address,
+                  subtitle: _addressCountSubtitle,
                   onTap: _openAddressBottomSheet,
                 ),
               ]),
@@ -861,80 +1101,95 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _profileCard() {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [kBrandNavy, kBrandOrange.withOpacity(0.95)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _openEditProfile,
         borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: Container(
-                width: 58,
-                height: 58,
-                color: Colors.white.withOpacity(0.15),
-                child: _photoUrl.isEmpty
-                    ? const Icon(Icons.person, color: Colors.white, size: 30)
-                    : Image.network(
-                        _photoUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const Icon(Icons.person,
-                            color: Colors.white, size: 30),
-                      ),
-              ),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [kBrandNavy, kBrandOrange.withOpacity(0.95)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 18,
-                    ),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 16,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    width: 58,
+                    height: 58,
+                    color: Colors.white.withOpacity(0.15),
+                    child: _photoUrl.isEmpty
+                        ? const Icon(Icons.person, color: Colors.white, size: 30)
+                        : Image.network(
+                            _photoUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(Icons.person,
+                                color: Colors.white, size: 30),
+                          ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _email,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.9),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _chip(Icons.phone_outlined, _phone),
-                      _chip(Icons.location_on_outlined, _address),
+                      Text(
+                        _name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 18,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _email,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.9),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _chip(Icons.phone_outlined, _phone),
+                          _chip(Icons.location_on_outlined,
+                              _defaultAddressDisplay.isEmpty
+                                  ? _address
+                                  : _defaultAddressDisplay),
+                        ],
+                      ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                Icon(
+                  Icons.edit_outlined,
+                  color: Colors.white.withOpacity(0.9),
+                  size: 22,
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

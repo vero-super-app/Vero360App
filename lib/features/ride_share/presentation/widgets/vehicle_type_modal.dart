@@ -137,7 +137,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
 
   final List<VehicleTypeOption> _baseVehicleTypes = [
     VehicleTypeOption(
-      class_: VehicleClass.economy,
+      class_: VehicleClass.bike,
       name: 'Bike',
       description: 'Affordable & quick',
       icon: Icons.two_wheeler,
@@ -147,7 +147,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       capacity: 1,
     ),
     VehicleTypeOption(
-      class_: VehicleClass.comfort,
+      class_: VehicleClass.standard,
       name: 'Standard',
       description: 'Comfortable & reliable',
       icon: Icons.directions_car,
@@ -157,7 +157,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       capacity: 4,
     ),
     VehicleTypeOption(
-      class_: VehicleClass.premium,
+      class_: VehicleClass.executive,
       name: 'Executive',
       description: 'Premium experience',
       icon: Icons.directions_car_filled,
@@ -223,7 +223,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         pickupLongitude: widget.userLng,
         dropoffLatitude: widget.dropoffPlace.latitude,
         dropoffLongitude: widget.dropoffPlace.longitude,
-        vehicleClass: _selectedVehicleClass ?? VehicleClass.economy,
+        vehicleClass: _selectedVehicleClass ?? VehicleClass.bike,
         pickupAddress: widget.pickupPlace.address,
         dropoffAddress: widget.dropoffPlace.address,
         notes: null,

@@ -456,12 +456,12 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   /// Get marker color based on vehicle class
   BitmapDescriptor _getVehicleMarkerIcon(String vehicleClass) {
     switch (vehicleClass) {
-      case 'ECONOMY':
+      case 'BIKE':
+        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen);
+      case 'STANDARD':
         return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
-      case 'COMFORT':
+      case 'EXECUTIVE':
         return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange);
-      case 'PREMIUM':
-        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet);
       case 'BUSINESS':
         return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
       default:

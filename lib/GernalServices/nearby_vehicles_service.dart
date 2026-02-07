@@ -38,7 +38,7 @@ class NearbyVehicle {
       latitude: (json['latitude'] ?? 0.0).toDouble(),
       longitude: (json['longitude'] ?? 0.0).toDouble(),
       distance: (json['distance'] ?? 0.0).toDouble(),
-      vehicleClass: json['vehicleClass'] ?? 'ECONOMY',
+      vehicleClass: json['vehicleClass'] ?? 'BIKE',
       make: json['make'] ?? '',
       model: json['model'] ?? '',
       licensePlate: json['licensePlate'] ?? '',

@@ -1,7 +1,7 @@
 class Taxi {
   final int id;
   final int driverId;
-  final String taxiClass; // ECONOMY, COMFORT, PREMIUM, BUSINESS
+  final String taxiClass; // BIKE, STANDARD, EXECUTIVE, BUSINESS
   final String make;
   final String model;
   final int year;

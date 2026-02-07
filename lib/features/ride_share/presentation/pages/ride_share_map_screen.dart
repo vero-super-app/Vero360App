@@ -639,10 +639,10 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
                     dropoffPlace.address,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.grey[500],
-                          ),
-                   maxLines: 1,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey[500],
+                        ),
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -673,6 +673,114 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                     ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchResultsSection() {
+    final recentPlaces = ref.watch(recentPlacesProvider);
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Recent Places',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+          ),
+          const SizedBox(height: 12),
+          if (recentPlaces.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'No recent searches. Tap "Where to?" to search.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[500],
+                    ),
+              ),
+            )
+          else
+            ...recentPlaces.map(
+              (place) => _buildRecentPlaceItem(place),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentPlaceItem(Place place) {
+    return GestureDetector(
+      onTap: () {
+        ref.read(selectedDropoffPlaceProvider.notifier).state = place;
+        _unfocusKeyboard();
+      },
+      child: _buildPlaceItem(
+        place.name,
+        place.address,
+        Icons.history,
+      ),
+    );
+  }
+
+  Widget _buildPlaceItem(String title, String subtitle, IconData icon) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.grey.withValues(alpha: 0.1),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF8A00).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              icon,
+              color: const Color(0xFFFF8A00),
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[500],
+                      ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            Icons.arrow_forward_ios,
+            size: 14,
+            color: Colors.grey[400],
           ),
         ],
       ),

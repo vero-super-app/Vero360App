@@ -42,13 +42,15 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     _markers = {};
     _polylines = {};
     _initializeCameraPosition();
-    
+
     // Load map style from assets
     _loadMapStyle();
 
     // Initial route draw if both places are provided
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && widget.pickupPlace != null && widget.dropoffPlace != null) {
+      if (mounted &&
+          widget.pickupPlace != null &&
+          widget.dropoffPlace != null) {
         _updateRoutePolyline();
       }
     });
@@ -420,17 +422,11 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     });
   }
 
-  void _toggleMapType() {
-    setState(() {
-      _mapType =
-          _mapType == MapType.normal ? MapType.satellite : MapType.normal;
-    });
-  }
-
   /// Update vehicle markers on the map from nearby vehicles data
   void _updateVehicleMarkers(List<NearbyVehicle> vehicles) {
     // Remove old vehicle markers (keep user, pickup, dropoff, route)
-    _markers.removeWhere((marker) => marker.markerId.value.startsWith('vehicle_'));
+    _markers
+        .removeWhere((marker) => marker.markerId.value.startsWith('vehicle_'));
 
     // Add new vehicle markers
     for (final vehicle in vehicles) {
@@ -461,7 +457,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
       case 'STANDARD':
         return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
       case 'EXECUTIVE':
-        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange);
+        return BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueOrange);
       case 'BUSINESS':
         return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
       default:
@@ -534,22 +531,6 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
               ),
             ),
           ),
-        // Satellite/Map toggle button
-        Positioned(
-          bottom: 16,
-          right: 16,
-          child: FloatingActionButton.small(
-            onPressed: _toggleMapType,
-            backgroundColor: Colors.white,
-            foregroundColor: const Color(0xFFFF8A00),
-            elevation: 4,
-            child: Icon(
-              _mapType == MapType.satellite
-                  ? Icons.layers_clear_rounded
-                  : Icons.satellite_alt_rounded,
-            ),
-          ),
-        ),
       ],
     );
   }

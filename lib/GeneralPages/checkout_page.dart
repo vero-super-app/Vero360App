@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/GeneralPages/payment_webview.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
+import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
@@ -434,6 +435,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
         currency: 'MWK',
         phoneNumber: phone,
         relatedType: 'ORDER',
+        meta: {
+          // Core order fields expected by backend / orders API
+          'ItemName': widget.item.name,
+          if (_safeItemImageForMeta(widget.item.image) != null)
+            'ItemImage': _safeItemImageForMeta(widget.item.image),
+          'Category': widget.item.category,
+          'Price': widget.item.price,
+          'Quantity': _qty,
+          'Description': _noteCtrl.text,
+          // Merchant + delivery info (helps backend build full order object)
+          'merchantId': widget.item.merchantId,
+          'merchantName': widget.item.merchantName,
+          'deliveryType': _deliveryLabel(_deliveryType),
+          'addressCity': _defaultAddr?.city,
+          'addressDescription': _defaultAddr?.description,
+        },
         description:
             'Order: ${widget.item.name} (x$_qty) • Delivery: ${_deliveryLabel(_deliveryType)} • $addrText • $_providerLabel',
       );
@@ -452,7 +469,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
           errorMessage: 'OK',
         );
       }
-      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        // After starting payment, send user to their orders so they see the new order + status
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const OrdersPage()),
+        );
+      }
     } catch (e) {
       ToastHelper.showCustomToast(
         context,
@@ -478,6 +500,20 @@ class _CheckoutPageState extends State<CheckoutPage> {
         currency: 'MWK',
         phoneNumber: null,
         relatedType: 'ORDER',
+        meta: {
+          'ItemName': widget.item.name,
+          if (_safeItemImageForMeta(widget.item.image) != null)
+            'ItemImage': _safeItemImageForMeta(widget.item.image),
+          'Category': widget.item.category,
+          'Price': widget.item.price,
+          'Quantity': _qty,
+          'Description': _noteCtrl.text,
+          'merchantId': widget.item.merchantId,
+          'merchantName': widget.item.merchantName,
+          'deliveryType': _deliveryLabel(_deliveryType),
+          'addressCity': _defaultAddr?.city,
+          'addressDescription': _defaultAddr?.description,
+        },
         description:
             'Card payment: ${widget.item.name} (x$_qty) • Delivery: ${_deliveryLabel(_deliveryType)} • $addrText',
       );
@@ -496,7 +532,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
           errorMessage: 'OK',
         );
       }
-      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const OrdersPage()),
+        );
+      }
     } catch (e) {
       ToastHelper.showCustomToast(
         context,
@@ -507,6 +547,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  /// Avoid sending massive base64 images in payment metadata (backend JSON limit).
+  String? _safeItemImageForMeta(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return null;
+    // If it looks like a normal URL and is short enough, keep it.
+    final isHttp = s.startsWith('http://') || s.startsWith('https://');
+    if (isHttp && s.length < 5000) return s;
+    // Otherwise omit (likely a long base64 or storage path which backend can look up by item id).
+    return null;
   }
 
   String _methodLabel(PaymentMethod m) => 'Pay Now';

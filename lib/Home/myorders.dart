@@ -1,8 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:path_provider/path_provider.dart';
 
 class OrdersPage extends StatefulWidget {
   const OrdersPage({Key? key}) : super(key: key);
@@ -114,6 +117,55 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     } catch (e) {
       if (!mounted) return;
       ToastHelper.showCustomToast(context, 'Cancel failed', isSuccess: false, errorMessage: e.toString());
+    }
+  }
+
+  Future<void> _downloadOrder(OrderItem o) async {
+    try {
+      // Prefer the public Downloads folder on the phone
+      final dir = await getDownloadsDirectory() ??
+          await getApplicationDocumentsDirectory();
+      final safeOrderNo =
+          o.orderNumber.replaceAll(RegExp(r'[^A-Za-z0-9_\-]'), '_');
+      final file = File('${dir.path}/order_$safeOrderNo.txt');
+
+      final buf = StringBuffer()
+        ..writeln('Order details')
+        ..writeln('-----------------------------')
+        ..writeln('Order number: ${o.orderNumber}')
+        ..writeln('Order ID: ${o.id}')
+        ..writeln('Date: ${o.orderDate != null ? _date.format(o.orderDate!.toLocal()) : '-'}')
+        ..writeln('Status: ${_statusLabel(o.status)}')
+        ..writeln('Payment: ${_paymentLabel(o.paymentStatus)}')
+        ..writeln('Item: ${o.itemName}')
+        ..writeln('Quantity: ${o.quantity}')
+        ..writeln('Price (each): ${_money.format(o.price)}')
+        ..writeln('Total: ${_money.format(o.total)}')
+        ..writeln('Category: ${o.category.toString().split('.').last}')
+        ..writeln()
+        ..writeln('Merchant: ${o.merchantName ?? 'Merchant'}')
+        ..writeln('Merchant phone: ${o.merchantPhone ?? '-'}')
+        ..writeln()
+        ..writeln('Address city: ${o.addressCity ?? '-'}')
+        ..writeln('Address description: ${o.addressDescription ?? '-'}');
+
+      await file.writeAsString(buf.toString());
+
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Order saved to ${file.path}',
+        isSuccess: true,
+        errorMessage: '',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Failed to save order',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
     }
   }
 
@@ -279,6 +331,17 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                       onPressed: () => _reloadCurrent(),
                       icon: const Icon(Icons.refresh),
                       label: const Text('Refresh'),
+                    ),
+                    const SizedBox(width: 10),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.black87,
+                        side: BorderSide(color: Colors.black12.withValues(alpha: .4)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => _downloadOrder(o),
+                      icon: const Icon(Icons.download_outlined),
+                      label: const Text('Download'),
                     ),
                     const SizedBox(width: 10),
                     if (o.status == OrderStatus.pending)

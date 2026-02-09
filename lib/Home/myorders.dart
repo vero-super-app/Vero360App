@@ -16,6 +16,11 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   final Color _brand = const Color(0xFFFF8A00);
   final _money = NumberFormat.currency(symbol: 'MK ', decimalDigits: 0);
   final _date = DateFormat('dd MMM yyyy, HH:mm');
+  final _dateSearch = DateFormat('dd MMM yyyy');
+  final _dateSearchAlt = DateFormat('yyyy-MM-dd');
+
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   late TabController _tab;
   final List<OrderStatus> _statuses = const [
@@ -25,21 +30,27 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     OrderStatus.cancelled,
   ];
 
-  final Map<OrderStatus, Future<List<OrderItem>>> _futures = {};
+  /// Single future: fetch all orders once; filter by status in each tab.
+  /// Backend may not support ?status=, so we filter client-side.
+  late Future<List<OrderItem>> _ordersFuture;
 
   @override
   void initState() {
     super.initState();
     _tab = TabController(length: _statuses.length, vsync: this);
-    for (final s in _statuses) {
-      _futures[s] = _svc.getMyOrders(status: s);
-    }
+    _ordersFuture = _svc.getMyOrders();
   }
 
   Future<void> _reloadCurrent() async {
-    final s = _statuses[_tab.index];
-    setState(() => _futures[s] = _svc.getMyOrders(status: s));
-    await _futures[s];
+    if (!mounted) return;
+    setState(() => _ordersFuture = _svc.getMyOrders());
+    try {
+      await _ordersFuture;
+    } catch (_) {
+      // Error shown by FutureBuilder
+    }
+    if (!mounted) return;
+    setState(() {});
   }
 
   Color _statusColor(OrderStatus s) {
@@ -185,7 +196,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            'Order: ${o.orderNumber}   •   ID: ${o.id}',
+                            'Order: ${o.orderNumber}',
                             style: const TextStyle(
                               color: Color(0xFF6B778C),
                               fontWeight: FontWeight.w600,
@@ -291,11 +302,10 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   }
 
   Widget _tabBody(OrderStatus s) {
-    final fut = _futures[s]!;
     return RefreshIndicator(
       onRefresh: _reloadCurrent,
       child: FutureBuilder<List<OrderItem>>(
-        future: fut,
+        future: _ordersFuture,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
@@ -313,12 +323,23 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
               ],
             );
           }
-          final items = snap.data ?? const <OrderItem>[];
+          final all = snap.data ?? const <OrderItem>[];
+          final byStatus = all.where((o) => o.status == s).toList();
+          final items = byStatus
+              .where((o) => _orderMatchesSearch(o, _searchQuery))
+              .toList();
           if (items.isEmpty) {
             return ListView(
-              children: const [
-                SizedBox(height: 90),
-                Center(child: Text('No orders in this status', style: TextStyle(color: Colors.red))),
+              children: [
+                const SizedBox(height: 90),
+                Center(
+                  child: Text(
+                    _searchQuery.trim().isEmpty
+                        ? 'No orders in this status'
+                        : 'No orders match your search',
+                    style: const TextStyle(color: Color(0xFF6B778C)),
+                  ),
+                ),
               ],
             );
           }
@@ -334,8 +355,22 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
 
   @override
   void dispose() {
+    _searchController.dispose();
     _tab.dispose();
     super.dispose();
+  }
+
+  bool _orderMatchesSearch(OrderItem o, String q) {
+    if (q.trim().isEmpty) return true;
+    final lower = q.trim().toLowerCase();
+    if (o.orderNumber.toLowerCase().contains(lower)) return true;
+    if (o.orderDate != null) {
+      final d = o.orderDate!.toLocal();
+      if (_dateSearch.format(d).toLowerCase().contains(lower)) return true;
+      if (_dateSearchAlt.format(d).contains(lower)) return true;
+      if (_date.format(d).toLowerCase().contains(lower)) return true;
+    }
+    return false;
   }
 
   @override
@@ -362,9 +397,46 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tab,
-        children: _statuses.map(_tabBody).toList(),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: TextField(
+              controller: _searchController,
+              onChanged: (v) => setState(() => _searchQuery = v),
+              decoration: InputDecoration(
+                hintText: 'Search by order number or date...',
+                hintStyle: const TextStyle(color: Color(0xFF9CA3AF)),
+                prefixIcon: const Icon(Icons.search, color: Color(0xFF6B778C)),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() => _searchQuery = '');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tab,
+              children: _statuses.map(_tabBody).toList(),
+            ),
+          ),
+        ],
       ),
     );
   }

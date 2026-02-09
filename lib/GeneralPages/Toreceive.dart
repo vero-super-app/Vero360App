@@ -26,10 +26,17 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
   }
 
   Future<void> _reload() async {
+    if (!mounted) return;
     setState(() {
       _future = _svc.getMyOrders(status: OrderStatus.delivered);
     });
-    await _future;
+    try {
+      await _future;
+    } catch (_) {
+      // Error shown by FutureBuilder
+    }
+    if (!mounted) return;
+    setState(() {});
   }
 
   Color _paymentColor(String statusUpper) {

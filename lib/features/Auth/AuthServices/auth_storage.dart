@@ -1,22 +1,24 @@
 // lib/services/auth_storage.dart
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 class AuthStorage {
   static const _tokenKeys = ['token', 'jwt_token', 'jwt'];
 
-  /// returns the first non-empty token it finds
-  static Future<String?> readToken() async {
+  /// Returns Firebase token first (stays valid after 1hr refresh), then SP.
+  static Future<String?> readToken() async => AuthHandler.getTokenForApi();
+
+  /// Single source of truth: Firebase session first, then SP token.
+  static Future<bool> isLoggedIn() async {
+    if (await AuthHandler.isAuthenticated()) return true;
     final sp = await SharedPreferences.getInstance();
     for (final k in _tokenKeys) {
       final v = sp.getString(k);
-      if (v != null && v.isNotEmpty) return v;
+      if (v != null && v.isNotEmpty) return true;
     }
-    return null;
+    return false;
   }
-
-  /// true if we have ANY token
-  static Future<bool> isLoggedIn() async => (await readToken()) != null;
 
   /// Try to get numeric userId from the JWT: payload.sub | payload.id | payload.userId
   static Future<int?> userIdFromToken() async {

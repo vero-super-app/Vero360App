@@ -100,9 +100,9 @@ class PromoService {
     File f, {
     String filename = 'promo.jpg',
   }) async {
-    final base = await ApiConfig.readBase();
+    await ApiConfig.readBase();
     final t = await _token();
-    final url = Uri.parse('$base/uploads');
+    final url = ApiConfig.endpoint('uploads');
 
     final req = http.MultipartRequest('POST', url)
       ..headers.addAll(_auth(t))
@@ -125,9 +125,9 @@ class PromoService {
 
   // === secured promo endpoints ===
   Future<List<PromoModel>> fetchMyPromos() async {
-    final base = await ApiConfig.readBase();
+    await ApiConfig.readBase();
     final t = await _token();
-    final url = Uri.parse('$base/promos/me');
+    final url = ApiConfig.endpoint('promos/me');
     final r = await http.get(url, headers: _auth(t));
     final body = _decode(r, where: 'GET /promos/me');
     final list = (body as List).cast<Map<String, dynamic>>();
@@ -135,9 +135,9 @@ class PromoService {
   }
 
   Future<PromoModel> createPromo(PromoModel p) async {
-    final base = await ApiConfig.readBase();
+    await ApiConfig.readBase();
     final t = await _token();
-    final url = Uri.parse('$base/promos');
+    final url = ApiConfig.endpoint('promos');
     final r = await http.post(
       url,
       headers: _auth(t, extra: {'Content-Type': 'application/json'}),
@@ -148,9 +148,9 @@ class PromoService {
   }
 
   Future<void> subscribe(int promoId, double amountPaid) async {
-    final base = await ApiConfig.readBase();
+    await ApiConfig.readBase();
     final t = await _token();
-    final url = Uri.parse('$base/promos/$promoId/subscribe');
+    final url = ApiConfig.endpoint('promos/$promoId/subscribe');
     final r = await http.patch(
       url,
       headers: _auth(t, extra: {'Content-Type': 'application/json'}),
@@ -160,17 +160,17 @@ class PromoService {
   }
 
   Future<void> deactivate(int promoId) async {
-    final base = await ApiConfig.readBase();
+    await ApiConfig.readBase();
     final t = await _token();
-    final url = Uri.parse('$base/promos/$promoId/deactivate');
+    final url = ApiConfig.endpoint('promos/$promoId/deactivate');
     final r = await http.patch(url, headers: _auth(t));
     _decode(r, where: 'PATCH /promos/$promoId/deactivate');
   }
 
   Future<void> deletePromo(int promoId) async {
-    final base = await ApiConfig.readBase();
+    await ApiConfig.readBase();
     final t = await _token();
-    final url = Uri.parse('$base/promos/$promoId');
+    final url = ApiConfig.endpoint('promos/$promoId');
     final r = await http.delete(url, headers: _auth(t));
     _decode(r, where: 'DELETE /promos/$promoId');
   }

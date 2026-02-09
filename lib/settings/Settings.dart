@@ -29,6 +29,15 @@ import 'package:vero360_app/GernalServices/address_service.dart';
 const Color kBrandOrange = Color(0xFFFF8A00);
 const Color kBrandNavy = Color(0xFF16284C);
 
+/// Filters out Firebase identifiers (e.g. +firebase_xxx) so we show real phone numbers only.
+String _sanitizePhone(String s) {
+  final t = (s ?? '').trim();
+  if (t.isEmpty) return '';
+  if (t.toLowerCase().startsWith('+firebase_') ||
+      t.toLowerCase().contains('firebase_')) return '';
+  return t;
+}
+
 class SettingsPage extends StatefulWidget {
   /// If Settings is shown as a TAB/root, pass this so back goes to home tab instead of closing app.
   final VoidCallback? onBackToHomeTab;
@@ -69,6 +78,12 @@ class _SettingsPageState extends State<SettingsPage> {
   static const String _supportPhone = '+265999955270';
   static const String _supportWhatsApp = '+265992695612';
   static const String _supportEmail = 'support@vero360.app';
+
+  /// Display phone; filters out Firebase identifiers so we never show +firebase_xxx.
+  String get _displayPhone {
+    final s = _sanitizePhone(_phone);
+    return s.isEmpty ? 'No Phone' : _phone;
+  }
 
   @override
   void initState() {
@@ -164,10 +179,11 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _loadCachedProfile() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
+    final phone = _sanitizePhone(prefs.getString('phone') ?? '');
     setState(() {
       _name = prefs.getString('fullName') ?? prefs.getString('name') ?? _name;
       _email = prefs.getString('email') ?? _email;
-      _phone = prefs.getString('phone') ?? _phone;
+      if (phone.isNotEmpty) _phone = phone;
       _address = prefs.getString('address') ?? _address;
       _photoUrl = prefs.getString('profilepicture') ?? '';
     });
@@ -210,8 +226,10 @@ class _SettingsPageState extends State<SettingsPage> {
       if ((data['email'] ?? '').toString().trim().isNotEmpty) {
         _email = data['email'].toString().trim();
       }
-      if ((data['phone'] ?? '').toString().trim().isNotEmpty) {
-        _phone = data['phone'].toString().trim();
+      final phoneVal = _sanitizePhone(
+          (data['phone'] ?? '').toString().trim());
+      if (phoneVal.isNotEmpty) {
+        _phone = phoneVal;
       }
       if ((data['address'] ?? '').toString().trim().isNotEmpty) {
         _address = data['address'].toString().trim();
@@ -288,7 +306,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
     final name = (user['name'] ?? 'Guest User').toString().trim();
     final email = (user['email'] ?? '').toString().trim();
-    final phone = (user['phone'] ?? '').toString().trim();
+    final phone = _sanitizePhone(
+        (user['phone'] ?? '').toString().trim());
     final pic = (user['profilepicture'] ??
             user['profilePicture'] ??
             user['photoURL'] ??
@@ -380,7 +399,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _openEditProfile() async {
     _maybeHaptic();
     final nameController = TextEditingController(text: _name);
-    final phoneController = TextEditingController(text: _phone);
+    final phoneController = TextEditingController(
+        text: _sanitizePhone(_phone).isEmpty ? '' : _phone);
     final addressController = TextEditingController(text: _address);
 
     final saved = await showModalBottomSheet<bool>(
@@ -1172,7 +1192,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          _chip(Icons.phone_outlined, _phone),
+                          _chip(Icons.phone_outlined, _displayPhone),
                           _chip(Icons.location_on_outlined,
                               _defaultAddressDisplay.isEmpty
                                   ? _address

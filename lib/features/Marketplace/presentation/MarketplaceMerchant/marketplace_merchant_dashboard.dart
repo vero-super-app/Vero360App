@@ -66,6 +66,15 @@ String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
 String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
 // ---------------------------------------------------------------------------
 
+/// Filters out Firebase identifiers (e.g. +firebase_xxx) so we show real phone numbers only.
+String _sanitizePhone(String s) {
+  final t = (s ?? '').trim();
+  if (t.isEmpty) return '';
+  if (t.toLowerCase().startsWith('+firebase_') ||
+      t.toLowerCase().contains('firebase_')) return '';
+  return t;
+}
+
 class LocalMedia {
   final Uint8List bytes;
   final String filename;
@@ -81,7 +90,16 @@ class LocalMedia {
 
 class MarketplaceMerchantDashboard extends StatefulWidget {
   final String email;
-  const MarketplaceMerchantDashboard({super.key, required this.email, required void Function() onBackToHomeTab});
+  /// When true, this dashboard is shown as a tab inside the main app bottom nav;
+  /// hide our own bottom nav to avoid two overlapping bars.
+  final bool embeddedInMainNav;
+
+  const MarketplaceMerchantDashboard({
+    super.key,
+    required this.email,
+    required void Function() onBackToHomeTab,
+    this.embeddedInMainNav = false,
+  });
 
   @override
   State<MarketplaceMerchantDashboard> createState() =>
@@ -180,6 +198,12 @@ class _MarketplaceMerchantDashboardState
     final until = _walletUnlockedUntil;
     if (until == null) return false;
     return DateTime.now().isBefore(until);
+  }
+
+  /// Display phone; filters out Firebase identifiers so we never show +firebase_xxx.
+  String get _displayMerchantPhone {
+    final s = _sanitizePhone(_merchantPhone);
+    return s.isEmpty ? 'No Phone' : _merchantPhone;
   }
 
   void _toastOk(String msg) {
@@ -398,6 +422,7 @@ class _MarketplaceMerchantDashboardState
   @override
   void initState() {
     super.initState();
+    if (widget.embeddedInMainNav) _selectedIndex = 4;
     _marketplaceTabs = TabController(length: 3, vsync: this);
 
     _uid = _auth.currentUser?.uid ?? '';
@@ -445,7 +470,7 @@ class _MarketplaceMerchantDashboardState
     _uid = u.uid;
 
     final email = (u.email ?? '').trim();
-    final phone = (u.phoneNumber ?? '').trim();
+    final phone = _sanitizePhone(u.phoneNumber ?? '');
     final photo = (u.photoURL ?? '').trim();
 
     if (mounted) {
@@ -465,7 +490,8 @@ class _MarketplaceMerchantDashboardState
       final doc = await _firestore.collection('users').doc(uid).get();
       final data = doc.data();
       if (data == null || !mounted) return;
-      final phoneVal = (data['phone'] ?? '').toString().trim();
+      final phoneVal = _sanitizePhone(
+          (data['phone'] ?? '').toString().trim());
       final picVal = (data['profilePicture'] ?? data['profilepicture'] ?? '')
           .toString()
           .trim();
@@ -633,9 +659,10 @@ class _MarketplaceMerchantDashboardState
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
 
+    final phone = _sanitizePhone(prefs.getString('phone') ?? '');
     setState(() {
       _merchantEmail = prefs.getString('email') ?? _merchantEmail;
-      _merchantPhone = prefs.getString('phone') ?? _merchantPhone;
+      if (phone.isNotEmpty) _merchantPhone = phone;
       _merchantProfileUrl =
           prefs.getString('profilepicture') ?? _merchantProfileUrl;
     });
@@ -680,7 +707,8 @@ class _MarketplaceMerchantDashboardState
 
         final emailVal =
             (user['email'] ?? user['userEmail'] ?? '').toString().trim();
-        final phoneVal = (user['phone'] ?? '').toString().trim();
+        final phoneVal = _sanitizePhone(
+            (user['phone'] ?? '').toString().trim());
         final picVal = (user['profilepicture'] ?? user['profilePicture'] ?? '')
             .toString()
             .trim();
@@ -757,7 +785,8 @@ class _MarketplaceMerchantDashboardState
                 _status = ms.toString().trim();
               }
 
-              final mp = (merchant['phone'] ?? '').toString().trim();
+              final mp = _sanitizePhone(
+                  (merchant['phone'] ?? '').toString().trim());
               if (mp.isNotEmpty) _merchantPhone = mp;
             }
           });
@@ -1800,7 +1829,7 @@ class _MarketplaceMerchantDashboardState
       backgroundColor: const Color(0xFFF3F4F7),
       appBar: _selectedIndex == 4 ? _buildDashboardAppBar() : null,
       body: _getCurrentPage(),
-      bottomNavigationBar: _buildMerchantNavBar(),
+      bottomNavigationBar: widget.embeddedInMainNav ? null : _buildMerchantNavBar(),
     );
   }
 
@@ -2004,7 +2033,7 @@ class _MarketplaceMerchantDashboardState
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    _merchantPhone,
+                    _displayMerchantPhone,
                     style: TextStyle(
                         color: Colors.white.withOpacity(0.85),
                         fontWeight: FontWeight.w600),

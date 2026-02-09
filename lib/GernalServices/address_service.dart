@@ -21,7 +21,7 @@ class AddressService {
   Future<String> _getTokenOrThrow() async {
     final token = await AuthHandler.getFirebaseToken();
     if (token == null || token.isEmpty) {
-      throw AuthRequiredException('No Firebase token. Please log in.');
+      throw AuthRequiredException('No Auth token Found. Please log in.');
     }
     return token;
   }

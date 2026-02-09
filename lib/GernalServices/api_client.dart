@@ -3,9 +3,9 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:http/http.dart' as http;
-import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 
 class ApiClient {
@@ -122,21 +122,17 @@ class ApiClient {
       ...?headers,
     };
 
-    // 🔐 Auto‑attach Firebase ID token (JWT) if logged in and no Authorization provided
+    // 🔐 Single source of truth: AuthHandler (Firebase first, then SP)
     try {
       final hasAuthHeader =
           allHeaders.keys.any((k) => k.toLowerCase() == 'authorization');
       if (!hasAuthHeader) {
-        final user = FirebaseAuth.instance.currentUser;
-        if (user != null) {
-          final rawToken = await user.getIdToken();
-          final token = rawToken?.trim();
-          if (token != null && token.isNotEmpty) {
-            allHeaders['Authorization'] = 'Bearer $token';
-            if (kDebugMode) {
-              debugPrint('[JWT] Firebase ID token length: ${token.length}');
-              debugPrint('[JWT] jwt_token: $token');
-            }
+        final token = await AuthHandler.getTokenForApi();
+        final t = token?.trim();
+        if (t != null && t.isNotEmpty) {
+          allHeaders['Authorization'] = 'Bearer $t';
+          if (kDebugMode) {
+            debugPrint('[JWT] Auth token length: ${t.length}');
           }
         }
       }

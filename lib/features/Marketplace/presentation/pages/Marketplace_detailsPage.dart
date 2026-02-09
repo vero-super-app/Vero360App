@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:vero360_app/Home/Messages.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/GernalServices/chat_service.dart';
@@ -165,14 +166,7 @@ class _DetailsPageState extends State<DetailsPage> {
     return info;
   }
 
-  Future<String?> _readAuthToken() async {
-    final sp = await SharedPreferences.getInstance();
-    for (final k in const ['token', 'jwt_token', 'jwt']) {
-      final v = sp.getString(k);
-      if (v != null && v.isNotEmpty) return v;
-    }
-    return null;
-  }
+  Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
 
   Future<bool> _requireLogin() async {
     final t = await _readAuthToken();

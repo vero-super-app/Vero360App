@@ -55,6 +55,7 @@ import 'package:vero360_app/utils/toasthelper.dart';
 
 // ✅ Providers
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -217,12 +218,34 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     ),
   ];
 
+  String? _resolvedGreetingName;
+  bool _greetingResolved = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(() => _animateIn = true);
     });
+    _resolveGreetingName();
+  }
+
+  Future<void> _resolveGreetingName() async {
+    if (widget.email.isNotEmpty) return;
+    final name = await AuthStorage.userNameFromToken();
+    if (!mounted) return;
+    setState(() {
+      _resolvedGreetingName = name;
+      _greetingResolved = true;
+    });
+  }
+
+  @override
+  void didUpdateWidget(Vero360Homepage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.email != widget.email && widget.email.isEmpty) {
+      _resolveGreetingName();
+    }
   }
 
   @override
@@ -231,9 +254,21 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     super.dispose();
   }
 
+  String _displayName() {
+    if (widget.email.isNotEmpty) return _firstNameFromEmail(widget.email);
+    if (_resolvedGreetingName != null && _resolvedGreetingName!.isNotEmpty) {
+      final cleaned = _resolvedGreetingName!.replaceAll(RegExp(r'[^a-zA-Z]'), ' ').trim();
+      final parts = cleaned.split(RegExp(r'\s+'));
+      final first = parts.isNotEmpty ? parts.first : 'there';
+      if (first.isEmpty) return 'there';
+      return '${first[0].toUpperCase()}${first.substring(1).toLowerCase()}';
+    }
+    return _greetingResolved ? 'there' : '...';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final greeting = 'Hi, ${_firstNameFromEmail(widget.email)} 👋';
+    final greeting = 'Hi, ${_displayName()} 👋';
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
@@ -370,13 +405,13 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   }
 
   void _openDigitalDetail(DigitalProduct p) {
-    final suggestedName = _firstNameFromEmail(widget.email);
+    final suggestedName = _displayName();
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => DigitalProductDetailPage(
           product: p,
           initialEmail: widget.email,
-          initialName: suggestedName == 'there' ? '' : suggestedName,
+          initialName: (suggestedName == 'there' || suggestedName == '...') ? '' : suggestedName,
         ),
       ),
     );

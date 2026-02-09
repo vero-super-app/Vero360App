@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart'; // ✅ ADD (commas formatter)
 
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
@@ -35,6 +36,7 @@ class _CartPageState extends State<CartPage> {
   final List<CartModel> _items = [];
   String? _error;
   bool _loading = false;
+  StreamSubscription<User?>? _authSub;
 
   // Firebase services
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -43,11 +45,30 @@ class _CartPageState extends State<CartPage> {
   @override
   void initState() {
     super.initState();
-    _cartFuture = _fetch();
+    _authSub = _auth.authStateChanges().listen((User? user) {
+      if (user == null && mounted) {
+        setState(() {
+          _items.clear();
+          _error = null;
+        });
+      }
+    });
+    _cartFuture = _hasSession().then((has) async {
+      if (!has) return <CartModel>[];
+      return _fetch();
+    });
   }
 
-  /// Check if user has a valid session
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
+
+  /// Check if user has a valid session (single source: Firebase then SP).
   Future<bool> _hasSession() async {
+    final hasFirebase = await AuthHandler.isAuthenticated();
+    if (hasFirebase) return true;
     final sp = await SharedPreferences.getInstance();
     final t = sp.getString('token') ??
         sp.getString('jwt_token') ??

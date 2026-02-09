@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 
 import '../../Home/homepage.dart';
@@ -70,13 +71,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 
   Future<void> _refreshAuthState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('jwt_token');
-    final fbUser = FirebaseAuth.instance.currentUser;
-
-    final loggedIn =
-        (token != null && token.isNotEmpty) || fbUser != null;
-
+    final loggedIn = await AuthHandler.isAuthenticated();
     if (!mounted) return;
     setState(() => _isLoggedIn = loggedIn);
 
@@ -113,6 +108,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
           onBackToHomeTab: () {
             setState(() => _selectedIndex = 0);
           },
+          embeddedInMainNav: true,
         ),
       ),
     ];
@@ -153,7 +149,18 @@ class _BottomnavbarState extends State<Bottomnavbar>
     }
 
     HapticFeedback.lightImpact();
-    setState(() => _selectedIndex = index);
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
+  /// Body when a protected tab is selected but user is not logged in must not show;
+  /// we never set _selectedIndex to a protected tab when !_isLoggedIn (see _onItemTapped).
+  Widget _buildBody() {
+    if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return _pages[_selectedIndex];
   }
 
   void _showAuthDialog() {
@@ -184,7 +191,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     }
 
     return Scaffold(
-      body: _pages[_selectedIndex],
+      body: _buildBody(),
       bottomNavigationBar: SafeArea(
         top: false,
         child: Padding(

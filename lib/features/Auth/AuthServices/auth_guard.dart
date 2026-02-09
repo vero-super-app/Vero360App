@@ -1,8 +1,8 @@
 // lib/services/auth_guard.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
@@ -63,19 +63,8 @@ class _AuthGuardState extends State<AuthGuard> with WidgetsBindingObserver {
     }
   }
 
-  String? _readToken(SharedPreferences prefs) {
-    return prefs.getString("jwt_token") ??
-        prefs.getString("token") ??
-        prefs.getString("authToken");
-  }
-
   Future<void> _checkAuthStatus() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = _readToken(prefs);
-    final fbUser = FirebaseAuth.instance.currentUser;
-
-    final loggedIn =
-        (token != null && token.trim().isNotEmpty) || (fbUser != null);
+    final loggedIn = await AuthHandler.isAuthenticated();
 
     if (!mounted) return;
 

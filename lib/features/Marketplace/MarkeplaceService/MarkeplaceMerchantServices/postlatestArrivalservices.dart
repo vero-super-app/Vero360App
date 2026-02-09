@@ -4,10 +4,22 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 class LatestArrivalsServicess {
+  /// Single source of truth: Firebase first, then SP (keeps session after 1hr refresh).
+  Future<String> _token() async {
+    final token = await AuthHandler.getTokenForApi();
+    return token ?? '';
+  }
+
+  Map<String, String> _auth(String t, {Map<String, String>? extra}) => {
+        'Authorization': 'Bearer $t',
+        'Accept': 'application/json',
+        if (extra != null) ...extra,
+      };
   // ---------------- URL builder (adds /vero) ----------------
 
   Future<String> _apiBase() async {
@@ -58,12 +70,7 @@ class LatestArrivalsServicess {
     return json.decode(r.body);
   }
 
-  Map<String, String> _jsonHeaders() => const {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
-
-  // ---------------- upload (NO AUTH multipart) ----------------
+  // ---------------- upload (auth required: single source AuthHandler) ----------------
 
   Future<String> uploadImageBytes(
     Uint8List bytes, {
@@ -72,9 +79,16 @@ class LatestArrivalsServicess {
   }) async {
     final base = await _apiBase();
     final uri = _u('/uploads', base);
+    final t = await _token();
+    if (t.isEmpty) {
+      throw Exception(
+        'Upload failed: HTTP 401 {"message":"No token provided","error":"Unauthorized","statusCode":401}',
+      );
+    }
 
     final req = http.MultipartRequest('POST', uri)
-      ..headers['Accept'] = 'application/json';
+      ..headers['Accept'] = 'application/json'
+      ..headers['Authorization'] = 'Bearer $t';
 
     final parts = mime.split('/');
     final mediaType = (parts.length == 2)
@@ -120,15 +134,13 @@ class LatestArrivalsServicess {
     return (list as List).map((e) => LatestArrivalModel.fromJson(e)).toList();
   }
 
-  // ---------------- list mine (NO AUTH) ----------------
-  // If your backend does NOT have /me public, then change to fetchAll()
-  // or create a public route for "mine".
+  // ---------------- list mine (auth required) ----------------
   Future<List<LatestArrivalModel>> fetchMine() async {
     final base = await _apiBase();
     final url = _u('/latestarrivals/me', base);
+    final t = await _token();
 
-    final r =
-        await http.get(url, headers: const {'Accept': 'application/json'});
+    final r = await http.get(url, headers: _auth(t));
     final body = _decode(r, where: 'GET $url');
 
     final list =
@@ -136,15 +148,16 @@ class LatestArrivalsServicess {
     return (list as List).map((e) => LatestArrivalModel.fromJson(e)).toList();
   }
 
-  // ---------------- create/update/delete (NO AUTH) ----------------
+  // ---------------- create/update/delete (auth required) ----------------
 
   Future<void> create(LatestArrivalModel item) async {
     final base = await _apiBase();
     final url = _u('/latestarrivals', base);
+    final t = await _token();
 
     final r = await http.post(
       url,
-      headers: _jsonHeaders(),
+      headers: _auth(t, extra: {'Content-Type': 'application/json'}),
       body: json.encode(item.toJson()),
     );
     _decode(r, where: 'POST $url');
@@ -153,10 +166,11 @@ class LatestArrivalsServicess {
   Future<void> update(int id, Map<String, dynamic> patch) async {
     final base = await _apiBase();
     final url = _u('/latestarrivals/$id', base);
+    final t = await _token();
 
     final r = await http.put(
       url,
-      headers: _jsonHeaders(),
+      headers: _auth(t, extra: {'Content-Type': 'application/json'}),
       body: json.encode(patch),
     );
     _decode(r, where: 'PUT $url');
@@ -165,9 +179,9 @@ class LatestArrivalsServicess {
   Future<void> delete(int id) async {
     final base = await _apiBase();
     final url = _u('/latestarrivals/$id', base);
+    final t = await _token();
 
-    final r =
-        await http.delete(url, headers: const {'Accept': 'application/json'});
+    final r = await http.delete(url, headers: _auth(t));
     _decode(r, where: 'DELETE $url');
   }
 }

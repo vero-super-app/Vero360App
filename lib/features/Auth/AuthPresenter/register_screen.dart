@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,13 +9,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
+import 'package:vero360_app/GernalServices/api_client.dart';
 
 // Merchant dashboards
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 
 class AppColors {
@@ -206,8 +210,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     final displayId = user['email']?.toString() ??
         user['phone']?.toString() ??
-        _email.text.trim() ??
-        _phone.text.trim();
+        _email.text.trim();
     if (displayId.isNotEmpty) {
       await prefs.setString('email', displayId);
     }
@@ -339,6 +342,46 @@ class _RegisterScreenState extends State<RegisterScreen> {
     };
   }
 
+  /// Syncs the chosen role (and merchant data) to the backend so the API user
+  /// is created/updated as merchant. Uses PUT /users/me (backend uses Put, not Patch).
+  Future<void> _syncProfileToBackend(User user) async {
+    final role = _role == UserRole.merchant ? 'merchant' : 'customer';
+    final body = <String, dynamic>{
+      'name': _name.text.trim(),
+      'email': _email.text.trim(),
+      'phone': _phone.text.trim(),
+      'role': role,
+    };
+    if (_role == UserRole.merchant) {
+      body['merchantService'] = _selectedMerchantService?.key;
+      body['businessName'] = _businessName.text.trim();
+      body['businessAddress'] = _businessAddress.text.trim();
+    }
+
+    // Ensure backend gets the new user's token (persist so ApiClient uses it).
+    final token = await user.getIdToken(true);
+    if (token != null && token.isNotEmpty) {
+      await AuthHandler.persistTokenToSp(token);
+    }
+
+    try {
+      await ApiClient.put(
+        '/users/me',
+        body: jsonEncode(body),
+        timeout: const Duration(seconds: 10),
+      );
+      if (kDebugMode) {
+        // ignore: avoid_print
+        print('[Register] Backend profile synced via PUT /users/me (role: $role)');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        // ignore: avoid_print
+        print('[Register] PUT /users/me failed. Ensure UpdateUserDto allows role (and merchant fields). Error: $e');
+      }
+    }
+  }
+
   // ---------- Firebase-only registration ----------
 
   Future<void> _registerWithFirebaseOnly() async {
@@ -450,6 +493,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         await prefs.setString('business_name', _businessName.text.trim());
         await prefs.setString('business_address', _businessAddress.text.trim());
       }
+
+      // Sync role (and merchant data) to backend so API user is merchant when chosen.
+      await _syncProfileToBackend(user);
 
       final firebaseResponse = await _buildResultFromUser(user);
 

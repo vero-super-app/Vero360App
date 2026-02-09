@@ -5,12 +5,12 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/GeneralPages/payment_webview.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/paychangu_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -301,15 +301,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  // ── Auth + Default address bootstrap ─────────────────────────────────────
-  Future<String?> _readAuthToken() async {
-    final sp = await SharedPreferences.getInstance();
-    for (final k in const ['token', 'jwt_token', 'jwt']) {
-      final v = sp.getString(k);
-      if (v != null && v.isNotEmpty) return v;
-    }
-    return null;
-  }
+  // ── Auth + Default address bootstrap (single source: Firebase then SP) ───
+  Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
 
   Future<void> _initAuthAndAddress() async {
     setState(() {

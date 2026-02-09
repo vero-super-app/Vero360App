@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:http/http.dart' as http;
 
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 
 class ApiClient {
@@ -78,7 +79,7 @@ class ApiClient {
     );
   }
 
-  // ✅ NEW: PATCH helper
+  /// PATCH helper
   static Future<http.Response> patch(
     String path, {
     Map<String, String>? headers,
@@ -106,9 +107,9 @@ class ApiClient {
     Duration? timeout,
     Set<int>? allowedStatusCodes,
   }) async {
-    // 🔐 ensure backend (primary or backup) is reachable
-    final ok = await ApiConfig.ensureBackendUp();
-    if (!ok) {
+    // Ensure backend is reachable
+    final backendOk = await ApiConfig.ensureBackendUp();
+    if (!backendOk) {
       throw const ApiException(
         message: 'Please check your internet connection and try again.',
       );
@@ -121,10 +122,27 @@ class ApiClient {
       ...?headers,
     };
 
+    // 🔐 Single source of truth: AuthHandler (Firebase first, then SP)
+    try {
+      final hasAuthHeader =
+          allHeaders.keys.any((k) => k.toLowerCase() == 'authorization');
+      if (!hasAuthHeader) {
+        final token = await AuthHandler.getTokenForApi();
+        final t = token?.trim();
+        if (t != null && t.isNotEmpty) {
+          allHeaders['Authorization'] = 'Bearer $t';
+          if (kDebugMode) {
+            debugPrint('[JWT] Auth token length: ${t.length}');
+          }
+        }
+      }
+    } catch (_) {
+      // If token fetch fails, just send request without auth
+    }
+
     try {
       Future<http.Response> future;
-
-      switch (method) {
+      switch (lineUpper(method)) {
         case 'GET':
           future = http.get(uri, headers: allHeaders);
           break;
@@ -146,15 +164,11 @@ class ApiClient {
 
       final res = await future.timeout(timeout ?? _defaultTimeout);
 
-      final isExplicitlyAllowed = allowedStatusCodes != null &&
-          allowedStatusCodes.contains(res.statusCode);
-
-      if ((res.statusCode >= 200 && res.statusCode < 300) ||
-          isExplicitlyAllowed) {
+      final allowed = allowedStatusCodes?.contains(res.statusCode) ?? false;
+      if ((res.statusCode >= 200 && res.statusCode < 300) || allowed) {
         return res;
       }
 
-      // Try to extract backend message safely
       String? backendMsg;
       try {
         final decoded = jsonDecode(res.body);
@@ -166,14 +180,10 @@ class ApiClient {
             backendMsg = m.toString();
           }
         }
-      } catch (_) {
-        // ignore JSON errors
-      }
+      } catch (_) {}
 
       if (kDebugMode) {
-        debugPrint(
-          'API $method ${uri.path} -> ${res.statusCode} ${res.body}',
-        );
+        debugPrint('API $method ${uri.path} -> ${res.statusCode} ${res.body}');
       }
 
       final userMsg = backendMsg ??
@@ -208,4 +218,6 @@ class ApiClient {
       );
     }
   }
+
+  static String lineUpper(String s) => s.toUpperCase();
 }

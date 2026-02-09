@@ -31,11 +31,11 @@ import 'package:vero360_app/Home/CustomersProfilepage.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
-import 'package:vero360_app/GernalScreens/login_screen.dart';
-import 'package:vero360_app/GernalScreens/register_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 
 // Services
-import 'package:vero360_app/GernalServices/auth_guard.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/messaging_initialization_service.dart';
@@ -44,6 +44,8 @@ import 'package:vero360_app/GernalServices/websocket_manager.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/GernalServices/driver_service.dart';
 
 final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
 
@@ -187,8 +189,8 @@ class _AppBootstrapState extends State<AppBootstrap> {
           );
         }
 
-        // ✅ main app
-        return const MyApp();
+        // ✅ main app with ride share data preloader
+        return const _RideSharePreloader(child: MyApp());
       },
     );
   }
@@ -511,6 +513,28 @@ class _SelfHealPageState extends State<SelfHealPage>
   }
 }
 
+/// ====== RIDE SHARE DATA PRELOADER ======
+/// Loads driver status from local cache on app start
+class _RideSharePreloader extends ConsumerWidget {
+  final Widget child;
+  const _RideSharePreloader({required this.child});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Load driver status from SharedPreferences (local, no network call)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      loadDriverStatusFromPrefs();
+      
+      // Optional: Sync with backend in background (fire and forget)
+      Future.delayed(const Duration(seconds: 2), () {
+        ref.read(syncDriverStatusProvider);
+      });
+    });
+    
+    return child;
+  }
+}
+
 /// ----------------- ✅ MAIN APP (your original logic preserved) -----------------
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
@@ -675,7 +699,7 @@ class _MyAppState extends State<MyApp> {
     _currentShell = 'merchant';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(
-          builder: (_) => MarketplaceMerchantDashboard(email: email)),
+          builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
       (_) => false,
     );
   }
@@ -814,10 +838,13 @@ class AuthFlow {
         final email = (user['email'] ?? '').toString();
         await prefs.setString('email', email);
 
+        // ✅ Check and cache driver status (background, fire and forget)
+        _checkAndCacheDriverStatus(prefs);
+
         if (role == 'merchant') {
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(
-                builder: (_) => MarketplaceMerchantDashboard(email: email)),
+                builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
             (_) => false,
           );
         } else {
@@ -849,6 +876,7 @@ class AuthFlow {
     await p.remove('authToken');
     await p.remove('user_role');
     await p.remove('role');
+    await p.remove('user_is_driver');
 
     try {
       await FirebaseAuth.instance.signOut();
@@ -865,5 +893,28 @@ class AuthFlow {
     final t = _readToken(p);
     final fb = FirebaseAuth.instance.currentUser;
     return (t != null && t.trim().isNotEmpty) || fb != null;
+  }
+
+  static Future<void> _checkAndCacheDriverStatus(SharedPreferences prefs) async {
+    try {
+      final driverService = DriverService();
+      final token = _readToken(prefs);
+      if (token == null) return;
+
+      // Extract userId from token if available
+      final userId = prefs.getInt('user_id');
+      if (userId == null) return;
+
+      // Check if user is a driver (fire and forget)
+      try {
+        await driverService.getDriverByUserId(userId);
+        await prefs.setBool('user_is_driver', true);
+      } catch (_) {
+        await prefs.setBool('user_is_driver', false);
+      }
+    } catch (_) {
+      // Silent fail - if we can't determine, assume not a driver
+      await prefs.setBool('user_is_driver', false);
+    }
   }
 }

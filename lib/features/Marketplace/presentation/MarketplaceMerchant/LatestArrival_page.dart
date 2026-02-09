@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/latest_Services.dart';
 
@@ -99,11 +100,12 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   Future<void> _addToCart(LatestArrivalModels item, {int qty = 1}) async {
     if (qty <= 0) return;
 
-    final user = FirebaseAuth.instance.currentUser;
     final resolvedImage = await _resolveImageUrl(item) ?? item.imageUrl;
+    final isLoggedIn = await AuthHandler.isAuthenticated();
+    final user = FirebaseAuth.instance.currentUser;
 
-    // Logged in -> Firestore cart
-    if (user != null) {
+    // Single source of truth: AuthHandler. Logged in -> Firestore cart
+    if (isLoggedIn && user != null) {
       final uid = user.uid;
       final docId = (item.id.isNotEmpty) ? item.id : item.name;
 

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
-import 'package:vero360_app/GernalServices/auth_storage.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'driver_request_screen.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {

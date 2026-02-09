@@ -24,6 +24,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
@@ -51,17 +52,10 @@ class CartService {
   static DateTime? _lastWarmupAttempt;
 
   // ---------------------------------------------------------------------------
-  // AUTH + HEADERS
+  // AUTH + HEADERS (single source: Firebase then SP, same as rest of app)
   // ---------------------------------------------------------------------------
 
-  Future<String?> _getToken() async {
-    final p = await SharedPreferences.getInstance();
-    for (final k in const ['token', 'jwt_token', 'jwt']) {
-      final v = p.getString(k);
-      if (v != null && v.isNotEmpty) return v;
-    }
-    return null;
-  }
+  Future<String?> _getToken() async => AuthHandler.getTokenForApi();
 
   Future<String?> _getEmail() async {
     final p = await SharedPreferences.getInstance();

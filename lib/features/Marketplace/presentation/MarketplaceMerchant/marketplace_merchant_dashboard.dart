@@ -22,6 +22,7 @@ import 'package:geocoding/geocoding.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/PostlatestArrival.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/Postpromotion.dart';
 import 'package:vero360_app/config/api_config.dart';
@@ -33,7 +34,7 @@ import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 // Add login screen import (using your correct path)
-import 'package:vero360_app/GernalScreens/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 
 import 'package:vero360_app/Home/homepage.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
@@ -65,6 +66,15 @@ String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
 String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
 // ---------------------------------------------------------------------------
 
+/// Filters out Firebase identifiers (e.g. +firebase_xxx) so we show real phone numbers only.
+String _sanitizePhone(String s) {
+  final t = (s ?? '').trim();
+  if (t.isEmpty) return '';
+  if (t.toLowerCase().startsWith('+firebase_') ||
+      t.toLowerCase().contains('firebase_')) return '';
+  return t;
+}
+
 class LocalMedia {
   final Uint8List bytes;
   final String filename;
@@ -80,7 +90,16 @@ class LocalMedia {
 
 class MarketplaceMerchantDashboard extends StatefulWidget {
   final String email;
-  const MarketplaceMerchantDashboard({super.key, required this.email});
+  /// When true, this dashboard is shown as a tab inside the main app bottom nav;
+  /// hide our own bottom nav to avoid two overlapping bars.
+  final bool embeddedInMainNav;
+
+  const MarketplaceMerchantDashboard({
+    super.key,
+    required this.email,
+    required void Function() onBackToHomeTab,
+    this.embeddedInMainNav = false,
+  });
 
   @override
   State<MarketplaceMerchantDashboard> createState() =>
@@ -179,6 +198,12 @@ class _MarketplaceMerchantDashboardState
     final until = _walletUnlockedUntil;
     if (until == null) return false;
     return DateTime.now().isBefore(until);
+  }
+
+  /// Display phone; filters out Firebase identifiers so we never show +firebase_xxx.
+  String get _displayMerchantPhone {
+    final s = _sanitizePhone(_merchantPhone);
+    return s.isEmpty ? 'No Phone' : _merchantPhone;
   }
 
   void _toastOk(String msg) {
@@ -397,6 +422,7 @@ class _MarketplaceMerchantDashboardState
   @override
   void initState() {
     super.initState();
+    if (widget.embeddedInMainNav) _selectedIndex = 4;
     _marketplaceTabs = TabController(length: 3, vsync: this);
 
     _uid = _auth.currentUser?.uid ?? '';
@@ -404,6 +430,7 @@ class _MarketplaceMerchantDashboardState
     _loadMerchantProfileFromPrefs();
     _hydrateFromFirebaseAuth();
     _ensureBusinessName();
+    _pullPhoneAndProfileFromFirestore();
 
     _fetchCurrentUserMe();
     _loadMerchantData();
@@ -443,7 +470,7 @@ class _MarketplaceMerchantDashboardState
     _uid = u.uid;
 
     final email = (u.email ?? '').trim();
-    final phone = (u.phoneNumber ?? '').trim();
+    final phone = _sanitizePhone(u.phoneNumber ?? '');
     final photo = (u.photoURL ?? '').trim();
 
     if (mounted) {
@@ -453,6 +480,33 @@ class _MarketplaceMerchantDashboardState
         if (photo.isNotEmpty) _merchantProfileUrl = photo;
       });
     }
+  }
+
+  /// Pull phone and profile picture from Firestore users/{uid} when Auth/prefs are empty.
+  Future<void> _pullPhoneAndProfileFromFirestore() async {
+    final uid = _auth.currentUser?.uid ?? _uid;
+    if (uid.isEmpty) return;
+    try {
+      final doc = await _firestore.collection('users').doc(uid).get();
+      final data = doc.data();
+      if (data == null || !mounted) return;
+      final phoneVal = _sanitizePhone(
+          (data['phone'] ?? '').toString().trim());
+      final picVal = (data['profilePicture'] ?? data['profilepicture'] ?? '')
+          .toString()
+          .trim();
+      if (phoneVal.isEmpty && picVal.isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      if (phoneVal.isNotEmpty) await prefs.setString('phone', phoneVal);
+      if (picVal.isNotEmpty) await prefs.setString('profilepicture', picVal);
+      if (!mounted) return;
+      setState(() {
+        if (phoneVal.isNotEmpty && _merchantPhone == 'No Phone')
+          _merchantPhone = phoneVal;
+        if (picVal.isNotEmpty && _merchantProfileUrl.trim().isEmpty)
+          _merchantProfileUrl = picVal;
+      });
+    } catch (_) {}
   }
 
   Future<void> _ensureBusinessName() async {
@@ -568,7 +622,17 @@ class _MarketplaceMerchantDashboardState
   }
 
   // ----------------- API auth: prefs token OR Firebase idToken -----------------
-  Future<String?> _getBearerTokenForApi() async {
+  /// [forceRefresh] true = get a new Firebase ID token (use before sensitive/upload calls to avoid auth/id-token-expired).
+  Future<String?> _getBearerTokenForApi({bool forceRefresh = false}) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && forceRefresh) {
+      try {
+        final idToken = await user.getIdToken(true);
+        final t = idToken?.trim();
+        if (t != null && t.isNotEmpty) return t;
+      } catch (_) {}
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final fromPrefs = prefs.getString('jwt_token') ??
         prefs.getString('token') ??
@@ -579,11 +643,10 @@ class _MarketplaceMerchantDashboardState
       return fromPrefs.trim();
     }
 
-    final user = FirebaseAuth.instance.currentUser;
     if (user == null) return null;
 
     try {
-      final idToken = await user.getIdToken();
+      final idToken = await user.getIdToken(forceRefresh);
       final t = idToken?.trim();
       if (t == null || t.isEmpty) return null;
       return t;
@@ -596,9 +659,10 @@ class _MarketplaceMerchantDashboardState
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
 
+    final phone = _sanitizePhone(prefs.getString('phone') ?? '');
     setState(() {
       _merchantEmail = prefs.getString('email') ?? _merchantEmail;
-      _merchantPhone = prefs.getString('phone') ?? _merchantPhone;
+      if (phone.isNotEmpty) _merchantPhone = phone;
       _merchantProfileUrl =
           prefs.getString('profilepicture') ?? _merchantProfileUrl;
     });
@@ -643,7 +707,8 @@ class _MarketplaceMerchantDashboardState
 
         final emailVal =
             (user['email'] ?? user['userEmail'] ?? '').toString().trim();
-        final phoneVal = (user['phone'] ?? '').toString().trim();
+        final phoneVal = _sanitizePhone(
+            (user['phone'] ?? '').toString().trim());
         final picVal = (user['profilepicture'] ?? user['profilePicture'] ?? '')
             .toString()
             .trim();
@@ -651,20 +716,25 @@ class _MarketplaceMerchantDashboardState
         final apiRating = user['rating'];
         if (apiRating is num) _rating = apiRating.toDouble();
 
+        // Pull verification/status from API (e.g. pending, approved, under_review)
+        final apiStatus = (user['status'] ?? user['verificationStatus'] ?? '')
+            .toString()
+            .trim();
+        if (apiStatus.isNotEmpty) _status = apiStatus;
+
         final prefs = await SharedPreferences.getInstance();
         if (emailVal.isNotEmpty) await prefs.setString('email', emailVal);
         if (phoneVal.isNotEmpty) await prefs.setString('phone', phoneVal);
         if (picVal.isNotEmpty) await prefs.setString('profilepicture', picVal);
 
         if (!mounted) return;
+        final authPhoto = (_auth.currentUser?.photoURL ?? '').trim();
         setState(() {
           if (emailVal.isNotEmpty) _merchantEmail = emailVal;
           if (phoneVal.isNotEmpty) _merchantPhone = phoneVal;
-
-          final authPhoto = (_auth.currentUser?.photoURL ?? '').trim();
-          if (authPhoto.isEmpty && picVal.isNotEmpty) {
-            _merchantProfileUrl = picVal;
-          }
+          // Prefer Firebase Auth photo; else use API profile picture
+          _merchantProfileUrl =
+              authPhoto.isNotEmpty ? authPhoto : picVal;
         });
       } else {
         setState(() => _meOffline = true);
@@ -714,6 +784,10 @@ class _MarketplaceMerchantDashboardState
               if (ms != null && ms.toString().trim().isNotEmpty) {
                 _status = ms.toString().trim();
               }
+
+              final mp = _sanitizePhone(
+                  (merchant['phone'] ?? '').toString().trim());
+              if (mp.isNotEmpty) _merchantPhone = mp;
             }
           });
         }
@@ -875,6 +949,8 @@ class _MarketplaceMerchantDashboardState
 
   // ----------------- Pull-to-refresh -----------------
   Future<void> _refreshAll() async {
+    _hydrateFromFirebaseAuth();
+    await _pullPhoneAndProfileFromFirestore();
     await _ensureBusinessName();
     await _fetchCurrentUserMe();
     await _loadMerchantData();
@@ -976,21 +1052,38 @@ class _MarketplaceMerchantDashboardState
   }
 
   Future<void> _pickAndUploadProfile(ImageSource src) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    final file = await _picker.pickImage(
+      source: src,
+      maxWidth: 1400,
+      imageQuality: 85,
+    );
+    if (file == null) return;
+
     try {
-      final user = _auth.currentUser;
-      if (user == null) return;
-
-      final file = await _picker.pickImage(
-        source: src,
-        maxWidth: 1400,
-        imageQuality: 85,
-      );
-      if (file == null) return;
-
       setState(() => _profileUploading = true);
-      final url = await _uploadProfileToFirebaseStorage(user.uid, file);
+      String url;
+
+      // Prefer backend upload (works when Firebase Storage returns 404 / App Check).
+      try {
+        url = await _uploadProfileViaBackend(file);
+      } catch (backendErr) {
+        debugPrint('Backend profile upload failed: $backendErr');
+        try {
+          url = await _uploadProfileToFirebaseStorage(user.uid, file);
+        } on FirebaseException catch (e) {
+          if ((e.code == 'object-not-found' || e.code == 'unknown') && (e.message?.contains('404') == true)) {
+            url = await _uploadProfileViaBackend(file);
+          } else {
+            rethrow;
+          }
+        }
+      }
 
       await user.updatePhotoURL(url);
+      await user.reload();
 
       await _firestore.collection('users').doc(user.uid).set({
         'profilePicture': url,
@@ -1004,6 +1097,35 @@ class _MarketplaceMerchantDashboardState
       setState(() => _merchantProfileUrl = url);
 
       _toastOk('Profile picture updated');
+    } on FirebaseException catch (e) {
+      debugPrint('Profile upload error: ${e.code} ${e.message}');
+      if (!mounted) return;
+      try {
+        final url = await _uploadProfileViaBackend(file);
+        if (url.isNotEmpty) {
+          final u = _auth.currentUser;
+          if (u != null) {
+            await u.updatePhotoURL(url);
+            await u.reload();
+            await _firestore.collection('users').doc(u.uid).set({
+              'profilePicture': url,
+              'updatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('profilepicture', url);
+            setState(() => _merchantProfileUrl = url);
+            _toastOk('Profile picture updated');
+            return;
+          }
+        }
+      } catch (fallbackErr) {
+        debugPrint('Backend fallback failed: $fallbackErr');
+      }
+      if (e.code == 'object-not-found' || (e.message ?? '').contains('404')) {
+        _toastErr('Upload failed. Check network and that the server is running.');
+      } else {
+        _toastErr('Failed to upload photo. Please try again.');
+      }
     } catch (e) {
       debugPrint('Profile upload error: $e');
       if (!mounted) return;
@@ -1013,18 +1135,63 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
+  /// Upload via backend POST /vero/users/me/profile-picture. Uses a fresh ID token to avoid auth/id-token-expired.
+  Future<String> _uploadProfileViaBackend(XFile file) async {
+    String bearer = await _getBearerTokenForApi(forceRefresh: true) ?? '';
+    if (bearer.isEmpty) throw Exception('Not authenticated');
+    final uri = ApiConfig.endpoint('/users/me/profile-picture');
+    final bytes = await file.readAsBytes();
+    final mimeType = lookupMimeType(file.name, headerBytes: bytes) ?? 'image/jpeg';
+    final parts = mimeType.split('/');
+    final contentType = parts.length == 2 ? MediaType(parts[0], parts[1]) : null;
+
+    Future<http.StreamedResponse> sendRequest(String token) async {
+      final req = http.MultipartRequest('POST', uri)
+        ..headers['Authorization'] = 'Bearer $token'
+        ..files.add(http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: file.name.isNotEmpty ? file.name : 'profile.jpg',
+          contentType: contentType,
+        ));
+      return req.send();
+    }
+
+    var sent = await sendRequest(bearer);
+    var resp = await http.Response.fromStream(sent);
+
+    if (resp.statusCode == 401) {
+      bearer = await _getBearerTokenForApi(forceRefresh: true) ?? '';
+      if (bearer.isEmpty) throw Exception('Session expired. Please sign in again.');
+      sent = await sendRequest(bearer);
+      resp = await http.Response.fromStream(sent);
+    }
+
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      if (resp.statusCode == 404) throw Exception('Profile picture endpoint not found');
+      if (resp.statusCode == 401) throw Exception('Session expired. Please sign in again.');
+      throw Exception('Upload failed (${resp.statusCode}) ${resp.body}');
+    }
+    final body = jsonDecode(resp.body);
+    final data = (body is Map && body['data'] is Map)
+        ? body['data'] as Map
+        : (body is Map ? Map<String, dynamic>.from(body as Map) : <String, dynamic>{});
+    final url = (data['profilepicture'] ?? data['profilePicture'] ?? data['url'])?.toString();
+    if (url == null || url.isEmpty) throw Exception('No URL in response');
+    return url;
+  }
+
+  /// Upload profile image to Firebase Storage.
+  /// Uses a single path segment (profile_photos/uid_timestamp.ext) to avoid 404 with nested refs.
   Future<String> _uploadProfileToFirebaseStorage(String uid, XFile file) async {
-    final ext = (file.name.contains('.')) ? file.name.split('.').last : 'jpg';
+    final rawExt = file.name.contains('.') ? file.name.split('.').last : 'jpg';
+    final ext = rawExt.isEmpty || rawExt.length > 4 ? 'jpg' : rawExt;
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final path = 'profile_photos/${uid}_$timestamp.$ext';
+    final ref = FirebaseStorage.instance.ref().child(path);
 
     final bytes = await file.readAsBytes();
     final mime = lookupMimeType(file.name, headerBytes: bytes) ?? 'image/jpeg';
-
-    final ref = FirebaseStorage.instance
-        .ref()
-        .child('profile_photos')
-        .child(uid)
-        .child('profile_${DateTime.now().millisecondsSinceEpoch}.$ext');
-
     await ref.putData(bytes, SettableMetadata(contentType: mime));
     return await ref.getDownloadURL();
   }
@@ -1037,6 +1204,10 @@ class _MarketplaceMerchantDashboardState
       setState(() => _profileUploading = true);
 
       await user.updatePhotoURL(null);
+      await user.reload();
+      if (_auth.currentUser?.photoURL == null || _auth.currentUser!.photoURL!.isEmpty) {
+        if (mounted) setState(() => _merchantProfileUrl = '');
+      }
 
       await _firestore.collection('users').doc(user.uid).set({
         'profilePicture': '',
@@ -1658,7 +1829,7 @@ class _MarketplaceMerchantDashboardState
       backgroundColor: const Color(0xFFF3F4F7),
       appBar: _selectedIndex == 4 ? _buildDashboardAppBar() : null,
       body: _getCurrentPage(),
-      bottomNavigationBar: _buildMerchantNavBar(),
+      bottomNavigationBar: widget.embeddedInMainNav ? null : _buildMerchantNavBar(),
     );
   }
 
@@ -1862,7 +2033,7 @@ class _MarketplaceMerchantDashboardState
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    _merchantPhone,
+                    _displayMerchantPhone,
                     style: TextStyle(
                         color: Colors.white.withOpacity(0.85),
                         fontWeight: FontWeight.w600),

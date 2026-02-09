@@ -3,9 +3,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 class AuthRequiredException implements Exception {
   final String message;
@@ -15,15 +15,13 @@ class AuthRequiredException implements Exception {
 }
 
 class AddressService {
-  // ---------- Core helpers ----------
+  // ---------- Core helpers (Firebase auth for NestJS FirebaseAuthGuard) ----------
 
-  Future<String> _readBase() => ApiConfig.readBase();
-
+  /// Uses Firebase ID token so backend FirebaseAuthGuard can verify the user.
   Future<String> _getTokenOrThrow() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('jwt_token') ?? prefs.getString('token');
+    final token = await AuthHandler.getFirebaseToken();
     if (token == null || token.isEmpty) {
-      throw AuthRequiredException('No auth token found.');
+      throw AuthRequiredException('No Auth token Found. Please log in.');
     }
     return token;
   }
@@ -90,11 +88,10 @@ class AddressService {
 
   // ---------- API methods ----------
 
-  // GET /addresses/me
+  // GET /vero/addresses/me (Firebase auth)
   Future<List<Address>> getMyAddresses() async {
-    final base = await _readBase();
     final h = await _authHeaders();
-    final u = Uri.parse('$base/addresses/me');
+    final u = ApiConfig.endpoint('addresses/me');
 
     final r = await _sendWithRetry(() => http.get(u, headers: h));
     if (r.statusCode != 200) _handleBad(r);
@@ -112,12 +109,10 @@ class AddressService {
         .toList();
   }
 
-  // lib/services/address_service.dart  (add two helpers)
   Future<List<Map<String, dynamic>>> placesAutocomplete(String q,
       {String? sessionToken}) async {
-    final base = await _readBase();
     final h = await _authHeaders();
-    final u = Uri.parse('$base/addresses/places/autocomplete')
+    final u = ApiConfig.endpoint('addresses/places/autocomplete')
         .replace(queryParameters: {
       'q': q,
       if (sessionToken != null) 'st': sessionToken,
@@ -132,9 +127,8 @@ class AddressService {
 
   Future<Map<String, dynamic>?> placeDetails(String placeId,
       {String? sessionToken}) async {
-    final base = await _readBase();
     final h = await _authHeaders();
-    final u = Uri.parse('$base/addresses/places/details/$placeId')
+    final u = ApiConfig.endpoint('addresses/places/details/$placeId')
         .replace(queryParameters: {
       if (sessionToken != null) 'st': sessionToken,
     });
@@ -145,11 +139,10 @@ class AddressService {
     return (data['result'] ?? data) as Map<String, dynamic>?;
   }
 
-  // POST /addresses
+  // POST /vero/addresses (Firebase auth)
   Future<Address> createAddress(AddressPayload payload) async {
-    final base = await _readBase();
     final h = await _authHeaders();
-    final u = Uri.parse('$base/addresses');
+    final u = ApiConfig.endpoint('addresses');
 
     final r = await _sendWithRetry(
       () => http.post(u, headers: h, body: jsonEncode(payload.toJson())),
@@ -174,11 +167,10 @@ class AddressService {
     return Address.fromJson(map);
   }
 
-  // PUT /addresses/:id
+  // PUT /vero/addresses/:id (Firebase auth)
   Future<Address> updateAddress(String id, AddressPayload payload) async {
-    final base = await _readBase();
     final h = await _authHeaders();
-    final u = Uri.parse('$base/addresses/$id');
+    final u = ApiConfig.endpoint('addresses/$id');
 
     final r = await _sendWithRetry(
       () => http.put(u, headers: h, body: jsonEncode(payload.toJson())),
@@ -195,8 +187,8 @@ class AddressService {
           id: id,
           addressType: payload.addressType,
           city: payload.city,
-          description: payload.description ?? '',
-          isDefault: payload.isDefault ?? false,
+          description: payload.description,
+          isDefault: payload.isDefault == true,
         );
       });
     }
@@ -210,22 +202,19 @@ class AddressService {
     return Address.fromJson(map);
   }
 
-  // DELETE /addresses/:id
+  // DELETE /vero/addresses/:id (Firebase auth)
   Future<void> deleteAddress(String id) async {
-    final base = await _readBase();
     final h = await _authHeaders();
-    final u = Uri.parse('$base/addresses/$id');
+    final u = ApiConfig.endpoint('addresses/$id');
 
     final r = await _sendWithRetry(() => http.delete(u, headers: h));
     if (r.statusCode < 200 || r.statusCode >= 300) _handleBad(r);
   }
 
-  /// Mark one address as default. If your backend has
-  /// `POST /addresses/:id/default` use that instead.
+  /// POST /vero/addresses/:id/default (Firebase auth)
   Future<void> setDefaultAddress(String id) async {
-    final base = await _readBase();
     final h = await _authHeaders();
-    final u = Uri.parse('$base/addresses/$id/default');
+    final u = ApiConfig.endpoint('addresses/$id/default');
 
     final r = await _sendWithRetry(() => http.post(u, headers: h));
     if (r.statusCode < 200 || r.statusCode >= 300) _handleBad(r);

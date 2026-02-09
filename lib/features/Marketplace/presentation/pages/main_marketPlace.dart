@@ -14,6 +14,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart' as core;
 
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
@@ -815,20 +816,10 @@ class _MarketPageState extends State<MarketPage> {
     }
   }
 
+  /// Logged in = we have a token the cart/API can use (same source as CartService).
   Future<bool> _isUserLoggedIn() async {
-    final firebaseUser = FirebaseAuth.instance.currentUser;
-    if (firebaseUser != null) return true;
-
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? token = prefs.getString('token');
-    final String? jwtToken = prefs.getString('jwt_token');
-    final String? uid = prefs.getString('uid');
-    final String? email = prefs.getString('email');
-
-    return (token != null && token.isNotEmpty) ||
-        (jwtToken != null && jwtToken.isNotEmpty) ||
-        (uid != null && uid.isNotEmpty) ||
-        (email != null && email.isNotEmpty);
+    final token = await AuthHandler.getTokenForApi();
+    return token != null && token.isNotEmpty;
   }
 
   Future<bool> _requireLoginForCart() async {

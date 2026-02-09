@@ -22,13 +22,13 @@ class Place {
   });
 
   factory Place.fromJson(Map<String, dynamic> json) => Place(
-    id: json['id'] as String,
-    name: json['name'] as String,
-    address: json['address'] as String,
-    latitude: (json['latitude'] as num).toDouble(),
-    longitude: (json['longitude'] as num).toDouble(),
+    id: (json['id'] as String?) ?? '',
+    name: (json['name'] as String?) ?? '',
+    address: (json['address'] as String?) ?? '',
+    latitude: (json['latitude'] as num?)?.toDouble() ?? 0.0,
+    longitude: (json['longitude'] as num?)?.toDouble() ?? 0.0,
     isBookmarked: json['isBookmarked'] as bool? ?? false,
-    savedAt: json['savedAt'] != null ? DateTime.parse(json['savedAt'] as String) : null,
+    savedAt: json['savedAt'] != null ? DateTime.tryParse(json['savedAt'] as String? ?? '') : null,
     type: PlaceType.values.byName(json['type'] as String? ?? 'FAVORITE'),
   );
 

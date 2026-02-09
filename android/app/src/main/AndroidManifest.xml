@@ -1,7 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  
-    package="vero.a360_app"> 
-
+    package="vero.a360_app">
 
     <!-- Permissions -->
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -19,7 +18,7 @@
         android:name="${applicationName}"
         android:label="Vero360"
         android:icon="@mipmap/ic_launcher">
-        
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -40,16 +39,27 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
 
-            <!-- Deep link -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-                <category android:name="android.intent.category.BROWSABLE"/>
+            <!-- Deep link support for vero360:// (catches payment-complete and any other paths) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <!-- This catches ALL vero360:// URLs (recommended for payment callbacks) -->
+                <data android:scheme="vero360" />
+            </intent-filter>
+
+            <!-- If you want to be more restrictive (only payment-complete path), use this instead: -->
+            <!--
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="vero360"
-                    android:host="users"
-                    android:pathPrefix="/me"/>
+                    android:host="payment-complete" />
             </intent-filter>
+            -->
+
         </activity>
 
         <!-- Flutter plugin registration -->
@@ -69,4 +79,5 @@
             <data android:mimeType="text/plain"/>
         </intent>
     </queries>
+
 </manifest>

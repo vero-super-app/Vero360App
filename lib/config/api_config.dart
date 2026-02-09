@@ -5,17 +5,17 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiConfig {
-  /// API prefix (your endpoints are /vero/...)
+  /// API prefix (your endpoints are /vero/...)https://unbigamous-unappositely-kory.ngrok-free.dev
   static const String apiPrefix = '/vero';
 
   /// PROD root (as you requested)
   // static const String _defaultProdRoot = 'https://heflexitservice.co.za';
 
-  static const String _defaultProdRoot =
-      'https://unbigamous-unappositely-kory.ngrok-free.dev';
-
   // static const String _defaultProdRoot =
-  //     'http://10.0.2.2:3000'; // Android emulator localhost
+  //     'https://unbigamous-unappositely-kory.ngrok-free.dev';
+
+  static const String _defaultProdRoot =
+      'http://10.0.2.2:3000'; // Android emulator localhost
 
   /// Optional override at build time:
   /// flutter run --dart-define=API_BASE_URL=http://127.0.0.1:3000

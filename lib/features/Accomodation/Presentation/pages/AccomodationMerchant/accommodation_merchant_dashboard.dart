@@ -15,7 +15,7 @@ import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
 import 'package:vero360_app/Home/homepage.dart';
 // Add login screen import
-import 'package:vero360_app/GernalScreens/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class AccommodationMerchantDashboard extends StatefulWidget {

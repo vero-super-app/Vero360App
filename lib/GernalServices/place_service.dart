@@ -44,7 +44,14 @@ class PlaceService {
       if (placemarks.isEmpty) return null;
 
       final p = placemarks.first;
-      return '${p.street}, ${p.locality}, ${p.administrativeArea}';
+      final parts = [
+        p.street,
+        p.locality,
+        p.subAdministrativeArea,
+        p.administrativeArea,
+        p.country,
+      ].where((s) => s != null && s.isNotEmpty).map((s) => s!).toList();
+      return parts.isEmpty ? null : parts.join(', ');
     } catch (e) {
       print('Error getting address: $e');
       return null;

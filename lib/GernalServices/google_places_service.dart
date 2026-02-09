@@ -44,6 +44,8 @@ class GooglePlacesService {
         'input': input,
         'key': _apiKey,
         'language': 'en',
+        'components': 'country:mw', // Restrict to Malawi
+        'region': 'mw', // Bias results to Malawi
       };
 
       final Uri uri = Uri.parse('$_baseUrl/autocomplete/json').replace(

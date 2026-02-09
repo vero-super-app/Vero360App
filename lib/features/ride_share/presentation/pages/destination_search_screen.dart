@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/features/ride_share/presentation/widgets/place_search_widget.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 
@@ -20,6 +19,9 @@ class _DestinationSearchScreenState
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      RecentPlacesManager.loadAndSet(ref);
+    });
     // Auto-focus the search field when screen opens
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted && !_searchFocusNode.hasFocus) {
@@ -96,50 +98,48 @@ class _DestinationSearchScreenState
   }
 
   Widget _buildRecentPlacesSection() {
+    final recentPlaces = ref.watch(recentPlacesProvider);
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Recent Places',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
+          Container(
+            color: Colors.transparent,
+            width: MediaQuery.of(context).size.width,
+            child: Center(
+              child: Text(
+                'Recent Places',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+              ),
+            ),
           ),
           const SizedBox(height: 12),
-          _buildRecentPlaceItem(
-            'Home',
-            '123 Main Street, Downtown',
-            Icons.home_outlined,
-          ),
-          _buildRecentPlaceItem(
-            'Office',
-            '456 Business Ave, Tech Park',
-            Icons.business_outlined,
-          ),
-          _buildRecentPlaceItem(
-            'Favorite Spot',
-            '789 Park Lane, Downtown',
-            Icons.favorite_outline,
-          ),
+          if (recentPlaces.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'No recent searches yet.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[500],
+                      ),
+                ),
+              ),
+            )
+          else
+            ...recentPlaces.map((place) => _buildRecentPlaceItem(place)),
         ],
       ),
     );
   }
 
-  Widget _buildRecentPlaceItem(String title, String subtitle, IconData icon) {
+  Widget _buildRecentPlaceItem(Place place) {
     return GestureDetector(
       onTap: () {
-        final place = Place(
-          id: title.toLowerCase().replaceAll(' ', '_'),
-          name: title,
-          address: subtitle,
-          latitude: 0.0,
-          longitude: 0.0,
-          type: PlaceType.RECENT,
-        );
         ref.read(selectedDropoffPlaceProvider.notifier).state = place;
         _showLoadingAndReturn();
       },
@@ -165,9 +165,9 @@ class _DestinationSearchScreenState
                 color: const Color(0xFFFF8A00).withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(
-                icon,
-                color: const Color(0xFFFF8A00),
+              child: const Icon(
+                Icons.history,
+                color: Color(0xFFFF8A00),
                 size: 20,
               ),
             ),
@@ -177,7 +177,7 @@ class _DestinationSearchScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    title,
+                    place.name,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.w600,
                           color: Colors.black87,
@@ -185,7 +185,7 @@ class _DestinationSearchScreenState
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    subtitle,
+                    place.address,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Colors.grey[500],
                         ),
@@ -209,6 +209,7 @@ class _DestinationSearchScreenState
         return false;
       },
       child: Scaffold(
+        resizeToAvoidBottomInset: false,
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(70),
           child: SafeArea(
@@ -242,6 +243,7 @@ class _DestinationSearchScreenState
                 searchController: _searchController,
                 focusNode: _searchFocusNode,
                 onLocationSelected: (place) {
+                  RecentPlacesManager.addPlace(ref, place);
                   ref.read(selectedDropoffPlaceProvider.notifier).state = place;
                   _showLoadingAndReturn();
                 },

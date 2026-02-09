@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 /// Thrown when user must login again (safe to show to user)
 class AuthRequiredException implements Exception {
@@ -39,12 +40,11 @@ class FriendlyApiException implements Exception {
 class OrderService {
   /* --------------------- infra helpers --------------------- */
 
-  Future<String> _base() async {
-    final b = await ApiConfig.readBase();
-    return b.isNotEmpty ? b : (ApiConfig.prodBase);
-  }
-
   Future<String> _token() async {
+    // Use same token as rest of app (Firebase → SP)
+    final t = await AuthHandler.getTokenForApi();
+    if (t != null && t.trim().isNotEmpty) return t.trim();
+
     final prefs = await SharedPreferences.getInstance();
     const keys = [
       'jwt_token',
@@ -54,13 +54,10 @@ class OrderService {
       'merchantToken',
       'jwt'
     ];
-
     for (final k in keys) {
-      final t = prefs.getString(k);
-      if (t != null && t.trim().isNotEmpty) return t.trim();
+      final v = prefs.getString(k);
+      if (v != null && v.trim().isNotEmpty) return v.trim();
     }
-
-    // Friendly
     throw AuthRequiredException('Please sign in to continue.');
   }
 
@@ -233,29 +230,71 @@ class OrderService {
   /* --------------------- public API --------------------- */
 
   // Chooses the right “me” endpoint by role.
-  Future<List<OrderItem>> getMyOrders({OrderStatus? status}) async {
-    final base = await _base();
-    final isMerchant = await _isMerchant();
-    final path = isMerchant ? '/orders/merchant/me' : '/orders/me';
+  bool _isSingleOrderMap(Map<dynamic, dynamic> m) {
+    final hasId = m.containsKey('ID') || m.containsKey('id');
+    final hasOrderNo =
+        m.containsKey('OrderNumber') || m.containsKey('orderNumber');
+    return hasId && hasOrderNo;
+  }
 
+  Future<List<OrderItem>> getMyOrders({OrderStatus? status}) async {
+    await ApiConfig.readBase();
+    final isMerchant = await _isMerchant();
+
+    // Primary endpoints match your backend:
+    // - customer: GET /vero/orders/me
+    // - merchant: GET /vero/orders/merchant/me
+    final primaryPath = isMerchant ? '/orders/merchant/me' : '/orders/me';
     final qp = status != null ? {'status': orderStatusToApi(status)} : null;
-    final u = Uri.parse('$base$path').replace(queryParameters: qp);
+
+    Uri buildUri(String path) {
+      final base = ApiConfig.endpoint(path);
+      return qp != null ? base.replace(queryParameters: qp) : base;
+    }
+
+    var u = buildUri(primaryPath);
     final h = await _headers();
 
-    final r =
+    var r =
         await _retry(() => http.get(u, headers: h), action: 'load your orders');
-    if (r.statusCode != 200) _bad(r, action: 'load your orders');
+
+    // Fallback: if /me endpoint 404s, try generic /orders
+    if (r.statusCode == 404) {
+      final fallbackPath = '/orders';
+      u = buildUri(fallbackPath);
+      r = await _retry(
+          () => http.get(u, headers: h), action: 'load your orders');
+    }
+
+    if (r.statusCode == 404) return [];
+    if (r.statusCode != 200 && r.statusCode != 201) {
+      _bad(r, action: 'load your orders');
+    }
 
     try {
       final decoded = jsonDecode(r.body);
 
-      final List<dynamic> list = decoded is List
-          ? decoded
-          : (decoded is Map && decoded['data'] is List)
-              ? (decoded['data'] as List)
-              : (decoded is Map && decoded['orders'] is List)
-                  ? (decoded['orders'] as List)
-                  : <dynamic>[];
+      // Backend may return: List, { data: List }, { data: singleOrder }, { orders: List }, or single order object
+      List<dynamic> list;
+      if (decoded is List) {
+        list = decoded;
+      } else if (decoded is Map) {
+        final map = Map<dynamic, dynamic>.from(decoded);
+        if (decoded['data'] is List) {
+          list = decoded['data'] as List;
+        } else if (decoded['data'] is Map) {
+          final dataMap = Map<dynamic, dynamic>.from(decoded['data'] as Map);
+          list = _isSingleOrderMap(dataMap) ? [decoded['data']] : <dynamic>[];
+        } else if (decoded['orders'] is List) {
+          list = decoded['orders'] as List;
+        } else if (_isSingleOrderMap(map)) {
+          list = [decoded];
+        } else {
+          list = <dynamic>[];
+        }
+      } else {
+        list = <dynamic>[];
+      }
 
       final all = list
           .whereType<Map>()
@@ -282,7 +321,7 @@ class OrderService {
           'Invalid order. Please refresh and try again.');
     }
 
-    final u = Uri.parse('${await _base()}/orders/$id/status');
+    final u = ApiConfig.endpoint('/orders/$id/status');
     final h = await _headers();
 
     // keep your server's expected key casing
@@ -305,7 +344,7 @@ class OrderService {
       rethrow;
     } catch (_) {
       // fallback: delete endpoint
-      final u = Uri.parse('${await _base()}/orders/$id');
+      final u = ApiConfig.endpoint('/orders/$id');
       final h = await _headers();
       final r = await _retry(() => http.delete(u, headers: h),
           action: 'cancel the order');

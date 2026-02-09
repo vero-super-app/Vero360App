@@ -158,6 +158,11 @@ class AuthService {
 
     final token = await user.getIdToken();
 
+    // Log JWT so you can see it in console (not the UID)
+    if (token != null && token.isNotEmpty) {
+      debugPrint('[JWT] Firebase ID token (JWT): $token');
+    }
+
     final userMap = <String, dynamic>{
       'id': user.uid,
       'firebaseUid': user.uid,

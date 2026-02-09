@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -6,17 +5,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 
-// Import merchant dashboards
-import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart'; // Add this
+// Merchant dashboards
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
-
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
-import 'package:vero360_app/GernalScreens/register_screen.dart';
-import 'package:vero360_app/GernalServices/auth_service.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
-import 'package:vero360_app/widgets/oauth_buttons.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
+import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -35,7 +33,8 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  
+  final FirebaseAuthService _firebaseAuthService = FirebaseAuthService();
+
   final _identifier = TextEditingController();
   final _password = TextEditingController();
   bool _obscure = true;
@@ -49,11 +48,15 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // Helper method to get the appropriate merchant dashboard - ADD MARKETPLACE CASE
+  // -------------------- Merchant dashboard selection --------------------
+
   Widget _getMerchantDashboard(String serviceKey, String email) {
     switch (serviceKey) {
-      case 'marketplace':  // Add marketplace case
-        return MarketplaceMerchantDashboard(email: email);
+      case 'marketplace':
+        return MarketplaceMerchantDashboard(
+          email: email,
+          onBackToHomeTab: () {},
+        );
       case 'food':
         return FoodMerchantDashboard(email: email);
       case 'taxi':
@@ -62,23 +65,25 @@ class _LoginScreenState extends State<LoginScreen> {
         return AccommodationMerchantDashboard(email: email);
       case 'courier':
         return CourierMerchantDashboard(email: email);
-      // Add more cases for other services as needed
       default:
-        return MarketplaceMerchantDashboard(email: email);
+        return MarketplaceMerchantDashboard(
+          email: email,
+          onBackToHomeTab: () {},
+        );
     }
   }
 
-  // Update the _handleAuthResult method
+  // -------------------- Handle auth result --------------------
+
   Future<void> _handleAuthResult(Map<String, dynamic>? result) async {
     if (result == null) return;
 
     final prefs = await SharedPreferences.getInstance();
-    
-    // Store auth provider
-    final authProvider = (result['authProvider'] ?? 'backend').toString().toLowerCase();
+
+    final authProvider =
+        (result['authProvider'] ?? 'firebase').toString().toLowerCase();
     await prefs.setString('auth_provider', authProvider);
 
-    // Store token
     final token = result['token']?.toString();
     if (token == null || token.isEmpty) {
       ToastHelper.showCustomToast(
@@ -93,7 +98,6 @@ class _LoginScreenState extends State<LoginScreen> {
     await prefs.setString('token', token);
     await prefs.setString('jwt_token', token);
 
-    // Get user data
     Map<String, dynamic> user = {};
     final rawUser = result['user'];
     if (rawUser is Map<String, dynamic>) {
@@ -105,24 +109,22 @@ class _LoginScreenState extends State<LoginScreen> {
         _identifier.text.trim();
     await prefs.setString('email', displayId);
 
-    // Get role
-    final role = (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
+    final role =
+        (user['role'] ?? user['userRole'] ?? 'customer').toString().toLowerCase();
     await prefs.setString('role', role);
 
-    // Store user ID
-    final uid = user['uid']?.toString() ?? user['id']?.toString() ?? user['firebaseUid']?.toString();
+    final uid = user['uid']?.toString() ??
+        user['id']?.toString() ??
+        user['firebaseUid']?.toString();
     if (uid != null && uid.isNotEmpty) {
       await prefs.setString('uid', uid);
     }
 
-    // For merchants, store service and business info
     if (role == 'merchant') {
-      // Get merchant service from multiple possible sources
       String? merchantService = user['merchantService']?.toString() ??
           user['serviceType']?.toString() ??
           user['merchant_service']?.toString();
 
-      // If not in user data, try to fetch from Firebase
       if (merchantService == null || merchantService.isEmpty) {
         if (uid != null) {
           merchantService = await _fetchMerchantServiceFromFirebase(uid);
@@ -133,7 +135,6 @@ class _LoginScreenState extends State<LoginScreen> {
         await prefs.setString('merchant_service', merchantService);
       }
 
-      // Store business info
       final businessName = user['businessName']?.toString();
       if (businessName != null && businessName.isNotEmpty) {
         await prefs.setString('business_name', businessName);
@@ -147,29 +148,29 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!mounted) return;
 
-    // Redirect based on role
     if (role == 'merchant') {
       final merchantService = prefs.getString('merchant_service');
-      
+
       if (merchantService != null && merchantService.isNotEmpty) {
-        // Navigate to specific merchant dashboard
-        Widget merchantDashboard = _getMerchantDashboard(merchantService, displayId);
-        
+        final merchantDashboard =
+            _getMerchantDashboard(merchantService, displayId);
+
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => merchantDashboard),
           (_) => false,
         );
       } else {
-        // No specific service found, go to generic merchant dashboard
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (_) => MarketplaceMerchantDashboard(email: displayId),
+            builder: (_) => MarketplaceMerchantDashboard(
+              email: displayId,
+              onBackToHomeTab: () {},
+            ),
           ),
           (_) => false,
         );
       }
     } else {
-      // For customers, go to customer bottom navbar
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => Bottomnavbar(email: displayId),
@@ -179,29 +180,25 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // Fetch merchant service from Firebase - UPDATE FOR MARKETPLACE
+  // -------------------- Firebase profile helpers --------------------
+
   Future<String?> _fetchMerchantServiceFromFirebase(String uid) async {
     try {
       final userDoc = await _firestore.collection('users').doc(uid).get();
       if (userDoc.exists) {
         final userData = userDoc.data();
         return userData?['merchantService']?.toString() ??
-               userData?['merchant_service']?.toString() ??
-               userData?['serviceType']?.toString();
+            userData?['merchant_service']?.toString() ??
+            userData?['serviceType']?.toString();
       }
-      
-      // Also try to find in service-specific collections - ADD MARKETPLACE
+
       final services = ['marketplace', 'food', 'taxi', 'accommodation', 'courier'];
       for (final service in services) {
-        // Special handling for marketplace collection name
-        final collectionName = service == 'marketplace' 
-            ? 'marketplace_merchants'
-            : '${service}_merchants';
-            
-        final merchantDoc = await _firestore
-            .collection(collectionName)
-            .doc(uid)
-            .get();
+        final collectionName =
+            service == 'marketplace' ? 'marketplace_merchants' : '${service}_merchants';
+
+        final merchantDoc =
+            await _firestore.collection(collectionName).doc(uid).get();
         if (merchantDoc.exists) {
           return service;
         }
@@ -212,42 +209,186 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
+  Future<Map<String, dynamic>> _buildResultFromUser(User user) async {
+    Map<String, dynamic> profile = {};
+    try {
+      final snap = await _firestore.collection('users').doc(user.uid).get();
+      if (snap.exists && snap.data() != null) {
+        profile = Map<String, dynamic>.from(snap.data()!);
+      }
+    } catch (e) {
+      print('Failed to load Firebase profile: $e');
+    }
+
+    // Ensure at least a basic profile exists
+    if (profile.isEmpty) {
+      profile = {
+        'email': user.email,
+        'name': user.displayName,
+        'phone': '',
+        'role': 'customer',
+      };
+      try {
+        await _firestore.collection('users').doc(user.uid).set({
+          ...profile,
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      } catch (_) {}
+    }
+
+    final role =
+        (profile['role'] ?? 'customer').toString().toLowerCase();
+    final token = await user.getIdToken();
+
+    return <String, dynamic>{
+      'authProvider': 'firebase',
+      'token': token,
+      'user': <String, dynamic>{
+        'uid': user.uid,
+        'firebaseUid': user.uid,
+        'email': user.email ?? _identifier.text.trim(),
+        'phone': profile['phone']?.toString() ?? '',
+        'name': profile['name']?.toString() ?? (user.displayName ?? ''),
+        'role': role,
+        'merchantService': profile['merchantService'],
+        'businessName': profile['businessName'],
+        'businessAddress': profile['businessAddress'],
+      },
+    };
+  }
+
+  // -------------------- Email/password submit via Firebase --------------------
+
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
+
     setState(() => _loading = true);
     try {
-      final result = await AuthService().loginWithIdentifier(
-        _identifier.text.trim(),
-        _password.text.trim(),
+      final email = _identifier.text.trim();
+      final password = _password.text.trim();
+
+      final cred = await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final user = cred.user;
+      if (user == null) {
+        ToastHelper.showCustomToast(
+          context,
+          'Login failed (no user).',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+
+      final result = await _buildResultFromUser(user);
+
+      ToastHelper.showCustomToast(
         context,
+        'Logged in successfully',
+        isSuccess: true,
+        errorMessage: '',
       );
       await _handleAuthResult(result);
+    } on FirebaseAuthException catch (e) {
+      String msg = 'Login failed';
+      if (e.code == 'user-not-found') {
+        msg = 'No user found for that email';
+      } else if (e.code == 'wrong-password') {
+        msg = 'Invalid credentials';
+      }
+      ToastHelper.showCustomToast(
+        context,
+        msg,
+        isSuccess: false,
+        errorMessage: e.message ?? '',
+      );
+    } catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Login failed. Please try again.',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  // -------------------- Social sign-in via Firebase (no platform lock) --------------------
+
   Future<void> _google() async {
     setState(() => _socialLoading = true);
     try {
-      final resp = await AuthService().continueWithGoogle(context);
-      await _handleAuthResult(resp);
+      final user = await _firebaseAuthService.signInWithGoogle();
+      if (user == null) {
+        ToastHelper.showCustomToast(
+          context,
+          'Google sign-in cancelled or failed.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+
+      final result = await _buildResultFromUser(user);
+      ToastHelper.showCustomToast(
+        context,
+        'Signed in with Google',
+        isSuccess: true,
+        errorMessage: '',
+      );
+      await _handleAuthResult(result);
+    } catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Google sign-in failed.',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
     } finally {
       if (mounted) setState(() => _socialLoading = false);
     }
   }
 
   Future<void> _apple() async {
-    if (!Platform.isIOS) return;
     setState(() => _socialLoading = true);
     try {
-      final resp = await AuthService().continueWithApple(context);
-      await _handleAuthResult(resp);
+      final user = await _firebaseAuthService.signInWithApple();
+      if (user == null) {
+        ToastHelper.showCustomToast(
+          context,
+          'Apple sign-in cancelled or not supported on this device.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+
+      final result = await _buildResultFromUser(user);
+      ToastHelper.showCustomToast(
+        context,
+        'Signed in with Apple',
+        isSuccess: true,
+        errorMessage: '',
+      );
+      await _handleAuthResult(result);
+    } catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Apple sign-in failed.',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
     } finally {
       if (mounted) setState(() => _socialLoading = false);
     }
   }
+
+  // -------------------- UI helpers --------------------
 
   InputDecoration _fieldDecoration({
     required String label,
@@ -262,14 +403,16 @@ class _LoginScreenState extends State<LoginScreen> {
       suffixIcon: trailing,
       filled: true,
       fillColor: AppColors.fieldFill,
-      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      contentPadding:
+          const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: AppColors.brandOrange, width: 1.2),
+        borderSide:
+            const BorderSide(color: AppColors.brandOrange, width: 1.2),
       ),
     );
   }
@@ -290,7 +433,8 @@ class _LoginScreenState extends State<LoginScreen> {
         SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
                 child: Column(
@@ -324,18 +468,23 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 8),
 
-                    // Logo-only socials (always visible)
                     OAuthButtonsRow(
                       onGoogle: _socialLoading ? null : _google,
                       onApple: _socialLoading ? null : _apple,
                     ),
                     const SizedBox(height: 18),
 
-                    // Form card
                     Container(
                       decoration: BoxDecoration(
-                        color: Colors.white, borderRadius: BorderRadius.circular(20),
-                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 20, offset: const Offset(0, 10))],
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.06),
+                            blurRadius: 20,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
                       ),
                       padding: const EdgeInsets.all(18),
                       child: Form(
@@ -347,21 +496,20 @@ class _LoginScreenState extends State<LoginScreen> {
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
                               decoration: _fieldDecoration(
-                                label: 'Email or Phone',
-                                hint: 'you@example.com or +2659XXXXXXXX',
+                                label: 'Email',
+                                hint: 'you@example.com',
                                 icon: Icons.person_outline,
                               ),
                               validator: (v) {
                                 final val = v?.trim() ?? '';
-                                if (val.isEmpty) return 'Email or phone is required';
+                                if (val.isEmpty) {
+                                  return 'Email is required';
+                                }
                                 final isEmail = RegExp(
                                   r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$',
                                 ).hasMatch(val);
-                                final digits = val.replaceAll(RegExp(r'\D'), '');
-                                final isLocal = RegExp(r'^(08|09)\d{8}$').hasMatch(digits);
-                                final isE164 = RegExp(r'^\+265[89]\d{8}$').hasMatch(val);
-                                if (!isEmail && !isLocal && !isE164) {
-                                  return 'Use email or phone (08/09… or +265…)';
+                                if (!isEmail) {
+                                  return 'Enter a valid email address';
                                 }
                                 return null;
                               },
@@ -379,14 +527,21 @@ class _LoginScreenState extends State<LoginScreen> {
                                 trailing: IconButton(
                                   tooltip: _obscure ? 'Show' : 'Hide',
                                   icon: Icon(
-                                    _obscure ? Icons.visibility : Icons.visibility_off,
+                                    _obscure
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
                                   ),
-                                  onPressed: () => setState(() => _obscure = !_obscure),
+                                  onPressed: () =>
+                                      setState(() => _obscure = !_obscure),
                                 ),
                               ),
                               validator: (v) {
-                                if (v == null || v.isEmpty) return 'Password is required';
-                                if (v.length < 6) return 'Must be at least 6 characters';
+                                if (v == null || v.isEmpty) {
+                                  return 'Password is required';
+                                }
+                                if (v.length < 6) {
+                                  return 'Must be at least 6 characters';
+                                }
                                 return null;
                               },
                             ),
@@ -430,13 +585,15 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(width: 6),
                         TextButton(
-                          onPressed: _loading ? null : () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const RegisterScreen(),
-                              ),
-                            );
-                          },
+                          onPressed: _loading
+                              ? null
+                              : () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => const RegisterScreen(),
+                                    ),
+                                  );
+                                },
                           child: const Text(
                             'Create one',
                             style: TextStyle(

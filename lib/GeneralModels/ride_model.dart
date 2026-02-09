@@ -1,7 +1,7 @@
 class VehicleClass {
-  static const String economy = 'ECONOMY';
-  static const String comfort = 'COMFORT';
-  static const String premium = 'PREMIUM';
+  static const String bike = 'BIKE';
+  static const String standard = 'STANDARD';
+  static const String executive = 'EXECUTIVE';
   static const String business = 'BUSINESS';
 }
 

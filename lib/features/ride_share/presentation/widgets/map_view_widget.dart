@@ -3,11 +3,14 @@ import 'package:flutter/foundation.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/config/map_style_constants.dart';
+import 'package:vero360_app/providers/ride_share/nearby_vehicles_provider.dart';
+import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
 
-class MapViewWidget extends StatefulWidget {
+class MapViewWidget extends ConsumerStatefulWidget {
   final Function(GoogleMapController) onMapCreated;
   final Position? initialPosition;
   final Place? pickupPlace;
@@ -22,10 +25,10 @@ class MapViewWidget extends StatefulWidget {
   });
 
   @override
-  State<MapViewWidget> createState() => _MapViewWidgetState();
+  ConsumerState<MapViewWidget> createState() => _MapViewWidgetState();
 }
 
-class _MapViewWidgetState extends State<MapViewWidget> {
+class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   late GoogleMapController _mapController;
   late Set<Marker> _markers;
   late Set<Polyline> _polylines;
@@ -39,16 +42,30 @@ class _MapViewWidgetState extends State<MapViewWidget> {
     _markers = {};
     _polylines = {};
     _initializeCameraPosition();
-    
+
     // Load map style from assets
     _loadMapStyle();
 
     // Initial route draw if both places are provided
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (widget.pickupPlace != null && widget.dropoffPlace != null) {
+      if (mounted &&
+          widget.pickupPlace != null &&
+          widget.dropoffPlace != null) {
         _updateRoutePolyline();
       }
     });
+
+    if (widget.initialPosition != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
+                latitude: widget.initialPosition!.latitude,
+                longitude: widget.initialPosition!.longitude,
+                radiusKm: 5.0,
+              );
+        }
+      });
+    }
   }
 
   Future<void> _loadMapStyle() async {
@@ -99,11 +116,38 @@ class _MapViewWidgetState extends State<MapViewWidget> {
             '[MapViewWidget] ✅ Places changed! Updating route polyline...');
       }
       _updateRoutePolyline();
-    } else {
-      if (kDebugMode) {
-        debugPrint('[MapViewWidget] ❌ No changes detected');
-      }
     }
+
+    final oldPos = oldWidget.initialPosition;
+    final newPos = widget.initialPosition;
+    if (newPos != null &&
+        (oldPos == null ||
+            oldPos.latitude != newPos.latitude ||
+            oldPos.longitude != newPos.longitude)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        animateToPosition(newPos.latitude, newPos.longitude);
+        _updateUserMarker(newPos);
+        ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
+              latitude: newPos.latitude,
+              longitude: newPos.longitude,
+              radiusKm: 5.0,
+            );
+      });
+    }
+  }
+
+  void _updateUserMarker(Position position) {
+    _markers.removeWhere((m) => m.markerId == const MarkerId('user_location'));
+    _markers.add(
+      Marker(
+        markerId: const MarkerId('user_location'),
+        position: LatLng(position.latitude, position.longitude),
+        infoWindow: const InfoWindow(title: 'Your Location'),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   void _initializeCameraPosition() {
@@ -184,9 +228,7 @@ class _MapViewWidgetState extends State<MapViewWidget> {
         debugPrint(
             '[MapViewWidget] Pickup or dropoff is null, clearing polylines');
       }
-      setState(() {
-        _polylines.clear();
-      });
+      if (mounted) setState(() => _polylines.clear());
       return;
     }
 
@@ -249,12 +291,11 @@ class _MapViewWidgetState extends State<MapViewWidget> {
               '[MapViewWidget] Polyline has ${polylineCoordinates.length} points');
         }
 
-        if (polylineCoordinates.isNotEmpty) {
+        if (polylineCoordinates.isNotEmpty && mounted) {
           if (kDebugMode) {
             debugPrint('[MapViewWidget] Polyline added to map');
           }
 
-          // Animate polyline drawing with smooth transitions
           setState(() {
             _polylines.clear();
             _polylines.add(
@@ -266,12 +307,9 @@ class _MapViewWidgetState extends State<MapViewWidget> {
                 geodesic: true,
               ),
             );
-
-            // Add markers for pickup and dropoff
             _updatePlaceMarkers();
           });
 
-          // Animate camera to fit both locations with delay for smooth UX
           _fitCameraToBounds(polylineCoordinates);
         }
       } else {
@@ -282,12 +320,8 @@ class _MapViewWidgetState extends State<MapViewWidget> {
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[MapViewWidget] Error loading route: $e');
-        debugPrint('[MapViewWidget] Stack trace: $e');
       }
-      // Clear polylines on error
-      setState(() {
-        _polylines.clear();
-      });
+      if (mounted) setState(() => _polylines.clear());
     }
   }
 
@@ -388,15 +422,62 @@ class _MapViewWidgetState extends State<MapViewWidget> {
     });
   }
 
-  void _toggleMapType() {
-    setState(() {
-      _mapType =
-          _mapType == MapType.normal ? MapType.satellite : MapType.normal;
-    });
+  /// Update vehicle markers on the map from nearby vehicles data
+  void _updateVehicleMarkers(List<NearbyVehicle> vehicles) {
+    // Remove old vehicle markers (keep user, pickup, dropoff, route)
+    _markers
+        .removeWhere((marker) => marker.markerId.value.startsWith('vehicle_'));
+
+    // Add new vehicle markers
+    for (final vehicle in vehicles) {
+      _markers.add(
+        Marker(
+          markerId: MarkerId('vehicle_${vehicle.id}'),
+          position: LatLng(vehicle.latitude, vehicle.longitude),
+          infoWindow: InfoWindow(
+            title: '${vehicle.make} ${vehicle.model}',
+            snippet:
+                '${vehicle.distance.toStringAsFixed(1)}km • ⭐${vehicle.rating}',
+          ),
+          icon: _getVehicleMarkerIcon(vehicle.vehicleClass),
+        ),
+      );
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// Get marker color based on vehicle class
+  BitmapDescriptor _getVehicleMarkerIcon(String vehicleClass) {
+    switch (vehicleClass) {
+      case 'BIKE':
+        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen);
+      case 'STANDARD':
+        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
+      case 'EXECUTIVE':
+        return BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueOrange);
+      case 'BUSINESS':
+        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
+      default:
+        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final nearbyVehiclesState = ref.watch(nearbyVehiclesProvider);
+
+    ref.listen(nearbyVehiclesProvider, (prev, next) {
+      if (next.vehicles.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _updateVehicleMarkers(next.vehicles);
+        });
+      }
+    });
+
     return Stack(
       children: [
         GoogleMap(
@@ -406,28 +487,50 @@ class _MapViewWidgetState extends State<MapViewWidget> {
           polylines: _polylines,
           mapType: _mapType,
           style: _mapStyleJson,
-          myLocationEnabled: false,
-          myLocationButtonEnabled: false,
+          myLocationEnabled: true,
+          myLocationButtonEnabled: true,
           zoomControlsEnabled: true,
           mapToolbarEnabled: false,
           compassEnabled: true,
         ),
-        // Satellite/Map toggle button
-        Positioned(
-          bottom: 16,
-          right: 16,
-          child: FloatingActionButton.small(
-            onPressed: _toggleMapType,
-            backgroundColor: Colors.white,
-            foregroundColor: const Color(0xFFFF8A00),
-            elevation: 4,
-            child: Icon(
-              _mapType == MapType.satellite
-                  ? Icons.layers_clear_rounded
-                  : Icons.satellite_alt_rounded,
+        // Nearby vehicles indicator
+        if (nearbyVehiclesState.vehicles.isNotEmpty)
+          Positioned(
+            top: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 8,
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.directions_car,
+                    color: Color(0xFFFF8A00),
+                    size: 18,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${nearbyVehiclesState.vehicles.length} nearby',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
       ],
     );
   }

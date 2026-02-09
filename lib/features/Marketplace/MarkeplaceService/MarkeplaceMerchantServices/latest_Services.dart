@@ -1,4 +1,5 @@
-// lib/services/hostel_service.dart
+// lib/services/latest_Services.dart
+// Uses ApiClient which attaches auth via AuthHandler.getTokenForApi() (single source of truth).
 import 'dart:convert';
 
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
@@ -8,7 +9,7 @@ import 'package:vero360_app/GernalServices/api_exception.dart';
 class LatestArrivalServices {
   Future<List<LatestArrivalModels>> fetchLatestArrivals() async {
     try {
-      // 🌐 Single source of truth for URLs + resilience
+      // ApiClient auto-attaches Bearer token from AuthHandler (Firebase then SP).
       final response = await ApiClient.get('/latestarrivals');
 
       final decoded = jsonDecode(response.body);

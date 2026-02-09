@@ -5,7 +5,7 @@ import 'package:geolocator/geolocator.dart';
 class LocationService {
   StreamSubscription<Position>? _positionStream;
 
-  /// Get current user location with error handling
+  /// Get current user location with error handling. Prefers fresh GPS fix over stale cache.
   Future<Position?> getCurrentLocation() async {
     try {
       LocationPermission permission = await Geolocator.checkPermission();
@@ -17,13 +17,22 @@ class LocationService {
         return null;
       }
 
-      return await Geolocator.getCurrentPosition(
+      final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
+        timeLimit: const Duration(seconds: 15),
       );
+      return position;
     } catch (e) {
       print('Error getting location: $e');
-      return await Geolocator.getLastKnownPosition();
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      if (lastKnown != null) {
+        final age = DateTime.now().difference(lastKnown.timestamp);
+        if (age.inMinutes > 5) {
+          return null;
+        }
+        return lastKnown;
+      }
+      return null;
     }
   }
 

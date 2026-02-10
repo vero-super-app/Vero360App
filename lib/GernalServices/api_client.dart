@@ -18,6 +18,7 @@ class ApiClient {
     Map<String, String>? headers,
     Duration? timeout,
     Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
   }) {
     return _request(
       method: 'GET',
@@ -25,6 +26,7 @@ class ApiClient {
       headers: headers,
       timeout: timeout,
       allowedStatusCodes: allowedStatusCodes,
+      queryParameters: queryParameters,
     );
   }
 
@@ -34,6 +36,7 @@ class ApiClient {
     Object? body,
     Duration? timeout,
     Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
   }) {
     return _request(
       method: 'POST',
@@ -42,6 +45,7 @@ class ApiClient {
       body: body,
       timeout: timeout,
       allowedStatusCodes: allowedStatusCodes,
+      queryParameters: queryParameters,
     );
   }
 
@@ -51,6 +55,7 @@ class ApiClient {
     Object? body,
     Duration? timeout,
     Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
   }) {
     return _request(
       method: 'PUT',
@@ -59,6 +64,7 @@ class ApiClient {
       body: body,
       timeout: timeout,
       allowedStatusCodes: allowedStatusCodes,
+      queryParameters: queryParameters,
     );
   }
 
@@ -68,6 +74,7 @@ class ApiClient {
     Object? body,
     Duration? timeout,
     Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
   }) {
     return _request(
       method: 'DELETE',
@@ -76,6 +83,7 @@ class ApiClient {
       body: body,
       timeout: timeout,
       allowedStatusCodes: allowedStatusCodes,
+      queryParameters: queryParameters,
     );
   }
 
@@ -86,6 +94,7 @@ class ApiClient {
     Object? body,
     Duration? timeout,
     Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
   }) {
     return _request(
       method: 'PATCH',
@@ -94,6 +103,7 @@ class ApiClient {
       body: body,
       timeout: timeout,
       allowedStatusCodes: allowedStatusCodes,
+      queryParameters: queryParameters,
     );
   }
 
@@ -106,6 +116,7 @@ class ApiClient {
     Object? body,
     Duration? timeout,
     Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
   }) async {
     // Ensure backend is reachable
     final backendOk = await ApiConfig.ensureBackendUp();
@@ -115,7 +126,19 @@ class ApiClient {
       );
     }
 
-    final uri = ApiConfig.endpoint(path);
+    // Build base URI (scheme/host/port + /vero/... path)
+    final baseUri = ApiConfig.endpoint(path);
+    // Attach query parameters (if provided)
+    final uri = baseUri.replace(
+      queryParameters: queryParameters?.isNotEmpty == true
+          ? {
+              ...baseUri.queryParameters,
+              ...queryParameters!,
+            }
+          : baseUri.queryParameters.isNotEmpty
+              ? baseUri.queryParameters
+              : null,
+    );
     final allHeaders = <String, String>{
       'Accept': 'application/json',
       if (body != null) 'Content-Type': 'application/json',

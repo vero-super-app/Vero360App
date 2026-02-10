@@ -27,6 +27,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/Quickservices/social.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/Accomodation.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 
@@ -441,7 +442,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
         page = FoodPage();
         break;
       case 'more':
-        page = MorePage();
+        page = const BikeRideShareMapScreen();
         break;
       case 'jobs':
         page = JobsPage();
@@ -469,7 +470,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
         page = const ExchangeRateScreen();
         break;
       default:
-        page = const MorePage();
+        page = const BikeRideShareMapScreen();
     }
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }

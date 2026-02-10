@@ -37,6 +37,7 @@ class VehicleTypeModal extends ConsumerStatefulWidget {
   final double userLat;
   final double userLng;
   final Function(String) onRideRequested;
+  final List<String>? allowedVehicleClasses;
 
   const VehicleTypeModal({
     required this.pickupPlace,
@@ -44,6 +45,7 @@ class VehicleTypeModal extends ConsumerStatefulWidget {
     required this.userLat,
     required this.userLng,
     required this.onRideRequested,
+    this.allowedVehicleClasses,
     Key? key,
   }) : super(key: key);
 
@@ -60,6 +62,8 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
   int _duration = 0; // Duration in minutes
   Map<String, dynamic> _estimatedFares = {};
   late AnimationController _animationController;
+  // Deprecated: kept for backward compatibility only (no longer used).
+  // ignore: unused_field
   String _filterType = 'all';
 
   @override
@@ -169,7 +173,15 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
   ];
 
   List<VehicleTypeOption> get _filteredVehicles {
-    return _baseVehicleTypes;
+    final allowed = widget.allowedVehicleClasses;
+    if (allowed == null || allowed.isEmpty) {
+      return _baseVehicleTypes;
+    }
+
+    final allowedSet = allowed.toSet();
+    return _baseVehicleTypes
+        .where((vehicle) => allowedSet.contains(vehicle.class_))
+        .toList();
   }
 
   Future<void> _handleVehicleSelected(String vehicleClass) async {
@@ -210,7 +222,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       if (fareEstimate != null) {
         final fareValue = fareEstimate['estimatedFare'];
         if (fareValue is num) {
-          estimatedFare = (fareValue as num).toDouble();
+          estimatedFare = fareValue.toDouble();
         } else if (fareValue is String) {
           estimatedFare = double.tryParse(fareValue) ?? 0.0;
         }
@@ -512,7 +524,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       double? estimatedFare;
 
       if (fareValue is num) {
-        estimatedFare = (fareValue as num).toDouble();
+        estimatedFare = fareValue.toDouble();
       } else if (fareValue is String) {
         estimatedFare = double.tryParse(fareValue);
       }
@@ -770,40 +782,6 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     );
   }
 
-  Widget _buildLoadingStep(String label, bool isActive, Color color) {
-    return Row(
-      children: [
-        Container(
-          width: 24,
-          height: 24,
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: color, width: 2),
-          ),
-          child: isActive
-              ? Center(
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                )
-              : null,
-        ),
-        const SizedBox(width: 12),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: isActive ? Colors.black : Colors.grey[500],
-          ),
-        ),
-      ],
-    );
-  }
+  // _buildLoadingStep was previously used for a multi-step loading UI.
+  // It has been removed as part of UI simplification.
 }

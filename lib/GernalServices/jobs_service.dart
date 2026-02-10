@@ -11,10 +11,13 @@ class JobsService {
 
   /// Fetch job posts. activeOnly=true means only active jobs (default).
   Future<List<JobPost>> fetchJobs({bool activeOnly = true}) async {
-    final query = activeOnly ? 'true' : 'false';
-    final path = 'jobs?activeOnly=$query';
+    final queryValue = activeOnly ? 'true' : 'false';
+    const path = 'jobs';
 
-    final res = await ApiClient.get(path);
+    final res = await ApiClient.get(
+      path,
+      queryParameters: {'activeOnly': queryValue},
+    );
 
     try {
       final decoded = jsonDecode(res.body);

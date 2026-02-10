@@ -1,10 +1,13 @@
 // lib/Pages/details_page.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
+import 'package:share_plus/share_plus.dart';
+
 import 'package:vero360_app/Home/Messages.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -34,7 +37,12 @@ class DetailsPage extends StatefulWidget {
 }
 
 class _SellerInfo {
-  String? businessName, openingHours, status, description, logoUrl, serviceProviderId;
+  String? businessName,
+      openingHours,
+      status,
+      description,
+      logoUrl,
+      serviceProviderId;
   double? rating;
   _SellerInfo({
     this.businessName,
@@ -58,7 +66,7 @@ class _Media {
 class _DetailsPageState extends State<DetailsPage> {
   // ── Brand (UI only)
   static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandSoft   = Color(0xFFFFE8CC);
+  static const Color _brandSoft = Color(0xFFFFE8CC);
 
   Future<_SellerInfo>? _sellerFuture;
   final TextEditingController _commentController = TextEditingController();
@@ -88,6 +96,23 @@ class _DetailsPageState extends State<DetailsPage> {
     if (_media.length > 1) _startAutoplay();
   }
 
+  /// Share current product
+  void _shareProduct() {
+    final item = widget.item;
+    final productUrl = 'https://vero360.app/marketplace/${item.id}';
+    Share.share(
+      'Check out ${item.name} on Vero360 - MWK ${item.price.toStringAsFixed(0)}\n$productUrl',
+    );
+  }
+
+  /// Copy product link to clipboard (for pasting in other apps)
+  void _copyProductLink() {
+    final item = widget.item;
+    final productUrl = 'https://vero360.app/marketplace/${item.id}';
+    Clipboard.setData(ClipboardData(text: productUrl));
+    _toast('Product link copied', Icons.link, _brandOrange);
+  }
+
   @override
   void dispose() {
     _autoTimer?.cancel();
@@ -101,7 +126,8 @@ class _DetailsPageState extends State<DetailsPage> {
         hintText: hint,
         filled: true,
         fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         border: const OutlineInputBorder(),
         enabledBorder: OutlineInputBorder(
           borderSide: const BorderSide(color: Colors.black, width: 1),
@@ -119,12 +145,36 @@ class _DetailsPageState extends State<DetailsPage> {
     _autoTimer = Timer.periodic(_autoInterval, (_) {
       if (!mounted || _media.length <= 1) return;
       final next = (_page + 1) % _media.length;
-      _pc.animateToPage(next, duration: const Duration(milliseconds: 400), curve: Curves.easeOut);
+      _pc.animateToPage(next,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOut);
     });
   }
-  void _stopAutoplay() { _autoTimer?.cancel(); _autoTimer = null; }
-  void _next() { if (_media.isEmpty) return; _stopAutoplay(); final n = (_page + 1) % _media.length; _pc.animateToPage(n, duration: const Duration(milliseconds: 300), curve: Curves.easeOut); Future.delayed(const Duration(seconds: 5), _startAutoplay); }
-  void _prev() { if (_media.isEmpty) return; _stopAutoplay(); final p = (_page - 1 + _media.length) % _media.length; _pc.animateToPage(p, duration: const Duration(milliseconds: 300), curve: Curves.easeOut); Future.delayed(const Duration(seconds: 5), _startAutoplay); }
+
+  void _stopAutoplay() {
+    _autoTimer?.cancel();
+    _autoTimer = null;
+  }
+
+  void _next() {
+    if (_media.isEmpty) return;
+    _stopAutoplay();
+    final n = (_page + 1) % _media.length;
+    _pc.animateToPage(n,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut);
+    Future.delayed(const Duration(seconds: 5), _startAutoplay);
+  }
+
+  void _prev() {
+    if (_media.isEmpty) return;
+    _stopAutoplay();
+    final p = (_page - 1 + _media.length) % _media.length;
+    _pc.animateToPage(p,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut);
+    Future.delayed(const Duration(seconds: 5), _startAutoplay);
+  }
 
   // seller/data
   Future<_SellerInfo> _loadSeller() async {
@@ -149,7 +199,8 @@ class _DetailsPageState extends State<DetailsPage> {
     final spId = info.serviceProviderId?.trim();
     if (missing && spId != null && spId.isNotEmpty) {
       try {
-        final ServiceProvider? sp = await ServiceProviderServicess.fetchByNumber(spId);
+        final ServiceProvider? sp =
+            await ServiceProviderServicess.fetchByNumber(spId);
         if (sp != null) {
           info.businessName ??= sp.businessName;
           info.openingHours ??= sp.openingHours;
@@ -195,17 +246,27 @@ class _DetailsPageState extends State<DetailsPage> {
     final prefs = await SharedPreferences.getInstance();
     final _ = prefs.getInt('userId'); // kept as-is
     // ignore: use_build_context_synchronously
-    Navigator.push(context, MaterialPageRoute(builder: (_) => CheckoutPage(item: item)));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => CheckoutPage(item: item)),
+    );
   }
 
   void _toast(String msg, IconData icon, Color color) {
     _fToast.showToast(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
+        decoration: BoxDecoration(
+            color: color, borderRadius: BorderRadius.circular(12)),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, color: Colors.white), const SizedBox(width: 12),
-          Flexible(child: Text(msg, style: const TextStyle(color: Colors.white))),
+          Icon(icon, color: Colors.white),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              msg,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
         ]),
       ),
       gravity: ToastGravity.CENTER,
@@ -231,25 +292,39 @@ class _DetailsPageState extends State<DetailsPage> {
     final hasHalf = (rr - filled) >= 0.5 && filled < 5;
     final empty = 5 - filled - (hasHalf ? 1 : 0);
     return Row(mainAxisSize: MainAxisSize.min, children: [
-      for (int i = 0; i < filled; i++) const Icon(Icons.star, size: 16, color: Colors.amber),
-      if (hasHalf) const Icon(Icons.star_half, size: 16, color: Colors.amber),
-      for (int i = 0; i < empty; i++) const Icon(Icons.star_border, size: 16, color: Colors.amber),
+      for (int i = 0; i < filled; i++)
+        const Icon(Icons.star, size: 16, color: Colors.amber),
+      if (hasHalf)
+        const Icon(Icons.star_half, size: 16, color: Colors.amber),
+      for (int i = 0; i < empty; i++)
+        const Icon(Icons.star_border, size: 16, color: Colors.amber),
       const SizedBox(width: 6),
-      Text(_fmtRating(rr), style: const TextStyle(fontWeight: FontWeight.w600)),
+      Text(_fmtRating(rr),
+          style: const TextStyle(fontWeight: FontWeight.w600)),
     ]);
   }
 
   Widget _infoRow(String label, String? value, {IconData? icon}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      child:
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (icon != null) ...[
-          Icon(icon, size: 16, color: Colors.black54), const SizedBox(width: 8),
+          Icon(icon, size: 16, color: Colors.black54),
+          const SizedBox(width: 8),
         ],
-        SizedBox(width: 120, child: Text(label, style: const TextStyle(color: Colors.black54))),
+        SizedBox(
+          width: 120,
+          child: Text(label,
+              style: const TextStyle(color: Colors.black54)),
+        ),
         const SizedBox(width: 8),
-        Expanded(child: Text((value ?? '').isNotEmpty ? value! : '—',
-            style: const TextStyle(fontWeight: FontWeight.w600))),
+        Expanded(
+          child: Text(
+            (value ?? '').isNotEmpty ? value! : '—',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
       ]),
     );
   }
@@ -257,25 +332,37 @@ class _DetailsPageState extends State<DetailsPage> {
   Widget _statusChip(String? status) {
     final s = (status ?? '').toLowerCase().trim();
     Color bg = Colors.grey.shade200, fg = Colors.black87;
-    if (s == 'open') { bg = Colors.green.shade50; fg = Colors.green.shade700; }
-    else if (s == 'closed') { bg = Colors.red.shade50; fg = Colors.red.shade700; }
-    else if (s == 'busy') { bg = Colors.orange.shade50; fg = Colors.orange.shade800; }
+    if (s == 'open') {
+      bg = Colors.green.shade50;
+      fg = Colors.green.shade700;
+    } else if (s == 'closed') {
+      bg = Colors.red.shade50;
+      fg = Colors.red.shade700;
+    } else if (s == 'busy') {
+      bg = Colors.orange.shade50;
+      fg = Colors.orange.shade800;
+    }
     return Chip(
       label: Text((status ?? '—').toUpperCase()),
       backgroundColor: bg,
-      labelStyle: TextStyle(color: fg, fontWeight: FontWeight.w700),
+      labelStyle: TextStyle(
+          color: fg, fontWeight: FontWeight.w700),
       visualDensity: VisualDensity.compact,
     );
   }
 
   void _openVideo(String url) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => VideoPlayerPage(url: url)));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => VideoPlayerPage(url: url)),
+    );
   }
 
   Future<void> _openChat(MarketplaceDetailModel item) async {
     if (!await _requireLogin()) return;
 
-    final peerAppId = (item.serviceProviderId ?? item.sellerUserId ?? '').trim();
+    final peerAppId =
+        (item.serviceProviderId ?? item.sellerUserId ?? '').trim();
     if (peerAppId.isEmpty) {
       _toast('Seller chat unavailable', Icons.info_outline, Colors.orange);
       return;
@@ -307,6 +394,22 @@ class _DetailsPageState extends State<DetailsPage> {
     );
   }
 
+  /// Navigate to a page that shows all products from this merchant.
+  /// You need to implement `MerchantProductsPage` + fetching by merchantId.
+  void _openMerchantProducts(
+      {required String merchantId,
+      required String merchantName}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MerchantProductsPage(
+          merchantId: merchantId,
+          merchantName: merchantName,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
@@ -317,6 +420,18 @@ class _DetailsPageState extends State<DetailsPage> {
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.link),
+            onPressed: _copyProductLink,
+            tooltip: 'Copy link',
+          ),
+          IconButton(
+            icon: const Icon(Icons.share),
+            onPressed: _shareProduct,
+            tooltip: 'Share product',
+          ),
+        ],
       ),
       body: FutureBuilder<_SellerInfo>(
         future: _sellerFuture ??= _loadSeller(),
@@ -330,185 +445,341 @@ class _DetailsPageState extends State<DetailsPage> {
           final businessDesc = s?.description;
           final logo = s?.logoUrl;
 
+          final hasMerchant =
+              (item.merchantId != null && item.merchantId!.isNotEmpty) ||
+                  (item.serviceProviderId != null &&
+                      item.serviceProviderId!.isNotEmpty);
+
+          final merchantId =
+              item.merchantId ?? item.serviceProviderId ?? '';
+          final merchantDisplayName =
+              item.merchantName ?? businessName ?? 'Merchant';
+
           return Padding(
             padding: const EdgeInsets.all(16.0),
-            child: ListView(children: [
-              // ----- MEDIA CAROUSEL -----
-              AspectRatio(
-                aspectRatio: 16 / 9,
-                child: Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: PageView.builder(
-                        controller: _pc,
-                        physics: _media.length > 1
-                            ? const BouncingScrollPhysics()
-                            : const NeverScrollableScrollPhysics(),
-                        itemCount: _media.length,
-                        onPageChanged: (i) => setState(() => _page = i),
-                        itemBuilder: (_, i) {
-                          final m = _media[i];
-                          if (!m.isVideo) {
-                            return Image.network(
-                              m.url,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  Container(color: Colors.grey.shade200),
-                            );
-                          }
-                          return InkWell(
-                            onTap: () => _openVideo(m.url),
-                            child: Stack(children: [
-                              Container(color: Colors.black26),
-                              const Center(
-                                child: Icon(Icons.play_circle_fill, size: 64, color: Colors.white),
+            child: ListView(
+              children: [
+                // ----- MEDIA CAROUSEL -----
+                AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: PageView.builder(
+                          controller: _pc,
+                          physics: _media.length > 1
+                              ? const BouncingScrollPhysics()
+                              : const NeverScrollableScrollPhysics(),
+                          itemCount: _media.length,
+                          onPageChanged: (i) =>
+                              setState(() => _page = i),
+                          itemBuilder: (_, i) {
+                            final m = _media[i];
+                            if (!m.isVideo) {
+                              return Image.network(
+                                m.url,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    Container(
+                                        color:
+                                            Colors.grey.shade200),
+                              );
+                            }
+                            return InkWell(
+                              onTap: () => _openVideo(m.url),
+                              child: Stack(
+                                children: const [
+                                  ColoredBox(
+                                    color: Colors.black26,
+                                  ),
+                                  Center(
+                                    child: Icon(
+                                      Icons.play_circle_fill,
+                                      size: 64,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ]),
-                          );
-                        },
+                            );
+                          },
+                        ),
+                      ),
+                      if (_media.length > 1) ...[
+                        Positioned(
+                          left: 8,
+                          top: 0,
+                          bottom: 0,
+                          child: _NavBtn(
+                            icon: Icons.chevron_left,
+                            onTap: _prev,
+                          ),
+                        ),
+                        Positioned(
+                          right: 8,
+                          top: 0,
+                          bottom: 0,
+                          child: _NavBtn(
+                            icon: Icons.chevron_right,
+                            onTap: _next,
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 8,
+                          left: 0,
+                          right: 0,
+                          child: Row(
+                            mainAxisAlignment:
+                                MainAxisAlignment.center,
+                            children:
+                                List.generate(_media.length, (i) {
+                              final active = i == _page;
+                              return AnimatedContainer(
+                                duration: const Duration(
+                                    milliseconds: 200),
+                                margin:
+                                    const EdgeInsets.symmetric(
+                                        horizontal: 3),
+                                width: active ? 18 : 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: active
+                                      ? _brandOrange
+                                      : Colors.white70,
+                                  borderRadius:
+                                      BorderRadius.circular(20),
+                                  border: Border.all(
+                                      color: Colors.black26),
+                                ),
+                              );
+                            }),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // ----- TEXTS + CHAT BUTTON -----
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.name,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: _brandSoft,
+                              borderRadius:
+                                  BorderRadius.circular(20),
+                              border: Border.all(
+                                  color: _brandOrange),
+                            ),
+                            child: Text(
+                              'MWK ${item.price.toStringAsFixed(0)}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          if ((item.description ?? '').isNotEmpty)
+                            Text(
+                              item.description,
+                              style:
+                                  const TextStyle(height: 1.3),
+                            ),
+                        ],
                       ),
                     ),
-                    if (_media.length > 1) ...[
-                      Positioned(
-                        left: 8, top: 0, bottom: 0,
-                        child: _NavBtn(icon: Icons.chevron_left, onTap: _prev),
-                      ),
-                      Positioned(
-                        right: 8, top: 0, bottom: 0,
-                        child: _NavBtn(icon: Icons.chevron_right, onTap: _next),
-                      ),
-                      Positioned(
-                        bottom: 8, left: 0, right: 0,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: List.generate(_media.length, (i) {
-                            final active = i == _page;
-                            return AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              margin: const EdgeInsets.symmetric(horizontal: 3),
-                              width: active ? 18 : 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: active ? _brandOrange : Colors.white70,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: Colors.black26),
-                              ),
-                            );
-                          }),
+                    const SizedBox(width: 10),
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _brandOrange,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(12),
                         ),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
                       ),
-                    ],
+                      onPressed: () => _openChat(item),
+                      icon:
+                          const Icon(Icons.message_rounded),
+                      label: const Text('Chat'),
+                    ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 16),
 
-              // ----- TEXTS + CHAT BUTTON -----
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
+                const SizedBox(height: 20),
+
+                // ----- SELLER CARD -----
+                Card(
+                  elevation: 6,
+                  shadowColor: Colors.black12,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                  clipBehavior: Clip.antiAlias,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        16, 14, 16, 14),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment:
+                          CrossAxisAlignment.start,
                       children: [
-                        Text(item.name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: _brandSoft,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: _brandOrange),
-                          ),
-                          child: Text('MWK ${item.price.toStringAsFixed(0)}',
-                              style: const TextStyle(fontWeight: FontWeight.w700)),
+                        Row(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.center,
+                          children: [
+                            if (logo != null &&
+                                logo.isNotEmpty)
+                              CircleAvatar(
+                                  radius: 18,
+                                  backgroundImage:
+                                      NetworkImage(logo)),
+                            if (logo != null &&
+                                logo.isNotEmpty)
+                              const SizedBox(width: 10),
+                            const Icon(
+                              Icons.storefront_rounded,
+                              size: 20,
+                              color: Colors.black87,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                businessName ??
+                                    'Posted by —',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                ),
+                                maxLines: 1,
+                                overflow:
+                                    TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            _ratingStars(rating),
+                            const SizedBox(width: 8),
+                            _statusChip(status),
+                          ],
                         ),
-                        const SizedBox(height: 12),
-                        if ((item.description ?? '').isNotEmpty)
-                          Text(item.description!, style: const TextStyle(height: 1.3)),
+                        const SizedBox(height: 10),
+                        _infoRow('Business name',
+                            businessName,
+                            icon:
+                                Icons.badge_rounded),
+                        _infoRow(
+                          'Closing hours',
+                          closing,
+                          icon: Icons
+                              .access_time_rounded,
+                        ),
+                        _infoRow(
+                          'Status',
+                          (status ?? '').isEmpty
+                              ? '—'
+                              : status!.toUpperCase(),
+                          icon: Icons
+                              .info_outline_rounded,
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Business description',
+                          style: TextStyle(
+                              color: Colors.black54),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          (businessDesc ?? '').isNotEmpty
+                              ? businessDesc!
+                              : '—',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  FilledButton.icon(
+                ),
+
+                // ----- VIEW MERCHANT PRODUCTS BUTTON -----
+                if (hasMerchant &&
+                    merchantId.trim().isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      icon: const Icon(
+                        Icons.store_mall_directory_outlined,
+                      ),
+                      label: Text(
+                        'View more from $merchantDisplayName',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(14),
+                        ),
+                        side: BorderSide(
+                            color: _brandOrange),
+                        foregroundColor: _brandOrange,
+                      ),
+                      onPressed: () {
+                        _openMerchantProducts(
+                          merchantId: merchantId,
+                          merchantName:
+                              merchantDisplayName,
+                        );
+                      },
+                    ),
+                  ),
+                ],
+
+                const SizedBox(height: 16),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
                     style: FilledButton.styleFrom(
                       backgroundColor: _brandOrange,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    ),
-                    onPressed: () => _openChat(item),
-                    icon: const Icon(Icons.message_rounded),
-                    label: const Text('Chat'),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 20),
-
-              // ----- SELLER CARD -----
-              Card(
-                elevation: 6,
-                shadowColor: Colors.black12,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                clipBehavior: Clip.antiAlias,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                      if (logo != null && logo.isNotEmpty)
-                        CircleAvatar(radius: 18, backgroundImage: NetworkImage(logo)),
-                      if (logo != null && logo.isNotEmpty) const SizedBox(width: 10),
-                      const Icon(Icons.storefront_rounded, size: 20, color: Colors.black87),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          businessName ?? 'Posted by —',
-                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                      padding:
+                          const EdgeInsets.symmetric(
+                              vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(14),
                       ),
-                      const SizedBox(width: 8),
-                      _ratingStars(rating),
-                      const SizedBox(width: 8),
-                      _statusChip(status),
-                    ]),
-                    const SizedBox(height: 10),
-
-                    _infoRow('Business name', businessName, icon: Icons.badge_rounded),
-                    _infoRow('Closing hours', _closingFromHours(openingHours), icon: Icons.access_time_rounded),
-                    _infoRow('Status', (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
-                        icon: Icons.info_outline_rounded),
-                    const SizedBox(height: 6),
-                    const Text('Business description', style: TextStyle(color: Colors.black54)),
-                    const SizedBox(height: 4),
-                    Text((businessDesc ?? '').isNotEmpty ? businessDesc! : '—',
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
-                  ]),
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _brandOrange,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                      textStyle: const TextStyle(
+                          fontWeight: FontWeight.w700),
+                    ),
+                    onPressed: () =>
+                        _goToCheckout(widget.item),
+                    icon: const Icon(
+                        Icons.shopping_bag_outlined),
+                    label:
+                        const Text("Continue to checkout"),
                   ),
-                  onPressed: () => _goToCheckout(widget.item),
-                  icon: const Icon(Icons.shopping_bag_outlined),
-                  label: const Text("Continue to checkout"),
                 ),
-              ),
-            ]),
+              ],
+            ),
           );
         },
       ),
@@ -530,8 +801,13 @@ class _NavBtn extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(24),
         child: SizedBox(
-          width: 40, height: 40,
-          child: Icon(icon, color: Colors.white, size: 26),
+          width: 40,
+          height: 40,
+          child: Icon(
+            icon,
+            color: Colors.white,
+            size: 26,
+          ),
         ),
       ),
     );

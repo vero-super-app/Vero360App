@@ -15,6 +15,16 @@ class AuthRequiredException implements Exception {
 }
 
 class AddressService {
+  // ---------- Simple in-memory cache for address list ----------
+  List<Address>? _cachedAddresses;
+  DateTime? _addressesFetchedAt;
+  static const Duration _addressesCacheTtl = Duration(minutes: 5);
+
+  void _clearAddressesCache() {
+    _cachedAddresses = null;
+    _addressesFetchedAt = null;
+  }
+
   // ---------- Core helpers (Firebase auth for NestJS FirebaseAuthGuard) ----------
 
   /// Uses Firebase ID token so backend FirebaseAuthGuard can verify the user.
@@ -89,7 +99,21 @@ class AddressService {
   // ---------- API methods ----------
 
   // GET /vero/addresses/me (Firebase auth)
-  Future<List<Address>> getMyAddresses() async {
+  Future<List<Address>> getMyAddresses({
+    bool forceRefresh = false,
+    bool allowCache = true,
+  }) async {
+    // Return cached value when allowed and still fresh
+    if (!forceRefresh &&
+        allowCache &&
+        _cachedAddresses != null &&
+        _addressesFetchedAt != null) {
+      final age = DateTime.now().difference(_addressesFetchedAt!);
+      if (age <= _addressesCacheTtl) {
+        return _cachedAddresses!;
+      }
+    }
+
     final h = await _authHeaders();
     final u = ApiConfig.endpoint('addresses/me');
 
@@ -103,10 +127,16 @@ class AddressService {
             ? decoded['data'] as List
             : <dynamic>[];
 
-    return list
+    final parsed = list
         .whereType<Map<String, dynamic>>()
         .map<Address>((m) => Address.fromJson(m))
         .toList();
+
+    // Cache a defensive copy
+    _cachedAddresses = List<Address>.from(parsed);
+    _addressesFetchedAt = DateTime.now();
+
+    return parsed;
   }
 
   Future<List<Map<String, dynamic>>> placesAutocomplete(String q,
@@ -152,7 +182,8 @@ class AddressService {
 
     if (r.body.isEmpty) {
       // Some APIs return 204; refetch list and return last
-      final all = await getMyAddresses();
+      final all =
+          await getMyAddresses(forceRefresh: true, allowCache: false);
       return all.isNotEmpty
           ? all.last
           : throw Exception('Create succeeded but no body/list empty');
@@ -180,7 +211,8 @@ class AddressService {
 
     if (r.body.isEmpty) {
       // Gracefully handle 204: re-fetch the updated list and find the record
-      final all = await getMyAddresses();
+      final all =
+          await getMyAddresses(forceRefresh: true, allowCache: false);
       return all.firstWhere((a) => a.id == id, orElse: () {
         // If not found just return a minimal model
         return Address(
@@ -209,6 +241,7 @@ class AddressService {
 
     final r = await _sendWithRetry(() => http.delete(u, headers: h));
     if (r.statusCode < 200 || r.statusCode >= 300) _handleBad(r);
+    _clearAddressesCache();
   }
 
   /// POST /vero/addresses/:id/default (Firebase auth)
@@ -218,5 +251,6 @@ class AddressService {
 
     final r = await _sendWithRetry(() => http.post(u, headers: h));
     if (r.statusCode < 200 || r.statusCode >= 300) _handleBad(r);
+    _clearAddressesCache();
   }
 }

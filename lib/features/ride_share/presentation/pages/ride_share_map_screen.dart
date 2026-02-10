@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -32,6 +34,8 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   Place? _cachedPickupPlace;
   late AnimationController _bottomSheetAnimationController;
   late AnimationController _fadeAnimationController;
+  bool _checkingConnectivity = true;
+  bool _isOffline = false;
 
   void _onMapCreated(GoogleMapController controller) {
     mapController = controller;
@@ -238,6 +242,9 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       duration: const Duration(milliseconds: 300),
       vsync: this,
     );
+
+    _checkConnectivity();
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       RecentPlacesManager.loadAndSet(ref);
@@ -285,7 +292,15 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
         ),
         resizeToAvoidBottomInset: true,
         backgroundColor: Colors.white,
-        body: FutureBuilder<bool>(
+        body: _checkingConnectivity
+            ? const Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00)),
+                ),
+              )
+            : _isOffline
+                ? _buildNoInternetScreen()
+                : FutureBuilder<bool>(
           future: AuthStorage.isLoggedIn(),
           builder: (context, authSnapshot) {
             if (authSnapshot.connectionState == ConnectionState.waiting) {
@@ -865,6 +880,83 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
           color: Colors.white,
           size: 20,
         ),
+      ),
+    );
+  }
+
+  Future<void> _checkConnectivity() async {
+    setState(() {
+      _checkingConnectivity = true;
+    });
+    bool offline = false;
+    try {
+      // Simple DNS lookup – if this fails, we consider the device offline
+      final result = await InternetAddress.lookup('example.com')
+          .timeout(const Duration(seconds: 3));
+      offline = result.isEmpty || result.first.rawAddress.isEmpty;
+    } catch (_) {
+      offline = true;
+    }
+    if (!mounted) return;
+    setState(() {
+      _isOffline = offline;
+      _checkingConnectivity = false;
+    });
+  }
+
+  Widget _buildNoInternetScreen() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 90,
+            height: 90,
+            decoration: BoxDecoration(
+              color: Colors.red.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Icon(
+              Icons.wifi_off_rounded,
+              size: 48,
+              color: Colors.red.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'No internet connection',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Please check your data or Wi‑Fi,\nthen try again.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Colors.grey[600],
+                ),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFF8A00),
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            onPressed: _checkConnectivity,
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+            label: const Text(
+              'Try Again',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

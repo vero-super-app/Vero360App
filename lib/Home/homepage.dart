@@ -368,7 +368,8 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
                 // ✅ Latest arrivals section
                 const SliverToBoxAdapter(
                   child: Padding(
-                    padding: EdgeInsets.fromLTRB(6, 12, 16, 16),
+                    // Symmetric horizontal padding so cards sit closer to the edges
+                    padding: EdgeInsets.fromLTRB(6, 12, 6, 16),
                     child: LatestArrivalsSection(),
                   ),
                 ),
@@ -1559,7 +1560,11 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
 
   String _fmtKwacha(int n) {
     final s = n.toString();
-    return s.replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+    // Insert commas every three digits from the right: 1000 -> 1,000
+    return s.replaceAllMapped(
+      RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]},',
+    );
   }
 
   int _fnv1a32(String input) {
@@ -1749,7 +1754,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       if (!mounted) return;
       ToastHelper.showCustomToast(
         sheetCtx,
-        'Failed to add ${it.name}',
+        'Failed to add ${it.name} to cart,log in to add to cart',
         isSuccess: false,
         errorMessage: e.toString(),
       );
@@ -1811,7 +1816,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(5, 12, 16, 8),
+      margin: const EdgeInsets.fromLTRB(5, 12, 5, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

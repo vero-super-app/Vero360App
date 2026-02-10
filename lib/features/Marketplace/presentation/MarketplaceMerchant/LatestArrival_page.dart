@@ -35,7 +35,11 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
 
   String _fmtKwacha(int n) {
     final s = n.toString();
-    return s.replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
+    // Insert commas every three digits from the right: 1000 -> 1,000
+    return s.replaceAllMapped(
+      RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]},',
+    );
   }
 
   // =========================
@@ -235,7 +239,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(5, 12, 16, 8),
+      // Reduce right margin so cards sit closer to the screen edge
+      margin: const EdgeInsets.fromLTRB(5, 12, 5, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

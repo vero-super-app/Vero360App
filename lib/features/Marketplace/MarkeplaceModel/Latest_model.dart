@@ -15,8 +15,15 @@ class LatestArrivalModels {
     int parsePrice(dynamic v) {
       if (v == null) return 0;
       if (v is num) return v.round();
-      final s = v.toString().replaceAll(RegExp(r'[^\d]'), '');
-      return int.tryParse(s) ?? 0;
+      // Allow decimals/commas but keep the numeric value correct.
+      // e.g. "1,000.00" -> 1000 (not 100000)
+      var s = v.toString().trim();
+      // Remove currency symbols / letters, keep digits, dots and commas
+      s = s.replaceAll(RegExp(r'[^0-9\.,]'), '');
+      // Normalise: "1,000.50" -> "1000.50"
+      s = s.replaceAll(',', '');
+      final d = double.tryParse(s) ?? 0;
+      return d.round();
     }
 
     return LatestArrivalModels(

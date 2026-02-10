@@ -9,9 +9,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -25,6 +27,7 @@ import 'package:vero360_app/Home/Messages.dart';
 import 'package:vero360_app/GernalServices/chat_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 
 /// ✅ Removes scrollbars + glow everywhere inside bottom-sheet
 class _NoBarsScrollBehavior extends MaterialScrollBehavior {
@@ -653,6 +656,9 @@ class _MarketPageState extends State<MarketPage> {
       return null;
     }
   }
+  // Removed misplaced await Share.shareXFiles block which was syntactically incorrect here.
+  // If sharing functionality is needed, place it inside a function or event handler.
+
 
   String _formatTimeAgo(DateTime time) {
     final now = DateTime.now();
@@ -846,6 +852,31 @@ class _MarketPageState extends State<MarketPage> {
       );
     }
     return isLoggedIn;
+  }
+
+  void _shareProductFromSheet(MarketplaceDetailModel item) {
+    final id = item.hasValidSqlItemId
+        ? item.sqlItemId!
+        : _stablePositiveIdFromString(item.id);
+    final productUrl = 'https://vero360.app/marketplace/$id';
+    Share.share(
+      'Check out ${item.name} on Vero360 - MWK ${item.price.toStringAsFixed(0)}\n$productUrl',
+    );
+  }
+
+  void _copyProductLinkFromSheet(MarketplaceDetailModel item) {
+    final id = item.hasValidSqlItemId
+        ? item.sqlItemId!
+        : _stablePositiveIdFromString(item.id);
+    final productUrl = 'https://vero360.app/marketplace/$id';
+    Clipboard.setData(ClipboardData(text: productUrl));
+    if (!mounted) return;
+    ToastHelper.showCustomToast(
+      context,
+      'Product link copied',
+      isSuccess: true,
+      errorMessage: 'OK',
+    );
   }
 
 void _showQuickLoading(BuildContext context, {String text = 'Adding to cart...'}) {
@@ -1361,6 +1392,29 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                                 style: const TextStyle(fontSize: 14, height: 1.3),
                               ),
 
+                            const SizedBox(height: 12),
+
+                            // Share / Copy link actions
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    icon: const Icon(Icons.link),
+                                    label: const Text('Copy link'),
+                                    onPressed: () => _copyProductLinkFromSheet(item),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    icon: const Icon(Icons.share),
+                                    label: const Text('Share'),
+                                    onPressed: () => _shareProductFromSheet(item),
+                                  ),
+                                ),
+                              ],
+                            ),
+
                             const SizedBox(height: 16),
 
                             // Seller Card
@@ -1425,7 +1479,38 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                               ),
                             ),
 
-                            const SizedBox(height: 20),
+                            const SizedBox(height: 16),
+
+                            // View more from this merchant
+                            if ((item.merchantId ?? '').trim().isNotEmpty) ...[
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(
+                                    Icons.store_mall_directory_outlined,
+                                  ),
+                                  label: Text(
+                                    'View more from $displayMerchantName',
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  onPressed: () {
+                                    Navigator.pop(sheetCtx);
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => MerchantProductsPage(
+                                          merchantId: item.merchantId!.trim(),
+                                          merchantName: displayMerchantName,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+
+                            const SizedBox(height: 4),
 
                             SizedBox(
                               width: double.infinity,

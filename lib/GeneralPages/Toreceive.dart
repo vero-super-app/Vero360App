@@ -85,14 +85,14 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
 
   Widget _card(OrderItem o) {
     // Strings (force to String so we never pass Object to Text/Chip)
-    final String imageUrl   = (o.itemImage ?? '').toString();
-    final String itemName   = (o.itemName  ?? 'Item').toString();
-    final String orderNo    = ((o.orderNumber ?? o.id) ?? '').toString();
-    final String paymentStr = (o.paymentStatus ?? '').toString().toUpperCase();
+    final String imageUrl   = o.itemImage.toString();
+    final String itemName   = o.itemName.toString();
+    final String orderNo    = o.orderNumber.toString();
+    final String paymentStr = o.paymentStatus.toString().toUpperCase();
 
     // Numbers
-    final int qty = int.tryParse('${o.quantity ?? 1}') ?? 1;
-    final num unitPrice = num.tryParse('${o.price ?? 0}') ?? 0;
+    final int qty = int.tryParse('${o.quantity}') ?? 1;
+    final num unitPrice = num.tryParse('${o.price}') ?? 0;
     final num total = unitPrice * qty;
 
     // Address + merchant (flat fields expected on your model)
@@ -127,8 +127,8 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: SizedBox(
-              width: 82,
-              height: 82,
+              width: 72,
+              height: 72,
               child: imageUrl.isEmpty
                   ? Container(
                       color: const Color(0xFFF1F2F6),
@@ -137,35 +137,45 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
                   : Image.network(imageUrl, fit: BoxFit.cover),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
 
           // Details
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Top row: name + chips
+                // Top row: name + chips (shrink-to-fit to avoid overflow)
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: Text(
                         itemName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontWeight: FontWeight.w700,
                           color: Color(0xFF222222),
-                          fontSize: 16,
+                          fontSize: 15,
                         ),
                       ),
                     ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        _chip(Colors.green, 'Delivered'),
-                        const SizedBox(height: 6),
-                        _chip(_brand, _money.format(total)),
-                      ],
-                    )
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.topRight,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _chip(Colors.green, 'Delivered'),
+                            const SizedBox(height: 6),
+                            _chip(_brand, _money.format(total)),
+                          ],
+                        ),
+                      ),
+                    ),
                   ],
                 ),
 
@@ -185,30 +195,30 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    Text(
-                      'Qty: $qty  •  Unit: ${_money.format(unitPrice)}',
-                      style: const TextStyle(
-                        color: Color(0xFF222222),
-                        fontWeight: FontWeight.w600,
+                    Expanded(
+                      child: Text(
+                        'Qty: $qty  •  Unit: ${_money.format(unitPrice)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF222222),
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                    const Spacer(),
-                    _chip(payColor, paymentStr.isEmpty ? 'UNKNOWN' : paymentStr),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: _chip(
+                          payColor,
+                          paymentStr.isEmpty ? 'UNKNOWN' : paymentStr,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-
-                // If you add a merchantAverageRating field to OrderItem,
-                // uncomment this block and show it:
-                // if (o.merchantAverageRating != null) ...[
-                //   const SizedBox(height: 8),
-                //   Row(
-                //     children: [
-                //       const Icon(Icons.star, size: 18, color: Colors.amber),
-                //       const SizedBox(width: 4),
-                //       Text('Merchant rating: ${o.merchantAverageRating}'),
-                //     ],
-                //   ),
-                // ],
               ],
             ),
           ),

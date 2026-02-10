@@ -58,6 +58,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Address? _defaultAddr;
   bool _loadingAddr = true;
   bool _loggedIn = false;
+  String? _pickupLocation; // merchant/shop address for pickup
 
   // Money formatter (MWK)
   late final NumberFormat _mwkFmt =
@@ -306,6 +307,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
 
   Future<void> _initAuthAndAddress() async {
+    // When pickup is selected we will show merchant address instead of user address.
+    _pickupLocation = widget.item.location.trim().isEmpty
+        ? widget.item.sellerBusinessName
+        : widget.item.location.trim();
+
     setState(() {
       _loadingAddr = true;
       _defaultAddr = null;
@@ -350,6 +356,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   Future<bool> _ensureDefaultAddressIfNeeded() async {
+    // For shop pickup we do not require a customer delivery address.
     if (_deliveryType == DeliveryType.pickup) return true;
 
     if (!_loggedIn) {
@@ -877,6 +884,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 loggedIn: _loggedIn,
                 address: _defaultAddr,
                 pickupSelected: _deliveryType == DeliveryType.pickup,
+                pickupLocation: _pickupLocation,
                 onManage: () async {
                   await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
                   await _initAuthAndAddress();
@@ -1065,6 +1073,7 @@ class _DeliveryAddressCard extends StatelessWidget {
     required this.address,
     required this.onManage,
     required this.pickupSelected,
+    this.pickupLocation,
   });
 
   final bool loading;
@@ -1072,6 +1081,7 @@ class _DeliveryAddressCard extends StatelessWidget {
   final Address? address;
   final VoidCallback onManage;
   final bool pickupSelected;
+  final String? pickupLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -1089,7 +1099,12 @@ class _DeliveryAddressCard extends StatelessWidget {
                 style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
             const SizedBox(height: 8),
             if (pickupSelected)
-              _line('Pickup selected', 'No address needed')
+              _line(
+                'Shop pickup selected',
+                (pickupLocation ?? '').trim().isEmpty
+                    ? 'Pickup at merchant shop (address from listing)'
+                    : pickupLocation!.trim(),
+              )
             else if (loading)
               const SizedBox(
                 height: 40,

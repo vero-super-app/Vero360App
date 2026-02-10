@@ -98,8 +98,6 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/style/
-    - .env
     - assets/happy.jpg
     - assets/uber-cabs-1024x576.webp
     - assets/logo_mark.png

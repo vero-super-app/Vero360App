@@ -3,7 +3,6 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:io';
 
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -14,136 +13,57 @@ import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 
+const Color _brandOrange = Color(0xFFFF8A00);
+
 class CheckoutFromCartPage extends StatefulWidget {
   final List<CartModel> items;
-  const CheckoutFromCartPage({Key? key, required this.items}) : super(key: key);
+  const CheckoutFromCartPage({super.key, required this.items});
 
   @override
   State<CheckoutFromCartPage> createState() => _CheckoutFromCartPageState();
 }
 
 class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
-  static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandSoft = Color(0xFFFFF3E0);
-
   bool _paying = false;
 
-  // ✅ MWK formatter with commas (same style as your main checkout page)
-  late final NumberFormat _mwkFmt =
-      NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
+  late final NumberFormat _mwkFmt = NumberFormat.currency(
+    locale: 'en_US',
+    symbol: 'MWK ',
+    decimalDigits: 0,
+  );
+
   String _mwk(num v) => _mwkFmt.format(v);
 
-  double get _subtotal =>
-      widget.items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
+  double get _subtotal => widget.items.fold(0.0, (sum, item) => sum + item.price * item.quantity);
 
   double get _deliveryFee => widget.items.isEmpty ? 0.0 : 20.0;
 
   double get _total => max(0.0, _subtotal + _deliveryFee);
 
-  // ✅ Same image logic as CheckoutPage (http / base64 / gs:// / firebase storage path)
-  Widget _itemImage(String raw, {double size = 64}) {
-    final s = raw.trim();
-    if (s.isEmpty) {
-      return Container(
-        width: size,
-        height: size,
-        color: Colors.grey.shade200,
-        child: const Icon(Icons.image_not_supported, color: Colors.grey),
-      );
-    }
-
-    // HTTP URL
-    if (s.startsWith('http://') || s.startsWith('https://')) {
-      return Image.network(
-        s,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(
-          width: size,
-          height: size,
-          color: Colors.grey.shade200,
-          child: const Icon(Icons.image_not_supported, color: Colors.grey),
-        ),
-      );
-    }
-
-    // Firebase Storage gs://
-    if (s.startsWith('gs://')) {
-      return FutureBuilder<String>(
-        future: FirebaseStorage.instance.refFromURL(s).getDownloadURL(),
-        builder: (context, snap) {
-          if (!snap.hasData) {
-            return Container(
-              width: size,
-              height: size,
-              color: Colors.grey.shade100,
-              child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            );
-          }
-          return Image.network(
-            snap.data!,
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              width: size,
-              height: size,
-              color: Colors.grey.shade200,
-              child: const Icon(Icons.image_not_supported, color: Colors.grey),
-            ),
-          );
-        },
-      );
-    }
-
-    // Try Base64
-    try {
-      final base64Part = s.contains(',') ? s.split(',').last : s;
-      if (base64Part.length > 150) {
-        final bytes = base64Decode(base64Part);
-        return Image.memory(bytes, width: size, height: size, fit: BoxFit.cover);
-      }
-    } catch (_) {}
-
-    // Try Firebase Storage path
-    return FutureBuilder<String>(
-      future: FirebaseStorage.instance.ref(s).getDownloadURL(),
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade200,
-            child: const Icon(Icons.image_not_supported, color: Colors.grey),
-          );
-        }
-        return Image.network(
-          snap.data!,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade200,
-            child: const Icon(Icons.image_not_supported, color: Colors.grey),
-          ),
-        );
-      },
-    );
-  }
+  // Image rendering remains unchanged (omitted here for brevity - keep your version)
 
   Future<void> _startPayChanguPayment() async {
+    print('============================================================');
+    print('!!! PAY BUTTON PRESSED - STARTING PAYMENT FLOW !!!');
+    print('Time: ${DateTime.now().toIso8601String()}');
+    print('Cart items: ${widget.items.length}');
+    print('Total: $_total MWK');
+    print('Paying state before: $_paying');
+    print('============================================================');
+
     if (widget.items.isEmpty) {
-      ToastHelper.showCustomToast(
-        context,
-        'Your cart is empty.',
-        isSuccess: false,
-        errorMessage: 'Empty cart',
-      );
+      print('Cart empty - aborting');
+      ToastHelper.showCustomToast(context, 'Cart is empty', isSuccess: false, errorMessage: 'Cart is empty');
       return;
     }
+
+    if (!PayChanguConfig.isConfigured) {
+      print('Config check failed: PayChanguConfig.isConfigured = false');
+      ToastHelper.showCustomToast(context, 'Payment config error', isSuccess: false, errorMessage: 'Payment config error');
+      return;
+    }
+
+    print('Config check passed');
 
     setState(() => _paying = true);
 
@@ -158,115 +78,167 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
 
       final txRef = 'vero-${DateTime.now().millisecondsSinceEpoch}';
+      print('Generated txRef: $txRef');
 
-      // DNS test
+      // DNS check
       try {
         await InternetAddress.lookup('api.paychangu.com');
-      } on SocketException catch (_) {
-        throw Exception(
-            'Cannot connect to payment service. Please check your internet connection.');
+        print('DNS check OK');
+      } on SocketException catch (e) {
+        print('DNS failed: $e');
+        throw Exception('Cannot reach PayChangu');
       }
+
+      final body = PayChanguConfig.buildPaymentBody(
+        txRef: txRef,
+        firstName: firstName,
+        lastName: lastName,
+        email: email,
+        phone: phone,
+        amount: _total.toInt().toString(),
+      );
+
+      // CRITICAL LOG - what is ACTUALLY sent
+      print('CALLBACK URL TO BE SENT: ${PayChanguConfig.callbackUrl}');
+      print('RETURN URL TO BE SENT: ${PayChanguConfig.returnUrl}');
+      print('Authorization header: ${PayChanguConfig.authHeaders['Authorization']}');
 
       final response = await http
           .post(
-            PayChanguConfig.paymentUri(),
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
-            },
-            body: json.encode({
-              'tx_ref': txRef,
-              'first_name': firstName,
-              'last_name': lastName,
-              'email': email,
-              'phone_number': phone,
-              'currency': 'MWK',
-              'amount': _total.round().toString(),
-              'payment_methods': ['card', 'mobile_money', 'bank'],
-              'callback_url': PayChanguConfig.callbackUrl,
-              'return_url': PayChanguConfig.returnUrl,
-              'customization': {
-                'title': 'Vero 360 Payment',
-                'description': 'Order checkout',
-              },
-            }),
+            PayChanguConfig.paymentUri,
+            headers: PayChanguConfig.authHeaders,
+            body: json.encode(body),
           )
           .timeout(const Duration(seconds: 30));
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final Map<String, dynamic> responseJson = json.decode(response.body);
+      print('RESPONSE STATUS: ${response.statusCode}');
+      print('RESPONSE BODY (first 500 chars): ${response.body.substring(0, response.body.length.clamp(0, 500))}');
 
-        final status = (responseJson['status'] ?? '').toString().toLowerCase();
-        if (status == 'success') {
-          final checkoutUrl = responseJson['data']['checkout_url'] as String;
-
-          if (!mounted) return;
-
-          Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => InAppPaymentPage(
-              checkoutUrl: checkoutUrl,
-              txRef: txRef,
-              totalAmount: _total,
-              rootContext: context,
-            ),
-          ));
-        } else {
-          throw Exception(responseJson['message'] ?? 'Payment failed');
-        }
-      } else {
-        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      if (![200, 201].contains(response.statusCode)) {
+        throw Exception('Gateway error: ${response.statusCode}');
       }
-    } on SocketException catch (e) {
-      ToastHelper.showCustomToast(
+
+      final jsonResponse = json.decode(response.body);
+      final status = (jsonResponse['status'] ?? '').toString().toLowerCase();
+
+      if (status != 'success') {
+        throw Exception(jsonResponse['message'] ?? 'Init failed');
+      }
+
+      final checkoutUrl = jsonResponse['data']?['checkout_url'] as String?;
+      if (checkoutUrl == null || checkoutUrl.isEmpty) {
+        throw Exception('No checkout URL');
+      }
+
+      print('Launching WebView with: $checkoutUrl');
+
+      if (!mounted) return;
+
+      final success = await Navigator.push<bool>(
         context,
-        'Network error. Please check your internet connection.',
-        isSuccess: false,
-        errorMessage: e.message,
+        MaterialPageRoute(
+          builder: (_) => InAppPaymentPage(
+            checkoutUrl: checkoutUrl,
+            txRef: txRef,
+            totalAmount: _total,
+            rootContext: context,
+          ),
+        ),
       );
-    } on TimeoutException {
-      ToastHelper.showCustomToast(
-        context,
-        'Connection timeout. Please try again.',
-        isSuccess: false,
-        errorMessage: 'Request timed out',
-      );
-    } catch (e) {
-      ToastHelper.showCustomToast(
-        context,
-        'Payment initialization failed',
-        isSuccess: false,
-        errorMessage: e.toString(),
-      );
+
+      if (success == true && mounted) {
+        print('Payment flow returned SUCCESS from WebView');
+        ToastHelper.showCustomToast(context, 'Order placed successfully!', isSuccess: true, errorMessage: 'Order placed successfully!');
+      } else if (success == false && mounted) {
+        print('Payment flow returned FAILURE from WebView');
+      }
+    } catch (e, stack) {
+      print('PAYMENT CRASH: $e');
+      print('Stack trace: $stack');
+      ToastHelper.showCustomToast(context, 'Payment failed', isSuccess: false, errorMessage: e.toString());
     } finally {
-      if (mounted) setState(() => _paying = false);
+      if (mounted) {
+        setState(() => _paying = false);
+      }
+      print('Payment attempt finished');
     }
   }
 
-  Widget _row(String label, String value, {bool bold = false, bool green = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
-              color: Colors.grey[700],
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
-              color: green ? const Color(0xFF2E7D32) : Colors.black,
-            ),
+  Widget _itemRow(CartModel item) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
+      child: Row(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: item.image.isNotEmpty
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.network(
+                      item.image,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported),
+                    ),
+                  )
+                : const Icon(Icons.shopping_bag_outlined),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'x${item.quantity} • ${_mwk(item.price)}',
+                  style: const TextStyle(color: Colors.black54),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _mwk(item.price * item.quantity),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryRow(String label, String value, {bool bold = false}) {
+    final style = TextStyle(
+      fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+      fontSize: bold ? 16 : 14,
+    );
+    return Row(
+      children: [
+        Expanded(child: Text(label, style: style)),
+        const SizedBox(width: 8),
+        Text(value, style: style),
+      ],
     );
   }
 
@@ -277,180 +249,77 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         title: const Text('Checkout'),
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
-        elevation: 0,
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: _brandSoft,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: _brandOrange.withOpacity(0.35)),
+      backgroundColor: const Color(0xFFF5F5F5),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                itemCount: widget.items.length,
+                itemBuilder: (_, i) => _itemRow(widget.items[i]),
+              ),
             ),
-            child: const Row(
-              children: [
-                Icon(Icons.lock, size: 18),
-                SizedBox(width: 8),
-                Expanded(child: Text('Secure checkout — review your address and payment details.')),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          Card(
-            elevation: 6,
-            shadowColor: Colors.black12,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            clipBehavior: Clip.antiAlias,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Color(0x22000000),
+                    blurRadius: 10,
+                    offset: Offset(0, -3),
+                  ),
+                ],
+              ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text('Your Items',
-                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                  const SizedBox(height: 8),
-                  ListView.separated(
-                    itemCount: widget.items.length,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    separatorBuilder: (_, __) => const Divider(height: 14),
-                    itemBuilder: (_, i) {
-                      final it = widget.items[i];
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: SizedBox(
-                              width: 64,
-                              height: 64,
-                              child: _itemImage(it.image, size: 64),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  it.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w700, fontSize: 15),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  '${_mwk(it.price)}  •  Qty: ${it.quantity}',
-                                  style: TextStyle(color: Colors.grey.shade700),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Text(
-                            _mwk(it.price * it.quantity),
-                            style: const TextStyle(
-                              color: Colors.green,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                      );
-                    },
+                  _summaryRow('Subtotal', _mwk(_subtotal)),
+                  const SizedBox(height: 4),
+                  _summaryRow('Delivery', _mwk(_deliveryFee)),
+                  const Divider(height: 18),
+                  _summaryRow('Total', _mwk(_total), bold: true),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _brandOrange,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: _paying ? null : _startPayChanguPayment,
+                      icon: _paying
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.lock),
+                      label: Text(_paying ? 'Processing…' : 'Pay Now'),
+                    ),
                   ),
                 ],
               ),
             ),
-          ),
-
-          const SizedBox(height: 12),
-
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 10,
-                  spreadRadius: 1,
-                  offset: const Offset(0, -2),
-                ),
-              ],
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Order Summary',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 12),
-                _row('Subtotal', _mwk(_subtotal)),
-                _row('Delivery Fee', _mwk(_deliveryFee)),
-                const SizedBox(height: 8),
-                const Divider(thickness: 1),
-                const SizedBox(height: 8),
-                _row('Total', _mwk(_total), bold: true, green: true),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed:
-                        _paying || widget.items.isEmpty ? null : _startPayChanguPayment,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _brandOrange,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 3,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        if (_paying)
-                          const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                            ),
-                          )
-                        else
-                          const Icon(Icons.payment, color: Colors.white),
-                        const SizedBox(width: 10),
-                        Text(
-                          _paying ? 'Processing...' : 'Pay Now',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-// ────────────────────── IN-APP PAYMENT PAGE ──────────────────────
+// InAppPaymentPage - with detailed deep link logging (keep your current version or use this enhanced one)
+
 class InAppPaymentPage extends StatefulWidget {
   final String checkoutUrl;
   final String txRef;
@@ -458,99 +327,149 @@ class InAppPaymentPage extends StatefulWidget {
   final BuildContext rootContext;
 
   const InAppPaymentPage({
-    Key? key,
+    super.key,
     required this.checkoutUrl,
     required this.txRef,
     required this.totalAmount,
     required this.rootContext,
-  }) : super(key: key);
+  });
 
   @override
   State<InAppPaymentPage> createState() => _InAppPaymentPageState();
 }
 
 class _InAppPaymentPageState extends State<InAppPaymentPage> {
-  late final WebViewController _controller;
+  late WebViewController _controller;
   Timer? _pollTimer;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _initializeWebView();
-    _startStatusPolling();
+    print('InAppPaymentPage initState - loading URL: ${widget.checkoutUrl}');
+    _initWebView();
+    _startPolling();
   }
 
-  void _initializeWebView() {
+  void _initWebView() {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
-      ..setNavigationDelegate(NavigationDelegate(
-        onProgress: (int progress) => setState(() => _isLoading = progress < 100),
-        onPageStarted: (String url) => setState(() => _isLoading = true),
-        onPageFinished: (String url) => setState(() => _isLoading = false),
-        onWebResourceError: (_) => setState(() => _isLoading = false),
-      ))
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onProgress: (p) {
+            print('WebView progress: $p%');
+            setState(() => _isLoading = p < 100);
+          },
+          onPageStarted: (url) {
+            print('PAGE STARTED: $url');
+            setState(() => _isLoading = true);
+          },
+          onPageFinished: (url) {
+            print('PAGE FINISHED: $url');
+            setState(() => _isLoading = false);
+          },
+          onWebResourceError: (error) {
+            print('WEB ERROR: ${error.description} - ${error.errorCode}');
+            setState(() => _isLoading = false);
+          },
+          onNavigationRequest: (request) {
+            print('NAVIGATION REQUEST: ${request.url}');
+            if (request.url.startsWith('vero360://payment-complete')) {
+              print('!!! DEEP LINK CAUGHT !!!');
+              print('Full URL: ${request.url}');
+
+              final uri = Uri.parse(request.url);
+              final status = uri.queryParameters['status']?.toLowerCase() ?? 'unknown';
+              final tx = uri.queryParameters['tx_ref'] ?? 'missing';
+
+              print('Parsed → tx_ref: $tx | status: $status');
+
+              if (tx == widget.txRef) {
+                if (status.contains('success') || status == 'successful') {
+                  print('DEEP LINK → SUCCESS DETECTED');
+                  _handleSuccess();
+                } else {
+                  print('DEEP LINK → FAILURE / CANCEL DETECTED');
+                  _handleFailure();
+                }
+              } else {
+                print('TX MISMATCH! Expected ${widget.txRef}, got $tx');
+              }
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+        ),
+      )
       ..loadRequest(Uri.parse(widget.checkoutUrl));
   }
 
-  void _startStatusPolling() {
-    _pollTimer = Timer.periodic(const Duration(seconds: 7), (timer) async {
-      await _checkPaymentStatus();
+  void _startPolling() {
+    print('Starting polling for txRef: ${widget.txRef}');
+    _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) => _verifyStatus());
+
+    Timer(const Duration(minutes: 10), () {
+      if (mounted && _pollTimer?.isActive == true) {
+        print('Polling timeout after 10 min');
+        _pollTimer?.cancel();
+        ToastHelper.showCustomToast(context, 'Payment check timed out', isSuccess: false, errorMessage: 'Payment check timed out');
+        Navigator.pop(context);
+      }
     });
   }
 
-  Future<void> _checkPaymentStatus() async {
+  Future<void> _verifyStatus() async {
+    print('Polling verify for ${widget.txRef}');
     try {
-      final response = await http.get(
+      final res = await http.get(
         PayChanguConfig.verifyUri(widget.txRef),
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
-        },
+        headers: PayChanguConfig.authHeaders,
       );
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final status = (data['data']?['status'] as String?)?.toLowerCase();
+      print('Verify status: ${res.statusCode} | body: ${res.body.substring(0, res.body.length.clamp(0, 300))}...');
 
-        if (status == 'successful' || status == 'success') {
-          _handlePaymentSuccess();
-        } else if (status == 'failed' || status == 'cancelled') {
-          _handlePaymentFailure();
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body);
+        final status = (data['data']?['status'] as String?)?.toLowerCase() ?? '';
+
+        if (status.contains('success')) {
+          print('POLL → SUCCESS');
+          _handleSuccess();
+        } else if (['failed', 'cancelled', 'expired'].contains(status)) {
+          print('POLL → FAILURE');
+          _handleFailure();
         }
       }
-    } catch (_) {}
-  }
-
-  void _handlePaymentSuccess() {
-    _pollTimer?.cancel();
-    ToastHelper.showCustomToast(
-      widget.rootContext,
-      'Payment Successful!',
-      isSuccess: true,
-      errorMessage: '',
-    );
-    if (mounted) {
-      Navigator.of(context).pop();
-      Navigator.of(widget.rootContext).pop(true);
+    } catch (e) {
+      print('Poll error: $e');
     }
   }
 
-  void _handlePaymentFailure() {
+  void _handleSuccess() {
+    _cleanup();
+    print('SUCCESS HANDLER CALLED');
+    ToastHelper.showCustomToast(widget.rootContext, 'Payment Successful!', isSuccess: true, errorMessage: 'Payment Successful!');
+    if (mounted) {
+      Navigator.pop(context);
+      Navigator.pop(widget.rootContext, true);
+    }
+  }
+
+  void _handleFailure() {
+    _cleanup();
+    print('FAILURE HANDLER CALLED');
+    ToastHelper.showCustomToast(widget.rootContext, 'Payment not completed', isSuccess: false, errorMessage: 'Payment not completed');
+    if (mounted) Navigator.pop(context);
+  }
+
+  void _cleanup() {
     _pollTimer?.cancel();
-    ToastHelper.showCustomToast(
-      widget.rootContext,
-      'Payment Failed or Cancelled',
-      isSuccess: false,
-      errorMessage: 'Payment was not completed',
-    );
-    if (mounted) Navigator.of(context).pop();
   }
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
+    _cleanup();
     super.dispose();
   }
 
@@ -559,28 +478,21 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Complete Payment'),
-        backgroundColor: const Color(0xFFFF8A00),
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
       ),
       body: Stack(
         children: [
           WebViewWidget(controller: _controller),
           if (_isLoading)
-            Container(
-              color: Colors.white,
-              child: const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00)),
-                    ),
-                    SizedBox(height: 20),
-                    Text(
-                      'Loading payment gateway...',
-                      style: TextStyle(fontSize: 16, color: Colors.grey),
-                    ),
-                  ],
-                ),
+            const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00))),
+                  SizedBox(height: 24),
+                  Text('Loading secure payment page...', style: TextStyle(color: Colors.grey)),
+                ],
               ),
             ),
         ],

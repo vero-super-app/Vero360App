@@ -1,67 +1,84 @@
-// lib/config/paychangu_config.dart
-/// Centralized configuration for PayChangu payment gateway
-/// 
-/// Usage:
-///   final paymentUrl = PayChanguConfig.paymentEndpoint;
-///   final verifyUrl = PayChanguConfig.verifyEndpoint(txRef);
-///   final transferUrl = PayChanguConfig.transferEndpoint;
+import 'package:flutter/foundation.dart' show kDebugMode;
 
+/// PayChangu configuration – using deep links completely
 class PayChanguConfig {
-  /// PayChangu API base URL
+  // ───────────────────────────────────────────────
+  //  Base & Auth
+  // ───────────────────────────────────────────────
+
   static const String baseUrl = 'https://api.paychangu.com';
 
-  /// Payment processing endpoint
-  /// POST to create/process a payment
-  static const String paymentEndpoint = '$baseUrl/payment';
+  static bool get isTestMode => kDebugMode;
 
-  /// Transaction verification endpoint
-  /// GET to verify a transaction by reference
-  static String verifyEndpoint(String txRef) =>
-      '$baseUrl/transaction/verify/$txRef';
-
-  /// Merchant payout/transfer endpoint
-  /// POST to request a payout to merchant account
-  static const String transferEndpoint = '$baseUrl/transfer';
-
-  /// Default callback URL (should be overridden in actual implementation)
-  /// This would be your backend webhook endpoint
-  static const String callbackUrl = 'https://webhook.site/your-webhook';
-
-  /// Default return URL (should be overridden in actual implementation)
-  /// This is where users are sent after payment
-  static const String returnUrl = 'https://your-app.com/payment-success';
-
-  /// Standard headers for PayChangu requests
-  static const Map<String, String> defaultHeaders = {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-  };
-
-  /// Whether to use sandbox/test mode
-  /// Set to false for production
-  static bool get isSandbox => false;
-
-  /// Public key for PayChangu integration
-  /// This should be stored in environment config, not hardcoded
-  static const String publicKey = 'pk_prod_xxx'; // Replace with actual key
-
-  /// Check if PayChangu is available and configured
-  static bool isConfigured() {
-    return baseUrl.isNotEmpty && publicKey.isNotEmpty;
+  static String get authorizationToken {
+    if (isTestMode) {
+      return 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u';
+    } else {
+      // Replace with your real production secret key
+      // Better: load from secure storage / Remote Config in production
+      return 'Bearer SEC-LIVE-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+    }
   }
 
-  /// Get full payment request URL with parameters
-  static Uri paymentUri() {
-    return Uri.parse(paymentEndpoint);
+  // ───────────────────────────────────────────────
+  //  Endpoints
+  // ───────────────────────────────────────────────
+
+  static Uri get paymentUri => Uri.parse('$baseUrl/payment');
+
+  static Uri verifyUri(String txRef) => Uri.parse('$baseUrl/transaction/verify/$txRef');
+
+  /// Payout / transfer endpoint for sending money out to bank / mobile money.
+  /// Matches usage in merchant wallet payouts.
+  static Uri transferUri() => Uri.parse('$baseUrl/transfers');
+
+  // ───────────────────────────────────────────────
+  //  Deep Links – completely replace http callbacks
+  // ───────────────────────────────────────────────
+
+  static const String scheme = 'vero360';
+
+  /// PayChangu redirects here after successful payment
+  static String get callbackUrl => '$scheme://payment-complete';
+
+  /// PayChangu redirects here on cancel/failure
+  static String get returnUrl => '$scheme://payment-complete';
+
+  // ───────────────────────────────────────────────
+  //  Headers & Helpers
+  // ───────────────────────────────────────────────
+
+  static Map<String, String> get authHeaders => {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': authorizationToken,
+      };
+
+  static Map<String, dynamic> buildPaymentBody({
+    required String txRef,
+    required String firstName,
+    required String lastName,
+    required String email,
+    required String phone,
+    required String amount,
+  }) {
+    return {
+      'tx_ref': txRef,
+      'first_name': firstName,
+      'last_name': lastName,
+      'email': email,
+      'phone_number': phone,
+      'currency': 'MWK',
+      'amount': amount,
+      'payment_methods': ['card', 'mobile_money', 'bank'],
+      'callback_url': callbackUrl,
+      'return_url': returnUrl,
+      'customization': {
+        'title': 'Vero 360 Payment',
+        'description': 'Order checkout',
+      },
+    };
   }
 
-  /// Get full verify request URL with transaction reference
-  static Uri verifyUri(String txRef) {
-    return Uri.parse(verifyEndpoint(txRef));
-  }
-
-  /// Get full transfer request URL
-  static Uri transferUri() {
-    return Uri.parse(transferEndpoint);
-  }
+  static bool get isConfigured => authorizationToken.isNotEmpty && !authorizationToken.contains('XXX');
 }

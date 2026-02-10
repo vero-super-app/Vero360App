@@ -2,12 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
-import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 
 class MerchantWalletPage extends StatefulWidget {
@@ -124,7 +122,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
       if (mounted) {
         setState(() {
           _recentTransactions = snapshot.docs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
+            final data = doc.data();
             return WalletTransaction.fromMap({
               ...data,
               'transactionId': doc.id,

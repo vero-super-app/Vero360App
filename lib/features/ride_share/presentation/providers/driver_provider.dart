@@ -10,6 +10,14 @@ final driverServiceProvider = Provider<DriverService>((ref) {
 });
 
 // ==================== DRIVER PROFILE ====================
+
+/// Get current authenticated driver profile (uses Firebase token)
+final myDriverProfileProvider = FutureProvider<Map<String, dynamic>>((ref) async {
+  final driverService = ref.watch(driverServiceProvider);
+  return await driverService.getMyDriverProfile();
+});
+
+/// Get driver by database user ID (legacy - prefer myDriverProfileProvider)
 final driverProfileProvider =
     FutureProvider.family<Map<String, dynamic>, int>((ref, userId) async {
   final driverService = ref.watch(driverServiceProvider);

@@ -279,9 +279,19 @@ class RideShareHttpService {
   /// Accept a ride (driver)
   Future<Ride> acceptRide(int rideId, int vehicleId) async {
     try {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+
+      // Add auth token if available
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/accept'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: jsonEncode({'vehicleId': vehicleId}),
       );
 
@@ -299,9 +309,19 @@ class RideShareHttpService {
   /// Mark driver as arrived at pickup
   Future<Ride> markDriverArrived(int rideId) async {
     try {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+
+      // Add auth token if available
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/driver-arrived'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
       );
 
       if (response.statusCode == 200) {
@@ -318,9 +338,19 @@ class RideShareHttpService {
   /// Start the ride
   Future<Ride> startRide(int rideId) async {
     try {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+
+      // Add auth token if available
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/start'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
       );
 
       if (response.statusCode == 200) {
@@ -337,9 +367,19 @@ class RideShareHttpService {
   /// Complete the ride
   Future<Ride> completeRide(int rideId, {double? actualDistance}) async {
     try {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+
+      // Add auth token if available
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/complete'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: jsonEncode({'actualDistance': actualDistance}),
       );
 
@@ -357,9 +397,19 @@ class RideShareHttpService {
   /// Cancel a ride
   Future<Ride> cancelRide(int rideId, {String? reason}) async {
     try {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+
+      // Add auth token if available
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/cancel'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: jsonEncode({'reason': reason}),
       );
 

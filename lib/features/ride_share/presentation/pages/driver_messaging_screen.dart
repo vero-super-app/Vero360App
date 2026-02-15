@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/GernalServices/driver_messaging_service.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 
@@ -83,6 +84,40 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
     } finally {
       if (mounted) {
         setState(() => _isSending = false);
+      }
+    }
+  }
+
+  Future<void> _makePhoneCall(String phoneNumber) async {
+    // Remove any non-digit characters and whitespace
+    final cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d+]'), '');
+    final Uri phoneUri = Uri(scheme: 'tel', path: cleanNumber);
+
+    try {
+      if (await canLaunchUrl(phoneUri)) {
+        await launchUrl(phoneUri);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Cannot make call to $phoneNumber'),
+              backgroundColor: Colors.red.shade600,
+              behavior: SnackBarBehavior.floating,
+              margin: const EdgeInsets.all(16),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error making call: $e'),
+            backgroundColor: Colors.red.shade600,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
       }
     }
   }
@@ -194,10 +229,9 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
                   ),
                   child: IconButton(
                     icon: const Icon(Icons.phone, color: primaryColor),
-                    onPressed: () {
-                      // Implement phone call
-                    },
+                    onPressed: () => _makePhoneCall(ride.passengerPhone!),
                     iconSize: 20,
+                    tooltip: 'Call Passenger',
                   ),
                 ),
             ],

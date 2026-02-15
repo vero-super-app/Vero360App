@@ -421,15 +421,13 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   }
 
   void _openService(String key) {
-    // Special handling for taxi service with driver check
+    // Special handling for taxi service
     if (key == 'taxi' || key == 'car_hire') {
-      final isDriver = ref.watch(isCurrentUserDriverProvider);
-
-      // ✅ INSTANT - uses cached value from SharedPreferences (no network call)
-      final page = (isDriver ?? false) 
-          ? const DriverDashboard() 
-          : const RideShareMapScreen();
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+      // ✅ Always open user/passenger mode when clicking ride share icon
+      // Drivers access DriverDashboard automatically on login
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const RideShareMapScreen()),
+      );
     } else {
       _openServiceStatic(context, key);
     }

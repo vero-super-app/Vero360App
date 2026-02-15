@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:dio/dio.dart';
+import 'dart:async';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
-import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'driver_request_screen.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
@@ -15,11 +19,133 @@ class DriverDashboard extends ConsumerStatefulWidget {
 class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   static const Color primaryColor = Color(0xFFFF8A00);
   GoogleMapController? mapController;
+  Timer? _locationBroadcastTimer;
+  final DriverService _driverService = DriverService();
+  bool _isOnline = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _startLocationBroadcasting();
+      }
+    });
+  }
 
   @override
   void dispose() {
     mapController?.dispose();
+    _stopLocationBroadcasting();
     super.dispose();
+  }
+
+  /// Start broadcasting driver location to nearby car service
+  void _startLocationBroadcasting() {
+    if (_isOnline) return; // Already broadcasting
+
+    setState(() => _isOnline = true);
+
+    // Broadcast location every 5 seconds
+    _locationBroadcastTimer =
+        Timer.periodic(const Duration(seconds: 5), (_) async {
+      try {
+        final position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 5),
+          ),
+        );
+
+        // Get driver profile and ensure taxi exists
+        final driverProfile = ref.read(myDriverProfileProvider);
+
+        driverProfile.whenData((driver) async {
+          if (driver['id'] == null) {
+            if (kDebugMode)
+              print('[DriverDashboard] Driver profile incomplete');
+            return;
+          }
+
+          var taxiId = driver['taxis']?.isNotEmpty == true
+              ? driver['taxis'][0]['id']
+              : null;
+
+          if (kDebugMode) {
+            print(
+                '[DriverDashboard] Driver ID: ${driver['id']}, Taxis: ${driver['taxis']}');
+            print('[DriverDashboard] Extracted taxiId: $taxiId');
+          }
+
+          // If no taxi exists, create one
+          if (taxiId == null) {
+            if (kDebugMode)
+              print('[DriverDashboard] No taxi found, creating default taxi...');
+            try {
+              final timestamp = DateTime.now().millisecondsSinceEpoch;
+              final taxiPayload = {
+                'make': 'Default',
+                'model': 'Vehicle',
+                'year': DateTime.now().year,
+                'licensePlate': 'DRV${driver['id']}-$timestamp',
+                'seats': 4,
+                'taxiClass': 'ECONOMY',
+                'color': 'White',
+                'registrationNumber': 'REG${driver['id']}-$timestamp',
+              };
+              if (kDebugMode)
+                print(
+                    '[DriverDashboard] Creating taxi with payload: $taxiPayload');
+
+              final newTaxi = await _driverService.createTaxi(taxiPayload);
+              taxiId = newTaxi['id'];
+              if (kDebugMode)
+                print('[DriverDashboard] ✓ Created taxi with ID: $taxiId');
+            } catch (e) {
+              if (kDebugMode) {
+                print('[DriverDashboard] ✗ Error creating taxi: $e');
+                print('[DriverDashboard] Error type: ${e.runtimeType}');
+                if (e is DioException) {
+                  print(
+                      '[DriverDashboard] Status code: ${e.response?.statusCode}');
+                  print('[DriverDashboard] Response: ${e.response?.data}');
+                }
+              }
+              return;
+            }
+          }
+
+          // Broadcast location
+          if (taxiId != null) {
+            try {
+              await _driverService.updateTaxiLocation(
+                  int.parse(taxiId.toString()),
+                  position.latitude,
+                  position.longitude);
+              if (kDebugMode) {
+                print(
+                    '[DriverDashboard] ✓ Broadcasting location to taxi $taxiId: ${position.latitude}, ${position.longitude}');
+              }
+            } catch (e) {
+              if (kDebugMode) {
+                print('[DriverDashboard] ✗ Error updating taxi location: $e');
+              }
+            }
+          }
+        });
+      } catch (e) {
+        if (kDebugMode) {
+          print('[DriverDashboard] Error getting position: $e');
+        }
+      }
+    });
+  }
+
+  /// Stop broadcasting driver location
+  void _stopLocationBroadcasting() {
+    _locationBroadcastTimer?.cancel();
+    _locationBroadcastTimer = null;
+    setState(() => _isOnline = false);
   }
 
   @override
@@ -32,93 +158,79 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         elevation: 0,
         centerTitle: false,
       ),
-      body: FutureBuilder<int?>(
-        future: _getUserId(),
-        builder: (context, userIdSnapshot) {
-          if (userIdSnapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: Stack(
+        children: [
+          // Map Background
+          _buildMap(),
 
-          if (!userIdSnapshot.hasData || userIdSnapshot.data == null) {
-            return _buildErrorState();
-          }
-
-          final userId = userIdSnapshot.data!;
-          return Stack(
-            children: [
-              // Map Background
-              _buildMap(),
-
-              // Bottom Sheet with Info
-              DraggableScrollableSheet(
-                initialChildSize: 0.35,
-                minChildSize: 0.35,
-                maxChildSize: 0.85,
-                builder: (context, scrollController) {
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(24),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 24,
-                          offset: const Offset(0, -4),
-                        ),
-                      ],
+          // Bottom Sheet with Info
+          DraggableScrollableSheet(
+            initialChildSize: 0.35,
+            minChildSize: 0.35,
+            maxChildSize: 0.85,
+            builder: (context, scrollController) {
+              return Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 24,
+                      offset: const Offset(0, -4),
                     ),
-                    child: SingleChildScrollView(
-                      controller: scrollController,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Drag Handle
-                          Center(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              child: Container(
-                                width: 36,
-                                height: 4,
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[300],
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
+                  ],
+                ),
+                child: SingleChildScrollView(
+                  controller: scrollController,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Drag Handle
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Container(
+                            width: 36,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(2),
                             ),
                           ),
-
-                          // Profile Card
-                          Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: _buildProfileCard(ref, userId),
-                          ),
-
-                          // Stats Section
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: _buildStatsSection(ref, userId),
-                          ),
-
-                          const SizedBox(height: 16),
-
-                          // Quick Actions
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: _buildActionsSection(context),
-                          ),
-
-                          const SizedBox(height: 24),
-                        ],
+                        ),
                       ),
-                    ),
-                  );
-                },
-              ),
-            ],
-          );
-        },
+
+                      // Profile Card
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: _buildProfileCard(ref),
+                      ),
+
+                      // Stats Section
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: _buildStatsSection(ref),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // Quick Actions
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: _buildActionsSection(context),
+                      ),
+
+                      const SizedBox(height: 24),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
@@ -136,190 +248,259 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     );
   }
 
-  Widget _buildErrorState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: Colors.red.shade50,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.error_outline,
-              size: 40,
-              color: Colors.red.shade400,
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Unable to load user information',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: Colors.black87,
-            ),
-          ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back),
-            label: const Text('Go Back'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(
-                horizontal: 24,
-                vertical: 12,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProfileCard(WidgetRef ref, int userId) {
-    final driverProfile = ref.watch(driverProfileProvider(userId));
+  Widget _buildProfileCard(WidgetRef ref) {
+    final driverProfile = ref.watch(myDriverProfileProvider);
 
     return driverProfile.when(
-      data: (driver) => Container(
-        decoration: BoxDecoration(
-          color: Colors.grey[50],
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: Colors.grey[200]!,
+      data: (driver) {
+        // Check if driver profile is empty or invalid
+        if (driver.isEmpty || driver['id'] == null) {
+          return _buildNoDriverProfile();
+        }
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: Colors.grey[200]!,
+            ),
           ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: primaryColor.withOpacity(0.2),
-                        width: 2,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: primaryColor.withOpacity(0.2),
+                          width: 2,
+                        ),
+                      ),
+                      child: CircleAvatar(
+                        radius: 32,
+                        backgroundImage:
+                            driver['user']?['profilepicture'] != null &&
+                                    driver['user']['profilepicture']
+                                        .toString()
+                                        .isNotEmpty
+                                ? NetworkImage(
+                                    driver['user']['profilepicture'].toString())
+                                : null,
+                        backgroundColor: primaryColor.withOpacity(0.1),
+                        child: driver['user']?['profilepicture'] == null ||
+                                driver['user']['profilepicture']
+                                    .toString()
+                                    .isEmpty
+                            ? Icon(
+                                Icons.person,
+                                size: 32,
+                                color: primaryColor,
+                              )
+                            : null,
                       ),
                     ),
-                    child: CircleAvatar(
-                      radius: 32,
-                      backgroundImage: driver['user']?['profilepicture'] != null
-                          ? NetworkImage(driver['user']['profilepicture'])
-                          : null,
-                      backgroundColor: primaryColor.withOpacity(0.1),
-                      child: driver['user']?['profilepicture'] == null
-                          ? Icon(
-                              Icons.person,
-                              size: 32,
-                              color: primaryColor,
-                            )
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          driver['user']?['name'] ?? 'Driver',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: driver['isVerified']
-                                ? Colors.green.shade50
-                                : primaryColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: driver['isVerified']
-                                  ? Colors.green.shade200
-                                  : primaryColor.withOpacity(0.3),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            (driver['user']?['name'] ?? 'Driver').toString(),
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black87,
                             ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                driver['isVerified']
-                                    ? Icons.verified
-                                    : Icons.pending_actions,
-                                size: 12,
-                                color: driver['isVerified']
-                                    ? Colors.green
-                                    : primaryColor,
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _getBoolValue(driver['isVerified'])
+                                  ? Colors.green.shade50
+                                  : primaryColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: _getBoolValue(driver['isVerified'])
+                                    ? Colors.green.shade200
+                                    : primaryColor.withOpacity(0.3),
                               ),
-                              const SizedBox(width: 4),
-                              Text(
-                                driver['isVerified'] ? 'Verified' : 'Pending',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  color: driver['isVerified']
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _getBoolValue(driver['isVerified'])
+                                      ? Icons.verified
+                                      : Icons.pending_actions,
+                                  size: 12,
+                                  color: _getBoolValue(driver['isVerified'])
                                       ? Colors.green
                                       : primaryColor,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 4),
+                                Text(
+                                  _getBoolValue(driver['isVerified'])
+                                      ? 'Verified'
+                                      : 'Pending',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                    color: _getBoolValue(driver['isVerified'])
+                                        ? Colors.green
+                                        : primaryColor,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Container(height: 1, color: Colors.grey[200]),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildStatItem('Rating', '${driver['rating']}/5'),
-                  Container(
-                    width: 1,
-                    height: 40,
-                    color: Colors.grey[200],
-                  ),
-                  _buildStatItem('Rides', '${driver['totalRides']}'),
-                  Container(
-                    width: 1,
-                    height: 40,
-                    color: Colors.grey[200],
-                  ),
-                  _buildStatItem('Accepted', '${driver['acceptedRides']}'),
-                ],
-              ),
-            ],
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Container(height: 1, color: Colors.grey[200]),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildStatItem(
+                        'Rating', '${_getNumericValue(driver['rating'])}/5'),
+                    Container(
+                      width: 1,
+                      height: 40,
+                      color: Colors.grey[200],
+                    ),
+                    _buildStatItem(
+                        'Rides', '${_getNumericValue(driver['totalRides'])}'),
+                    Container(
+                      width: 1,
+                      height: 40,
+                      color: Colors.grey[200],
+                    ),
+                    _buildStatItem('Accepted',
+                        '${_getNumericValue(driver['acceptedRides'])}'),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
       loading: () => const Padding(
         padding: EdgeInsets.all(16),
         child: CircularProgressIndicator(),
       ),
-      error: (error, stack) => Padding(
+      error: (error, stack) {
+        // If driver profile doesn't exist, show create profile option
+        final errorStr = error.toString().toLowerCase();
+        if (errorStr.contains('404') || errorStr.contains('not found')) {
+          return _buildNoDriverProfile();
+        }
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Icon(Icons.error_outline, color: Colors.red.shade400, size: 32),
+              const SizedBox(height: 8),
+              Text(
+                'Error loading profile',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                error.toString(),
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildNoDriverProfile() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: primaryColor.withOpacity(0.3),
+        ),
+      ),
+      child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Text('Error: $error'),
+        child: Column(
+          children: [
+            Icon(
+              Icons.person_add_outlined,
+              size: 48,
+              color: primaryColor,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Driver Profile Not Found',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'You need to create a driver profile to access the driver dashboard.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text(
+                        'Driver profile creation coming soon! Please contact support to set up your driver account.',
+                      ),
+                      backgroundColor: primaryColor,
+                      behavior: SnackBarBehavior.floating,
+                      margin: const EdgeInsets.all(16),
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.add_circle_outline),
+                label: const Text('Contact Support'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -348,45 +529,72 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     );
   }
 
-  Widget _buildStatsSection(WidgetRef ref, int userId) {
-    final driverProfile = ref.watch(driverProfileProvider(userId));
+  /// Helper to safely get numeric values (handles both int and string)
+  dynamic _getNumericValue(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value;
+    if (value is String) {
+      return num.tryParse(value) ?? 0;
+    }
+    return 0;
+  }
+
+  /// Helper to safely get boolean values (handles various types)
+  bool _getBoolValue(dynamic value) {
+    if (value == null) return false;
+    if (value is bool) return value;
+    if (value is String) {
+      return value.toLowerCase() == 'true' || value == '1';
+    }
+    if (value is num) return value != 0;
+    return false;
+  }
+
+  Widget _buildStatsSection(WidgetRef ref) {
+    final driverProfile = ref.watch(myDriverProfileProvider);
 
     return driverProfile.when(
-      data: (driver) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.only(bottom: 12),
-            child: Text(
-              'Performance',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: Colors.black87,
+      data: (driver) {
+        // Handle missing or invalid driver profile
+        if (driver.isEmpty || driver['id'] == null) {
+          return const SizedBox.shrink();
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text(
+                'Performance',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
               ),
             ),
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  'Completed',
-                  '${driver['completedRides']}',
-                  Colors.green,
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatCard(
+                    'Completed',
+                    '${_getNumericValue(driver['completedRides'])}',
+                    Colors.green,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                  'Cancelled',
-                  '${driver['cancelledRides']}',
-                  Colors.red,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildStatCard(
+                    'Cancelled',
+                    '${_getNumericValue(driver['cancelledRides'])}',
+                    Colors.red,
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
-      ),
+              ],
+            ),
+          ],
+        );
+      },
       loading: () => const SizedBox.shrink(),
       error: (error, stack) => const SizedBox.shrink(),
     );
@@ -441,6 +649,32 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             ),
           ),
         ),
+        // Online/Offline Toggle
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: ElevatedButton.icon(
+            onPressed: () {
+              if (_isOnline) {
+                _stopLocationBroadcasting();
+              } else {
+                _startLocationBroadcasting();
+              }
+            },
+            icon: Icon(_isOnline ? Icons.cloud_done : Icons.cloud_off),
+            label: Text(_isOnline ? 'Go Offline' : 'Go Online'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _isOnline ? Colors.green : Colors.grey,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              elevation: 0,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        // View Ride Requests Button
         SizedBox(
           width: double.infinity,
           height: 48,
@@ -464,39 +698,65 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     );
   }
 
-  Future<int?> _getUserId() async {
-    return await AuthStorage.userIdFromToken();
-  }
-
   void _navigateToRideRequests(BuildContext context) async {
-    final userId = await _getUserId();
-    if (userId == null) {
+    try {
+      // Get driver profile to extract driver ID
+      final driverProfile = await ref.read(myDriverProfileProvider.future);
+
+      if (driverProfile['id'] == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Driver profile not found'),
+              backgroundColor: Colors.red.shade600,
+              behavior: SnackBarBehavior.floating,
+              margin: const EdgeInsets.all(16),
+            ),
+          );
+        }
+        return;
+      }
+
+      // Handle both string and int types for ID
+      final driverId = driverProfile['id'].toString();
+      final driverName =
+          (driverProfile['user']?['name'] ?? 'Driver').toString();
+      final driverPhone = (driverProfile['user']?['phone'] ?? '').toString();
+      final driverAvatar = driverProfile['user']?['profilepicture']?.toString();
+
+      if (kDebugMode) {
+        print('[DriverDashboard] Navigating to ride requests:');
+        print('  Driver ID: $driverId');
+        print('  Driver Name: $driverName');
+      }
+
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => DriverRequestScreen(
+              driverId: driverId,
+              driverName: driverName,
+              driverPhone: driverPhone,
+              driverAvatar: driverAvatar,
+            ),
+          ),
+        );
+      }
+    } catch (e, stackTrace) {
+      if (kDebugMode) {
+        print('[DriverDashboard] Error navigating to ride requests: $e');
+        print('StackTrace: $stackTrace');
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Unable to load user information'),
+            content: Text('Error loading driver data: ${e.toString()}'),
             backgroundColor: Colors.red.shade600,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
           ),
         );
       }
-      return;
-    }
-
-    final driverName = await AuthStorage.userNameFromToken() ?? 'Driver';
-
-    if (mounted) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => DriverRequestScreen(
-            driverId: userId.toString(),
-            driverName: driverName,
-            driverPhone: '',
-            driverAvatar: null,
-          ),
-        ),
-      );
     }
   }
 }

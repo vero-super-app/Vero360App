@@ -1,5 +1,5 @@
 import 'package:dio/dio.dart';
-import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 class DriverService {
@@ -14,16 +14,40 @@ class DriverService {
 
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
-        final token = await AuthStorage.readToken();
-        if (token != null) {
-          options.headers['Authorization'] = 'Bearer $token';
+        // ✅ Get fresh Firebase ID token (auto-refreshed if expired)
+        final firebaseUser = FirebaseAuth.instance.currentUser;
+        if (firebaseUser != null) {
+          try {
+            final freshToken = await firebaseUser.getIdToken();
+            if (freshToken != null && freshToken.isNotEmpty) {
+              options.headers['Authorization'] = 'Bearer $freshToken';
+              return handler.next(options);
+            }
+          } catch (e) {
+            print('[DriverService] Error getting fresh Firebase token: $e');
+          }
         }
+        
+        // Fallback: If Firebase token not available, log warning
+        print('[DriverService] No Firebase user or token available');
         return handler.next(options);
       },
     ));
   }
 
   // ==================== DRIVER PROFILE ====================
+  
+  /// Get current authenticated driver profile using Firebase token
+  Future<Map<String, dynamic>> getMyDriverProfile() async {
+    try {
+      final response = await _dio.get('/vero/drivers/me');
+      return response.data as Map<String, dynamic>;
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  /// Get driver by database user ID (legacy method, use getMyDriverProfile instead)
   Future<Map<String, dynamic>> getDriverByUserId(int userId) async {
     try {
       final response = await _dio.get('/vero/drivers/user/$userId');

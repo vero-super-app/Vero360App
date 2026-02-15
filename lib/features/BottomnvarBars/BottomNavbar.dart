@@ -14,6 +14,7 @@ import 'package:vero360_app/settings/Settings.dart';
 
 import '../Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
+import 'package:vero360_app/Home/CustomersProfilepage.dart';
 
 // Merchant dashboards
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
@@ -100,16 +101,19 @@ class _BottomnavbarState extends State<Bottomnavbar>
         showChildBehindDialog: true,
         child: CartPage(cartService: cartService),
       ),
+      // Customers see Profile; merchants are redirected and never see this tab
       AuthGuard(
-        featureName: 'Dashboard',
+        featureName: _isMerchant ? 'Dashboard' : 'Profile',
         showChildBehindDialog: true,
-        child: MarketplaceMerchantDashboard(
-          email: widget.email,
-          onBackToHomeTab: () {
-            setState(() => _selectedIndex = 0);
-          },
-          embeddedInMainNav: true,
-        ),
+        child: _isMerchant
+            ? MarketplaceMerchantDashboard(
+                email: widget.email,
+                onBackToHomeTab: () {
+                  setState(() => _selectedIndex = 0);
+                },
+                embeddedInMainNav: true,
+              )
+            : const ProfilePage(),
       ),
     ];
 
@@ -199,12 +203,15 @@ class _BottomnavbarState extends State<Bottomnavbar>
           child: _GlassPillNavBar(
             selectedIndex: _selectedIndex,
             onTap: _onItemTapped,
-            items: const [
-              _NavItemData(icon: Icons.home_rounded, label: "Home"),
-              _NavItemData(icon: Icons.store_rounded, label: "Market"),
-              _NavItemData(icon: Icons.message_rounded, label: "Messages"),
-              _NavItemData(icon: Icons.shopping_cart_rounded, label: "Cart"),
-              _NavItemData(icon: Icons.dashboard_rounded, label: "Dashboard"),
+            items: [
+              const _NavItemData(icon: Icons.home_rounded, label: "Home"),
+              const _NavItemData(icon: Icons.store_rounded, label: "Market"),
+              const _NavItemData(icon: Icons.message_rounded, label: "Messages"),
+              const _NavItemData(icon: Icons.shopping_cart_rounded, label: "Cart"),
+              _NavItemData(
+                icon: _isMerchant ? Icons.dashboard_rounded : Icons.person_rounded,
+                label: _isMerchant ? "Dashboard" : "Profile",
+              ),
             ],
             selectedGradient: const LinearGradient(
               colors: [_brandOrange, _brandOrangeDark],

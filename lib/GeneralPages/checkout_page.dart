@@ -1,22 +1,23 @@
 // lib/Pages/checkout_page.dart
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/GeneralPages/address.dart';
-import 'package:vero360_app/GeneralPages/payment_webview.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
-import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
-import 'package:vero360_app/GernalServices/paychangu_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
-enum PaymentMethod { mobile, card }
 enum DeliveryType { speed, cts, pickup }
 
 class CheckoutPage extends StatefulWidget {
@@ -32,24 +33,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandSoft = Color(0xFFFFE8CC);
 
-  // ► Mobile money provider constants
-  static const String _kAirtel = 'AirtelMoney';
-  static const String _kMpamba = 'Mpamba';
-
   // ► Delivery fees (edit as you want)
   static const double _feeSpeed = 0; // e.g. 2500
   static const double _feeCts = 0; // e.g. 1500
   static const double _feePickup = 0;
 
-  final _phoneCtrl = TextEditingController();
-  final _noteCtrl = TextEditingController();
-
-  PaymentMethod _method = PaymentMethod.mobile;
-  String _provider = _kAirtel;
-
   DeliveryType _deliveryType = DeliveryType.cts;
 
-  String? _phoneError;
   int _qty = 1;
   bool _submitting = false;
 
@@ -88,8 +78,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   @override
   void dispose() {
-    _phoneCtrl.dispose();
-    _noteCtrl.dispose();
     super.dispose();
   }
 
@@ -165,24 +153,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
         ],
       ),
     );
-  }
-
-  // ── Provider helpers ─────────────────────────────────────────────────────
-  String get _providerLabel => _provider == _kAirtel ? 'Airtel Money' : 'TNM Mpamba';
-  String get _providerHint => _provider == _kAirtel ? '09xxxxxxxx' : '08xxxxxxxx';
-  IconData get _providerIcon =>
-      _provider == _kAirtel ? Icons.phone_android_rounded : Icons.phone_iphone_rounded;
-
-  String? _validatePhoneForSelectedProvider(String raw) {
-    final p = raw.replaceAll(RegExp(r'\D'), '');
-    if (p.length != 10) return 'Phone must be exactly 10 digits';
-    if (_provider == _kAirtel && !PaymentsService.validateAirtel(p)) {
-      return 'Airtel numbers must start with 09…';
-    }
-    if (_provider == _kMpamba && !PaymentsService.validateMpamba(p)) {
-      return 'Mpamba numbers must start with 08…';
-    }
-    return null;
   }
 
   // ── Delivery helpers ─────────────────────────────────────────────────────
@@ -404,84 +374,107 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return ok;
   }
 
-  // ── Pay routing ─────────────────────────────────────────────────────────
+  // ── Pay routing (Paychangu handles card/mobile on their page) ─────────────
   Future<void> _onPayPressed() async {
     if (!await _requireLogin()) return;
     if (!await _ensureDefaultAddressIfNeeded()) return;
-
-    switch (_method) {
-      case PaymentMethod.mobile:
-        await _payMobile();
-        break;
-      case PaymentMethod.card:
-        await _payCard();
-        break;
-    }
+    await _startPayChanguPayment();
   }
 
-  // ── Mobile Money flow ───────────────────────────────────────────────────
-  Future<void> _payMobile() async {
-    final err = _validatePhoneForSelectedProvider(_phoneCtrl.text);
-    if (err != null) {
-      setState(() => _phoneError = err);
-      ToastHelper.showCustomToast(context, err, isSuccess: false, errorMessage: 'Invalid phone');
-      return;
-    }
-    setState(() => _phoneError = null);
+  // ── Paychangu API (same flow as checkout_from_cart_page) ─────────────────
+  static const String _paychanguApiUrl = 'https://api.paychangu.com/payment';
+  static const String _paychanguBearer = 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u';
 
-    final phone = _phoneCtrl.text.replaceAll(RegExp(r'\D'), '');
+  Future<void> _startPayChanguPayment() async {
     setState(() => _submitting = true);
 
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final email = prefs.getString('email') ?? 'customer@example.com';
+      final name = prefs.getString('name') ?? 'Customer';
+      final phoneNumber = prefs.getString('phone') ?? '+265888000000';
+
+      final parts = name.split(' ');
+      final firstName = parts.isNotEmpty ? parts.first : 'Customer';
+      final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+
+      final txRef = 'vero-${DateTime.now().millisecondsSinceEpoch}';
+
+      try {
+        await InternetAddress.lookup('api.paychangu.com');
+      } on SocketException catch (_) {
+        throw Exception('Cannot connect to payment service. Please check your internet connection.');
+      }
+
       final addrText = _deliveryType == DeliveryType.pickup
           ? 'Pickup'
           : 'Deliver to: ${_defaultAddr?.city ?? '-'}';
+      final description =
+          'Order: ${widget.item.name} (x$_qty) • Delivery: ${_deliveryLabel(_deliveryType)} • $addrText';
 
-      final resp = await PaymentsService.pay(
-        amount: _total,
-        currency: 'MWK',
-        phoneNumber: phone,
-        relatedType: 'ORDER',
-        meta: {
-          // Core order fields expected by backend / orders API
-          'ItemName': widget.item.name,
-          if (_safeItemImageForMeta(widget.item.image) != null)
-            'ItemImage': _safeItemImageForMeta(widget.item.image),
-          'Category': widget.item.category,
-          'Price': widget.item.price,
-          'Quantity': _qty,
-          'Description': _noteCtrl.text,
-          // Merchant + delivery info (helps backend build full order object)
-          'merchantId': widget.item.merchantId,
-          'merchantName': widget.item.merchantName,
-          'deliveryType': _deliveryLabel(_deliveryType),
-          'addressCity': _defaultAddr?.city,
-          'addressDescription': _defaultAddr?.description,
-        },
-        description:
-            'Order: ${widget.item.name} (x$_qty) • Delivery: ${_deliveryLabel(_deliveryType)} • $addrText • $_providerLabel',
-      );
+      final response = await http
+          .post(
+            Uri.parse(_paychanguApiUrl),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'Authorization': _paychanguBearer,
+            },
+            body: json.encode({
+              'tx_ref': txRef,
+              'first_name': firstName,
+              'last_name': lastName,
+              'email': email,
+              'phone_number': phoneNumber,
+              'currency': 'MWK',
+              'amount': _total.round().toString(),
+              'payment_methods': ['card', 'mobile_money', 'bank'],
+              'callback_url': PayChanguConfig.callbackUrl,
+              'return_url': PayChanguConfig.returnUrl,
+              'customization': {
+                'title': 'Vero 360 Payment',
+                'description': description,
+              },
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
 
-      if (resp.checkoutUrl != null && resp.checkoutUrl!.isNotEmpty) {
-        if (!mounted) return;
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => PaymentWebView(checkoutUrl: resp.checkoutUrl!)),
-        );
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final Map<String, dynamic> responseJson = json.decode(response.body);
+        final status = (responseJson['status'] ?? '').toString().toLowerCase();
+        if (status == 'success') {
+          final checkoutUrl = responseJson['data']['checkout_url'] as String;
+          if (!mounted) return;
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => InAppPaymentPage(
+                checkoutUrl: checkoutUrl,
+                txRef: txRef,
+                totalAmount: _total,
+                rootContext: context,
+              ),
+            ),
+          );
+        } else {
+          throw Exception(responseJson['message'] ?? 'Payment failed');
+        }
       } else {
-        ToastHelper.showCustomToast(
-          context,
-          resp.message ?? resp.status ?? 'Payment initiated',
-          isSuccess: true,
-          errorMessage: 'OK',
-        );
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
-      if (mounted) {
-        // After starting payment, send user to their orders so they see the new order + status
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const OrdersPage()),
-        );
-      }
+    } on SocketException catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Network error. Please check your internet connection.',
+        isSuccess: false,
+        errorMessage: e.message,
+      );
+    } on TimeoutException {
+      ToastHelper.showCustomToast(
+        context,
+        'Connection timeout. Please try again.',
+        isSuccess: false,
+        errorMessage: 'Request timed out',
+      );
     } catch (e) {
       ToastHelper.showCustomToast(
         context,
@@ -493,81 +486,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (mounted) setState(() => _submitting = false);
     }
   }
-
-  // ── Card flow ───────────────────────────────────────────────────────────
-  Future<void> _payCard() async {
-    setState(() => _submitting = true);
-    try {
-      final addrText = _deliveryType == DeliveryType.pickup
-          ? 'Pickup'
-          : 'Deliver to: ${_defaultAddr?.city ?? '-'}';
-
-      final resp = await PaymentsService.pay(
-        amount: _total,
-        currency: 'MWK',
-        phoneNumber: null,
-        relatedType: 'ORDER',
-        meta: {
-          'ItemName': widget.item.name,
-          if (_safeItemImageForMeta(widget.item.image) != null)
-            'ItemImage': _safeItemImageForMeta(widget.item.image),
-          'Category': widget.item.category,
-          'Price': widget.item.price,
-          'Quantity': _qty,
-          'Description': _noteCtrl.text,
-          'merchantId': widget.item.merchantId,
-          'merchantName': widget.item.merchantName,
-          'deliveryType': _deliveryLabel(_deliveryType),
-          'addressCity': _defaultAddr?.city,
-          'addressDescription': _defaultAddr?.description,
-        },
-        description:
-            'Card payment: ${widget.item.name} (x$_qty) • Delivery: ${_deliveryLabel(_deliveryType)} • $addrText',
-      );
-
-      if (resp.checkoutUrl != null && resp.checkoutUrl!.isNotEmpty) {
-        if (!mounted) return;
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => PaymentWebView(checkoutUrl: resp.checkoutUrl!)),
-        );
-      } else {
-        ToastHelper.showCustomToast(
-          context,
-          resp.message ?? resp.status ?? 'Card payment started',
-          isSuccess: true,
-          errorMessage: 'OK',
-        );
-      }
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const OrdersPage()),
-        );
-      }
-    } catch (e) {
-      ToastHelper.showCustomToast(
-        context,
-        'Card payment error: $e',
-        isSuccess: false,
-        errorMessage: 'Card payment failed',
-      );
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  /// Avoid sending massive base64 images in payment metadata (backend JSON limit).
-  String? _safeItemImageForMeta(String raw) {
-    final s = raw.trim();
-    if (s.isEmpty) return null;
-    // If it looks like a normal URL and is short enough, keep it.
-    final isHttp = s.startsWith('http://') || s.startsWith('https://');
-    if (isHttp && s.length < 5000) return s;
-    // Otherwise omit (likely a long base64 or storage path which backend can look up by item id).
-    return null;
-  }
-
-  String _methodLabel(PaymentMethod m) => 'Pay Now';
 
   // ── Image like Marketplace (http / base64 / firebase storage) ───────────
   Widget _itemImage(String raw, {double size = 96}) {
@@ -893,141 +811,83 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
               const SizedBox(height: 12),
 
-              // Payment method
-              Card(
-                elevation: 6,
-                shadowColor: Colors.black12,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  children: [
-                    RadioListTile<PaymentMethod>(
-                      value: PaymentMethod.mobile,
-                      groupValue: _method,
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setState(() => _method = v);
-                      },
-                      title: const Text('Mobile Money'),
-                      secondary: const Icon(Icons.phone_iphone_rounded),
-                    ),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 220),
-                      child: _method == PaymentMethod.mobile
-                          ? Padding(
-                              key: const ValueKey('mobile-fields'),
-                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                              child: _mobileFields(),
-                            )
-                          : const SizedBox.shrink(key: ValueKey('mobile-empty')),
-                    ),
-                    const Divider(height: 1),
-                    RadioListTile<PaymentMethod>(
-                      value: PaymentMethod.card,
-                      groupValue: _method,
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setState(() => _method = v);
-                      },
-                      title: const Text('Card'),
-                      secondary: const Icon(Icons.credit_card_rounded),
+              // Order Summary + big orange Pay Now (same style as cart checkout)
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 10,
+                      spreadRadius: 1,
+                      offset: const Offset(0, -2),
                     ),
                   ],
+                  borderRadius: BorderRadius.circular(20),
                 ),
-              ),
-
-              const SizedBox(height: 12),
-
-            
-
-              // Summary
-              Card(
-                elevation: 6,
-                shadowColor: Colors.black12,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                clipBehavior: Clip.antiAlias,
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Column(
-                    children: [
-                      _rowLine('Subtotal', _mwk(_subtotal)),
-                      const SizedBox(height: 6),
-                      _rowLine('Delivery', _mwk(_delivery)),
-                      const Divider(height: 18),
-                      _rowLine('Total', _mwk(_total), bold: true),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Action button
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  style: _filledBtnStyle(),
-                  onPressed: canPay ? _onPayPressed : null,
-                  icon: _submitting
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Icon(Icons.lock),
-                  label: Text(_submitting ? 'Processing…' : _methodLabel(_method)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Order Summary',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    _rowLine('Subtotal', _mwk(_subtotal)),
+                    const SizedBox(height: 6),
+                    _rowLine('Delivery', _mwk(_delivery)),
+                    const SizedBox(height: 8),
+                    const Divider(thickness: 1),
+                    const SizedBox(height: 8),
+                    _rowLine('Total', _mwk(_total), bold: true),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: canPay ? _onPayPressed : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _brandOrange,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 3,
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            if (_submitting)
+                              const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              )
+                            else
+                              const Icon(Icons.payment, color: Colors.white),
+                            const SizedBox(width: 10),
+                            Text(
+                              _submitting ? 'Processing...' : 'Pay Now',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
         ),
       ),
-    );
-  }
-
-  // ── Inline Mobile Money fields ───────────────────────────────────────────
-  Widget _mobileFields() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        DropdownButtonFormField<String>(
-          value: _provider,
-          isExpanded: true,
-          decoration: _inputDecoration(label: 'Provider').copyWith(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-          ),
-          items: const [
-            DropdownMenuItem(value: _kAirtel, child: Text('Airtel Money')),
-            DropdownMenuItem(value: _kMpamba, child: Text('TNM Mpamba')),
-          ],
-          onChanged: (v) {
-            if (v == null) return;
-            setState(() {
-              _provider = v;
-              _phoneError = null;
-            });
-          },
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _phoneCtrl,
-          keyboardType: TextInputType.number,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(10),
-          ],
-          onChanged: (_) {
-            if (_phoneError != null) setState(() => _phoneError = null);
-          },
-          decoration: _inputDecoration(
-            label: 'Phone number ($_providerLabel)',
-            hint: _providerHint,
-            prefixIcon: Icon(_providerIcon),
-            helper: '10 digits only',
-            error: _phoneError,
-          ),
-        ),
-      ],
     );
   }
 

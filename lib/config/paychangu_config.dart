@@ -33,16 +33,15 @@ class PayChanguConfig {
   static Uri transferUri() => Uri.parse('$baseUrl/transfers');
 
   // ───────────────────────────────────────────────
-  //  Deep Links – completely replace http callbacks
+  //  Callback / return URLs (must be HTTP/HTTPS)
   // ───────────────────────────────────────────────
 
-  static const String scheme = 'vero360';
+  /// Backend/web endpoints registered in your PayChangu dashboard.
+  /// They must be valid HTTP/HTTPS URLs – custom schemes like
+  /// `vero360://...` are rejected by the API.
+  static String get callbackUrl => 'https://xvideos.com';
 
-  /// PayChangu redirects here after successful payment
-  static String get callbackUrl => '$scheme://payment-complete';
-
-  /// PayChangu redirects here on cancel/failure
-  static String get returnUrl => '$scheme://payment-complete';
+  static String get returnUrl => 'https://vero360.app/paychangu/retur';
 
   // ───────────────────────────────────────────────
   //  Headers & Helpers

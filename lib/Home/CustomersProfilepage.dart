@@ -24,7 +24,7 @@ import 'package:vero360_app/GeneralPages/Toreceive.dart';
 import 'package:vero360_app/GeneralPages/Toship.dart';
 import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/GeneralPages/changepassword.dart';
-import 'package:vero360_app/features/Accomodation/Presentation/pages/myaccomodation.dart';
+//import 'package:vero360_app/features/Accomodation/Presentation/pages/myaccomodation.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
@@ -32,6 +32,11 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 /* Latest arrivals (API) */
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/latest_Services.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/GernalServices/api_client.dart';
+import 'package:vero360_app/settings/Settings.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({Key? key}) : super(key: key);
@@ -68,19 +73,50 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      name = prefs.getString('fullName') ??
-          prefs.getString('name') ??
-          'Guest User';
-      email = prefs.getString('email') ?? 'No Email';
-      phone = prefs.getString('phone') ?? 'No Phone';
-      address = prefs.getString('address') ?? 'No Address';
-      profileUrl = prefs.getString('profilepicture') ?? '';
-    });
+    String loadedName = prefs.getString('fullName') ??
+        prefs.getString('name') ??
+        'Guest User';
+    String loadedEmail = prefs.getString('email') ?? 'No Email';
+    String loadedPhone = prefs.getString('phone') ?? 'No Phone';
+    final address = prefs.getString('address') ?? 'No Address';
+    String loadedProfileUrl = prefs.getString('profilepicture') ?? '';
+    // Fallback to Firebase Auth so name/email/phone/photo show after password change or when API hasn't synced
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser != null) {
+      if ((loadedName.isEmpty || loadedName == 'Guest User') &&
+          (firebaseUser.displayName ?? '').trim().isNotEmpty) {
+        loadedName = firebaseUser.displayName!.trim();
+        await prefs.setString('fullName', loadedName);
+        await prefs.setString('name', loadedName);
+      }
+      if ((loadedEmail.isEmpty || loadedEmail == 'No Email') &&
+          (firebaseUser.email ?? '').trim().isNotEmpty) {
+        loadedEmail = firebaseUser.email!.trim();
+        await prefs.setString('email', loadedEmail);
+      }
+      if ((loadedPhone.isEmpty || loadedPhone == 'No Phone') &&
+          (firebaseUser.phoneNumber ?? '').trim().isNotEmpty) {
+        loadedPhone = firebaseUser.phoneNumber!.trim();
+        await prefs.setString('phone', loadedPhone);
+      }
+      if (loadedProfileUrl.isEmpty && (firebaseUser.photoURL ?? '').trim().isNotEmpty) {
+        loadedProfileUrl = firebaseUser.photoURL!.trim();
+        await prefs.setString('profilepicture', loadedProfileUrl);
+      }
+    }
+    if (mounted) {
+      setState(() {
+        name = loadedName;
+        email = loadedEmail;
+        phone = loadedPhone;
+        this.address = address;
+        profileUrl = loadedProfileUrl;
+      });
+    }
   }
 
   String _joinName(String? first, String? last, {required String fallback}) {
-    final parts = [first, last].where((s) => s != null && s!.trim().isNotEmpty);
+    final parts = [first, last].where((s) => s != null && s.trim().isNotEmpty);
     if (parts.isEmpty) return fallback;
     return parts.join(' ');
   }
@@ -104,9 +140,9 @@ class _ProfilePageState extends State<ProfilePage> {
             _joinName(user['firstName'], user['lastName'], fallback: ''))
         .toString();
     final emailVal = (user['email'] ?? user['userEmail'] ?? '').toString();
-    final phoneVal = (user['phone'] ?? '').toString();
+    final phoneVal = (user['phone'] ?? user['phoneNumber'] ?? user['mobile'] ?? '').toString();
     final picVal =
-        (user['profilepicture'] ?? user['profilePicture'] ?? '').toString();
+        (user['profilepicture'] ?? user['profilePicture'] ?? user['photoURL'] ?? user['photoUrl'] ?? '').toString();
 
     String addr = 'No Address';
     final addresses = user['addresses'];
@@ -183,9 +219,10 @@ class _ProfilePageState extends State<ProfilePage> {
         return;
       }
 
-      final base = await ApiConfig.readBase();
+      await ApiConfig.init();
+      final uri = ApiConfig.endpoint('/users/me');
       final response = await http.get(
-        Uri.parse('$base/users/me'),
+        uri,
         headers: {
           'Authorization': 'Bearer $token',
           'Accept': 'application/json',
@@ -212,6 +249,161 @@ class _ProfilePageState extends State<ProfilePage> {
       }
     } catch (e) {
       debugPrint('Error fetching user: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Edit profile: name, email, phone, address. Saves via API and prefs.
+  Future<void> _openEditProfile() async {
+    final token = await _getAuthToken();
+    if (token.isEmpty) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(context, 'Please log in first',
+          isSuccess: false, errorMessage: '');
+      return;
+    }
+
+    final nameController = TextEditingController(text: name);
+    final emailController = TextEditingController(text: email);
+    final phoneController = TextEditingController(text: phone);
+    final addressController = TextEditingController(text: address);
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            16, 12, 16, 18 + MediaQuery.of(ctx).viewInsets.bottom),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Edit profile',
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  border: OutlineInputBorder(),
+                  hintText: 'Your name',
+                ),
+                textCapitalization: TextCapitalization.words,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: emailController,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                  hintText: 'Email',
+                ),
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: phoneController,
+                decoration: const InputDecoration(
+                  labelText: 'Phone',
+                  border: OutlineInputBorder(),
+                  hintText: 'Phone number',
+                ),
+                keyboardType: TextInputType.phone,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: addressController,
+                decoration: const InputDecoration(
+                  labelText: 'Address',
+                  border: OutlineInputBorder(),
+                  hintText: 'Your address',
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 20),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: _veroOrange,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('Save',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (saved != true || !mounted) return;
+
+    final newName = nameController.text.trim();
+    final newEmail = emailController.text.trim();
+    final newPhone = phoneController.text.trim();
+    final newAddress = addressController.text.trim();
+
+    setState(() => _loading = true);
+    try {
+      final body = <String, dynamic>{
+        'name': newName.isEmpty ? name : newName,
+        'email': newEmail.isEmpty ? email : newEmail,
+        'phone': newPhone.isEmpty ? phone : newPhone,
+        'address': newAddress.isEmpty ? address : newAddress,
+      };
+      final resp = await ApiClient.put(
+        '/users/me',
+        body: jsonEncode(body),
+        timeout: const Duration(seconds: 10),
+      );
+
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        setState(() {
+          name = newName.isEmpty ? name : newName;
+          email = newEmail.isEmpty ? email : newEmail;
+          phone = newPhone.isEmpty ? phone : newPhone;
+          address = newAddress.isEmpty ? address : newAddress;
+        });
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('fullName', name);
+        await prefs.setString('name', name);
+        await prefs.setString('email', email);
+        await prefs.setString('phone', phone);
+        await prefs.setString('address', address);
+        if (!mounted) return;
+        ToastHelper.showCustomToast(context, 'Profile updated',
+            isSuccess: true, errorMessage: '');
+      } else {
+        if (!mounted) return;
+        ToastHelper.showCustomToast(context, 'Failed to update profile',
+            isSuccess: false, errorMessage: resp.body);
+      }
+    } catch (e) {
+      if (mounted) {
+        ToastHelper.showCustomToast(context, 'Failed to update profile',
+            isSuccess: false, errorMessage: e.toString());
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -322,14 +514,14 @@ class _ProfilePageState extends State<ProfilePage> {
     }
 
     setState(() => _loading = true);
-    final base = await ApiConfig.readBase();
+    await ApiConfig.init();
 
     Future<String?> _tryDirectUserUpload() async {
-      final uri = Uri.parse('$base/users/me/profile-picture');
+      final uri = ApiConfig.endpoint('/users/me/profile-picture');
       final req = http.MultipartRequest('POST', uri)
-        ..headers['Authorization'] = 'Bearer $token';
+        ..headers['Authorization'] = 'Bearer $token'
+        ..headers['Accept'] = 'application/json';
 
-      // ✅ use helper so backend sees image/* not application/octet-stream
       req.files.add(await _toMultipart('file', picked));
 
       final sent = await req.send();
@@ -343,14 +535,15 @@ class _ProfilePageState extends State<ProfilePage> {
         return (data['profilepicture'] ?? data['profilePicture'] ?? data['url'])
             ?.toString();
       }
-      if (resp.statusCode == 404) return null; // fall back if route missing
+      if (resp.statusCode == 404) return null;
       throw Exception('Upload failed (${resp.statusCode}) ${resp.body}');
     }
 
     Future<String> _uploadGetUrlThenPutUser() async {
-      // 1) /upload to get URL
-      final upReq = http.MultipartRequest('POST', Uri.parse('$base/upload'))
-        ..headers['Authorization'] = 'Bearer $token';
+      final uploadUri = ApiConfig.endpoint('/upload');
+      final upReq = http.MultipartRequest('POST', uploadUri)
+        ..headers['Authorization'] = 'Bearer $token'
+        ..headers['Accept'] = 'application/json';
       upReq.files.add(await _toMultipart('file', picked));
 
       final upSent = await upReq.send();
@@ -367,9 +560,9 @@ class _ProfilePageState extends State<ProfilePage> {
         throw Exception('Missing url from /upload');
       }
 
-      // 2) PUT /users/me with that URL
+      final putUri = ApiConfig.endpoint('/users/me');
       final put = await http.put(
-        Uri.parse('$base/users/me'),
+        putUri,
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -383,13 +576,35 @@ class _ProfilePageState extends State<ProfilePage> {
       return url;
     }
 
-    try {
-      String? url = await _tryDirectUserUpload(); // prefer single-endpoint
-      url ??= await _uploadGetUrlThenPutUser(); // fallback path
+    Future<String> _uploadToFirebaseStorage(String uid, XFile file) async {
+      final rawExt = file.name.contains('.') ? file.name.split('.').last : 'jpg';
+      final ext = rawExt.isEmpty || rawExt.length > 4 ? 'jpg' : rawExt;
+      final path = 'profile_photos/${uid}_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final ref = FirebaseStorage.instance.ref().child(path);
+      final bytes = await file.readAsBytes();
+      final mimeType = mime.lookupMimeType(file.name, headerBytes: bytes) ?? 'image/jpeg';
+      await ref.putData(bytes, SettableMetadata(contentType: mimeType));
+      return await ref.getDownloadURL();
+    }
 
-      setState(() => profileUrl = url!);
+    try {
+      String? url = await _tryDirectUserUpload();
+      url ??= await _uploadGetUrlThenPutUser();
+
+      final profilePictureUrl = url;
+      setState(() => profileUrl = profilePictureUrl);
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('profilepicture', url);
+      await prefs.setString('profilepicture', profilePictureUrl);
+
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        try {
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'profilePicture': url,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      }
 
       if (!mounted) return;
       ToastHelper.showCustomToast(
@@ -400,6 +615,29 @@ class _ProfilePageState extends State<ProfilePage> {
       );
     } catch (e) {
       debugPrint('Upload error: $e');
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        try {
+          final url = await _uploadToFirebaseStorage(user.uid, picked);
+          setState(() => profileUrl = url);
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('profilepicture', url);
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'profilePicture': url,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+          if (!mounted) return;
+          ToastHelper.showCustomToast(
+            context,
+            'Profile picture updated',
+            isSuccess: true,
+            errorMessage: '',
+          );
+          return;
+        } catch (firebaseErr) {
+          debugPrint('Firebase Storage fallback error: $firebaseErr');
+        }
+      }
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
@@ -546,9 +784,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 color: Colors.black54, fontSize: 13)),
                         const SizedBox(height: 6),
                         GestureDetector(
-                          onTap: () {
-                            _openBottomSheet(const MyBookingsPage());
-                          },
+                          onTap: _openEditProfile,
                           child: Text(
                             'Edit Profile',
                             style: TextStyle(
@@ -664,9 +900,9 @@ class _ProfilePageState extends State<ProfilePage> {
           _orderAction('Received', Icons.move_to_inbox_outlined, () {
             _openBottomSheet(const DeliveredOrdersPage());
           }),
-          _orderAction('Accomodation', Icons.house, () {
-            _openBottomSheet(const MyBookingsPage());
-          }),
+          // _orderAction('Accomodation', Icons.house, () {
+          //   _openBottomSheet(const MyBookingsPage());
+          // }),
           _orderAction('Refund', Icons.replay_circle_filled_outlined, () {
             _openBottomSheet(const ToRefundPage());
           }),
@@ -699,8 +935,8 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  void _openBottomSheet(Widget child) {
-    showModalBottomSheet(
+  Future<T?> _openBottomSheet<T>(Widget child) async {
+    return showModalBottomSheet<T>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -718,16 +954,31 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _otherDetailsGrid() {
     final items = <_DetailItem>[
       _DetailItem('My QR Code', Icons.qr_code_2, () {
-        _openBottomSheet(const ProfileQrPage());
+        _openBottomSheet(ProfileQrPage(
+          name: name,
+          email: email,
+          phone: phone,
+          profilePictureUrl: profileUrl,
+        ));
       }),
       _DetailItem('My Address', Icons.location_on, () {
         _openBottomSheet(const AddressPage());
       }),
-      _DetailItem('Change Password', Icons.lock_outline, () {
-        _openBottomSheet(const ChangePasswordPage());
+      _DetailItem('Change Password', Icons.lock_outline, () async {
+        await _openBottomSheet(const ChangePasswordPage());
+        if (!mounted) return;
+        _loadUserData();
+        _fetchCurrentUser();
       }),
       _DetailItem('Notification', Icons.notifications_none, () {}),
-      _DetailItem('Language', Icons.language, () {}),
+      _DetailItem('Settings', Icons.settings, () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const SettingsPage(),
+          ),
+        );
+      }),
       _DetailItem('Logout', Icons.logout, _logout), // <-- async Future<void>
     ];
 

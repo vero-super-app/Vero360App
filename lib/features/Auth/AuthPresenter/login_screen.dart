@@ -293,25 +293,48 @@ class _LoginScreenState extends State<LoginScreen> {
         errorMessage: '',
       );
       await _handleAuthResult(result);
-    } on FirebaseAuthException catch (e) {
-      String msg = 'Login failed';
-      if (e.code == 'user-not-found') {
-        msg = 'No user found for that email';
-      } else if (e.code == 'wrong-password') {
-        msg = 'Invalid credentials';
+    }     on FirebaseAuthException catch (e) {
+      String msg;
+      switch (e.code) {
+        case 'user-not-found':
+          msg = 'No account found for this email.';
+          break;
+        case 'wrong-password':
+        case 'invalid-credential':
+        case 'invalid-email':
+          msg = 'Incorrect email or password.';
+          break;
+        case 'user-disabled':
+          msg = 'This account has been disabled.';
+          break;
+        case 'too-many-requests':
+          msg = 'Too many attempts. Try again later.';
+          break;
+        case 'operation-not-allowed':
+          msg = 'Email/password sign-in is not enabled.';
+          break;
+        default:
+          msg = e.message?.trim().isNotEmpty == true
+              ? e.message!
+              : 'Incorrect email or password.';
       }
       ToastHelper.showCustomToast(
         context,
         msg,
         isSuccess: false,
-        errorMessage: e.message ?? '',
+        errorMessage: '',
       );
     } catch (e) {
+      final String msg = e.toString().contains('credential') ||
+              e.toString().contains('incorrect') ||
+              e.toString().contains('invalid')
+          ? 'Incorrect email or password.'
+          : 'Login failed. Please try again.';
       ToastHelper.showCustomToast(
         context,
-        'Login failed. Please try again.',
+        msg,
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     } finally {
       if (mounted) setState(() => _loading = false);

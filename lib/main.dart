@@ -28,6 +28,7 @@ import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GeneralPages/profile_from_link_page.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
+import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
@@ -566,6 +567,12 @@ class _MyAppState extends State<MyApp> {
       if (uri.scheme == 'vero360' && uri.host == 'users' && uri.path == '/me') {
         navKey.currentState?.push(
           MaterialPageRoute(builder: (_) => const ProfileFromLinkPage()),
+        );
+      } else if (uri.scheme == 'vero360' && uri.host == 'payment-complete') {
+        // Paychangu redirects here after payment – go straight to My Orders
+        navKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OrdersPage()),
+          (_) => false,
         );
       }
     }, onError: (_) {});

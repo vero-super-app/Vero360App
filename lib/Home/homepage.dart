@@ -26,7 +26,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/Quickservices/social.dart';
-import 'package:vero360_app/features/Accomodation/Presentation/pages/Accomodation.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
+//import 'package:vero360_app/features/Accomodation/Presentation/pages/Accomodation.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
@@ -461,10 +462,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
          case 'Vero Chat':
         page = const SocialPage();
         break;
-      case 'hostels':
-      case 'hotels':
+      // case 'hostels':
+      // case 'hotels':
       case 'accommodation':
-        page = const AccomodationPage();
+     page = const AccommodationMainPage();
         break;
       case 'fx':
         page = const ExchangeRateScreen();

@@ -4,13 +4,30 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb, ByteData;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:saver_gallery/saver_gallery.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/GernalServices/address_service.dart';
+import 'package:vero360_app/GeneralModels/address_model.dart';
 
 class ProfileQrPage extends StatefulWidget {
-  const ProfileQrPage({Key? key}) : super(key: key);
+  const ProfileQrPage({
+    Key? key,
+    this.name,
+    this.email,
+    this.phone,
+    this.address,
+    this.profilePictureUrl,
+  }) : super(key: key);
+
+  final String? name;
+  final String? email;
+  final String? phone;
+  final String? address;
+  final String? profilePictureUrl;
 
   @override
   State<ProfileQrPage> createState() => _ProfileQrPageState();
@@ -18,30 +35,172 @@ class ProfileQrPage extends StatefulWidget {
 
 class _ProfileQrPageState extends State<ProfileQrPage> {
   final Color _brand = const Color(0xFFFF8A00);
+  final GlobalKey _qrCompositeKey = GlobalKey();
+  final AddressService _addressService = AddressService();
 
-  /// Put whatever you want to encode here.
-  /// If you prefer deep links: 'vero360://users/me'
-  static const String _qrData = 'vero360://users/me';
+  /// vCard 3.0 customer card: name, address, email, phone (no photo).
+  String _buildQrData([String? addressOverride]) {
+    final name = widget.name ?? '';
+    final email = widget.email ?? '';
+    final phone = widget.phone ?? '';
+    final address = addressOverride ?? _defaultAddressLine;
+    if (name.isEmpty && email.isEmpty && phone.isEmpty && address.isEmpty) {
+      return 'vero360://users/me';
+    }
+    return _buildVCard(name, email, phone, address);
+  }
 
-  Uint8List? _qrPng; // cached PNG bytes
+  static String _escapeVCard(String s) {
+    return s.replaceAll(r'\', r'\\').replaceAll('\n', r'\n').replaceAll('\r', '');
+  }
+
+  static String _buildVCard(
+      String name, String email, String phone, String address) {
+    final sb = StringBuffer();
+    sb.writeln('BEGIN:VCARD');
+    sb.writeln('VERSION:3.0');
+    if (name.isNotEmpty) sb.writeln('FN:${_escapeVCard(name)}');
+    if (name.isNotEmpty) sb.writeln('N:$name;;;;');
+    if (phone.isNotEmpty) sb.writeln('TEL:$phone');
+    if (email.isNotEmpty) sb.writeln('EMAIL:$email');
+    if (address.isNotEmpty) sb.writeln('ADR;TYPE=HOME:;;${_escapeVCard(address)};;;;');
+    sb.writeln('ORG:Vero360');
+    sb.writeln('END:VCARD');
+    return sb.toString();
+  }
+
+  Uint8List? _qrPng;
   bool _saving = false;
   bool _building = true;
+  String _qrData = 'vero360://users/me';
+  String _defaultAddressLine = '';
+  String _profilePictureUrl = '';
+  String _displayName = '';
+  String _displayEmail = '';
+  String _displayPhone = '';
 
   @override
   void initState() {
     super.initState();
-    _buildQrPng();
+    _loadDataAndBuildQr();
+  }
+
+  @override
+  void didUpdateWidget(ProfileQrPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.name != widget.name ||
+        oldWidget.email != widget.email ||
+        oldWidget.phone != widget.phone ||
+        oldWidget.address != widget.address ||
+        oldWidget.profilePictureUrl != widget.profilePictureUrl) {
+      _profilePictureUrl = widget.profilePictureUrl ?? '';
+      _loadDataAndBuildQr();
+    }
+  }
+
+  /// Load default address from addresses/me (AddressService). Returns display line.
+  Future<String> _loadDefaultAddress() async {
+    try {
+      final list = await _addressService.getMyAddresses();
+      Address? defaultOrFirst;
+      for (final a in list) {
+        if (a.isDefault) {
+          defaultOrFirst = a;
+          break;
+        }
+      }
+      defaultOrFirst ??= list.isNotEmpty ? list.first : null;
+      final line = defaultOrFirst?.displayLine.trim() ?? '';
+      if (mounted) setState(() => _defaultAddressLine = line);
+      return line;
+    } catch (_) {
+      if (mounted) setState(() => _defaultAddressLine = '');
+      return '';
+    }
+  }
+
+  Future<void> _loadDataAndBuildQr() async {
+    _profilePictureUrl = widget.profilePictureUrl ?? '';
+    if (_profilePictureUrl.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      _profilePictureUrl = prefs.getString('profilepicture') ?? '';
+    }
+
+    final hasArgs = widget.name != null ||
+        widget.email != null ||
+        widget.phone != null ||
+        widget.address != null;
+
+    String addressLine = await _loadDefaultAddress();
+    if (widget.address != null && widget.address!.trim().isNotEmpty) {
+      addressLine = widget.address!.trim();
+      if (mounted) setState(() => _defaultAddressLine = addressLine);
+    }
+
+    String displayName = widget.name ?? '';
+    String displayEmail = widget.email ?? '';
+    String displayPhone = widget.phone ?? '';
+
+    if (hasArgs) {
+      _qrData = _buildQrData(addressLine);
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      displayName = prefs.getString('fullName') ?? prefs.getString('name') ?? '';
+      displayEmail = prefs.getString('email') ?? '';
+      displayPhone = prefs.getString('phone') ?? '';
+      if (addressLine.isEmpty) {
+        final a = prefs.getString('address') ?? '';
+        if (a.trim().isNotEmpty) {
+          addressLine = a.trim();
+          if (mounted) setState(() => _defaultAddressLine = addressLine);
+        }
+      }
+      _qrData = (displayName.isNotEmpty || displayEmail.isNotEmpty || displayPhone.isNotEmpty || addressLine.isNotEmpty)
+          ? _buildVCard(displayName, displayEmail, displayPhone, addressLine)
+          : 'vero360://users/me';
+    }
+    if (mounted) {
+      setState(() {
+        _displayName = displayName;
+        _displayEmail = displayEmail;
+        _displayPhone = displayPhone;
+      });
+    }
+    if (mounted) _buildQrPng();
+  }
+
+  Widget _contactRow(IconData icon, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: _brand),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(
+              fontSize: 14,
+              color: Color(0xFF222222),
+              fontWeight: FontWeight.w500,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _buildQrPng() async {
     try {
       setState(() => _building = true);
+      final data = _qrData;
 
-      // 1) Validate the data and build the QR code matrix
+      // 1) Validate the data and build the QR code matrix (H = center can be covered by photo)
       final validation = QrValidator.validate(
-        data: _qrData,
+        data: data,
         version: QrVersions.auto,
-        errorCorrectionLevel: QrErrorCorrectLevel.M,
+        errorCorrectionLevel: QrErrorCorrectLevel.H,
       );
       if (validation.status != QrValidationStatus.valid || validation.qrCode == null) {
         throw Exception('Invalid QR data');
@@ -55,14 +214,14 @@ class _ProfileQrPageState extends State<ProfileQrPage> {
         gapless: true,
       );
 
-      final ByteData? data = await painter.toImageData(
+      final ByteData? byteData = await painter.toImageData(
         1024, // pixels; higher => crisper saved image
         format: ui.ImageByteFormat.png,
       );
-      if (data == null) throw Exception('Failed to render QR to PNG bytes');
+      if (byteData == null) throw Exception('Failed to render QR to PNG bytes');
 
       setState(() {
-        _qrPng = data.buffer.asUint8List();
+        _qrPng = byteData.buffer.asUint8List();
       });
     } catch (e) {
       if (mounted) {
@@ -129,9 +288,21 @@ class _ProfileQrPageState extends State<ProfileQrPage> {
         return;
       }
 
+      Uint8List bytesToSave = _qrPng!;
+      final boundary = _qrCompositeKey.currentContext?.findRenderObject();
+      if (boundary is RenderRepaintBoundary) {
+        try {
+          final image = await boundary.toImage(pixelRatio: 3.0);
+          final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+          if (byteData != null) {
+            bytesToSave = byteData.buffer.asUint8List();
+          }
+        } catch (_) {}
+      }
+
       final fileName = 'vero360_profile_qr_${DateTime.now().millisecondsSinceEpoch}';
       final SaveResult result = await SaverGallery.saveImage(
-        _qrPng!,
+        bytesToSave,
         quality: 100,
         extension: 'png',
         fileName: fileName,
@@ -218,7 +389,7 @@ class _ProfileQrPageState extends State<ProfileQrPage> {
                       Text('Vero360 App', style: titleStyle),
                       const SizedBox(height: 6),
                       Text(
-                        'Scan to add me on VeroChat or view my profile.',
+                        'Scan to add my Vero360 customer card (name, address, email, phone).',
                         style: Theme.of(context)
                             .textTheme
                             .bodyMedium
@@ -250,40 +421,93 @@ class _ProfileQrPageState extends State<ProfileQrPage> {
             child: Column(
               children: [
                 Text(
-                  'Vero360 — Profile QR',
+                  'Vero360 — Customer card QR',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                         color: const Color(0xFF222222),
                       ),
                 ),
                 const SizedBox(height: 12),
-                Container(
-                  width: 240,
-                  height: 240,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: const Color(0x11000000)),
+                 
+                      
+                    
+                  
+                RepaintBoundary(
+                  key: _qrCompositeKey,
+                  child: Container(
+                    width: 240,
+                    height: 240,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0x11000000)),
+                    ),
+                    child: _building
+                        ? const SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : (_qrPng == null
+                            ? const Text('Failed to render QR')
+                            : Stack(
+                                alignment: Alignment.center,
+                                clipBehavior: Clip.antiAlias,
+                                children: [
+                                  Image.memory(
+                                    _qrPng!,
+                                    width: 240,
+                                    height: 240,
+                                    fit: BoxFit.cover,
+                                    filterQuality: FilterQuality.high,
+                                    gaplessPlayback: true,
+                                  ),
+                                  Container(
+                                    width: 56,
+                                    height: 56,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: Colors.white,
+                                        width: 4,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(alpha: 0.12),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: ClipOval(
+                                      child: _profilePictureUrl.isNotEmpty
+                                          ? Image.network(
+                                              _profilePictureUrl,
+                                              fit: BoxFit.cover,
+                                              width: 56,
+                                              height: 56,
+                                              errorBuilder: (_, __, ___) =>
+                                                  const Icon(
+                                                      Icons.person,
+                                                      size: 28,
+                                                      color: Color(0xFF6B778C)),
+                                            )
+                                          : const Icon(
+                                              Icons.person,
+                                              size: 28,
+                                              color: Color(0xFF6B778C),
+                                            ),
+                                    ),
+                                  ),
+                                ],
+                              )),
                   ),
-                  child: _building
-                      ? const SizedBox(
-                          width: 28, height: 28,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : (_qrPng == null
-                          ? const Text('Failed to render QR')
-                          : Image.memory(
-                              _qrPng!,
-                              width: 220,
-                              height: 220,
-                              filterQuality: FilterQuality.high,
-                              gaplessPlayback: true,
-                            )),
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Scan with any QR app or the Vero360 app to view my profile.',
+                  'Vero360 customer card — name, default address, email & phone.',
                   style: Theme.of(context)
                       .textTheme
                       .bodySmall

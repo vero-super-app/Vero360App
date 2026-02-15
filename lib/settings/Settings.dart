@@ -73,6 +73,7 @@ class _SettingsPageState extends State<SettingsPage> {
   // personalization
   bool _compactMode = false;
   bool _haptics = true;
+  String _languageCode = 'en'; // en = English, ny = Chichewa
 
   // customer service
   static const String _supportPhone = '+265999955270';
@@ -149,6 +150,16 @@ class _SettingsPageState extends State<SettingsPage> {
     return '$_addressCount addresses';
   }
 
+  String get _languageSubtitle {
+    switch (_languageCode) {
+      case 'ny':
+        return 'Chichewa';
+      case 'en':
+      default:
+        return 'English';
+    }
+  }
+
   Future<void> _loadAppInfo() async {
     try {
       final info = await PackageInfo.fromPlatform();
@@ -163,6 +174,7 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() {
       _compactMode = prefs.getBool('pref_compact_mode') ?? false;
       _haptics = prefs.getBool('pref_haptics') ?? true;
+      _languageCode = prefs.getString('pref_language_code') ?? 'en';
     });
   }
 
@@ -170,6 +182,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('pref_compact_mode', _compactMode);
     await prefs.setBool('pref_haptics', _haptics);
+    await prefs.setString('pref_language_code', _languageCode);
   }
 
   void _maybeHaptic() {
@@ -627,6 +640,87 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  void _openLanguage() {
+    _maybeHaptic();
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Language',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                RadioListTile<String>(
+                  value: 'en',
+                  groupValue: _languageCode,
+                  onChanged: (v) async {
+                    if (v == null) return;
+                    setLocal(() => _languageCode = v);
+                    setState(() => _languageCode = v);
+                    await _savePersonalizationPrefs();
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    ToastHelper.showCustomToast(
+                      context,
+                      'Language set to English. Restart app for full effect.',
+                      isSuccess: true,
+                      errorMessage: '',
+                    );
+                  },
+                  title: const Text('English',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                RadioListTile<String>(
+                  value: 'ny',
+                  groupValue: _languageCode,
+                  onChanged: (v) async {
+                    if (v == null) return;
+                    setLocal(() => _languageCode = v);
+                    setState(() => _languageCode = v);
+                    await _savePersonalizationPrefs();
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    ToastHelper.showCustomToast(
+                      context,
+                      'Language set to Chichewa. Restart app for full effect.',
+                      isSuccess: true,
+                      errorMessage: '',
+                    );
+                  },
+                  title: const Text('Chichewa',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   void _openAboutUs() {
     _maybeHaptic();
     Navigator.push(
@@ -1036,6 +1130,13 @@ class _SettingsPageState extends State<SettingsPage> {
               const SizedBox(height: 14),
               _sectionTitle('Preferences'),
               _card([
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.language,
+                  title: 'Language',
+                  subtitle: _languageSubtitle,
+                  onTap: _openLanguage,
+                ),
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.tune,

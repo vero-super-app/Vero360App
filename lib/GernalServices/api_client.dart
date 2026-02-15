@@ -233,6 +233,7 @@ class ApiClient {
         message: 'Network error. Please check your connection and try again.',
       );
     } catch (e) {
+      if (e is ApiException) rethrow;
       if (kDebugMode) {
         debugPrint('API $method ${uri.path} -> unexpected error: $e');
       }

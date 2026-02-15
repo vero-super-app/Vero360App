@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/changepassword_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
@@ -67,18 +68,21 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        '✅ Password updated successfully',
+        ' Password updated successfully',
         isSuccess: true,
         errorMessage: '',
       );
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
+      final String message = e is ApiException
+          ? e.message
+          : 'Failed to change password';
       ToastHelper.showCustomToast(
         context,
-        'Failed to change password',
+        message,
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: e is ApiException ? '' : e.toString(),
       );
     } finally {
       if (mounted) setState(() => _saving = false);

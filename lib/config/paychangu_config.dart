@@ -39,7 +39,7 @@ class PayChanguConfig {
   /// Backend/web endpoints registered in your PayChangu dashboard.
   /// They must be valid HTTP/HTTPS URLs – custom schemes like
   /// `vero360://...` are rejected by the API.
-  static String get callbackUrl => 'https://xvideos.com';
+  static String get callbackUrl => 'https://xs.com';
 
   static String get returnUrl => 'https://vero360.app/paychangu/retur';
 

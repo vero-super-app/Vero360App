@@ -109,6 +109,17 @@ class _LoginScreenState extends State<LoginScreen> {
         _identifier.text.trim();
     await prefs.setString('email', displayId);
 
+    // Persist name and phone so other screens (e.g. airport pickup, profile) can auto-fill
+    final nameVal = (user['name'] ?? user['fullName'] ?? user['displayName'] ?? '').toString().trim();
+    if (nameVal.isNotEmpty) {
+      await prefs.setString('fullName', nameVal);
+      await prefs.setString('name', nameVal);
+    }
+    final phoneVal = (user['phone'] ?? user['phoneNumber'] ?? user['mobile'] ?? '').toString().trim();
+    if (phoneVal.isNotEmpty) {
+      await prefs.setString('phone', phoneVal);
+    }
+
     final role =
         (user['role'] ?? user['userRole'] ?? 'customer').toString().toLowerCase();
     await prefs.setString('role', role);
@@ -118,6 +129,19 @@ class _LoginScreenState extends State<LoginScreen> {
         user['firebaseUid']?.toString();
     if (uid != null && uid.isNotEmpty) {
       await prefs.setString('uid', uid);
+    }
+
+    // Backend chat expects numeric userId in SharedPreferences
+    final rawId = user['id'] ?? user['userId'];
+    if (rawId != null) {
+      final numericId = rawId is int ? rawId : int.tryParse(rawId.toString());
+      if (numericId != null) {
+        await prefs.setInt('userId', numericId);
+      }
+    }
+    if (prefs.getInt('userId') == null && uid != null) {
+      final numericId = int.tryParse(uid);
+      if (numericId != null) await prefs.setInt('userId', numericId);
     }
 
     if (role == 'merchant') {

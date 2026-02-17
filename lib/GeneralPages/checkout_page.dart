@@ -111,14 +111,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  ButtonStyle _filledBtnStyle() => FilledButton.styleFrom(
-        backgroundColor: _brandOrange,
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        textStyle: const TextStyle(fontWeight: FontWeight.w700),
-      );
-
   OutlinedButtonThemeData get _outlinedTheme => OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: Colors.black87,
@@ -364,9 +356,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final t = await _readAuthToken();
     final ok = t != null;
     if (!ok) {
+      // When user tries to pay while not logged in, give a clearer message,
+      // especially for shop pickup.
+      final msg = _deliveryType == DeliveryType.pickup
+          ? 'Please log in to use shop pickup.'
+          : 'Please log in to complete checkout.';
       ToastHelper.showCustomToast(
         context,
-        'Please log in to complete checkout.',
+        msg,
         isSuccess: false,
         errorMessage: 'Not logged in',
       );
@@ -586,7 +583,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final item = widget.item;
 
     final addressOk = _deliveryType == DeliveryType.pickup || _defaultAddr != null;
-    final canPay = !_submitting && _loggedIn && addressOk;
+    // Let _onPayPressed/_requireLogin handle auth messaging so users
+    // see a "log in first" message when they tap Pay Now, including for pickup.
+    final canPay = !_submitting && addressOk;
 
     return Theme(
       data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),

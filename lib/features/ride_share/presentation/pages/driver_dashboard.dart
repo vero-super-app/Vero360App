@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'dart:async';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/settings/Settings.dart';
 import 'driver_request_screen.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
@@ -157,6 +158,19 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         backgroundColor: primaryColor,
         elevation: 0,
         centerTitle: false,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const SettingsPage(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: Stack(
         children: [

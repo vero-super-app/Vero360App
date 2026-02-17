@@ -48,7 +48,9 @@ class AirportPickupBooking {
   final String vehicleLabel;
   final double distanceKm;
   final int estimatedFare; // MWK
-  final String status;     // "pending", "on_the_way", etc.
+  final String status;     // pending, accepted, on_the_way, driver_started, eta_30_mins, eta_soon, driver_arrived, completed, cancelled
+  /// Optional message from driver (e.g. "We have started off", "30 mins left", "We are here")
+  final String? journeyMessage;
 
   // Optional: echo back contact details from backend if you added them
   final String? customerName;
@@ -65,6 +67,7 @@ class AirportPickupBooking {
     required this.distanceKm,
     required this.estimatedFare,
     required this.status,
+    this.journeyMessage,
     this.customerName,
     this.customerPhone,
     this.dropoffAddressText,
@@ -72,15 +75,16 @@ class AirportPickupBooking {
 
   factory AirportPickupBooking.fromJson(Map<String, dynamic> json) {
     return AirportPickupBooking(
-      id: json['id'] as int,
-      airportCode: json['airportCode'] as String,
-      airportName: json['airportName'] as String,
-      serviceCity: json['serviceCity'] as String,
-      vehicleId: json['vehicleId'] as String,
-      vehicleLabel: json['vehicleLabel'] as String,
-      distanceKm: (json['distanceKm'] as num).toDouble(),
-      estimatedFare: (json['estimatedFare'] as num).toInt(),
-      status: json['status'] as String,
+      id: (json['id'] as num).toInt(),
+      airportCode: (json['airportCode'] as String?) ?? '',
+      airportName: (json['airportName'] as String?) ?? '',
+      serviceCity: (json['serviceCity'] as String?) ?? '',
+      vehicleId: (json['vehicleId'] as String?) ?? '',
+      vehicleLabel: (json['vehicleLabel'] as String?) ?? '',
+      distanceKm: (json['distanceKm'] as num?)?.toDouble() ?? 0.0,
+      estimatedFare: (json['estimatedFare'] as num?)?.toInt() ?? 0,
+      status: (json['status'] as String?) ?? 'pending',
+      journeyMessage: json['journeyMessage'] as String?,
       customerName: json['customerName'] as String?,
       customerPhone: json['customerPhone'] as String?,
       dropoffAddressText: json['dropoffAddressText'] as String?,

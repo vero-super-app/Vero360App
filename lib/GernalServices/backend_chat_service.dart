@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 class BackendChatThread {
   final String id;
@@ -147,10 +148,44 @@ class BackendChatService {
       throw Exception('Failed to get Firebase ID token');
     }
 
-    // Get userId from shared preferences (must be set after login)
+    // Get userId from SharedPreferences, or from JWT, or from GET /users/me
     final sp = await SharedPreferences.getInstance();
-    final userId = sp.getInt('userId');
-    
+    int? userId = sp.getInt('userId') ?? sp.getInt('user_id');
+    if (userId == null) {
+      userId = await AuthStorage.userIdFromToken();
+      if (userId != null) {
+        await sp.setInt('userId', userId);
+        await sp.setInt('user_id', userId);
+      }
+    }
+    if (userId == null && _authToken != null && _authToken!.isNotEmpty) {
+      // Firebase JWT has string sub (UID); fetch numeric id from backend
+      try {
+        final meUrl = ApiConfig.endpoint('/users/me');
+        final response = await http.get(
+          meUrl,
+          headers: {'Authorization': _authHeader},
+        ).timeout(const Duration(seconds: 10));
+        if (response.statusCode == 200) {
+          final json = jsonDecode(response.body) as Map<String, dynamic>?;
+          if (json != null) {
+            final data = json['data'] is Map<String, dynamic>
+                ? json['data'] as Map<String, dynamic>
+                : json;
+            final rawId = data['id'] ?? data['userId'];
+            if (rawId != null) {
+              userId = rawId is int ? rawId : int.tryParse(rawId.toString());
+              if (userId != null) {
+                await sp.setInt('userId', userId);
+                await sp.setInt('user_id', userId);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        print('[BackendChatService] Failed to fetch /users/me for userId: $e');
+      }
+    }
     if (userId == null) {
       print('[BackendChatService] WARNING: userId not found in SharedPreferences');
       print('[BackendChatService] Make sure to call: SharedPreferences.getInstance().setInt("userId", <numeric_id>)');

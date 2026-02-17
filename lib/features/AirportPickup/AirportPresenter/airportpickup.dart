@@ -5,11 +5,16 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/features/AirportPickup/AirportModels/Airport_pickup.models.dart';
-
 import 'package:vero360_app/features/AirportPickup/AirportService/airport_pickup_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/features/Auth/AuthServices/user_service.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/features/AirportPickup/AirportPresenter/airport_pickup_progress_page.dart';
 
 class Airportpickuppage extends StatefulWidget {
   const Airportpickuppage({super.key});
@@ -44,18 +49,18 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
 
   static final List<_Airport> _allAirports = [_kia, _chileka];
 
-  // Vehicles
+  // Vehicles — fare: base (MWK) + perKm (MWK/km). Standard & Executive with realistic rates.
   static const List<_Vehicle> _vehicles = [
     _Vehicle(
       id: 'standard',
       label: 'Standard Car',
       seats: 4,
       base: 5000,
-      perKm: 1,
+      perKm: 1000,
     ),
     _Vehicle(
       id: 'executive',
-      label: 'Executive car',
+      label: 'Executive Car',
       seats: 4,
       base: 12000,
       perKm: 1500,
@@ -70,7 +75,6 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
   LatLng? _myLatLng;
   String? _serviceCity; // Lilongwe / Blantyre / null
   bool _locating = true;
-  bool _isPickingDropoff = false;
   bool _submitting = false;
 
   _Airport? _selectedAirport;
@@ -78,28 +82,141 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
   _Vehicle _vehicle = _vehicles.first;
 
   final Set<Marker> _markers = {};
+  final Set<Polyline> _routePolylines = {};
 
   // Form fields
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _destSearchCtrl = TextEditingController();
   final _destAddressCtrl = TextEditingController();
 
   final _airportService = const AirportPickupService();
+  bool _searchingDest = false;
+
+  // Destination search suggestions (debounced) — each has location + human-readable address
+  List<_DestSuggestion> _destSuggestions = [];
+  bool _loadingSuggestions = false;
+  Timer? _suggestDebounce;
 
   @override
   void initState() {
     super.initState();
     _initLocation();
+    _loadUserData();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadUserData());
+    // Reload again after a short delay so we pick up name/phone if user just logged in
+    Future.delayed(const Duration(milliseconds: 800), () => _loadUserData());
+    Future.delayed(const Duration(seconds: 2), () => _loadUserData());
+    _destSearchCtrl.addListener(_onDestSearchChanged);
   }
 
   @override
   void dispose() {
+    _suggestDebounce?.cancel();
+    _destSearchCtrl.removeListener(_onDestSearchChanged);
     _map?.dispose();
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    _destSearchCtrl.dispose();
     _destAddressCtrl.dispose();
     super.dispose();
+  }
+
+  void _onDestSearchChanged() {
+    _suggestDebounce?.cancel();
+    final query = _destSearchCtrl.text.trim();
+    if (query.length < 2) {
+      setState(() => _destSuggestions = []);
+      return;
+    }
+    _suggestDebounce = Timer(const Duration(milliseconds: 450), () {
+      _fetchDestSuggestions(query);
+    });
+  }
+
+  /// Auto-populate name, phone, email (prefs + Firebase + API getMe, like CustomersProfilepage / marketplace).
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? name = prefs.getString('fullName') ?? prefs.getString('name');
+    String? phone = prefs.getString('phone') ?? prefs.getString('phoneNumber');
+    String? email = prefs.getString('email');
+    String? address = prefs.getString('address');
+
+    // Fallback to Firebase Auth (like CustomersProfilepage)
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser != null) {
+      if ((name == null || name.trim().isEmpty) &&
+          (firebaseUser.displayName ?? '').trim().isNotEmpty) {
+        name = firebaseUser.displayName!.trim();
+        await prefs.setString('fullName', name);
+        await prefs.setString('name', name);
+      }
+      if ((email == null || email.trim().isEmpty) &&
+          (firebaseUser.email ?? '').trim().isNotEmpty) {
+        email = firebaseUser.email!.trim();
+        await prefs.setString('email', email);
+      }
+      if ((phone == null || phone.trim().isEmpty) &&
+          (firebaseUser.phoneNumber ?? '').trim().isNotEmpty) {
+        phone = firebaseUser.phoneNumber!.trim();
+        await prefs.setString('phone', phone);
+      }
+    }
+
+    // Fallback to JWT name if still empty
+    if ((name == null || name.trim().isEmpty)) {
+      name = await AuthStorage.userNameFromToken();
+    }
+
+    // Optional: fetch latest from API (like marketplace /users/me) and persist
+    try {
+      final token = await AuthStorage.readToken();
+      if (token != null && token.isNotEmpty) {
+        final me = await UserService().getMe();
+        final data = me['data'] is Map ? me['data'] as Map : me;
+        final user = (data['user'] is Map) ? data['user'] as Map : data;
+        final apiName = (user['name'] ?? user['fullName'] ?? user['displayName'] ?? '').toString().trim();
+        final apiPhone = (user['phone'] ?? user['phoneNumber'] ?? user['mobile'] ?? '').toString().trim();
+        final apiEmail = (user['email'] ?? user['userEmail'] ?? '').toString().trim();
+        if (apiName.isNotEmpty) {
+          name = apiName;
+          await prefs.setString('fullName', apiName);
+          await prefs.setString('name', apiName);
+        }
+        if (apiPhone.isNotEmpty) {
+          phone = apiPhone;
+          await prefs.setString('phone', apiPhone);
+        }
+        if (apiEmail.isNotEmpty) {
+          email = apiEmail;
+          await prefs.setString('email', apiEmail);
+        }
+      }
+    } catch (_) {}
+
+    if (mounted) {
+      bool updated = false;
+      if (name != null && name.trim().isNotEmpty) {
+        _nameCtrl.text = name.trim();
+        updated = true;
+      }
+      if (phone != null && phone.trim().isNotEmpty) {
+        _phoneCtrl.text = phone.trim();
+        updated = true;
+      }
+      if (email != null && email.trim().isNotEmpty) {
+        _emailCtrl.text = email.trim();
+        updated = true;
+      }
+      if (address != null && address.trim().isNotEmpty && _destAddressCtrl.text.isEmpty) {
+        _destAddressCtrl.text = address.trim();
+        updated = true;
+      }
+      if (updated) setState(() {});
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -202,22 +319,114 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
     }
   }
 
-  void _onPickDropoffToggle() {
-    setState(() => _isPickingDropoff = !_isPickingDropoff);
-    if (_isPickingDropoff && _selectedAirport != null) {
-      _map?.animateCamera(
-        CameraUpdate.newLatLngZoom(_selectedAirport!.position, 13.5),
+  /// Reverse geocode dropoff coordinates to get address text.
+  Future<void> _reverseGeocodeDropoff(LatLng latLng, {bool forceSet = false}) async {
+    try {
+      final placemarks = await placemarkFromCoordinates(
+        latLng.latitude,
+        latLng.longitude,
       );
+      if (placemarks.isNotEmpty && mounted) {
+        final p = placemarks.first;
+        final parts = [
+          p.street,
+          p.locality,
+          p.subAdministrativeArea,
+          p.administrativeArea,
+        ].where((s) => s != null && s.trim().isNotEmpty).map((s) => s!.trim());
+        final addr = parts.join(', ');
+        if (addr.isNotEmpty && (forceSet || _destAddressCtrl.text.isEmpty)) {
+          _destAddressCtrl.text = addr;
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// Fetch address suggestions with human-readable text (reverse-geocode each result).
+  Future<void> _fetchDestSuggestions(String query) async {
+    if (query.trim().length < 2) return;
+    setState(() => _loadingSuggestions = true);
+    try {
+      final locations = await locationFromAddress('$query, Malawi');
+      final suggestions = <_DestSuggestion>[];
+      for (final loc in locations.take(6)) {
+        String address = '${loc.latitude.toStringAsFixed(4)}, ${loc.longitude.toStringAsFixed(4)}';
+        try {
+          final placemarks = await placemarkFromCoordinates(loc.latitude, loc.longitude);
+          if (placemarks.isNotEmpty) {
+            final p = placemarks.first;
+            final parts = [
+              p.street,
+              p.locality,
+              p.subAdministrativeArea,
+              p.administrativeArea,
+              p.country,
+            ].where((s) => s != null && s.trim().isNotEmpty).map((s) => s!.trim());
+            if (parts.isNotEmpty) address = parts.join(', ');
+          }
+        } catch (_) {}
+        suggestions.add(_DestSuggestion(location: loc, address: address));
+      }
+      if (mounted) {
+        setState(() {
+          _destSuggestions = suggestions;
+          _loadingSuggestions = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() {
+        _destSuggestions = [];
+        _loadingSuggestions = false;
+      });
     }
   }
 
-  void _onMapTap(LatLng latLng) {
-    if (_isPickingDropoff) {
+  /// When user selects a suggestion, set dropoff and fill address.
+  Future<void> _onSelectDestSuggestion(_DestSuggestion suggestion) async {
+    final loc = suggestion.location;
+    final latLng = LatLng(loc.latitude, loc.longitude);
+    setState(() {
+      _dropoff = latLng;
+      _destSuggestions = [];
+    });
+    _destAddressCtrl.text = suggestion.address;
+    _refreshMarkers();
+    await _map?.animateCamera(CameraUpdate.newLatLngZoom(latLng, 14));
+  }
+
+  /// Search for destination by address text; set dropoff from first result.
+  Future<void> _searchDestination() async {
+    final query = _destSearchCtrl.text.trim();
+    if (query.isEmpty) {
+      ToastHelper.showCustomToast(context, 'Enter an address to search (e.g. area, street, landmark).', isSuccess: false, errorMessage: '');
+      return;
+    }
+    setState(() {
+      _searchingDest = true;
+      _destSuggestions = [];
+    });
+    try {
+      final locations = await locationFromAddress('$query, Malawi');
+      if (locations.isEmpty) {
+        ToastHelper.showCustomToast(context, 'No results for "$query". Try a different address.', isSuccess: false, errorMessage: '');
+        return;
+      }
+      final loc = locations.first;
+      final latLng = LatLng(loc.latitude, loc.longitude);
       setState(() {
         _dropoff = latLng;
-        _isPickingDropoff = false;
+        _searchingDest = false;
       });
       _refreshMarkers();
+      await _reverseGeocodeDropoff(latLng, forceSet: true);
+      if (_destAddressCtrl.text.isEmpty) _destAddressCtrl.text = query;
+      await _map?.animateCamera(
+        CameraUpdate.newLatLngZoom(latLng, 14),
+      );
+      ToastHelper.showCustomToast(context, 'Destination set.', isSuccess: true, errorMessage: '');
+    } catch (e) {
+      if (mounted) setState(() => _searchingDest = false);
+      ToastHelper.showCustomToast(context, 'Could not find "$query". Try another address.', isSuccess: false, errorMessage: '');
     }
   }
 
@@ -260,6 +469,19 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
       );
     }
 
+    // Route line between airport and drop-off
+    _routePolylines.clear();
+    if (_selectedAirport != null && _dropoff != null) {
+      _routePolylines.add(
+        Polyline(
+          polylineId: const PolylineId('route'),
+          points: [_selectedAirport!.position, _dropoff!],
+          color: _brandOrange,
+          width: 5,
+        ),
+      );
+    }
+
     setState(() {
       _markers
         ..clear()
@@ -274,6 +496,16 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
     return v.base + v.perKm * km;
   }
 
+  /// Returns (distanceKm, base, perKmTotal, total) for fare breakdown. Null if route not set.
+  (double, double, double, double)? _fareBreakdown() {
+    if (_selectedAirport == null || _dropoff == null) return null;
+    final km = _kmBetween(_selectedAirport!.position, _dropoff!);
+    final v = _vehicle;
+    final perKmTotal = v.perKm * km;
+    final total = v.base + perKmTotal;
+    return (km, v.base, perKmTotal, total);
+  }
+
   // ---------------------------------------------------------------------------
   // Booking
   // ---------------------------------------------------------------------------
@@ -286,20 +518,20 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
 
   Future<void> _bookNow() async {
     if (_serviceCity == null) {
-      _toast("Airport Pickup is only available in Lilongwe & Blantyre.");
+      ToastHelper.showCustomToast(context, 'Airport Pickup is only available in Lilongwe & Blantyre.', isSuccess: false, errorMessage: '');
       return;
     }
     if (_selectedAirport == null) {
-      _toast("Select your pickup airport.");
+      ToastHelper.showCustomToast(context, 'Select your pickup airport.', isSuccess: false, errorMessage: '');
       return;
     }
     if (_dropoff == null) {
-      _toast("Set your drop-off location on the map.");
+      ToastHelper.showCustomToast(context, 'Search for a destination or tap on the map to set drop-off.', isSuccess: false, errorMessage: '');
       return;
     }
 
     if (!_formKey.currentState!.validate()) {
-      _toast('Please fill all required fields.');
+      ToastHelper.showCustomToast(context, 'Please fill all required fields.', isSuccess: false, errorMessage: '');
       return;
     }
 
@@ -326,26 +558,25 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
         authToken: token, // optional
       );
 
-      _toast(
-        'Pickup booked from ${booking.airportCode} to ${booking.serviceCity}. Status: ${booking.status}',
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Pickup booked successfully.',
+        isSuccess: true,
+        errorMessage: '',
+      );
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => AirportPickupProgressPage(booking: booking),
+        ),
       );
     } on ApiException catch (e) {
-      _toast(e.message);
+      ToastHelper.showCustomToast(context, e.message, isSuccess: false, errorMessage: e.message);
     } catch (_) {
-      _toast('Could not book pickup. Please try again.');
+      ToastHelper.showCustomToast(context, 'Could not book pickup. Please try again.', isSuccess: false, errorMessage: '');
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
-  }
-
-  void _toast(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Colors.black87,
-      ),
-    );
   }
 
   // ---------------------------------------------------------------------------
@@ -363,17 +594,19 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
     final fare = _estimatedFare();
 
     return Scaffold(
+      backgroundColor: const Color(0xFFF5F5F7),
       appBar: AppBar(
         title: const Text('Airport Pickup'),
+        centerTitle: true,
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
         elevation: 0,
+        scrolledUnderElevation: 2,
       ),
       body: Column(
         children: [
-          // ===================== MAP SECTION (TOP) =====================
           SizedBox(
-            height: 260,
+            height: 280,
             child: Stack(
               children: [
                 GoogleMap(
@@ -381,8 +614,8 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                   myLocationEnabled: true,
                   myLocationButtonEnabled: true,
                   markers: _markers,
+                  polylines: _routePolylines,
                   onMapCreated: _onMapCreated,
-                  onTap: _onMapTap,
                   zoomControlsEnabled: false,
                   compassEnabled: false,
                 ),
@@ -402,9 +635,8 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: const Text(
-                        'Orange pin = Airport (Pickup)   •   Blue pin = Drop-off (Destination)',
-                        style: TextStyle(color: Colors.white, fontSize: 11),
-                        textAlign: TextAlign.center,
+                        '🟠 Airport   🔵 Drop-off',
+                        style: TextStyle(color: Colors.white, fontSize: 12, letterSpacing: 0.5),
                       ),
                     ),
                   ),
@@ -420,330 +652,134 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                     ),
                   ),
                 ),
-                // Hint overlay when choosing drop-off
-                if (_isPickingDropoff)
-                  IgnorePointer(
-                    ignoring: true,
-                    child: Container(
-                      alignment: Alignment.topCenter,
-                      margin: const EdgeInsets.only(top: 70),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black87,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Text(
-                          'Tap on the map to set your drop-off location',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),
 
-          // ===================== FORM SECTION (BOTTOM) =====================
           Expanded(
             child: Container(
+              width: double.infinity,
               decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                boxShadow: [
-                  BoxShadow(
-                    blurRadius: 12,
-                    color: Colors.black26,
-                    offset: Offset(0, -4),
-                  )
-                ],
+                color: Color(0xFFF5F5F7),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 16, offset: Offset(0, -4))],
               ),
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-              child: SafeArea(
-                top: false,
-                child: Form(
-                  key: _formKey,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 42,
-                          height: 5,
-                          decoration: BoxDecoration(
-                            color: Colors.black12,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+              child: Form(
+                key: _formKey,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _SectionHeader(icon: Icons.flight_land_rounded, title: 'Your trip'),
+                      const SizedBox(height: 12),
+                      _Labeled(label: 'Pickup airport', child: _AirportChips(
+                        airports: airportsForCity,
+                        selected: airportsForCity.contains(_selectedAirport) ? _selectedAirport : null,
+                        onSelected: _onAirportChanged,
+                      )),
+                      const SizedBox(height: 16),
+                      _Labeled(
+                        label: 'Destination',
+                        child: _DestinationCard(
+                          destSearchCtrl: _destSearchCtrl,
+                          dropoff: _dropoff,
+                          destAddressCtrl: _destAddressCtrl,
+                          searchingDest: _searchingDest,
+                          suggestions: _destSuggestions,
+                          loadingSuggestions: _loadingSuggestions,
+                          onSearch: _searchDestination,
+                          onSelectSuggestion: _onSelectDestSuggestion,
+                          inputDecoration: _inputDecoration(),
                         ),
-                        const SizedBox(height: 12),
-                        _Labeled(
-                          label: 'Pickup Airport',
-                          child: DropdownButtonFormField<_Airport>(
-                            value: airportsForCity.contains(_selectedAirport)
-                                ? _selectedAirport
-                                : null,
-                            items: airportsForCity
-                                .map(
-                                  (a) => DropdownMenuItem(
-                                    value: a,
-                                    child: Text('${a.name} (${a.code})'),
-                                  ),
+                      ),
+                      const SizedBox(height: 20),
+                      _SectionHeader(icon: Icons.person_outline_rounded, title: 'Your details'),
+                      const SizedBox(height: 12),
+                      _ModernTextField(
+                        controller: _nameCtrl,
+                        label: 'Name',
+                        hint: 'Full name',
+                        icon: Icons.person_outline_rounded,
+                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                      ),
+                      const SizedBox(height: 12),
+                      _ModernTextField(
+                        controller: _phoneCtrl,
+                        label: 'Phone',
+                        hint: '+265 99 123 4567',
+                        icon: Icons.phone_outlined,
+                        keyboardType: TextInputType.phone,
+                        validator: (v) {
+                          final t = v?.trim() ?? '';
+                          if (t.isEmpty) return 'Required';
+                          if (t.length < 7) return 'Valid number required';
+                          return null;
+                        },
+                      ),
+                     
+                     
+                      const SizedBox(height: 20),
+                      _SectionHeader(icon: Icons.directions_car_rounded, title: 'Vehicle'),
+                      const SizedBox(height: 12),
+                      _VehicleCards(
+                        vehicles: _vehicles,
+                        selected: _vehicle,
+                        dropoff: _dropoff,
+                        airport: _selectedAirport,
+                        kmBetween: _kmBetween,
+                        fmtMoney: _fmtMoney,
+                        onSelect: (v) => setState(() => _vehicle = v),
+                      ),
+                      const SizedBox(height: 20),
+                      _FareCard(
+                        fare: fare,
+                        breakdown: _fareBreakdown(),
+                        fmtMoney: _fmtMoney,
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _brandOrange,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            elevation: 0,
+                            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                          ),
+                          onPressed: _submitting ? null : _bookNow,
+                          child: _submitting
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
                                 )
-                                .toList(),
-                            decoration: _inputDecoration(),
-                            onChanged: _onAirportChanged,
-                          ),
+                              : const Text('Book pickup'),
                         ),
-                        const SizedBox(height: 12),
-                        _Labeled(
-                          label: 'Destination on Map (Drop-off)',
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Container(
-                                  height: 48,
-                                  alignment: Alignment.centerLeft,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: Colors.black,
-                                      width: 1,
-                                    ),
-                                    color: Colors.white,
-                                  ),
-                                  child: Text(
-                                    _dropoff == null
-                                        ? 'Tap "Pick on Map" above, then tap on the map'
-                                        : 'Lat: ${_dropoff!.latitude.toStringAsFixed(5)}, '
-                                            'Lng: ${_dropoff!.longitude.toStringAsFixed(5)}',
-                                    style: TextStyle(
-                                      color: _dropoff == null
-                                          ? Colors.black54
-                                          : Colors.black,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              FilledButton(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: _brandOrange,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 12,
-                                  ),
-                                ),
-                                onPressed: _onPickDropoffToggle,
-                                child: Text(
-                                  _isPickingDropoff ? 'Cancel' : 'Pick on Map',
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _Labeled(
-                          label: 'Your Name',
-                          child: TextFormField(
-                            controller: _nameCtrl,
-                            decoration: _inputDecoration().copyWith(
-                              hintText: 'Who should the driver ask for?',
-                              suffixText: '*',
-                              suffixStyle: const TextStyle(color: Colors.red),
-                            ),
-                            validator: (v) => (v == null || v.trim().isEmpty)
-                                ? 'Name is required'
-                                : null,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _Labeled(
-                          label: 'Your Phone Number',
-                          child: TextFormField(
-                            controller: _phoneCtrl,
-                            keyboardType: TextInputType.phone,
-                            decoration: _inputDecoration().copyWith(
-                              hintText: 'e.g. +265 99 123 4567',
-                              suffixText: '*',
-                              suffixStyle: const TextStyle(color: Colors.red),
-                            ),
-                            validator: (v) {
-                              final t = v?.trim() ?? '';
-                              if (t.isEmpty) return 'Phone is required';
-                              if (t.length < 7) {
-                                return 'Enter a valid phone number';
-                              }
-                              return null;
-                            },
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _Labeled(
-                          label: 'Destination Address (required details)',
-                          child: TextFormField(
-                            controller: _destAddressCtrl,
-                            decoration: _inputDecoration().copyWith(
-                              hintText:
-                                  'Street / area, landmarks, gate color, etc.',
-                              suffixText: '*',
-                              suffixStyle: const TextStyle(color: Colors.red),
-                            ),
-                            maxLines: 2,
-                            autovalidateMode:
-                                AutovalidateMode.onUserInteraction,
-                            validator: (v) => (v == null || v.trim().isEmpty)
-                                ? 'This field is required'
-                                : null,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _Labeled(
-                          label: 'Vehicle',
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: _vehicles.map((v) {
-                              final selected = v.id == _vehicle.id;
-                              return InkWell(
-                                onTap: () => setState(() => _vehicle = v),
-                                borderRadius: BorderRadius.circular(12),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: selected
-                                          ? _brandOrange
-                                          : Colors.black,
-                                      width: 1,
-                                    ),
-                                    color: selected ? _brandSoft : Colors.white,
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.directions_car_filled,
-                                        size: 18,
-                                        color: selected
-                                            ? _brandOrange
-                                            : Colors.black87,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        '${v.label} • ${v.seats} seats',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          color: selected
-                                              ? Colors.black
-                                              : Colors.black87,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.black12),
-                            color: const Color(0xFFF8F8F8),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.attach_money_rounded),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  fare == null
-                                      ? 'Fare estimate appears after airport & drop-off are set.'
-                                      : 'Estimated fare: MWK ${_fmtMoney(fare)}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton(
-                            style: FilledButton.styleFrom(
-                              backgroundColor: _brandOrange,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 14,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              textStyle: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            onPressed: _submitting ? null : _bookNow,
-                            child: _submitting
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Colors.white,
-                                      ),
-                                    ),
-                                  )
-                                : const Text('Book Pickup'),
-                          ),
-                        ),
+                      ),
+                      if (_serviceCity != null) ...[
                         const SizedBox(height: 8),
-                        if (_serviceCity != null)
-                          Text(
-                            'Service city: $_serviceCity',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.black54,
-                            ),
-                          ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'You don’t need an account to book. Login for history & faster checkout next time.',
-                          style: TextStyle(fontSize: 11, color: Colors.black54),
+                        Text('Service area: $_serviceCity', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                      ],
+                      const SizedBox(height: 6),
+                      Center(
+                        child: Text(
+                        'Vero Airport Pickup is a service provided by Vero. All rights reserved.',
+                          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                           textAlign: TextAlign.center,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
-          ),
-        ],
-      ),
-    );
+            ),
+          ],
+        ),
+      );
   }
 
   static InputDecoration _inputDecoration() => InputDecoration(
@@ -787,10 +823,367 @@ class _Labeled extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
         const SizedBox(height: 6),
         child,
       ],
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  const _SectionHeader({required this.icon, required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: _AirportpickuppageState._brandOrange),
+        const SizedBox(width: 8),
+        Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+}
+
+class _AirportChips extends StatelessWidget {
+  final List<_Airport> airports;
+  final _Airport? selected;
+  final void Function(_Airport?) onSelected;
+
+  const _AirportChips({required this.airports, required this.selected, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: airports.map((a) {
+        final isSelected = selected?.code == a.code;
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => onSelected(a),
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: isSelected ? _AirportpickuppageState._brandSoft : Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: isSelected ? _AirportpickuppageState._brandOrange : Colors.grey.shade300,
+                  width: isSelected ? 2 : 1,
+                ),
+                boxShadow: isSelected ? null : [BoxShadow(color: Colors.black26, blurRadius: 6, offset: const Offset(0, 2))],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.flight_land_rounded, size: 20, color: isSelected ? _AirportpickuppageState._brandOrange : Colors.grey.shade700),
+                  const SizedBox(width: 8),
+                  Text('${a.code}', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: isSelected ? Colors.black87 : Colors.black87)),
+                  const SizedBox(width: 4),
+                  Text('• ${a.city}', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _DestinationCard extends StatelessWidget {
+  final TextEditingController destSearchCtrl;
+  final LatLng? dropoff;
+  final TextEditingController destAddressCtrl;
+  final bool searchingDest;
+  final List<_DestSuggestion> suggestions;
+  final bool loadingSuggestions;
+  final VoidCallback onSearch;
+  final void Function(_DestSuggestion) onSelectSuggestion;
+  final InputDecoration inputDecoration;
+
+  const _DestinationCard({
+    required this.destSearchCtrl,
+    required this.dropoff,
+    required this.destAddressCtrl,
+    required this.searchingDest,
+    required this.suggestions,
+    required this.loadingSuggestions,
+    required this.onSearch,
+    required this.onSelectSuggestion,
+    required this.inputDecoration,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: destSearchCtrl,
+                  decoration: inputDecoration.copyWith(
+                    hintText: 'Search address or landmark',
+                    prefixIcon: const Icon(Icons.search_rounded, color: _AirportpickuppageState._brandOrange, size: 22),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  ),
+                  textInputAction: TextInputAction.search,
+                  onFieldSubmitted: (_) => onSearch(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _AirportpickuppageState._brandOrange,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
+                onPressed: searchingDest ? null : onSearch,
+                icon: searchingDest
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)))
+                    : const Icon(Icons.search, size: 20),
+                label: Text(searchingDest ? '...' : 'Search'),
+              ),
+            ],
+          ),
+          if (loadingSuggestions)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: SizedBox(height: 24, child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
+            )
+          else if (suggestions.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Material(
+              color: Colors.transparent,
+              child: ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: suggestions.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, i) {
+                  final suggestion = suggestions[i];
+                  return ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.place_outlined, size: 20, color: _AirportpickuppageState._brandOrange),
+                    title: Text(
+                      suggestion.address,
+                      style: const TextStyle(fontSize: 13),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text('Tap to set as drop-off', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                    onTap: () => onSelectSuggestion(suggestion),
+                  );
+                },
+              ),
+            ),
+          ],
+          if (dropoff != null && destAddressCtrl.text.trim().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade300),
+                color: _AirportpickuppageState._brandSoft,
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.place, size: 18, color: _AirportpickuppageState._brandOrange),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      destAddressCtrl.text.trim(),
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ModernTextField extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final IconData icon;
+  final TextInputType? keyboardType;
+  final int maxLines;
+  final String? Function(String?)? validator;
+
+  const _ModernTextField({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    required this.icon,
+    this.keyboardType,
+    this.maxLines = 1,
+    this.validator,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black45, blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      child: TextFormField(
+        controller: controller,
+        keyboardType: keyboardType,
+        maxLines: maxLines,
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: hint,
+          prefixIcon: Icon(icon, size: 22, color: _AirportpickuppageState._brandOrange),
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 12),
+        ),
+        validator: validator,
+      ),
+    );
+  }
+}
+
+class _VehicleCards extends StatelessWidget {
+  final List<_Vehicle> vehicles;
+  final _Vehicle selected;
+  final LatLng? dropoff;
+  final _Airport? airport;
+  final double Function(LatLng, LatLng) kmBetween;
+  final String Function(double?) fmtMoney;
+  final void Function(_Vehicle) onSelect;
+
+  const _VehicleCards({
+    required this.vehicles,
+    required this.selected,
+    required this.dropoff,
+    required this.airport,
+    required this.kmBetween,
+    required this.fmtMoney,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasRoute = airport != null && dropoff != null;
+    return Row(
+      children: vehicles.map((v) {
+        final isSelected = v.id == selected.id;
+        final estimate = hasRoute ? v.base + v.perKm * kmBetween(airport!.position, dropoff!) : null;
+        return Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(right: v.id == vehicles.last.id ? 0 : 10),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => onSelect(v),
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: isSelected ? _AirportpickuppageState._brandSoft : Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isSelected ? _AirportpickuppageState._brandOrange : Colors.grey.shade300,
+                      width: isSelected ? 2 : 1,
+                    ),
+                    boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 6, offset: const Offset(0, 2))],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Icon(Icons.directions_car_rounded, size: 28, color: isSelected ? _AirportpickuppageState._brandOrange : Colors.grey.shade700),
+                      const SizedBox(height: 6),
+                      Text(v.label, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Colors.black87)),
+                      Text('${v.seats} seats', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                      if (estimate != null) ...[
+                        const SizedBox(height: 6),
+                        Text('MWK ${fmtMoney(estimate)}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: Colors.black87)),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _FareCard extends StatelessWidget {
+  final double? fare;
+  final (double, double, double, double)? breakdown;
+  final String Function(double?) fmtMoney;
+
+  const _FareCard({required this.fare, required this.breakdown, required this.fmtMoney});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [const Color(0xFFFF8A00).withValues(alpha: 0.12), const Color(0xFFFFE8CC)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFF8A00).withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.receipt_long_rounded, color: _AirportpickuppageState._brandOrange, size: 22),
+              const SizedBox(width: 8),
+              Text(fare == null ? 'Fare estimate' : 'Fare breakdown', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (fare == null)
+            const Text('Set airport and destination to see estimate.', style: TextStyle(color: Colors.black54, fontSize: 13))
+          else if (breakdown != null) ...[
+            Text('Base fare: MWK ${fmtMoney(breakdown!.$2)}', style: const TextStyle(fontSize: 13)),
+            Text('${breakdown!.$1.toStringAsFixed(1)} km × rate = MWK ${fmtMoney(breakdown!.$3)}', style: const TextStyle(fontSize: 13)),
+            const Divider(height: 16),
+            Text('Total (estimate): MWK ${fmtMoney(breakdown!.$4)}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+          ] else
+            Text('Estimated fare: MWK ${fmtMoney(fare)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+        ],
+      ),
     );
   }
 }
@@ -869,4 +1262,10 @@ class _Vehicle {
     required this.base,
     required this.perKm,
   });
+}
+
+class _DestSuggestion {
+  final Location location;
+  final String address;
+  const _DestSuggestion({required this.location, required this.address});
 }

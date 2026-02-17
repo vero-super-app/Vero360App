@@ -65,21 +65,21 @@ const List<MerchantService> kMerchantServices = [
     name: 'Accommodation',
     icon: Icons.hotel_rounded,
   ),
-  MerchantService(
-    key: 'courier',
-    name: 'Vero Courier',
-    icon: Icons.local_shipping_rounded,
-  ),
-  MerchantService(
-    key: 'vero_bike',
-    name: 'Vero Bike',
-    icon: Icons.pedal_bike_rounded,
-  ),
-  MerchantService(
-    key: 'airport_pickup',
-    name: 'Airport Pickup',
-    icon: Icons.flight_takeoff_rounded,
-  ),
+  // MerchantService(
+  //   key: 'courier',
+  //   name: 'Vero Courier',
+  //   icon: Icons.local_shipping_rounded,
+  // ),
+  // MerchantService(
+  //   key: 'vero_bike',
+  //   name: 'Vero Bike',
+  //   icon: Icons.pedal_bike_rounded,
+  // ),
+  // MerchantService(
+  //   key: 'airport_pickup',
+  //   name: 'Airport Pickup',
+  //   icon: Icons.flight_takeoff_rounded,
+  // ),
 ];
 
 class RegisterScreen extends StatefulWidget {
@@ -282,8 +282,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return DriverDashboard();
       case 'accommodation':
         return AccommodationMerchantDashboard(email: email);
-      case 'courier':
-        return CourierMerchantDashboard(email: email);
+      // case 'courier':
+      //   return CourierMerchantDashboard(email: email);
     }
     return MarketplaceMerchantDashboard(
       email: email,
@@ -484,7 +484,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('uid', user.uid);
       await prefs.setString('email', _email.text.trim());
-      await prefs.setString('name', _name.text.trim());
+      final nameVal = _name.text.trim();
+      if (nameVal.isNotEmpty) {
+        await prefs.setString('fullName', nameVal);
+        await prefs.setString('name', nameVal);
+      }
+      final phoneVal = _phone.text.trim();
+      if (phoneVal.isNotEmpty) await prefs.setString('phone', phoneVal);
       await prefs.setString('role', role);
       await prefs.setString('auth_provider', 'firebase_only');
 

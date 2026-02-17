@@ -13,10 +13,14 @@
 // NOTE: Make sure toasthelper.dart is fixed/working. This file calls:
 // ToastHelper.showCustomToast(context, message, isSuccess: ..., errorMessage: ...)
 
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -30,7 +34,6 @@ import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodatio
 //import 'package:vero360_app/features/Accomodation/Presentation/pages/Accomodation.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 
 // ✅ Cart + checkout
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
@@ -41,12 +44,12 @@ import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_
 
 import 'package:vero360_app/Quickservices/ExchangeRate.dart';
 
-import 'package:vero360_app/Quickservices/More.dart';
 import 'package:vero360_app/features/AirportPickup/AirportPresenter/airportpickup.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
 import 'package:vero360_app/Quickservices/jobs.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/verocourier.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/config/paychangu_config.dart';
 
 // Latest arrivals (API)
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
@@ -56,7 +59,6 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMer
 import 'package:vero360_app/utils/toasthelper.dart';
 
 // ✅ Providers
-import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 class AppColors {
@@ -407,14 +409,32 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     }
   }
 
-  void _openDigitalDetail(DigitalProduct p) {
-    final suggestedName = _displayName();
+  Future<void> _openDigitalDetail(DigitalProduct p) async {
+    // Pull name, phone, email from user (SharedPreferences like checkout_page)
+    String? initialName;
+    String? initialPhone;
+    String initialEmail = widget.email;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      initialName = prefs.getString('name');
+      initialPhone = prefs.getString('phone');
+      if (initialEmail.trim().isEmpty) {
+        initialEmail = prefs.getString('email') ?? '';
+      }
+      final suggestedName = _displayName();
+      if ((initialName == null || initialName.isEmpty) &&
+          suggestedName != 'there' && suggestedName != '...') {
+        initialName = suggestedName;
+      }
+    } catch (_) {}
+    if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => DigitalProductDetailPage(
           product: p,
-          initialEmail: widget.email,
-          initialName: (suggestedName == 'there' || suggestedName == '...') ? '' : suggestedName,
+          initialEmail: initialEmail,
+          initialPhone: initialPhone,
+          initialName: initialName,
         ),
       ),
     );
@@ -1737,6 +1757,17 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   }) async {
     if (qty <= 0) return;
 
+    // ✅ Require login before allowing add-to-cart from Latest Arrivals
+    if (FirebaseAuth.instance.currentUser == null) {
+      ToastHelper.showCustomToast(
+        sheetCtx,
+        'Please log in to add items from Latest Arrivals.',
+        isSuccess: false,
+        errorMessage: 'Not logged in',
+      );
+      return;
+    }
+
     try {
       final img = (await _resolveImage(it)) ?? it.imageUrl;
       final cartItem = _makeCartModel(it, img, qty: qty);
@@ -1767,6 +1798,17 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     required BuildContext sheetCtx, // ✅ close only the sheet
   }) async {
     if (qty <= 0) return;
+
+    // ✅ Require login before allowing Buy Now from Latest Arrivals
+    if (FirebaseAuth.instance.currentUser == null) {
+      ToastHelper.showCustomToast(
+        sheetCtx,
+        'Please log in to buy from Latest Arrivals.',
+        isSuccess: false,
+        errorMessage: 'Not logged in',
+      );
+      return;
+    }
 
     final img = (await _resolveImage(it)) ?? it.imageUrl;
     final cartItem = _makeCartModel(it, img, qty: qty);
@@ -2303,38 +2345,127 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
     return RegExp(r'^0[89]\d{8}$').hasMatch(digits);
   }
 
+  /// Parse price string like "MWK 8,000" or "MWK 12000" to number.
+  static double _parsePrice(String priceStr) {
+    final digits = priceStr.replaceAll(RegExp(r'[^\d.]'), '');
+    return double.tryParse(digits) ?? 0;
+  }
+
+  /// Normalize Malawi phone to E.164 (+265...) for Paychangu.
+  static String _normalizePhone(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.length >= 9 && (digits.startsWith('0') || digits.startsWith('265'))) {
+      final rest = digits.startsWith('265') ? digits.substring(3) : digits.substring(1);
+      return '+265$rest';
+    }
+    return raw.trim().isEmpty ? '+265888000000' : (raw.startsWith('+') ? raw : '+$raw');
+  }
+
   Future<void> _payNow() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _submitting = true);
 
     try {
-      await Future.delayed(const Duration(seconds: 1));
+      final name = _nameCtrl.text.trim();
+      final email = _emailCtrl.text.trim();
+      final phone = _normalizePhone(_phoneCtrl.text.trim());
+      final parts = name.split(' ');
+      final firstName = parts.isNotEmpty ? parts.first : 'Customer';
+      final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
 
-      if (!mounted) return;
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          title: const Text('Order Created'),
-          content: Text(
-            'Thanks ${_nameCtrl.text.trim()}, we\'ll email your ${widget.product.name} key to ${_emailCtrl.text.trim()}.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context)
-                ..pop()
-                ..pop(),
-              child: const Text('Done'),
+      final amount = _parsePrice(widget.product.price);
+      if (amount <= 0) {
+        ToastHelper.showCustomToast(
+          context,
+          'Invalid price for ${widget.product.name}.',
+          isSuccess: false,
+          errorMessage: 'Invalid amount',
+        );
+        return;
+      }
+
+      try {
+        await InternetAddress.lookup('api.paychangu.com');
+      } on SocketException catch (_) {
+        throw Exception(
+            'Cannot connect to payment service. Please check your internet connection.');
+      }
+
+      final txRef = 'vero-digital-${DateTime.now().millisecondsSinceEpoch}';
+      final description =
+          'Digital: ${widget.product.name} • ${widget.product.subtitle}';
+
+      final response = await http
+          .post(
+            PayChanguConfig.paymentUri,
+            headers: PayChanguConfig.authHeaders,
+            body: json.encode({
+              'tx_ref': txRef,
+              'first_name': firstName,
+              'last_name': lastName,
+              'email': email,
+              'phone_number': phone,
+              'currency': 'MWK',
+              'amount': amount.round().toString(),
+              'payment_methods': ['card', 'mobile_money', 'bank'],
+              'callback_url': PayChanguConfig.callbackUrl,
+              'return_url': PayChanguConfig.returnUrl,
+              'customization': {
+                'title': 'Vero 360 Payment',
+                'description': description,
+              },
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final Map<String, dynamic> responseJson =
+            json.decode(response.body) as Map<String, dynamic>;
+        final status =
+            (responseJson['status'] ?? '').toString().toLowerCase();
+        if (status == 'success') {
+          final checkoutUrl =
+              responseJson['data']['checkout_url'] as String;
+          if (!mounted) return;
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => InAppPaymentPage(
+                checkoutUrl: checkoutUrl,
+                txRef: txRef,
+                totalAmount: amount,
+                rootContext: context,
+                digitalProductName: widget.product.name,
+              ),
             ),
-          ],
-        ),
+          );
+        } else {
+          throw Exception(
+              responseJson['message'] ?? 'Payment failed');
+        }
+      } else {
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      }
+    } on SocketException catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Network error. Please check your internet connection.',
+        isSuccess: false,
+        errorMessage: e.message,
+      );
+    } on TimeoutException {
+      ToastHelper.showCustomToast(
+        context,
+        'Connection timeout. Please try again.',
+        isSuccess: false,
+        errorMessage: 'Request timed out',
       );
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Payment failed: $e')),
+      ToastHelper.showCustomToast(
+        context,
+        'Payment error: $e',
+        isSuccess: false,
+        errorMessage: 'Payment failed',
       );
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -2506,7 +2637,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
               const SizedBox(height: 10),
               const Center(
                 child: Text(
-                  'Secure checkout • You’ll receive your code via email',
+                  'Secure checkout • Contact support for your code or instructions',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: AppColors.body,

@@ -750,6 +750,8 @@ class InAppPaymentPage extends StatefulWidget {
   final String txRef;
   final double totalAmount;
   final BuildContext rootContext;
+  /// When set, this is a digital product purchase: show product-specific messages and go back to homepage after payment.
+  final String? digitalProductName;
 
   const InAppPaymentPage({
     Key? key,
@@ -757,6 +759,7 @@ class InAppPaymentPage extends StatefulWidget {
     required this.txRef,
     required this.totalAmount,
     required this.rootContext,
+    this.digitalProductName,
   }) : super(key: key);
 
   @override
@@ -819,30 +822,94 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
   void _handlePaymentSuccess() {
     _pollTimer?.cancel();
+    final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
+    final productName = widget.digitalProductName ?? 'your order';
+
     ToastHelper.showCustomToast(
       widget.rootContext,
-      'Payment Successful!',
+      isDigital ? 'Payment successful!' : 'Payment Successful!',
       isSuccess: true,
       errorMessage: '',
     );
-    if (mounted) {
-      Navigator.of(context).pop(); // close webview
-      Navigator.of(widget.rootContext).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const OrdersPage()),
-        (_) => false,
-      );
+
+    if (isDigital) {
+      // Digital purchase: thank-you message (email not sent from app)
+      final message =
+          'Thank you for purchasing $productName on Vero. Contact support if you need instructions.';
+      if (mounted) {
+        Navigator.of(context).pop(); // close webview
+        if (!widget.rootContext.mounted) return;
+        showDialog(
+          context: widget.rootContext,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Purchase successful'),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  Navigator.of(widget.rootContext).pop(); // back to homepage (pops DigitalProductDetailPage)
+                },
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        Navigator.of(context).pop(); // close webview
+        Navigator.of(widget.rootContext).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OrdersPage()),
+          (_) => false,
+        );
+      }
     }
   }
 
   void _handlePaymentFailure() {
     _pollTimer?.cancel();
-    ToastHelper.showCustomToast(
-      widget.rootContext,
-      'Payment Failed or Cancelled',
-      isSuccess: false,
-      errorMessage: 'Payment was not completed',
-    );
-    if (mounted) Navigator.of(context).pop();
+    final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
+
+    if (isDigital) {
+      // Digital purchase: failure message (email not sent from app)
+      final message =
+          'Payment was not successful. Contact support if you need help or a refund.';
+      ToastHelper.showCustomToast(
+        widget.rootContext,
+        'Payment failed',
+        isSuccess: false,
+        errorMessage: 'Payment was not completed',
+      );
+      if (mounted) {
+        Navigator.of(context).pop(); // close webview
+        if (!widget.rootContext.mounted) return;
+        showDialog(
+          context: widget.rootContext,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Payment failed'),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  Navigator.of(widget.rootContext).pop(); // back to homepage
+                },
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    } else {
+      ToastHelper.showCustomToast(
+        widget.rootContext,
+        'Payment Failed or Cancelled',
+        isSuccess: false,
+        errorMessage: 'Payment was not completed',
+      );
+      if (mounted) Navigator.of(context).pop();
+    }
   }
 
   @override

@@ -5,20 +5,37 @@ import 'package:flutter/foundation.dart';
 class GoogleMapsConfig {
   static late final String apiKey;
 
-  /// Initialize configuration from .env file
+  /// Initialize configuration from .env file or dart-define
   static Future<void> initialize() async {
+    // First try to get from dart-define
+    const String dartDefineKey = String.fromEnvironment('GOOGLE_MAPS_API_KEY', defaultValue: '');
+    
+    if (dartDefineKey.isNotEmpty) {
+      apiKey = dartDefineKey;
+      if (kDebugMode) {
+        debugPrint('[GoogleMapsConfig] API key loaded from dart-define: ${dartDefineKey.substring(0, 10)}...');
+      }
+      return;
+    }
+
+    // Fallback to .env file
     try {
       await dotenv.load(fileName: ".env");
       apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
+      
+      if (apiKey.isNotEmpty && kDebugMode) {
+        debugPrint('[GoogleMapsConfig] API key loaded from .env: ${apiKey.substring(0, 10)}...');
+      }
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('[GoogleMapsConfig] .env file not found: $e');
+        debugPrint('[GoogleMapsConfig] Error loading .env: $e');
       }
       apiKey = '';
     }
     
     if (kDebugMode && !isConfigured) {
-      debugPrint('[GoogleMapsConfig] Warning: API key not configured');
+      debugPrint('[GoogleMapsConfig] ⚠️ WARNING: No Google Maps API key found!');
+      debugPrint('[GoogleMapsConfig] Please add GOOGLE_MAPS_API_KEY to .env or run with --dart-define');
     }
   }
 
@@ -30,7 +47,8 @@ class GoogleMapsConfig {
     if (apiKey.isEmpty) {
       throw Exception(
           'Google Maps API key not configured. '
-          'Add GOOGLE_MAPS_API_KEY to .env file or set it via environment variables.');
+          'Add GOOGLE_MAPS_API_KEY to .env file or run with: '
+          'flutter run --dart-define=GOOGLE_MAPS_API_KEY=your_api_key');
     }
     return apiKey;
   }

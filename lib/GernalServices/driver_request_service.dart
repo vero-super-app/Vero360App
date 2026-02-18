@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 /// Model for driver-specific ride request
@@ -133,14 +135,24 @@ class DriverRideRequest {
 }
 
 class DriverRequestService {
-  static const String _baseUrl = '/api/rides';
+  static const String _baseUrl = '/ride-share';
 
   /// Get pending ride requests for a driver
   /// Note: For real-time updates, use WebSocket instead of polling
   static Future<List<DriverRideRequest>> getIncomingRequests() async {
     try {
+      // Get auth token
+      final token = await _getAuthToken();
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await http.get(
-        ApiConfig.endpoint('$_baseUrl/pending'),
+        ApiConfig.endpoint('$_baseUrl/pending-rides'),
+        headers: headers,
       );
 
       if (response.statusCode == 200) {
@@ -180,7 +192,7 @@ class DriverRequestService {
   static Future<DriverRideRequest?> getRideRequest(String rideId) async {
     try {
       final response = await http.get(
-        ApiConfig.endpoint('$_baseUrl/$rideId'),
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId'),
       );
 
       if (response.statusCode == 200) {
@@ -208,7 +220,7 @@ class DriverRequestService {
   }) async {
     try {
       final response = await http.patch(
-        ApiConfig.endpoint('$_baseUrl/$rideId/accept'),
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/accept'),
         headers: {
           'Content-Type': 'application/json',
         },
@@ -234,7 +246,7 @@ class DriverRequestService {
   static Future<void> rejectRideRequest(String rideId) async {
     try {
       final response = await http.patch(
-        ApiConfig.endpoint('$_baseUrl/$rideId/reject'),
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/reject'),
         headers: {
           'Content-Type': 'application/json',
         },
@@ -262,7 +274,7 @@ class DriverRequestService {
       }
 
       final response = await http.patch(
-        ApiConfig.endpoint('$_baseUrl/$rideId/status'),
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/status'),
         headers: {
           'Content-Type': 'application/json',
         },
@@ -284,7 +296,7 @@ class DriverRequestService {
   ) async {
     try {
       final response = await http.get(
-        ApiConfig.endpoint('$_baseUrl/drivers/$driverId/active'),
+        ApiConfig.endpoint('$_baseUrl/drivers/$driverId/active-rides'),
       );
 
       if (response.statusCode == 200) {
@@ -328,7 +340,7 @@ class DriverRequestService {
   }) async {
     try {
       final response = await http.patch(
-        ApiConfig.endpoint('$_baseUrl/$rideId/complete'),
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/complete'),
         headers: {
           'Content-Type': 'application/json',
         },
@@ -355,7 +367,7 @@ class DriverRequestService {
   }) async {
     try {
       final response = await http.patch(
-        ApiConfig.endpoint('$_baseUrl/$rideId/cancel'),
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/cancel'),
         headers: {
           'Content-Type': 'application/json',
         },
@@ -370,6 +382,42 @@ class DriverRequestService {
     } catch (e) {
       print('Error cancelling ride: $e');
       rethrow;
+    }
+  }
+
+  /// Get auth token - tries Firebase first, then falls back to SharedPreferences
+  static Future<String?> _getAuthToken() async {
+    try {
+      // Try to get fresh Firebase ID token if user is logged in
+      final firebaseUser = FirebaseAuth.instance.currentUser;
+      if (firebaseUser != null) {
+        try {
+          final freshToken = await firebaseUser.getIdToken();
+          if (freshToken != null && freshToken.isNotEmpty) {
+            print('[DriverRequest] Using fresh Firebase ID token');
+            return freshToken;
+          }
+        } catch (e) {
+          print('[DriverRequest] Error getting fresh Firebase token: $e');
+        }
+      }
+
+      // Fallback to SharedPreferences if Firebase token not available
+      final prefs = await SharedPreferences.getInstance();
+      final storedToken = prefs.getString('jwt_token') ??
+          prefs.getString('token') ??
+          prefs.getString('jwt');
+      
+      if (storedToken != null) {
+        print('[DriverRequest] Using stored token from SharedPreferences');
+        return storedToken;
+      }
+
+      print('[DriverRequest] No authentication token available');
+      return null;
+    } catch (e) {
+      print('Error reading auth token: $e');
+      return null;
     }
   }
 }

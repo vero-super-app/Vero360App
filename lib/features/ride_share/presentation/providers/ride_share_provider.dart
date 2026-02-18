@@ -29,21 +29,26 @@ final placeServiceProvider = Provider<PlaceService>((ref) {
 });
 
 final googlePlacesServiceProvider = Provider<GooglePlacesService>((ref) {
-  try {
-    return GooglePlacesService(apiKey: GoogleMapsConfig.getApiKey());
-  } catch (e) {
-    // Fallback: try to use the apiKey even if empty, let GooglePlacesService handle the error
-    return GooglePlacesService(apiKey: GoogleMapsConfig.apiKey);
+  final apiKey = GoogleMapsConfig.apiKey;
+  if (apiKey.isEmpty) {
+    throw Exception(
+      'Google Maps API key not configured. '
+      'Run: flutter run --dart-define=GOOGLE_MAPS_API_KEY=your_key'
+    );
   }
+  return GooglePlacesService(apiKey: apiKey);
 });
 
 final googleDirectionsServiceProvider =
     Provider<GoogleDirectionsService>((ref) {
-  try {
-    return GoogleDirectionsService(apiKey: GoogleMapsConfig.getApiKey());
-  } catch (e) {
-    return GoogleDirectionsService(apiKey: GoogleMapsConfig.apiKey);
+  final apiKey = GoogleMapsConfig.apiKey;
+  if (apiKey.isEmpty) {
+    throw Exception(
+      'Google Maps API key not configured. '
+      'Run: flutter run --dart-define=GOOGLE_MAPS_API_KEY=your_key'
+    );
   }
+  return GoogleDirectionsService(apiKey: apiKey);
 });
 
 // ==================== CURRENT LOCATION ====================

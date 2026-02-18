@@ -336,13 +336,23 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
 
   Widget _buildErrorState(Object error) {
     String errorMessage = 'Please try again';
+    String errorTitle = 'Search error';
 
-    if (error.toString().contains('API key')) {
-      errorMessage = 'Google Maps API key not configured';
+    if (error.toString().contains('API key') || error.toString().contains('not configured')) {
+      errorTitle = 'Configuration Required';
+      errorMessage = 'Google Maps API key not configured.\nRun: flutter run --dart-define=GOOGLE_MAPS_API_KEY=your_key';
     } else if (error.toString().contains('billing')) {
-      errorMessage = 'Google Maps billing not enabled';
+      errorTitle = 'Billing Not Enabled';
+      errorMessage = 'Enable billing at Google Cloud Console';
     } else if (error.toString().contains('REQUEST_DENIED')) {
-      errorMessage = 'API request denied. Check your API key.';
+      errorTitle = 'API Access Denied';
+      errorMessage = 'Check your API key permissions';
+    } else if (error.toString().contains('Network') || error.toString().contains('connection')) {
+      errorTitle = 'Network Error';
+      errorMessage = 'Check your internet connection';
+    } else if (error.toString().contains('ZERO_RESULTS')) {
+      errorTitle = 'No Results';
+      errorMessage = 'Try searching with different keywords';
     }
 
     return Padding(
@@ -353,7 +363,7 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
           Icon(Icons.error_outline, color: Colors.red[400], size: 40),
           const SizedBox(height: 12),
           Text(
-            'Search error',
+            errorTitle,
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 4),

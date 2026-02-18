@@ -61,7 +61,7 @@ class DriverRideRequest {
     };
   }
 
-  factory DriverRideRequest.fromMap(Map<String, dynamic> map, String id) {
+  factory DriverRideRequest.fromMap(Map<String, dynamic> map, dynamic idParam) {
     // Handle both ISO string and millisecond timestamps
     DateTime parseDate(dynamic value) {
       if (value == null) return DateTime.now();
@@ -78,21 +78,46 @@ class DriverRideRequest {
       return DateTime.now();
     }
 
+    // Parse numeric values that might come as strings or numbers
+    double parseDouble(dynamic value) {
+      if (value == null) return 0.0;
+      if (value is double) return value;
+      if (value is int) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+
+    // Parse ID from various formats to string
+    String parseId(dynamic value) {
+      if (value == null) return '';
+      if (value is String) return value;
+      if (value is int) return value.toString();
+      return value.toString();
+    }
+
+    // Get passenger name from nested passenger object if available
+    String getPassengerName(dynamic passengerData) {
+      if (passengerData is Map && passengerData.containsKey('name')) {
+        return passengerData['name'] ?? 'Unknown';
+      }
+      return 'Unknown';
+    }
+
     return DriverRideRequest(
-      id: map['id'] ?? id,
-      passengerId: map['passengerId'] ?? '',
-      passengerName: map['passengerName'] ?? 'Unknown',
-      pickupLat: (map['pickupLat'] as num?)?.toDouble() ?? 0.0,
-      pickupLng: (map['pickupLng'] as num?)?.toDouble() ?? 0.0,
-      dropoffLat: (map['dropoffLat'] as num?)?.toDouble() ?? 0.0,
-      dropoffLng: (map['dropoffLng'] as num?)?.toDouble() ?? 0.0,
+      id: parseId(map['id'] ?? idParam),
+      passengerId: parseId(map['passengerId']),
+      passengerName: getPassengerName(map['passenger']) ?? (map['passengerName'] ?? 'Unknown'),
+      pickupLat: parseDouble(map['pickupLatitude'] ?? map['pickupLat']),
+      pickupLng: parseDouble(map['pickupLongitude'] ?? map['pickupLng']),
+      dropoffLat: parseDouble(map['dropoffLatitude'] ?? map['dropoffLat']),
+      dropoffLng: parseDouble(map['dropoffLongitude'] ?? map['dropoffLng']),
       pickupAddress: map['pickupAddress'] ?? '',
       dropoffAddress: map['dropoffAddress'] ?? '',
       status: map['status'] ?? 'pending',
       createdAt: parseDate(map['createdAt']),
       estimatedTime: (map['estimatedTime'] as num?)?.toInt() ?? 0,
-      estimatedDistance: (map['estimatedDistance'] as num?)?.toDouble() ?? 0.0,
-      estimatedFare: (map['estimatedFare'] as num?)?.toDouble() ?? 0.0,
+      estimatedDistance: parseDouble(map['estimatedDistance']),
+      estimatedFare: parseDouble(map['estimatedFare']),
       passengerPhone: map['passengerPhone'],
     );
   }
@@ -143,6 +168,8 @@ class DriverRequestService {
     try {
       // Get auth token
       final token = await _getAuthToken();
+      print('[DriverRequest] Token: ${token?.substring(0, 20)}...');
+      
       final headers = <String, String>{
         'Content-Type': 'application/json',
       };
@@ -150,10 +177,12 @@ class DriverRequestService {
         headers['Authorization'] = 'Bearer $token';
       }
 
-      final response = await http.get(
-        ApiConfig.endpoint('$_baseUrl/pending-rides'),
-        headers: headers,
-      );
+      final url = ApiConfig.endpoint('$_baseUrl/pending-rides');
+      print('[DriverRequest] GET $url');
+      
+      final response = await http.get(url, headers: headers);
+      print('[DriverRequest] Response status: ${response.statusCode}');
+      print('[DriverRequest] Response body: ${response.body}');
 
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
@@ -163,6 +192,8 @@ class DriverRequestService {
                 ? (decoded['requests'] as List)
                     .cast<Map<String, dynamic>>()
                 : <Map<String, dynamic>>[]);
+
+        print('[DriverRequest] Found ${requests.length} requests');
 
         // Sort by most recent first
         requests.sort(
@@ -176,14 +207,19 @@ class DriverRequestService {
           },
         );
 
-        return requests
+        final result = requests
             .map((r) =>
                 DriverRideRequest.fromMap(Map<String, dynamic>.from(r), r['id']))
             .toList();
+        
+        print('[DriverRequest] Returning ${result.length} ride requests');
+        return result;
+      } else {
+        print('[DriverRequest] ❌ Request failed with status ${response.statusCode}');
       }
       return [];
     } catch (e) {
-      print('Error getting incoming requests: $e');
+      print('[DriverRequest] ❌ Error getting incoming requests: $e');
       return [];
     }
   }
@@ -217,19 +253,19 @@ class DriverRequestService {
     required String driverName,
     required String driverPhone,
     required String? driverAvatar,
+    int? vehicleId,
   }) async {
     try {
+      final body = <String, dynamic>{
+        'vehicleId': vehicleId,
+      };
+      
       final response = await http.patch(
         ApiConfig.endpoint('$_baseUrl/rides/$rideId/accept'),
         headers: {
           'Content-Type': 'application/json',
         },
-        body: jsonEncode({
-          'driverId': driverId,
-          'driverName': driverName,
-          'driverPhone': driverPhone,
-          'driverAvatar': driverAvatar,
-        }),
+        body: jsonEncode(body),
       );
 
       if (response.statusCode != 200 && response.statusCode != 204) {
@@ -321,7 +357,7 @@ class DriverRequestService {
 
         return rides
             .map((r) =>
-                DriverRideRequest.fromMap(Map<String, dynamic>.from(r), r['id']))
+                DriverRideRequest.fromMap(Map<String, dynamic>.from(r), r['id'] ?? ''))
             .toList();
       }
       return [];

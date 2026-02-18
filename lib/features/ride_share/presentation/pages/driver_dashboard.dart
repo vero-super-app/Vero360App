@@ -714,7 +714,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
   void _navigateToRideRequests(BuildContext context) async {
     try {
-      // Get driver profile to extract driver ID
+      // Get driver profile to extract driver ID and vehicle ID
       final driverProfile = await ref.read(myDriverProfileProvider.future);
 
       if (driverProfile['id'] == null) {
@@ -737,11 +737,21 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           (driverProfile['user']?['name'] ?? 'Driver').toString();
       final driverPhone = (driverProfile['user']?['phone'] ?? '').toString();
       final driverAvatar = driverProfile['user']?['profilepicture']?.toString();
+      
+      // Extract vehicle ID from taxis list
+      int? vehicleId;
+      if (driverProfile['taxis'] is List && (driverProfile['taxis'] as List).isNotEmpty) {
+        final taxiData = driverProfile['taxis'][0];
+        if (taxiData is Map && taxiData.containsKey('id')) {
+          vehicleId = taxiData['id'] as int?;
+        }
+      }
 
       if (kDebugMode) {
         print('[DriverDashboard] Navigating to ride requests:');
         print('  Driver ID: $driverId');
         print('  Driver Name: $driverName');
+        print('  Vehicle ID: $vehicleId');
       }
 
       if (mounted) {
@@ -752,6 +762,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               driverName: driverName,
               driverPhone: driverPhone,
               driverAvatar: driverAvatar,
+              vehicleId: vehicleId,
             ),
           ),
         );

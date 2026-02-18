@@ -10,6 +10,7 @@ class DriverRequestAcceptDialog extends StatefulWidget {
   final String driverName;
   final String driverPhone;
   final String? driverAvatar;
+  final int? vehicleId;
   final Function()? onAccepted;
   final Function()? onRejected;
 
@@ -20,6 +21,7 @@ class DriverRequestAcceptDialog extends StatefulWidget {
     required this.driverName,
     required this.driverPhone,
     this.driverAvatar,
+    this.vehicleId,
     this.onAccepted,
     this.onRejected,
   }) : super(key: key);
@@ -61,22 +63,29 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         driverName: widget.driverName,
         driverPhone: widget.driverPhone,
         driverAvatar: widget.driverAvatar,
+        vehicleId: widget.vehicleId,
       );
 
-      await DriverMessagingService.ensureRideThread(
-        rideId: widget.request.id,
-        passengerId: widget.request.passengerId,
-        driverId: widget.driverId,
-        passengerName: widget.request.passengerName,
-        driverName: widget.driverName,
-        passengerAvatar: null,
-        driverAvatar: widget.driverAvatar,
-      );
+      // Try to create ride thread and send message, but don't fail if they error
+      try {
+        await DriverMessagingService.ensureRideThread(
+          rideId: widget.request.id,
+          passengerId: widget.request.passengerId,
+          driverId: widget.driverId,
+          passengerName: widget.request.passengerName,
+          driverName: widget.driverName,
+          passengerAvatar: null,
+          driverAvatar: widget.driverAvatar,
+        );
 
-      await DriverMessagingService.sendSystemMessage(
-        rideId: widget.request.id,
-        message: '${widget.driverName} accepted your ride request',
-      );
+        await DriverMessagingService.sendSystemMessage(
+          rideId: widget.request.id,
+          message: '${widget.driverName} accepted your ride request',
+        );
+      } catch (e) {
+        // Log but don't fail - messaging is non-critical
+        print('Warning: Failed to create messaging thread: $e');
+      }
 
       if (mounted) {
         Navigator.of(context).pop(true);

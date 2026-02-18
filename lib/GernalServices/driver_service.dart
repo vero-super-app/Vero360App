@@ -140,6 +140,11 @@ class DriverService {
           'latitude': latitude,
           'longitude': longitude,
         },
+        options: Options(
+          // Increase timeout for location updates since backend may be slow
+          receiveTimeout: const Duration(seconds: 30),
+          sendTimeout: const Duration(seconds: 30),
+        ),
       );
       return response.data as Map<String, dynamic>;
     } catch (e) {

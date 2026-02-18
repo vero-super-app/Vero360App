@@ -92,57 +92,68 @@ class DriverRideRequestsWebSocketService {
     try {
       // Get auth token
       final firebaseUser = FirebaseAuth.instance.currentUser;
+      print('[DriverRideRequests] Firebase user: ${firebaseUser?.email}');
+      
       String? token;
 
       if (firebaseUser != null) {
-        token = await firebaseUser.getIdToken();
+        try {
+          token = await firebaseUser.getIdToken();
+          print('[DriverRideRequests] ✅ Got Firebase token: ${token?.substring(0, 20)}...');
+        } catch (e) {
+          print('[DriverRideRequests] ❌ Error getting Firebase token: $e');
+          token = null;
+        }
+      } else {
+        print('[DriverRideRequests] ❌ No Firebase user logged in');
       }
 
       if (token == null || token.isEmpty) {
-        print('[DriverRideRequests] No auth token available');
+        print('[DriverRideRequests] ❌ No auth token available - WebSocket connection skipped');
         _connectionStatusController.add(false);
         return;
       }
+
+      print('[DriverRideRequests] 🔗 Connecting WebSocket with token: ${token.substring(0, 20)}...');
 
       socket = IO.io(
         ApiConfig.prod,
         IO.OptionBuilder()
             .setTransports(['websocket'])
             .disableAutoConnect()
-            .setExtraHeaders({
-              'Authorization': 'Bearer $token',
-            })
+            .setExtraHeaders({'Authorization': 'Bearer $token'})
             .build(),
       );
 
       socket.onConnect((_) {
-        print('[DriverRideRequests] WebSocket connected');
+        print('[DriverRideRequests] ✅ WebSocket connected successfully');
         _isConnected = true;
         _connectionStatusController.add(true);
         _listenForRideRequests();
       });
 
       socket.onDisconnect((_) {
-        print('[DriverRideRequests] WebSocket disconnected');
+        print('[DriverRideRequests] ⏸️ WebSocket disconnected');
         _isConnected = false;
         _connectionStatusController.add(false);
       });
 
       socket.onError((error) {
-        print('[DriverRideRequests] WebSocket error: $error');
+        print('[DriverRideRequests] ❌ WebSocket error: $error');
         _isConnected = false;
         _connectionStatusController.add(false);
       });
 
       socket.onConnectError((error) {
-        print('[DriverRideRequests] WebSocket connection error: $error');
+        print('[DriverRideRequests] ❌ WebSocket connection error: $error');
         _isConnected = false;
         _connectionStatusController.add(false);
       });
 
+      print('[DriverRideRequests] 🔗 Calling socket.connect()');
       socket.connect();
     } catch (e) {
-      print('[DriverRideRequests] Error connecting WebSocket: $e');
+      print('[DriverRideRequests] ❌ Error connecting WebSocket: $e');
       _isConnected = false;
       _connectionStatusController.add(false);
     }

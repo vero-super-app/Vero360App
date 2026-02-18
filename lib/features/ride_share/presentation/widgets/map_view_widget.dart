@@ -394,7 +394,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
     // Smooth animation with more padding and longer duration
     Future.delayed(const Duration(milliseconds: 100), () {
-      if (mounted) {
+      if (mounted && _mapController != null) {
         _mapController.animateCamera(
           CameraUpdate.newLatLngBounds(bounds, 150),
         );
@@ -409,7 +409,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     Duration duration = const Duration(milliseconds: 800),
   }) {
     Future.delayed(const Duration(milliseconds: 50), () {
-      if (mounted) {
+      if (mounted && _mapController != null) {
         _mapController.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(
@@ -537,7 +537,9 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
   @override
   void dispose() {
-    _mapController.dispose();
+    if (_mapController != null) {
+      _mapController.dispose();
+    }
     super.dispose();
   }
 }

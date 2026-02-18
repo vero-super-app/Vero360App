@@ -48,6 +48,12 @@ android {
     buildFeatures {
         buildConfig = true
     }
+
+    packaging {
+        resources {
+            excludes += "META-INF/DEPENDENCIES"
+        }
+    }
 }
 
 flutter {
@@ -56,4 +62,6 @@ flutter {
 
 dependencies {
     implementation("androidx.multidex:multidex:2.0.1")
+    // Apache HTTP library for Google Maps compatibility (required for Android API 28+)
+    implementation("org.apache.httpcomponents:httpclient:4.5.14")
 }

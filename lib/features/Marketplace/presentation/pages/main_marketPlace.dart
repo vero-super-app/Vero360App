@@ -1894,7 +1894,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
               onSubmitted: _onSubmit,
               decoration: InputDecoration(
                 hintText: _aiSearchMode
-                    ? "Search with AI... (e.g. canon camera, budget phone)"
+                    ? "Search with Vero AI... (e.g. canon camera, budget phone)"
                     : "Search items...",
                 prefixIcon: const Icon(Icons.search_rounded, color: Colors.black54),
                 suffixIcon: Row(
@@ -1941,7 +1941,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
               children: [
                 _buildSearchModeChip('All', false),
                 const SizedBox(width: 8),
-                _buildSearchModeChip('◆ AI Search', true),
+                _buildSearchModeChip('◆ VeroAI Search', true),
               ],
             ),
           ),

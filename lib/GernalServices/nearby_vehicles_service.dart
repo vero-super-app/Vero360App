@@ -4,6 +4,14 @@ import 'package:http/http.dart' as http;
 import 'package:vero360_app/config/api_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Helper function to safely parse double values from JSON
+double _parseDouble(dynamic value) {
+  if (value == null) return 0.0;
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value) ?? 0.0;
+  return 0.0;
+}
+
 class NearbyVehicle {
   final int id;
   final int driverId;
@@ -35,14 +43,14 @@ class NearbyVehicle {
     return NearbyVehicle(
       id: json['id'] ?? 0,
       driverId: json['driverId'] ?? 0,
-      latitude: (json['latitude'] ?? 0.0).toDouble(),
-      longitude: (json['longitude'] ?? 0.0).toDouble(),
-      distance: (json['distance'] ?? 0.0).toDouble(),
+      latitude: _parseDouble(json['latitude']),
+      longitude: _parseDouble(json['longitude']),
+      distance: _parseDouble(json['distance']),
       vehicleClass: json['vehicleClass'] ?? 'BIKE',
       make: json['make'] ?? '',
       model: json['model'] ?? '',
       licensePlate: json['licensePlate'] ?? '',
-      rating: (json['rating'] ?? 0.0).toDouble(),
+      rating: _parseDouble(json['rating']),
       totalRides: json['totalRides'] ?? 0,
     );
   }

@@ -228,7 +228,9 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         debugPrint(
             '[MapViewWidget] Pickup or dropoff is null, clearing polylines');
       }
-      if (mounted) setState(() => _polylines.clear());
+      if (mounted) {
+        setState(() => _polylines.clear());
+      }
       return;
     }
 
@@ -275,6 +277,14 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         request: request,
       );
 
+      // Check if widget is still mounted after async operation
+      if (!mounted) {
+        if (kDebugMode) {
+          debugPrint('[MapViewWidget] Widget unmounted, skipping polyline update');
+        }
+        return;
+      }
+
       if (kDebugMode) {
         debugPrint(
             '[MapViewWidget] Response received: ${response.routes.length} routes');
@@ -291,7 +301,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
               '[MapViewWidget] Polyline has ${polylineCoordinates.length} points');
         }
 
-        if (polylineCoordinates.isNotEmpty && mounted) {
+        if (polylineCoordinates.isNotEmpty) {
           if (kDebugMode) {
             debugPrint('[MapViewWidget] Polyline added to map');
           }
@@ -321,7 +331,10 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
       if (kDebugMode) {
         debugPrint('[MapViewWidget] Error loading route: $e');
       }
-      if (mounted) setState(() => _polylines.clear());
+      // Only clear polylines if widget is still mounted
+      if (mounted) {
+        setState(() => _polylines.clear());
+      }
     }
   }
 

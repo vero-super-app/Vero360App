@@ -221,6 +221,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
           dropoffAddress: dropoffAddress,
           estimatedFare: estimatedFare,
           estimatedTime: estimatedTime,
+          httpService: _rideHttpService,
           onRideCompleted: () {
             _showRideCompletionScreen(driverName, driverRating);
           },

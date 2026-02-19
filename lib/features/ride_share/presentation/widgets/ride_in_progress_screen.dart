@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
+import 'package:vero360_app/GeneralModels/ride_model.dart';
 
 class RideInProgressScreen extends StatefulWidget {
   final String rideId;
@@ -11,6 +14,7 @@ class RideInProgressScreen extends StatefulWidget {
   final double estimatedFare;
   final int estimatedTime;
   final VoidCallback onRideCompleted;
+  final RideShareHttpService? httpService;
 
   const RideInProgressScreen({
     required this.rideId,
@@ -21,6 +25,7 @@ class RideInProgressScreen extends StatefulWidget {
     required this.estimatedFare,
     required this.estimatedTime,
     required this.onRideCompleted,
+    this.httpService,
   });
 
   @override
@@ -35,17 +40,48 @@ class _RideInProgressScreenState extends State<RideInProgressScreen> {
   LatLng? userLocation;
   int remainingTime = 0;
   double remainingDistance = 0;
+  bool _rideCompleted = false;
+  StreamSubscription<Ride>? _rideUpdateSubscription;
+  StreamSubscription<Map<String, dynamic>>? _locationUpdateSubscription;
 
   @override
   void initState() {
     super.initState();
     _startLocationTracking();
+    _listenToRideUpdates();
+  }
+
+  void _listenToRideUpdates() {
+    final httpService = widget.httpService ?? RideShareHttpService();
+    _rideUpdateSubscription = httpService.rideUpdateStream.listen((ride) {
+      // Ignore updates if widget is already unmounted
+      if (!mounted) {
+        print('[RideInProgressScreen] Received update after unmount, ignoring');
+        return;
+      }
+
+      print('[RideInProgressScreen] Ride update: status=${ride.status}');
+
+      // When ride is completed
+      if (ride.status == RideStatus.completed && !_rideCompleted) {
+        print('[RideInProgressScreen] Ride completed!');
+        _rideCompleted = true;
+        if (mounted) {
+          widget.onRideCompleted();
+        }
+      }
+    });
   }
 
   void _startLocationTracking() {
-    final httpService = RideShareHttpService();
-    httpService.driverLocationStream.listen((locationData) {
-      if (mounted && locationData.isNotEmpty) {
+    final httpService = widget.httpService ?? RideShareHttpService();
+    _locationUpdateSubscription = httpService.driverLocationStream.listen((locationData) {
+      if (!mounted) {
+        print('[RideInProgressScreen] Received location update after unmount, ignoring');
+        return;
+      }
+
+      if (locationData.isNotEmpty) {
         final lat = locationData['latitude'] as double?;
         final lng = locationData['longitude'] as double?;
 
@@ -105,9 +141,9 @@ class _RideInProgressScreenState extends State<RideInProgressScreen> {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              widget.onRideCompleted();
+              await _completeRideWithBackend();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red[500],
@@ -123,8 +159,51 @@ class _RideInProgressScreenState extends State<RideInProgressScreen> {
     );
   }
 
+  Future<void> _completeRideWithBackend() async {
+    try {
+      print('[RideInProgressScreen] Completing ride: ${widget.rideId}');
+
+      final httpService = widget.httpService ?? RideShareHttpService();
+      final rideIdInt = int.tryParse(widget.rideId) ?? 0;
+
+      if (rideIdInt <= 0) {
+        throw Exception('Invalid ride ID');
+      }
+
+      // Call backend to complete the ride
+      final ride = await httpService.completeRide(
+        rideIdInt,
+        actualDistance: remainingDistance,
+      );
+      print('[RideInProgressScreen] Ride completed successfully. New status: ${ride.status}');
+
+      if (!mounted) {
+        print('[RideInProgressScreen] Widget unmounted, skipping UI updates');
+        return;
+      }
+
+      widget.onRideCompleted();
+    } catch (e) {
+      print('[RideInProgressScreen] Error completing ride: $e');
+      if (!mounted) {
+        print('[RideInProgressScreen] Widget unmounted, skipping error display');
+        return;
+      }
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to complete ride: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   void dispose() {
+    // Cancel stream subscriptions to prevent memory leaks and defunct widget access
+    _rideUpdateSubscription?.cancel();
+    _locationUpdateSubscription?.cancel();
     mapController?.dispose();
     super.dispose();
   }

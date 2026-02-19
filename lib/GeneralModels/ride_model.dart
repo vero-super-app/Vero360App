@@ -273,6 +273,18 @@ class Ride {
       return null;
     }
 
+    DateTime _parseDateTime(dynamic value, {DateTime? fallback}) {
+      if (value == null) return fallback ?? DateTime.now();
+      if (value is String) {
+        try {
+          return DateTime.parse(value);
+        } catch (e) {
+          return fallback ?? DateTime.now();
+        }
+      }
+      return fallback ?? DateTime.now();
+    }
+
     return Ride(
       id: _parseInt(json['id']) ?? 0,
       passengerId: _parseInt(json['passengerId']) ?? 0,
@@ -292,17 +304,17 @@ class Ride {
       actualFare: json['actualFare'] != null
           ? _parseDouble(json['actualFare'])
           : null,
-      status: json['status'] as String,
+      status: json['status'] as String? ?? 'REQUESTED',
       startTime: json['startTime'] != null
-          ? DateTime.parse(json['startTime'] as String)
+          ? _parseDateTime(json['startTime'])
           : null,
       endTime: json['endTime'] != null
-          ? DateTime.parse(json['endTime'] as String)
+          ? _parseDateTime(json['endTime'])
           : null,
       cancellationReason: json['cancellationReason'] as String?,
       passengerNotes: json['passengerNotes'] as String?,
-      createdAt: DateTime.parse(json['createdAt'] as String),
-      updatedAt: DateTime.parse(json['updatedAt'] as String),
+      createdAt: _parseDateTime(json['createdAt']),
+      updatedAt: _parseDateTime(json['updatedAt']),
       vehicle: json['vehicle'] != null
           ? Vehicle.fromJson(json['vehicle'] as Map<String, dynamic>)
           : null,

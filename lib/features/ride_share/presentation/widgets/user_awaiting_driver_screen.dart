@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
@@ -48,6 +50,7 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
   final Set<Marker> markers = {};
   late AnimationController _pulseController;
   bool _rideStarted = false;
+  StreamSubscription<Ride>? _rideUpdateSubscription;
 
   @override
   void initState() {
@@ -64,13 +67,20 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
   
   void _listenToRideUpdates() {
     final httpService = widget.httpService ?? RideShareHttpService();
-    httpService.rideUpdateStream.listen((ride) {
+    _rideUpdateSubscription = httpService.rideUpdateStream.listen((ride) {
+      // Ignore updates if widget is already unmounted
+      if (!mounted) {
+        print('[UserAwaitingDriverScreen] Received update after unmount, ignoring');
+        return;
+      }
+
       print('[UserAwaitingDriverScreen] Ride update: status=${ride.status}');
       
       // When driver starts the ride (IN_PROGRESS)
       if (ride.status == RideStatus.inProgress && !_rideStarted) {
         print('[UserAwaitingDriverScreen] Driver started ride! Status is IN_PROGRESS');
         _rideStarted = true;
+        // Only call onStartRide if not already navigating away
         if (mounted) {
           widget.onStartRide();
         }
@@ -80,6 +90,8 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
 
   @override
   void dispose() {
+    // Cancel the stream subscription to prevent memory leaks and defunct widget access
+    _rideUpdateSubscription?.cancel();
     mapController?.dispose();
     _pulseController.dispose();
     super.dispose();
@@ -127,9 +139,9 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
             child: const Text('Not Yet'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              widget.onStartRide();
+              await _startRideWithBackend();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF10B981),
@@ -143,6 +155,43 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _startRideWithBackend() async {
+    try {
+      print('[UserAwaitingDriverScreen] Calling backend to start ride: ${widget.rideId}');
+      
+      final httpService = widget.httpService ?? RideShareHttpService();
+      final rideIdInt = int.tryParse(widget.rideId) ?? 0;
+      
+      if (rideIdInt <= 0) {
+        throw Exception('Invalid ride ID');
+      }
+
+      // Call backend to update ride status to IN_PROGRESS
+      final ride = await httpService.startRide(rideIdInt);
+      print('[UserAwaitingDriverScreen] Ride started successfully. New status: ${ride.status}');
+      
+      if (!mounted) {
+        print('[UserAwaitingDriverScreen] Widget unmounted, skipping UI updates');
+        return;
+      }
+      
+      widget.onStartRide();
+    } catch (e) {
+      print('[UserAwaitingDriverScreen] Error starting ride: $e');
+      if (!mounted) {
+        print('[UserAwaitingDriverScreen] Widget unmounted, skipping error display');
+        return;
+      }
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start ride: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   @override

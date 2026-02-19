@@ -400,7 +400,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                     _searchQuery.trim().isEmpty
                         ? 'No orders in this status'
                         : 'No orders match your search',
-                    style: const TextStyle(color: Color(0xFF6B778C)),
+                    style: const TextStyle(color: Colors.red),
                   ),
                 ),
               ],

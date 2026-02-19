@@ -127,7 +127,7 @@ const List<DigitalProduct> kDigitalProducts = [
     name: 'Spotify Premium',
     subtitle: '1-month subscription',
     price: 'MWK 8,000',
-    logoAsset: 'assets/brands/spotify.png',
+    logoAsset: 'assets/brands/Spotify.png', 
     icon: Icons.music_note_rounded,
   ),
   DigitalProduct(
@@ -1407,7 +1407,7 @@ class _DealsStrip extends StatelessWidget {
               style: const TextStyle(
                 fontWeight: FontWeight.w800,
                 color: AppColors.title,
-              ),
+              ),  
             ),
           ),
         ),
@@ -1431,7 +1431,7 @@ class DigitalServicesSection extends StatelessWidget {
       title: 'Digital & Virtual Services',
       action: TextButton(
         onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('See all digital services')),
+          const SnackBar(content: Text('more digital services coming soon')),
         ),
         child: const Text(
           'See all',

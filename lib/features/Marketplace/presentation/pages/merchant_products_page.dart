@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
 import 'package:vero360_app/config/api_config.dart';
@@ -28,6 +29,112 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   final CartService _cartService =
       CartService('unused', apiPrefix: ApiConfig.apiPrefix);
 
+  // Brand color to match main marketplace UI
+  static const Color _brandOrange = Color(0xFFFF8A00);
+
+  // Small cache for Firebase download URLs (gs:// or storage paths)
+  final Map<String, Future<String>> _dlUrlCache = {};
+
+  bool _isHttp(String s) => s.startsWith('http://') || s.startsWith('https://');
+  bool _isGs(String s) => s.startsWith('gs://');
+
+  Future<String?> _toFirebaseDownloadUrl(String raw) async {
+    final s = raw.trim();
+    if (s.isEmpty) return null;
+
+    if (_isHttp(s)) return s;
+
+    if (_dlUrlCache.containsKey(s)) return _dlUrlCache[s]!.then((v) => v);
+
+    Future<String> fut() async {
+      if (_isGs(s)) {
+        return FirebaseStorage.instance.refFromURL(s).getDownloadURL();
+      }
+      return FirebaseStorage.instance.ref(s).getDownloadURL();
+    }
+
+    _dlUrlCache[s] = fut();
+    try {
+      return await _dlUrlCache[s]!;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Match main marketplace image handling: base64 bytes, http(s), gs://, and storage paths.
+  Widget buildItemImage(MarketplaceDetailModel item) {
+    if (item.imageBytes != null) {
+      return Image.memory(
+        item.imageBytes!,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    }
+
+    final raw = item.image.trim();
+    if (raw.isEmpty) {
+      return Container(
+        color: const Color(0xFFEDEDED),
+        child: const Center(
+          child: Icon(
+            Icons.image_not_supported_rounded,
+            color: Colors.black38,
+          ),
+        ),
+      );
+    }
+
+    // Direct http(s) URL
+    if (_isHttp(raw)) {
+      return Image.network(
+        raw,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(
+          color: const Color(0xFFEDEDED),
+          child: const Center(
+            child: Icon(
+              Icons.image_not_supported_rounded,
+              color: Colors.black38,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Firebase gs:// or storage path
+    return FutureBuilder<String?>(
+      future: _toFirebaseDownloadUrl(raw),
+      builder: (context, snap) {
+        final url = snap.data;
+        if (url == null || url.isEmpty) {
+          return Container(
+            color: const Color(0xFFEDEDED),
+            child: const Center(
+              child: Icon(
+                Icons.image_not_supported_rounded,
+                color: Colors.black38,
+              ),
+            ),
+          );
+        }
+        return Image.network(
+          url,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Container(
+            color: const Color(0xFFEDEDED),
+            child: const Center(
+              child: Icon(
+                Icons.image_not_supported_rounded,
+                color: Colors.black38,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -37,16 +144,40 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   Future<List<MarketplaceDetailModel>> _loadMerchantItems() async {
     try {
       // Same collection used elsewhere: 'marketplace_items'
-      final snap = await _firestore
+      final String id = widget.merchantId.trim();
+      final String name = widget.merchantName.trim();
+
+      // 1) Try match by merchantId (new items) – no orderBy here to avoid composite index requirement
+      final idSnap = await _firestore
           .collection('marketplace_items')
-          .where('merchantId', isEqualTo: widget.merchantId.trim())
-          .orderBy('createdAt', descending: true)
+          .where('merchantId', isEqualTo: id)
           .get();
 
-      final all = snap.docs
+      var docs = idSnap.docs;
+
+      // 2) Fallback: some older items may only have merchantName or numeric merchantId
+      if (docs.isEmpty && name.isNotEmpty) {
+        final nameSnap = await _firestore
+            .collection('marketplace_items')
+            .where('merchantName', isEqualTo: name)
+            .get();
+        docs = nameSnap.docs;
+      }
+
+      final all = docs
           .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
           .where((item) => item.isActive)
           .toList();
+
+      // Sort in-memory by createdAt desc so newest items appear first
+      all.sort((a, b) {
+        final da = a.createdAt;
+        final db = b.createdAt;
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return db.compareTo(da);
+      });
 
       return all;
     } catch (e) {
@@ -59,7 +190,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.merchantName),
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        title: Text('${widget.merchantName} Store'),
       ),
       body: FutureBuilder<List<MarketplaceDetailModel>>(
         future: _future,
@@ -108,6 +241,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
               final it = items[index];
               return _MerchantProductCard(
                 item: it,
+                imageBuilder: (item) => buildItemImage(item),
                 onOpen: () {
                   // If the Firestore item has a valid backend/sql id, open the full details page.
                   if (!it.hasValidSqlItemId) return;
@@ -156,11 +290,13 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 class _MerchantProductCard extends StatelessWidget {
   final MarketplaceDetailModel item;
   final VoidCallback onOpen;
+  final Widget Function(MarketplaceDetailModel) imageBuilder;
 
   const _MerchantProductCard({
     Key? key,
     required this.item,
     required this.onOpen,
+    required this.imageBuilder,
   }) : super(key: key);
 
   @override
@@ -180,7 +316,7 @@ class _MerchantProductCard extends StatelessWidget {
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
                 ),
-                child: _image(),
+                child: imageBuilder(item),
               ),
             ),
             Padding(
@@ -224,7 +360,7 @@ class _MerchantProductCard extends StatelessWidget {
         color: const Color(0xFFEDEDED),
         child: const Center(
           child: Icon(
-            Icons.image_not_supported_rounded,
+                                             Icons.image_not_supported_rounded,
             color: Colors.black38,
           ),
         ),

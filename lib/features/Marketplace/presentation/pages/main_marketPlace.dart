@@ -423,8 +423,11 @@ class _MarketPageState extends State<MarketPage> {
 
   bool _looksLikeBase64(String s) {
     final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
-    if (x.length < 150) return false;
-    return RegExp(r'^[A-Za-z0-9+/=\s]+$').hasMatch(x);
+    if (x.isEmpty) return false;
+    // Allow shorter encoded images as well; URLs/storage paths contain characters
+    // like ':' and '/' so they will fail this charset check.
+    return x.length >= 40 &&
+        RegExp(r'^[A-Za-z0-9+/=\s]+$').hasMatch(x);
   }
 
   Future<String?> _toFirebaseDownloadUrl(String raw) async {

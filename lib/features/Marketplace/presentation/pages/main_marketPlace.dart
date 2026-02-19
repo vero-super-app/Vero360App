@@ -413,7 +413,13 @@ class _MarketPageState extends State<MarketPage> {
   bool _loading = false;
   bool _photoMode = false;
 
+  /// AI Search mode: when true, shows AI summary, product highlights, and smarter search
+  bool _aiSearchMode = true;
+
   late Future<List<MarketplaceDetailModel>> _future;
+
+  /// AI summary text (generated from results). Empty when not in AI mode or no query.
+  String _aiSummary = '';
 
   // ✅ Cache firebase download URLs to avoid repeated calls
   final Map<String, Future<String>> _dlUrlCache = {};
@@ -594,6 +600,7 @@ class _MarketPageState extends State<MarketPage> {
     _debounce?.cancel();
     _searchCtrl.removeListener(_onSearchChanged);
     _searchCtrl.dispose();
+    _askQuestionCtrl.dispose();
     super.dispose();
   }
 
@@ -782,9 +789,12 @@ class _MarketPageState extends State<MarketPage> {
     }
   }
 
+  /// Smarter search: matches name, description, category, location.
+  /// In AI mode: also uses word splitting for better relevance.
   Future<List<MarketplaceDetailModel>> _searchByName(String raw) async {
     final q = raw.trim();
     if (q.isEmpty || q.length < 2) {
+      _aiSummary = '';
       return _loadAll(category: _selectedCategory);
     }
 
@@ -796,12 +806,73 @@ class _MarketPageState extends State<MarketPage> {
     try {
       final all = await _loadAll(category: _selectedCategory);
       final lower = q.toLowerCase();
-      return all
-          .where((item) => item.name.toLowerCase().contains(lower))
-          .toList();
+      final words = lower.split(RegExp(r'\s+')).where((w) => w.length >= 2).toList();
+
+      List<MarketplaceDetailModel> matches;
+      if (_aiSearchMode && words.length > 1) {
+        matches = all.where((item) {
+          final name = item.name.toLowerCase();
+          final desc = (item.description ?? '').toLowerCase();
+          final cat = item.category.toLowerCase();
+          final loc = (item.location ?? '').toLowerCase();
+          final searchable = '$name $desc $cat $loc';
+          return words.every((w) => searchable.contains(w));
+        }).toList();
+      } else {
+        matches = all.where((item) {
+          final name = item.name.toLowerCase();
+          final desc = (item.description ?? '').toLowerCase();
+          final cat = item.category.toLowerCase();
+          final loc = (item.location ?? '').toLowerCase();
+          final searchable = '$name $desc $cat $loc';
+          return searchable.contains(lower);
+        }).toList();
+      }
+
+      if (_aiSearchMode && matches.isNotEmpty) {
+        _aiSummary = _buildAiSummary(q, matches);
+      } else {
+        _aiSummary = '';
+      }
+      return matches;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  String _buildAiSummary(String query, List<MarketplaceDetailModel> items) {
+    final catCounts = <String, int>{};
+    for (final i in items) {
+      final c = i.category.isEmpty ? 'other' : i.category;
+      catCounts[c] = (catCounts[c] ?? 0) + 1;
+    }
+    final topCats = catCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final catsText = topCats.take(3).map((e) => _titleCase(e.key)).join(', ');
+    final priceMin = items.map((i) => i.price).reduce((a, b) => a < b ? a : b);
+    final priceMax = items.map((i) => i.price).reduce((a, b) => a > b ? a : b);
+    return 'Based on your search for "$query", I found ${items.length} relevant products across ${topCats.length} categories${topCats.isNotEmpty ? ' ($catsText)' : ''}. Prices range from MWK ${priceMin.toStringAsFixed(0)} to MWK ${priceMax.toStringAsFixed(0)}. Here are the best matches for you.';
+  }
+
+  /// AI highlight for a product (heuristic, ready to swap for real AI later).
+  String _getAiHighlight(MarketplaceDetailModel item) {
+    final sb = StringBuffer();
+    final rating = item.sellerRating ?? 0;
+    if (rating >= 4.5) sb.write('Top-rated seller');
+    else if (rating >= 4) sb.write('Reliable seller');
+    if (sb.isNotEmpty && item.price > 0) sb.write(' • ');
+    sb.write(_mwk(item.price));
+    if ((item.description ?? '').toLowerCase().contains('new') ||
+        (item.description ?? '').toLowerCase().contains('brand')) {
+      if (sb.isNotEmpty) sb.write(' • ');
+      sb.write('Like new');
+    }
+    if ((item.description ?? '').toLowerCase().contains('free ship') ||
+        (item.description ?? '').toLowerCase().contains('delivery')) {
+      if (sb.isNotEmpty) sb.write(' • ');
+      sb.write('Fast delivery');
+    }
+    return sb.toString().trim().isEmpty ? _mwk(item.price) : sb.toString();
   }
 
   Future<List<MarketplaceDetailModel>> _searchByPhoto(File file) async {
@@ -1070,6 +1141,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
   void _setCategory(String? cat) {
     _searchCtrl.clear();
     _lastQuery = '';
+    _aiSummary = '';
     setState(() => _future = _loadAll(category: cat));
   }
 
@@ -1142,6 +1214,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
   Future<void> _refresh() async {
     _searchCtrl.clear();
     _lastQuery = '';
+    _aiSummary = '';
     setState(() => _future = _loadAll(category: _selectedCategory));
     await _future;
   }
@@ -1552,6 +1625,42 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     });
   }
 
+  Widget _buildSearchModeChip(String title, bool isAiMode) {
+    final selected = _aiSearchMode == isAiMode;
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () {
+        setState(() {
+          _aiSearchMode = isAiMode;
+          if (!isAiMode) _aiSummary = '';
+          _future = _lastQuery.isNotEmpty
+              ? _searchByName(_lastQuery)
+              : _loadAll(category: _selectedCategory);
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF1E88E5) : Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                color: selected ? Colors.white : Colors.black87,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCategoryChip(
     String title, {
     required bool isSelected,
@@ -1651,6 +1760,27 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                     color: Colors.black,
                   ),
                 ),
+                if (_aiSearchMode && _lastQuery.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(Icons.auto_awesome, size: 12, color: Colors.blue.shade600),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          _getAiHighlight(item),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.blue.shade700,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 4),
                 Text(
                   _mwk(item.price),
@@ -1723,7 +1853,23 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     );
   }
 
-  String _titleCase(String s) => s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
+  String _titleCase(String s) =>
+      s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
+
+  final TextEditingController _askQuestionCtrl = TextEditingController();
+
+  void _onAskQuestionSubmitted() {
+    final q = _askQuestionCtrl.text.trim();
+    if (q.isEmpty) return;
+    _askQuestionCtrl.clear();
+    if (!mounted) return;
+    ToastHelper.showCustomToast(
+      context,
+      'AI chat coming soon! Ask questions like "Compare these products" or "Best value?"',
+      isSuccess: true,
+      errorMessage: 'Vero AI',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1741,42 +1887,65 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(12.0),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             child: TextField(
               controller: _searchCtrl,
               textInputAction: TextInputAction.search,
               onSubmitted: _onSubmit,
               decoration: InputDecoration(
-                hintText: "Search items...",
-                prefixIcon: const Icon(Icons.search),
+                hintText: _aiSearchMode
+                    ? "Search with AI... (e.g. canon camera, budget phone)"
+                    : "Search items...",
+                prefixIcon: const Icon(Icons.search_rounded, color: Colors.black54),
                 suffixIcon: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (_searchCtrl.text.isNotEmpty)
                       IconButton(
-                        icon: const Icon(Icons.clear),
+                        icon: const Icon(Icons.close, size: 20),
                         onPressed: () {
                           _searchCtrl.clear();
                           _onSubmit('');
                         },
                       ),
                     IconButton(
-                      icon: const Icon(Icons.camera_alt),
+                      icon: const Icon(Icons.camera_alt_outlined),
                       onPressed: _showPhotoPickerSheet,
                       tooltip: 'Search by Photo',
                     ),
                   ],
                 ),
                 filled: true,
-                fillColor: Colors.white,
+                fillColor: Colors.grey.shade50,
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(30),
-                  borderSide: BorderSide.none,
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
                 ),
-                contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(color: Color(0xFFFF8A00), width: 2),
+                ),
+                contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
               ),
             ),
           ),
+          SizedBox(
+            height: 40,
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildSearchModeChip('All', false),
+                const SizedBox(width: 8),
+                _buildSearchModeChip('◆ AI Search', true),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
           SizedBox(
             height: 44,
             child: ListView(
@@ -1853,37 +2022,125 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                     );
                   }
 
-                  return Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final isWide = constraints.maxWidth >= 700;
-                        final crossAxisCount = isWide ? 3 : 2;
-                        final childAspectRatio = isWide ? 0.70 : 0.68;
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isWide = constraints.maxWidth >= 700;
+                      final crossAxisCount = isWide ? 3 : 2;
+                      final childAspectRatio = isWide ? 0.70 : 0.68;
 
-                        return GridView.builder(
-                          itemCount: items.length,
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: crossAxisCount,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                            childAspectRatio: childAspectRatio,
+                      return CustomScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        slivers: [
+                          if (_aiSummary.isNotEmpty)
+                            SliverToBoxAdapter(
+                              child: Container(
+                                margin: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFE3F2FD),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.blue.shade200,
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(Icons.auto_awesome,
+                                        size: 20, color: Colors.blue.shade700),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        _aiSummary,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          height: 1.4,
+                                          color: Colors.blue.shade900,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            sliver: SliverGrid(
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: crossAxisCount,
+                                crossAxisSpacing: 12,
+                                mainAxisSpacing: 12,
+                                childAspectRatio: childAspectRatio,
+                              ),
+                              delegate: SliverChildBuilderDelegate(
+                                (context, i) {
+                                  final item = items[i];
+                                  return GestureDetector(
+                                    onTap: () => _showDetailsBottomSheet(item),
+                                    child: _buildMarketItem(item),
+                                  );
+                                },
+                                childCount: items.length,
+                              ),
+                            ),
                           ),
-                          itemBuilder: (context, i) {
-                            final item = items[i];
-                            return GestureDetector(
-                              onTap: () => _showDetailsBottomSheet(item),
-                              child: _buildMarketItem(item),
-                            );
-                          },
-                        );
-                      },
-                    ),
+                        ],
+                      );
+                    },
                   );
                 },
               ),
             ),
           ),
+          if (_aiSearchMode)
+            Container(
+              padding: EdgeInsets.fromLTRB(12, 8, 12, 8 + MediaQuery.of(context).padding.bottom),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.06),
+                    blurRadius: 8,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _askQuestionCtrl,
+                      onSubmitted: (_) => _onAskQuestionSubmitted(),
+                      decoration: InputDecoration(
+                        hintText: 'Ask Vero AI a question about your search...',
+                        hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                        filled: true,
+                        fillColor: Colors.grey.shade100,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: _onAskQuestionSubmitted,
+                    icon: const Icon(Icons.send_rounded, size: 22),
+                    style: IconButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E88E5),
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );

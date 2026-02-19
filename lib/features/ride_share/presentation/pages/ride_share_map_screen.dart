@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/place_search_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/bookmarked_places_modal.dart';
@@ -36,6 +37,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   late AnimationController _fadeAnimationController;
   bool _checkingConnectivity = true;
   bool _isOffline = false;
+  RideShareHttpService? _rideHttpService;
 
   void _onMapCreated(GoogleMapController controller) {
     mapController = controller;
@@ -117,6 +119,20 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
 
   void _showWaitingForDriverScreen(String rideId) {
     _unfocusKeyboard();
+
+    // Subscribe to WebSocket immediately when showing waiting screen
+    _rideHttpService = RideShareHttpService();
+    final rideIdInt = int.tryParse(rideId) ?? 0;
+    if (rideIdInt > 0) {
+      // Subscribe asynchronously - don't block UI
+      _rideHttpService!.subscribeToRideTracking(rideIdInt).then((_) {
+        print(
+            '[RideShareMapScreen] Subscribed to ride tracking for ride: $rideId');
+      }).catchError((e) {
+        print('[RideShareMapScreen] Failed to subscribe to ride tracking: $e');
+      });
+    }
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -125,6 +141,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       barrierColor: Colors.black.withValues(alpha: 0.3),
       builder: (_) => RideWaitingScreen(
         rideId: rideId,
+        httpService: _rideHttpService,
         onRideAccepted: (driver) {
           setState(() => _isLoadingRide = false);
           _showUserAwaitingDriverScreen(driver, rideId);
@@ -163,6 +180,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
               estimatedFare: 250.0,
               driverLocation:
                   LatLng(driver.latitude ?? 0.0, driver.longitude ?? 0.0),
+              httpService: _rideHttpService,
               onStartRide: () {
                 _showRideInProgressScreen(
                   rideId,
@@ -301,196 +319,210 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
             : _isOffline
                 ? _buildNoInternetScreen()
                 : FutureBuilder<bool>(
-          future: AuthStorage.isLoggedIn(),
-          builder: (context, authSnapshot) {
-            if (authSnapshot.connectionState == ConnectionState.waiting) {
-              return const Center(
-                child: CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00)),
-                ),
-              );
-            }
-
-            if (!(authSnapshot.data ?? false)) {
-              return _buildAuthRequiredScreen();
-            }
-
-            return Column(
-              children: [
-                // Map view - 60% of screen
-                Expanded(
-                  flex: 3,
-                  child: Consumer(
-                    builder: (context, ref, _) {
-                      final currentLocation =
-                          ref.watch(currentLocationProvider);
-                      final dropoffPlace =
-                          ref.watch(selectedDropoffPlaceProvider);
-
-                      return currentLocation.when(
-                        data: (position) {
-                          // Cache pickup place to ensure object identity
-                          if (position != null &&
-                              (_cachedPickupPlace == null ||
-                                  _cachedPickupPlace!.latitude !=
-                                      position.latitude ||
-                                  _cachedPickupPlace!.longitude !=
-                                      position.longitude)) {
-                            _cachedPickupPlace = Place(
-                              id: 'current_location',
-                              name: 'Your Location',
-                              address: 'Current Location',
-                              latitude: position.latitude,
-                              longitude: position.longitude,
-                              type: PlaceType.RECENT,
-                            );
-                          }
-
-                          return MapViewWidget(
-                            onMapCreated: _onMapCreated,
-                            initialPosition: position,
-                            pickupPlace: _cachedPickupPlace,
-                            dropoffPlace: dropoffPlace,
-                          );
-                        },
-                        loading: () => const Center(
+                    future: AuthStorage.isLoggedIn(),
+                    builder: (context, authSnapshot) {
+                      if (authSnapshot.connectionState ==
+                          ConnectionState.waiting) {
+                        return const Center(
                           child: CircularProgressIndicator(
                             valueColor: AlwaysStoppedAnimation<Color>(
                                 Color(0xFFFF8A00)),
                           ),
-                        ),
-                        error: (error, __) => Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.location_off_outlined,
-                                size: 48,
-                                color: Colors.grey[400],
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'Unable to load location',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodyLarge
-                                    ?.copyWith(
-                                      color: Colors.grey[600],
-                                      fontWeight: FontWeight.w500,
+                        );
+                      }
+
+                      if (!(authSnapshot.data ?? false)) {
+                        return _buildAuthRequiredScreen();
+                      }
+
+                      return Column(
+                        children: [
+                          // Map view - 60% of screen
+                          Expanded(
+                            flex: 3,
+                            child: Consumer(
+                              builder: (context, ref, _) {
+                                final currentLocation =
+                                    ref.watch(currentLocationProvider);
+                                final dropoffPlace =
+                                    ref.watch(selectedDropoffPlaceProvider);
+
+                                return currentLocation.when(
+                                  data: (position) {
+                                    // Cache pickup place to ensure object identity
+                                    if (position != null &&
+                                        (_cachedPickupPlace == null ||
+                                            _cachedPickupPlace!.latitude !=
+                                                position.latitude ||
+                                            _cachedPickupPlace!.longitude !=
+                                                position.longitude)) {
+                                      _cachedPickupPlace = Place(
+                                        id: 'current_location',
+                                        name: 'Your Location',
+                                        address: 'Current Location',
+                                        latitude: position.latitude,
+                                        longitude: position.longitude,
+                                        type: PlaceType.RECENT,
+                                      );
+                                    }
+
+                                    return MapViewWidget(
+                                      onMapCreated: _onMapCreated,
+                                      initialPosition: position,
+                                      pickupPlace: _cachedPickupPlace,
+                                      dropoffPlace: dropoffPlace,
+                                    );
+                                  },
+                                  loading: () => const Center(
+                                    child: CircularProgressIndicator(
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                          Color(0xFFFF8A00)),
                                     ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Please enable location services',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(color: Colors.grey[500]),
-                              ),
-                            ],
+                                  ),
+                                  error: (error, __) => Center(
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.location_off_outlined,
+                                          size: 48,
+                                          color: Colors.grey[400],
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'Unable to load location',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyLarge
+                                              ?.copyWith(
+                                                color: Colors.grey[600],
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'Please enable location services',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.copyWith(
+                                                  color: Colors.grey[500]),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                // Search and booking section - 45% of screen
-                Expanded(
-                  flex: 2,
-                  child: Container(
-                    color: Colors.white,
-                    child: Stack(
-                      children: [
-                        SingleChildScrollView(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                    left: 16, right: 16, top: 20, bottom: 12),
-                                child: Column(
-                                  children: [
-                                    _buildPickupLocationCard(),
-                                    const SizedBox(height: 14),
-                                    if (selectedDropoffPlace == null)
-                                      PlaceSearchWidget(
-                                        searchController: _searchController,
-                                        focusNode: _searchFocusNode,
-                                        onToggleBookmarkedPlaces:
-                                            _toggleBookmarkedPlacesModal,
-                                        readOnly: true,
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) =>
-                                                  const DestinationSearchScreen(),
+                          // Search and booking section - 45% of screen
+                          Expanded(
+                            flex: 2,
+                            child: Container(
+                              color: Colors.white,
+                              child: Stack(
+                                children: [
+                                  SingleChildScrollView(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                              left: 16,
+                                              right: 16,
+                                              top: 20,
+                                              bottom: 12),
+                                          child: Column(
+                                            children: [
+                                              _buildPickupLocationCard(),
+                                              const SizedBox(height: 14),
+                                              if (selectedDropoffPlace == null)
+                                                PlaceSearchWidget(
+                                                  searchController:
+                                                      _searchController,
+                                                  focusNode: _searchFocusNode,
+                                                  onToggleBookmarkedPlaces:
+                                                      _toggleBookmarkedPlacesModal,
+                                                  readOnly: true,
+                                                  onTap: () {
+                                                    Navigator.push(
+                                                      context,
+                                                      MaterialPageRoute(
+                                                        builder: (context) =>
+                                                            const DestinationSearchScreen(),
+                                                      ),
+                                                    );
+                                                  },
+                                                )
+                                              else
+                                                _buildDropoffLocationCard(
+                                                    selectedDropoffPlace),
+                                            ],
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 16, vertical: 12),
+                                          child: _buildActionButton(
+                                              selectedDropoffPlace),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  // Search results popup overlay
+                                  if (_showBookmarkedPlaces)
+                                    Positioned(
+                                      bottom: 0,
+                                      left: 0,
+                                      right: 0,
+                                      top: 0,
+                                      child: AnimatedContainer(
+                                        duration:
+                                            const Duration(milliseconds: 300),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black
+                                              .withValues(alpha: 0.2),
+                                        ),
+                                        child: Center(
+                                          child: Container(
+                                            width: double.infinity,
+                                            margin: const EdgeInsets.symmetric(
+                                                horizontal: 12, vertical: 40),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.black
+                                                      .withValues(alpha: 0.12),
+                                                  blurRadius: 24,
+                                                  offset: const Offset(0, 8),
+                                                  spreadRadius: 2,
+                                                ),
+                                              ],
                                             ),
-                                          );
-                                        },
-                                      )
-                                    else
-                                      _buildDropoffLocationCard(
-                                          selectedDropoffPlace),
-                                  ],
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 12),
-                                child: _buildActionButton(selectedDropoffPlace),
-                              ),
-                            ],
-                          ),
-                        ),
-                        // Search results popup overlay
-                        if (_showBookmarkedPlaces)
-                          Positioned(
-                            bottom: 0,
-                            left: 0,
-                            right: 0,
-                            top: 0,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 300),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.2),
-                              ),
-                              child: Center(
-                                child: Container(
-                                  width: double.infinity,
-                                  margin: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 40),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black
-                                            .withValues(alpha: 0.12),
-                                        blurRadius: 24,
-                                        offset: const Offset(0, 8),
-                                        spreadRadius: 2,
+                                            child: ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
+                                              child: BookmarkedPlacesModal(
+                                                onClose:
+                                                    _toggleBookmarkedPlacesModal,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                       ),
-                                    ],
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(16),
-                                    child: BookmarkedPlacesModal(
-                                      onClose: _toggleBookmarkedPlacesModal,
                                     ),
-                                  ),
-                                ),
+                                ],
                               ),
                             ),
                           ),
-                      ],
-                    ),
+                        ],
+                      );
+                    },
                   ),
-                ),
-              ],
-            );
-          },
-        ),
       ),
     );
   }
@@ -500,9 +532,12 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     return pickupAsync.when(
       // Defensive null coalescing for async provider (avoids runtime Null subtype of String)
       data: (pickup) => _buildPickupCardContent(
-        userName: pickup.userName ?? 'Your Location', // ignore: unnecessary_null_in_if_null_operators
-        address: pickup.address ?? 'Current Location', // ignore: unnecessary_null_in_if_null_operators
-        profilePictureUrl: pickup.profilePictureUrl ?? '', // ignore: unnecessary_null_in_if_null_operators
+        userName: pickup.userName ??
+            'Your Location', // ignore: unnecessary_null_in_if_null_operators
+        address: pickup.address ??
+            'Current Location', // ignore: unnecessary_null_in_if_null_operators
+        profilePictureUrl: pickup.profilePictureUrl ??
+            '', // ignore: unnecessary_null_in_if_null_operators
       ),
       loading: () => _buildPickupCardContent(
         userName: 'Your Location',

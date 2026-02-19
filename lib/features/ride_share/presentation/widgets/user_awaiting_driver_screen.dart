@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
+import 'package:vero360_app/GeneralModels/ride_model.dart';
 
 class UserAwaitingDriverScreen extends StatefulWidget {
   final String rideId;
@@ -16,6 +18,7 @@ class UserAwaitingDriverScreen extends StatefulWidget {
   final double estimatedFare;
   final LatLng? driverLocation;
   final VoidCallback onStartRide;
+  final RideShareHttpService? httpService;
 
   const UserAwaitingDriverScreen({
     required this.rideId,
@@ -32,6 +35,7 @@ class UserAwaitingDriverScreen extends StatefulWidget {
     required this.estimatedFare,
     this.driverLocation,
     required this.onStartRide,
+    this.httpService,
   });
 
   @override
@@ -43,6 +47,7 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
   GoogleMapController? mapController;
   final Set<Marker> markers = {};
   late AnimationController _pulseController;
+  bool _rideStarted = false;
 
   @override
   void initState() {
@@ -52,6 +57,25 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
+    
+    // Listen to ride status updates
+    _listenToRideUpdates();
+  }
+  
+  void _listenToRideUpdates() {
+    final httpService = widget.httpService ?? RideShareHttpService();
+    httpService.rideUpdateStream.listen((ride) {
+      print('[UserAwaitingDriverScreen] Ride update: status=${ride.status}');
+      
+      // When driver starts the ride (IN_PROGRESS)
+      if (ride.status == RideStatus.inProgress && !_rideStarted) {
+        print('[UserAwaitingDriverScreen] Driver started ride! Status is IN_PROGRESS');
+        _rideStarted = true;
+        if (mounted) {
+          widget.onStartRide();
+        }
+      }
+    });
   }
 
   @override

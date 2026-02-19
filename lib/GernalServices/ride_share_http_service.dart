@@ -14,10 +14,32 @@ class RideShareHttpService {
   late StreamController<Map<String, dynamic>> _driverLocationController;
   late StreamController<Map<String, dynamic>> _rideStatusController;
   late StreamController<Ride> _rideUpdateController;
+  Future<void>? _initializationFuture;
 
   RideShareHttpService() {
     _initializeControllers();
-    _initializeSocket();
+    // Initialize socket asynchronously without blocking constructor
+    _initializationFuture = _initializeSocket().catchError((e) {
+      print('[RideShareHttpService] Error initializing socket in constructor: $e');
+    });
+  }
+
+  /// Ensure socket is initialized before using it
+  Future<void> _ensureSocketInitialized() async {
+    print('[RideShareHttpService] _ensureSocketInitialized called');
+    if (_initializationFuture == null) {
+      print('[RideShareHttpService] Creating new initialization future');
+      _initializationFuture = _initializeSocketNow();
+    }
+    await _initializationFuture;
+    print('[RideShareHttpService] Socket initialization complete');
+  }
+
+  /// Actual socket initialization
+  Future<void> _initializeSocketNow() async {
+    await _initializeSocket();
+    // Wait a brief moment for socket to establish connection
+    await Future.delayed(const Duration(milliseconds: 500));
   }
 
   /// Get auth token - tries Firebase first, then falls back to SharedPreferences
@@ -74,28 +96,32 @@ class RideShareHttpService {
       _rideStatusController.stream;
   Stream<Ride> get rideUpdateStream => _rideUpdateController.stream;
 
-  void _initializeSocket() {
+  Future<void> _initializeSocket() async {
+    // Get auth token before connecting
+    final token = await _getAuthToken();
+    
     socket = IO.io(
       ApiConfig.prod,
       IO.OptionBuilder()
           .setTransports(['websocket'])
           .disableAutoConnect()
+          .setQuery({'token': token})
           .build(),
     );
 
     socket.connect();
     socket.onConnect((_) {
-      print('Socket connected');
+      print('[RideShareHttpService] Socket connected with token');
       _connectionStatusController.add('connected');
     });
 
     socket.onDisconnect((_) {
-      print('Socket disconnected');
+      print('[RideShareHttpService] Socket disconnected');
       _connectionStatusController.add('disconnected');
     });
 
     socket.onError((error) {
-      print('Socket error: $error');
+      print('[RideShareHttpService] Socket error: $error');
       _connectionStatusController.add('error');
     });
   }
@@ -212,10 +238,12 @@ class RideShareHttpService {
       if (response.statusCode == 201) {
         return Ride.fromJson(jsonDecode(response.body));
       } else {
-        throw Exception('Failed to request ride: ${response.statusCode}');
+        print('[RideShareHttpService] Ride creation failed: ${response.statusCode}');
+        print('[RideShareHttpService] Response: ${response.body}');
+        throw Exception('Failed to request ride: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
-      print('Error requesting ride: $e');
+      print('[RideShareHttpService] Error requesting ride: $e');
       rethrow;
     }
   }
@@ -515,35 +543,46 @@ class RideShareHttpService {
   // ============== REAL-TIME UPDATES VIA WEBSOCKET ==============
 
   /// Subscribe to passenger ride tracking
-  void subscribeToRideTracking(int rideId) {
+  Future<void> subscribeToRideTracking(int rideId) async {
+    print('[RideShareHttpService] subscribeToRideTracking called for ride $rideId');
+    await _ensureSocketInitialized();
+    print('[RideShareHttpService] Socket initialized, connected: ${socket.connected}');
+    
     socket.emit('passenger:subscribe', {'rideId': rideId});
+    print('[RideShareHttpService] Emitted passenger:subscribe for ride $rideId');
 
     // Listen for driver location updates
     socket.on('driver:location:updated', (data) {
-      print('Driver location updated: $data');
+      print('[RideShareHttpService] Driver location updated: $data');
       _driverLocationController.add(Map<String, dynamic>.from(data));
     });
 
     // Listen for ride status updates
     socket.on('ride:status:updated', (data) {
-      print('Ride status updated: $data');
+      print('[RideShareHttpService] 🎉 Ride status updated received: $data');
       _rideStatusController.add(Map<String, dynamic>.from(data));
       try {
         final ride = Ride.fromJson(Map<String, dynamic>.from(data));
+        print('[RideShareHttpService] Parsed ride: ${ride.id}, status: ${ride.status}, driverId: ${ride.driverId}');
         _rideUpdateController.add(ride);
       } catch (e) {
-        print('Error parsing ride update: $e');
+        print('[RideShareHttpService] ❌ Error parsing ride update: $e');
+        print('[RideShareHttpService] Data was: $data');
       }
     });
+    
+    print('[RideShareHttpService] Listeners registered for ride $rideId');
   }
 
   /// Unsubscribe from ride tracking
-  void unsubscribeFromRideTracking() {
+  Future<void> unsubscribeFromRideTracking() async {
+    await _ensureSocketInitialized();
     socket.emit('passenger:unsubscribe');
   }
 
   /// Subscribe driver to send location updates
-  void subscribeDriverTracking(int rideId, int driverId, int vehicleId) {
+  Future<void> subscribeDriverTracking(int rideId, int driverId, int vehicleId) async {
+    await _ensureSocketInitialized();
     socket.emit('driver:subscribe', {
       'rideId': rideId,
       'driverId': driverId,
@@ -552,7 +591,8 @@ class RideShareHttpService {
   }
 
   /// Update driver location via websocket
-  void updateDriverLocationWebSocket(int rideId, double latitude, double longitude) {
+  Future<void> updateDriverLocationWebSocket(int rideId, double latitude, double longitude) async {
+    await _ensureSocketInitialized();
     socket.emit('driver:location:update', {
       'rideId': rideId,
       'latitude': latitude,

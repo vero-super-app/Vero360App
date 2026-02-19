@@ -52,25 +52,44 @@ class Vehicle {
   });
 
   factory Vehicle.fromJson(Map<String, dynamic> json) {
+    // Helper to safely parse doubles
+    double _parseDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+
+    int _parseInt(dynamic value) {
+      if (value is int) return value;
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+
+    bool _parseBool(dynamic value) {
+      if (value is bool) return value;
+      if (value is String) return value.toLowerCase() == 'true';
+      return false;
+    }
+
     return Vehicle(
-      id: json['id'] as int,
-      driverId: json['driverId'] as int,
-      vehicleClass: json['vehicleClass'] as String,
-      make: json['make'] as String,
-      model: json['model'] as String,
-      year: json['year'] as int,
-      licensePlate: json['licensePlate'] as String,
+      id: _parseInt(json['id']),
+      driverId: _parseInt(json['driverId']),
+      vehicleClass: json['vehicleClass'] as String? ?? json['taxiClass'] as String? ?? 'STANDARD',
+      make: json['make'] as String? ?? '',
+      model: json['model'] as String? ?? '',
+      year: _parseInt(json['year']),
+      licensePlate: json['licensePlate'] as String? ?? '',
       color: json['color'] as String?,
-      seats: json['seats'] as int,
-      isAvailable: json['isAvailable'] as bool,
-      latitude: (json['latitude'] as num?)?.toDouble(),
-      longitude: (json['longitude'] as num?)?.toDouble(),
-      rating: (json['rating'] as num?)?.toDouble() ?? 5.0,
-      totalRides: json['totalRides'] as int? ?? 0,
-      driver: json['driver'] != null
+      seats: _parseInt(json['seats']),
+      isAvailable: _parseBool(json['isAvailable']),
+      latitude: _parseDouble(json['latitude']),
+      longitude: _parseDouble(json['longitude']),
+      rating: _parseDouble(json['rating']),
+      totalRides: _parseInt(json['totalRides']),
+      driver: json['driver'] != null && json['driver'] is Map
           ? DriverInfo.fromJson(json['driver'] as Map<String, dynamic>)
           : null,
-      distanceFromUser: (json['distanceFromUser'] as num?)?.toDouble(),
+      distanceFromUser: _parseDouble(json['distanceFromUser']),
     );
   }
 
@@ -125,18 +144,49 @@ class DriverInfo {
   });
 
   factory DriverInfo.fromJson(Map<String, dynamic> json) {
+    // Handle nested user object from backend
+    var userData = json;
+    if (json.containsKey('user') && json['user'] is Map) {
+      userData = (json['user'] as Map<String, dynamic>)..addAll(json);
+    }
+    
+    // Helper to safely parse numbers
+    double _parseDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+
+    int _parseInt(dynamic value) {
+      if (value is int) return value;
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+    
+    // Handle both firstName/lastName and name field
+    String firstName = userData['firstName'] as String? ?? '';
+    String lastName = userData['lastName'] as String? ?? '';
+    
+    if (firstName.isEmpty && lastName.isEmpty && userData.containsKey('name')) {
+      // If firstName/lastName are missing, try to split "name" field
+      final fullName = userData['name'] as String? ?? '';
+      final parts = fullName.split(' ');
+      firstName = parts.isNotEmpty ? parts[0] : 'Driver';
+      lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+    }
+    
     return DriverInfo(
-      id: json['id'] as int,
-      firstName: json['firstName'] as String,
-      lastName: json['lastName'] as String,
-      phone: json['phone'] as String?,
-      rating: (json['rating'] as num?)?.toDouble() ?? 5.0,
-      completedRides: json['completedRides'] as int? ?? 0,
-      vehicleType: json['vehicleType'] as String?,
-      vehiclePlate: json['vehiclePlate'] as String?,
-      latitude: (json['latitude'] as num?)?.toDouble(),
-      longitude: (json['longitude'] as num?)?.toDouble(),
-      avatar: json['avatar'] as String? ?? '',
+      id: _parseInt(json['id']),
+      firstName: firstName.isEmpty ? 'Driver' : firstName,
+      lastName: lastName,
+      phone: userData['phone'] as String?,
+      rating: _parseDouble(userData['rating']),
+      completedRides: _parseInt(userData['completedRides']),
+      vehicleType: json['vehicleType'] as String? ?? userData['vehicleClass'] as String?,
+      vehiclePlate: json['vehiclePlate'] as String? ?? json['licensePlate'] as String?,
+      latitude: _parseDouble(json['latitude']),
+      longitude: _parseDouble(json['longitude']),
+      avatar: userData['avatar'] as String? ?? '',
     );
   }
 
@@ -256,9 +306,20 @@ class Ride {
       vehicle: json['vehicle'] != null
           ? Vehicle.fromJson(json['vehicle'] as Map<String, dynamic>)
           : null,
-      driver: json['driver'] != null && json['driver'] is Map
-          ? DriverInfo.fromJson(json['driver'] as Map<String, dynamic>)
-          : null,
+      driver: () {
+        // Try to get driver from direct field first
+        if (json['driver'] != null && json['driver'] is Map) {
+          return DriverInfo.fromJson(json['driver'] as Map<String, dynamic>);
+        }
+        // Fallback: try to get driver from taxi object
+        if (json['taxi'] != null && json['taxi'] is Map) {
+          final taxi = json['taxi'] as Map<String, dynamic>;
+          if (taxi['driver'] != null && taxi['driver'] is Map) {
+            return DriverInfo.fromJson(taxi['driver'] as Map<String, dynamic>);
+          }
+        }
+        return null;
+      }(),
     );
   }
 

@@ -8,6 +8,7 @@ class RideWaitingScreen extends StatefulWidget {
   final VoidCallback onCancelRide;
   final double? pickupLat;
   final double? pickupLng;
+  final RideShareHttpService? httpService;
 
   const RideWaitingScreen({
     super.key,
@@ -16,6 +17,7 @@ class RideWaitingScreen extends StatefulWidget {
     required this.onCancelRide,
     this.pickupLat,
     this.pickupLng,
+    this.httpService,
   });
 
   @override
@@ -54,24 +56,35 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
 
   @override
   Widget build(BuildContext context) {
-    final httpService = RideShareHttpService();
+    final httpService = widget.httpService ?? RideShareHttpService();
     final rideId = int.tryParse(widget.rideId) ?? 0;
 
     return StreamBuilder<Ride>(
       stream: httpService.rideUpdateStream,
       builder: (context, snapshot) {
         final ride = snapshot.data;
+        
+        print('[RideWaitingScreen] Stream update: ride=$ride, hasData=${snapshot.hasData}, error=${snapshot.error}');
+        if (ride != null) {
+          print('[RideWaitingScreen] Ride received: id=${ride.id}, status=${ride.status}, driverId=${ride.driverId}');
+        }
 
         // If driver accepted the ride
         if (ride != null &&
             ride.driverId != null &&
             ride.status == RideStatus.accepted) {
+          print('[RideWaitingScreen] ✅ Driver accepted! Triggering callback...');
           if (!_callbackTriggered && ride.driver != null) {
             _callbackTriggered = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) {
-                widget.onRideAccepted(ride.driver!);
+                print('[RideWaitingScreen] Calling onRideAccepted with driver: ${ride.driver!.name}');
+                // Pop first, then trigger callback to avoid context issues
                 Navigator.pop(context);
+                // Small delay to ensure modal is fully dismissed
+                Future.delayed(const Duration(milliseconds: 100), () {
+                  widget.onRideAccepted(ride.driver!);
+                });
               }
             });
           }

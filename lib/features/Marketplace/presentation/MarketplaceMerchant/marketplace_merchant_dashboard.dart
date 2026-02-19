@@ -1442,9 +1442,9 @@ class _MarketplaceMerchantDashboardState
           builder: (sheetCtx, setSheet) {
             final bottomInset = MediaQuery.of(sheetCtx).viewInsets.bottom;
 
-            Future<void> pickNewCover() async {
+            Future<void> pickNewCoverFrom(ImageSource src) async {
               final x = await _picker.pickImage(
-                source: ImageSource.gallery,
+                source: src,
                 maxWidth: 1800,
                 imageQuality: 90,
               );
@@ -1458,6 +1458,37 @@ class _MarketplaceMerchantDashboardState
                   mime: lookupMimeType(x.name, headerBytes: bytes),
                 );
               });
+            }
+
+            void showEditCoverSource() {
+              showModalBottomSheet(
+                context: sheetCtx,
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+                ),
+                builder: (_) => SafeArea(
+                  child: Wrap(
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.photo_camera_outlined),
+                        title: const Text('Take a photo'),
+                        onTap: () {
+                          Navigator.pop(_);
+                          pickNewCoverFrom(ImageSource.camera);
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.photo_library_outlined),
+                        title: const Text('Choose from gallery'),
+                        onTap: () {
+                          Navigator.pop(_);
+                          pickNewCoverFrom(ImageSource.gallery);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
             }
 
             Future<void> save() async {
@@ -1563,7 +1594,7 @@ class _MarketplaceMerchantDashboardState
                     ),
                     const SizedBox(height: 10),
                     OutlinedButton.icon(
-                      onPressed: saving ? null : pickNewCover,
+                      onPressed: saving ? null : showEditCoverSource,
                       icon: const Icon(Icons.photo),
                       label: const Text(
                         'Change Cover',
@@ -2507,9 +2538,8 @@ class _MarketplaceMerchantDashboardState
                               FilledButton.icon(
                                 style: FilledButton.styleFrom(
                                     backgroundColor: _brandOrange),
-                                onPressed: () =>
-                                    _pickCover(ImageSource.gallery),
-                                icon: const Icon(Icons.photo_library),
+                                onPressed: _showCoverImageSource,
+                                icon: const Icon(Icons.add_photo_alternate),
                                 label: const Text('Select Image'),
                               ),
                             ],
@@ -2565,7 +2595,7 @@ class _MarketplaceMerchantDashboardState
                     child: OutlinedButton.icon(
                       onPressed: _gallery.length >= _maxGalleryPhotos
                           ? null
-                          : _pickMorePhotos,
+                          : _showMorePhotosSource,
                       icon: const Icon(Icons.collections_outlined),
                       label: Text(
                         _gallery.isEmpty ? 'Add Photos' : 'Add More',
@@ -2813,6 +2843,37 @@ class _MarketplaceMerchantDashboardState
   }
 
   // ----------------- cover picker -----------------
+  void _showCoverImageSource() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take a photo'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickCover(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from gallery'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickCover(ImageSource.gallery);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _pickCover(ImageSource src) async {
     final x = await _picker.pickImage(
       source: src,
@@ -2828,6 +2889,66 @@ class _MarketplaceMerchantDashboardState
         mime: lookupMimeType(x.name, headerBytes: bytes),
       );
     });
+  }
+
+  void _showMorePhotosSource() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take a photo'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickMorePhotosFromCamera();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from gallery'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickMorePhotos();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickMorePhotosFromCamera() async {
+    try {
+      if (_gallery.length >= _maxGalleryPhotos) {
+        _toastErr('You can add up to $_maxGalleryPhotos photos.');
+        return;
+      }
+      final x = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 88,
+        maxWidth: 2048,
+      );
+      if (x == null) return;
+      final bytes = await x.readAsBytes();
+      setState(() {
+        _gallery.add(
+          LocalMedia(
+            bytes: bytes,
+            filename: x.name,
+            mime: lookupMimeType(x.name, headerBytes: bytes),
+          ),
+        );
+      });
+    } catch (e) {
+      debugPrint('Pick from camera error: $e');
+      if (!mounted) return;
+      _toastErr('Could not take photo. Please try again.');
+    }
   }
 
   // ----------------- Bottom nav -----------------

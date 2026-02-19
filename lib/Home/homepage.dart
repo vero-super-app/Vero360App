@@ -51,8 +51,9 @@ import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/verocourie
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 
-// Latest arrivals (API)
+// Latest arrivals (API) + main marketplace
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/latest_Services.dart';
 
 // ✅ Toast helper
@@ -187,8 +188,8 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
       image: 'assets/happy.jpg',
       bg: Color(0xFFFDF2E9),
       tint: AppColors.brandOrange,
-      cta: 'Order now',
-      serviceKey: 'food',
+      cta: 'Buy now',
+      serviceKey: 'mainmarketplace',
     ),
     _Promo(
       title: 'Free Delivery',
@@ -218,7 +219,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
       bg: Color(0xFFFFF4E6),
       tint: AppColors.brandOrange,
       cta: 'Chat now',
-      serviceKey: 'Vero Chat',
+      serviceKey: 'vero_ai',
     ),
   ];
 
@@ -398,6 +399,15 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   }
 
   void _onPromoTap(_Promo p) {
+    if (p.serviceKey == 'vero_ai') {
+      ToastHelper.showCustomToast(
+        context,
+        'Vero AI coming soon',
+        isSuccess: true,
+        errorMessage: '',
+      );
+      return;
+    }
     if (p.serviceKey != null && p.serviceKey!.isNotEmpty) {
       p.serviceKey == 'taxi'
           ? _openService(p.serviceKey!)
@@ -456,6 +466,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   static void _openServiceStatic(BuildContext context, String key) {
     Widget page;
     switch (key) {
+      case 'mainmarketplace':
+        page = MarketPage(
+          cartService: CartService('', apiPrefix: ApiConfig.apiPrefix),
+        );
+        break;
       case 'food':
       case 'grocery':
         page = FoodPage();

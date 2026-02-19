@@ -86,6 +86,10 @@ class _SettingsPageState extends State<SettingsPage> {
     return s.isEmpty ? 'No Phone' : _phone;
   }
 
+  /// Localization: returns English or Chichewa based on _languageCode (Settings-only).
+  String _t(String en, String ny) =>
+      _languageCode == 'ny' ? ny : en;
+
   @override
   void initState() {
     super.initState();
@@ -145,9 +149,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   String get _addressCountSubtitle {
     if (_addressCount < 0) return '—';
-    if (_addressCount == 0) return 'No addresses';
-    if (_addressCount == 1) return '1 address';
-    return '$_addressCount addresses';
+    if (_addressCount == 0) return _t('No addresses', 'Palibe maadiresi');
+    if (_addressCount == 1) return _t('1 address', 'Adiresi imodzi');
+    return _t('$_addressCount addresses', 'Maadiresi $_addressCount');
   }
 
   String get _languageSubtitle {
@@ -368,14 +372,14 @@ class _SettingsPageState extends State<SettingsPage> {
       await _loadAddressCount();
       ToastHelper.showCustomToast(
         context,
-        'Refreshed',
+        _t('Refreshed', 'Zafikidwanso'),
         isSuccess: true,
         errorMessage: '',
       );
     } catch (_) {
       ToastHelper.showCustomToast(
         context,
-        'Could not refresh right now',
+        _t('Could not refresh right now', 'Sizingathe kusintha pano'),
         isSuccess: false,
         errorMessage: '',
       );
@@ -440,37 +444,37 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               const SizedBox(height: 12),
-              const Text(
-                'Edit profile',
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+              Text(
+                _t('Edit profile', 'Sinthani mbiri'),
+                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  border: OutlineInputBorder(),
-                  hintText: 'Your name',
+                decoration: InputDecoration(
+                  labelText: _t('Name', 'Dzina'),
+                  border: const OutlineInputBorder(),
+                  hintText: _t('Your name', 'Dzina lanu'),
                 ),
                 textCapitalization: TextCapitalization.words,
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: phoneController,
-                decoration: const InputDecoration(
-                  labelText: 'Phone',
-                  border: OutlineInputBorder(),
-                  hintText: 'Phone number',
+                decoration: InputDecoration(
+                  labelText: _t('Phone', 'Foni'),
+                  border: const OutlineInputBorder(),
+                  hintText: _t('Phone number', 'Nambala yafoni'),
                 ),
                 keyboardType: TextInputType.phone,
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: addressController,
-                decoration: const InputDecoration(
-                  labelText: 'Address',
-                  border: OutlineInputBorder(),
-                  hintText: 'Your address',
+                decoration: InputDecoration(
+                  labelText: _t('Address', 'Adiresi'),
+                  border: const OutlineInputBorder(),
+                  hintText: _t('Your address', 'Adiresi yanu'),
                 ),
                 maxLines: 2,
               ),
@@ -484,7 +488,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text('Save', style: TextStyle(fontWeight: FontWeight.w800)),
+                child: Text(_t('Save', 'Sungani'), style: const TextStyle(fontWeight: FontWeight.w800)),
               ),
             ],
           ),
@@ -527,12 +531,12 @@ class _SettingsPageState extends State<SettingsPage> {
       await prefs.setString('address', _address);
 
       if (mounted) setState(() {});
-      ToastHelper.showCustomToast(context, 'Profile updated', isSuccess: true, errorMessage: '');
+      ToastHelper.showCustomToast(context, _t('Profile updated', 'Mbiri yasinthidwa'), isSuccess: true, errorMessage: '');
     } catch (e) {
       if (mounted) {
         ToastHelper.showCustomToast(
           context,
-          'Could not update profile',
+          _t('Could not update profile', 'Sidathe kusintha mbiri'),
           isSuccess: false,
           errorMessage: e.toString(),
         );
@@ -597,11 +601,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                const Row(
+                Row(
                   children: [
                     Expanded(
                       child: Text(
-                        'Personalization',
+                        _t('Personalization', 'Zokonda'),
                         style: TextStyle(
                             fontWeight: FontWeight.w900, fontSize: 16),
                       ),
@@ -616,9 +620,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     setState(() => _compactMode = v);
                     await _savePersonalizationPrefs();
                   },
-                  title: const Text('Compact mode',
-                      style: TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: const Text('Smaller spacing in settings list'),
+                  title: Text(_t('Compact mode', 'Mtundu wofupi'),
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text(_t('Smaller spacing in settings list', 'Mtunda wopingasa pamndandanda wa setingi')),
                 ),
                 SwitchListTile(
                   value: _haptics,
@@ -627,9 +631,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     setState(() => _haptics = v);
                     await _savePersonalizationPrefs();
                   },
-                  title: const Text('Haptics',
-                      style: TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: const Text('Vibration feedback when tapping'),
+                  title: Text(_t('Haptics', 'Kuthamangira'),
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text(_t('Vibration feedback when tapping', 'Kuthamangira mukafinya')),
                 ),
                 const SizedBox(height: 8),
               ],
@@ -666,9 +670,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                const Text(
-                  'Language',
-                  style: TextStyle(
+                Text(
+                  _t('Language', 'Chilankhulo'),
+                  style: const TextStyle(
                     fontWeight: FontWeight.w900,
                     fontSize: 18,
                   ),
@@ -685,7 +689,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     if (ctx.mounted) Navigator.pop(ctx);
                     ToastHelper.showCustomToast(
                       context,
-                      'Language set to English. Restart app for full effect.',
+                      _t('Language set to English. Restart app for full effect.', 'Chilankhulo chasankhidwa Chingerezi. Tsegulani pulogalamu kachiwiri kuti zitha.'),
                       isSuccess: true,
                       errorMessage: '',
                     );
@@ -704,7 +708,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     if (ctx.mounted) Navigator.pop(ctx);
                     ToastHelper.showCustomToast(
                       context,
-                      'Language set to Chichewa. Restart app for full effect.',
+                      _t('Language set to Chichewa. Restart app for full effect.', 'Chilankhulo chasankhidwa Chichewa. Tsegulani pulogalamu kachiwiri kuti zitha.'),
                       isSuccess: true,
                       errorMessage: '',
                     );
@@ -736,10 +740,10 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _clearCache() async {
     _maybeHaptic();
     final ok = await _confirm(
-      title: 'Clear cache',
+      title: _t('Clear cache', 'Chotsani cache'),
       message:
-          'This will clear temporary cached data and image cache. You will stay logged in.',
-      confirmText: 'Clear',
+          _t('This will clear temporary cached data and image cache. You will stay logged in.', 'Izi zidzachotsa data yosungidwa ndi cache ya chithunzi. Mudzakhala muli lowa muakaunti.'),
+      confirmText: _t('Clear', 'Chotsani'),
       confirmColor: Colors.red,
     );
     if (ok != true) return;
@@ -767,10 +771,10 @@ class _SettingsPageState extends State<SettingsPage> {
         if (isCacheKey(k)) await prefs.remove(k);
       }
 
-      ToastHelper.showCustomToast(context, 'Cache cleared',
+      ToastHelper.showCustomToast(context, _t('Cache cleared', 'Cache yachotsedwa'),
           isSuccess: true, errorMessage: '');
     } catch (_) {
-      ToastHelper.showCustomToast(context, 'Failed to clear cache',
+      ToastHelper.showCustomToast(context, _t('Failed to clear cache', 'Sidathe kuchotsa cache'),
           isSuccess: false, errorMessage: '');
     } finally {
       if (mounted) setState(() => _refreshing = false);
@@ -801,12 +805,12 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             const SizedBox(height: 12),
-            const Row(
+            Row(
               children: [
                 Expanded(
                   child: Text(
-                    'Customer service',
-                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                    _t('Customer service', 'Thandizo la makasitomala'),
+                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
                   ),
                 ),
               ],
@@ -814,8 +818,8 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 8),
             ListTile(
               leading: _roundIcon(Icons.call_outlined),
-              title: const Text('Call support',
-                  style: TextStyle(fontWeight: FontWeight.w800)),
+              title: Text(_t('Call support', 'Imbani thandizo'),
+                  style: const TextStyle(fontWeight: FontWeight.w800)),
               subtitle: const Text(_supportPhone),
               onTap: () async {
                 Navigator.pop(context);
@@ -824,8 +828,8 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             ListTile(
               leading: _roundIcon(Icons.chat_bubble_outline),
-              title: const Text('WhatsApp',
-                  style: TextStyle(fontWeight: FontWeight.w800)),
+              title: Text(_t('WhatsApp', 'WhatsApp'),
+                  style: const TextStyle(fontWeight: FontWeight.w800)),
               subtitle: const Text(_supportWhatsApp),
               onTap: () async {
                 Navigator.pop(context);
@@ -835,14 +839,14 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             ListTile(
               leading: _roundIcon(Icons.email_outlined),
-              title: const Text('Email',
-                  style: TextStyle(fontWeight: FontWeight.w800)),
+              title: Text(_t('Email', 'Imelo'),
+                  style: const TextStyle(fontWeight: FontWeight.w800)),
               subtitle: const Text(_supportEmail),
               onTap: () async {
                 Navigator.pop(context);
                 await _launchEmail(_supportEmail,
-                    subject: 'Support request',
-                    body: 'Hi, I need help with...');
+                    subject: _t('Support request', 'Kufuna thandizo'),
+                    body: _t('Hi, I need help with...', 'Moni, ndikufuna thandizo pa...'));
               },
             ),
             const SizedBox(height: 8),
@@ -903,7 +907,7 @@ class _SettingsPageState extends State<SettingsPage> {
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
+              child: Text(_t('Cancel', 'Lekani'))),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text(confirmText,
@@ -919,9 +923,9 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _logout() async {
     _maybeHaptic();
     final ok = await _confirm(
-      title: 'Logout',
-      message: 'Do you want to log out of this account?',
-      confirmText: 'Logout',
+      title: _t('Logout', 'Tulukani'),
+      message: _t('Do you want to log out of this account?', 'Mukufuna kutuluka mu akauntiyi?'),
+      confirmText: _t('Logout', 'Tulukani'),
       confirmColor: Colors.red,
     );
     if (ok != true) return;
@@ -962,10 +966,10 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _deleteAccount() async {
     _maybeHaptic();
     final ok = await _confirm(
-      title: 'Delete account',
+      title: _t('Delete account', 'Chotsani akaunti'),
       message:
-          'This will permanently delete your account.\n\nThis cannot be undone.',
-      confirmText: 'Delete',
+          _t('This will permanently delete your account.\n\nThis cannot be undone.', 'Izi zidzachotsa akaunti yanu mwamuyaya.\n\nSizingabwererenso.'),
+      confirmText: _t('Delete', 'Chotsani'),
       confirmColor: Colors.red,
     );
     if (ok != true) return;
@@ -1014,7 +1018,7 @@ class _SettingsPageState extends State<SettingsPage> {
         if (mounted) {
               ToastHelper.showCustomToast(
                 context,
-                'Please login again',
+                _t('Please login again', 'Chonde lowani kachiwiri'),
                 isSuccess: false,
                 errorMessage: 'Login again then try deleting your account.',
               );
@@ -1037,7 +1041,7 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       await AuthService().logout(context: context);
 
-      ToastHelper.showCustomToast(context, 'Account deleted',
+      ToastHelper.showCustomToast(context, _t('Account deleted', 'Akaunti yachotsedwa'),
           isSuccess: true, errorMessage: '');
       if (!mounted) return;
 
@@ -1046,7 +1050,7 @@ class _SettingsPageState extends State<SettingsPage> {
         (_) => false,
       );
     } catch (_) {
-      ToastHelper.showCustomToast(context, 'Delete failed',
+      ToastHelper.showCustomToast(context, _t('Delete failed', 'Kuchotsa kudagonjetsedwa'),
           isSuccess: false, errorMessage: '');
     } finally {
       if (mounted) setState(() => _refreshing = false);
@@ -1067,7 +1071,7 @@ class _SettingsPageState extends State<SettingsPage> {
         appBar: AppBar(
           backgroundColor: kBrandNavy,
           foregroundColor: Colors.white,
-          title: const Text('Settings'),
+          title: Text(_t('Settings', 'Zokonda')),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: _backPressed,
@@ -1099,85 +1103,85 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               _profileCard(),
               const SizedBox(height: 14),
-              _sectionTitle('Account'),
+              _sectionTitle(_t('Account', 'Akaunti')),
               _card([
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.person_outline,
-                  title: 'Edit profile',
-                  subtitle: 'Name, phone, address',
+                  title: _t('Edit profile', 'Sinthani mbiri'),
+                  subtitle: _t('Name, phone, address', 'Dzina, foni, adiresi'),
                   onTap: _openEditProfile,
                 ),
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.location_on_outlined,
-                  title: 'My address',
+                  title: _t('My address', 'Adiresi yanga'),
                   subtitle: _addressCountSubtitle,
                   onTap: _openAddressBottomSheet,
                 ),
               ]),
               const SizedBox(height: 14),
-              _sectionTitle('Security'),
+              _sectionTitle(_t('Security', 'Chitetezo')),
               _card([
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.lock_outline,
-                  title: 'Change password',
-                  subtitle: 'Update your password',
+                  title: _t('Change password', 'Sinthani chipangizo'),
+                  subtitle: _t('Update your password', 'Sinthani chipangizo chanu'),
                   onTap: _openChangePassword,
                 ),
               ]),
               const SizedBox(height: 14),
-              _sectionTitle('Preferences'),
+              _sectionTitle(_t('Preferences', 'Zokonda')),
               _card([
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.language,
-                  title: 'Language',
+                  title: _t('Language', 'Chilankhulo'),
                   subtitle: _languageSubtitle,
                   onTap: _openLanguage,
                 ),
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.tune,
-                  title: 'Personalization',
-                  subtitle: 'Compact mode, haptics',
+                  title: _t('Personalization', 'Zokonda'),
+                  subtitle: _t('Compact mode, haptics', 'Mtundu wofupi, haptics'),
                   onTap: _openPersonalization,
                 ),
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.cleaning_services_outlined,
-                  title: 'Clear cache',
-                  subtitle: 'Clear temporary cached data',
+                  title: _t('Clear cache', 'Chotsani cache'),
+                  subtitle: _t('Clear temporary cached data', 'Chotsani data yosungidwa'),
                   onTap: _clearCache,
                 ),
               ]),
               const SizedBox(height: 14),
-              _sectionTitle('Support'),
+              _sectionTitle(_t('Support', 'Thandizo')),
               _card([
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.support_agent_outlined,
-                  title: 'Customer service',
-                  subtitle: 'Call, WhatsApp, or email',
+                  title: _t('Customer service', 'Thandizo la makasitomala'),
+                  subtitle: _t('Call, WhatsApp, or email', 'Imbani, WhatsApp, kapena imelo'),
                   onTap: _openCustomerService,
                 ),
               ]),
               const SizedBox(height: 14),
-              _sectionTitle('About'),
+              _sectionTitle(_t('About', 'Za')),
               _card([
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.info_outline,
-                  title: 'About us',
-                  subtitle: 'App details and information',
+                  title: _t('About us', 'Za ife'),
+                  subtitle: _t('App details and information', 'Zambiri za pulogalamu'),
                   onTap: _openAboutUs,
                 ),
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.verified_user_outlined,
-                  title: 'Privacy policy & Terms',
-                  subtitle: 'Read our policy',
+                  title: _t('Privacy policy & Terms', 'Polisi ya uchi ndi malamulo'),
+                  subtitle: _t('Read our policy', 'Werengani polisi yathu'),
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const PolicyPage()),
@@ -1186,20 +1190,20 @@ class _SettingsPageState extends State<SettingsPage> {
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.apps_outlined,
-                  title: 'App version',
+                  title: _t('App version', 'Mtundu wa pulogalamu'),
                   subtitle: 'v$_appVersion ($_buildNumber)',
                   onTap: () => _maybeHaptic(),
                   trailing: const SizedBox.shrink(),
                 ),
               ]),
               const SizedBox(height: 14),
-              _sectionTitle('Danger zone'),
+              _sectionTitle(_t('Danger zone', 'Gawo la ngozi')),
               _card([
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.logout,
-                  title: 'Logout',
-                  subtitle: 'Sign out of this device',
+                  title: _t('Logout', 'Tulukani'),
+                  subtitle: _t('Sign out of this device', 'Tulukani pa chipangizochi'),
                   onTap: _logout,
                   iconColor: Colors.red,
                   titleColor: Colors.red,
@@ -1207,8 +1211,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 _SettingsTile(
                   compact: _compactMode,
                   icon: Icons.delete_forever,
-                  title: 'Delete my account',
-                  subtitle: 'Permanently delete your account',
+                  title: _t('Delete my account', 'Chotsani akaunti yanga'),
+                  subtitle: _t('Permanently delete your account', 'Chotsani akaunti yanu mwamuyaya'),
                   onTap: _deleteAccount,
                   iconColor: Colors.red,
                   titleColor: Colors.red,

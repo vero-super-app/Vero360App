@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:vero360_app/config/api_config.dart';
 
 /// PayChangu configuration – using deep links completely
 class PayChanguConfig {
@@ -39,9 +40,10 @@ class PayChanguConfig {
   /// Backend/web endpoints registered in your PayChangu dashboard.
   /// They must be valid HTTP/HTTPS URLs – custom schemes like
   /// `vero360://...` are rejected by the API.
-  static String get callbackUrl => 'https://xs.com';
+  static String get callbackUrl =>
+      ApiConfig.endpoint('/payments/callback').toString();
 
-  static String get returnUrl => 'https://vero360.app/paychangu/retur';
+  static String get returnUrl => ApiConfig.endpoint('/payments/return').toString();
 
   // ───────────────────────────────────────────────
   //  Headers & Helpers

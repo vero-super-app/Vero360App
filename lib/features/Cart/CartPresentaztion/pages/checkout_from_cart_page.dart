@@ -770,6 +770,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   late final WebViewController _controller;
   Timer? _pollTimer;
   bool _isLoading = true;
+  bool _resultHandled = false;
 
   @override
   void initState() {
@@ -783,6 +784,35 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(NavigationDelegate(
+        onNavigationRequest: (NavigationRequest request) {
+          final uri = Uri.tryParse(request.url);
+          if (uri == null) return NavigationDecision.navigate;
+
+          final isPaymentCompleteDeepLink =
+              uri.scheme == 'vero360' && uri.host == 'payment-complete';
+          if (isPaymentCompleteDeepLink) {
+            final status = (uri.queryParameters['status'] ?? '').toLowerCase();
+            if (status == 'failed' || status == 'cancelled') {
+              _handlePaymentFailure();
+            } else {
+              _handlePaymentSuccess();
+            }
+            return NavigationDecision.prevent;
+          }
+
+          final isBackendReturnUrl = request.url.startsWith(PayChanguConfig.returnUrl);
+          if (isBackendReturnUrl) {
+            final status = (uri.queryParameters['status'] ?? '').toLowerCase();
+            if (status == 'failed' || status == 'cancelled') {
+              _handlePaymentFailure();
+            } else if (status.isNotEmpty) {
+              _handlePaymentSuccess();
+            }
+            return NavigationDecision.prevent;
+          }
+
+          return NavigationDecision.navigate;
+        },
         onProgress: (int progress) => setState(() => _isLoading = progress < 100),
         onPageStarted: (String url) => setState(() => _isLoading = true),
         onPageFinished: (String url) => setState(() => _isLoading = false),
@@ -821,6 +851,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   }
 
   void _handlePaymentSuccess() {
+    if (_resultHandled) return;
+    _resultHandled = true;
     _pollTimer?.cancel();
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
     final productName = widget.digitalProductName ?? 'your order';
@@ -868,6 +900,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   }
 
   void _handlePaymentFailure() {
+    if (_resultHandled) return;
+    _resultHandled = true;
     _pollTimer?.cancel();
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
 

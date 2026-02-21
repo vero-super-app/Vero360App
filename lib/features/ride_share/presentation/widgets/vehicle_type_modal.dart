@@ -36,7 +36,9 @@ class VehicleTypeModal extends ConsumerStatefulWidget {
   final Place dropoffPlace;
   final double userLat;
   final double userLng;
-  final Function(String) onRideRequested;
+  /// Called when a ride is successfully created.
+  /// Parameters: (rideId, estimatedFare, distanceKm, durationMinutes)
+  final Function(String, double, double, int) onRideRequested;
   final List<String>? allowedVehicleClasses;
 
   const VehicleTypeModal({
@@ -267,7 +269,12 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
 
       if (mounted) {
         Navigator.pop(context);
-        widget.onRideRequested(ride['id'].toString());
+        widget.onRideRequested(
+          ride['id'].toString(),
+          (ride['estimatedFare'] as num?)?.toDouble() ?? estimatedFare,
+          distance,
+          duration,
+        );
       }
     } catch (e) {
       if (kDebugMode) {

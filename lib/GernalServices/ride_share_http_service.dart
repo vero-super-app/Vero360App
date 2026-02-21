@@ -593,7 +593,8 @@ class RideShareHttpService {
   /// Update driver location via websocket
   Future<void> updateDriverLocationWebSocket(int rideId, double latitude, double longitude) async {
     await _ensureSocketInitialized();
-    socket.emit('driver:location:update', {
+    // Event name must match the backend SubscribeMessage('driver:location') handler
+    socket.emit('driver:location', {
       'rideId': rideId,
       'latitude': latitude,
       'longitude': longitude,

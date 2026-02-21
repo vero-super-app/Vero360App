@@ -63,22 +63,80 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
       stream: httpService.rideUpdateStream,
       builder: (context, snapshot) {
         final ride = snapshot.data;
-        
-        print('[RideWaitingScreen] Stream update: ride=$ride, hasData=${snapshot.hasData}, error=${snapshot.error}');
+
+        print(
+            '[RideWaitingScreen] Stream update: ride=$ride, hasData=${snapshot.hasData}, error=${snapshot.error}');
         if (ride != null) {
-          print('[RideWaitingScreen] Ride received: id=${ride.id}, status=${ride.status}, driverId=${ride.driverId}');
+          print(
+              '[RideWaitingScreen] Ride received: id=${ride.id}, status=${ride.status}, driverId=${ride.driverId}');
+        }
+
+        // If the ride was cancelled (e.g. no drivers found), show a dialog and dismiss
+        if (ride != null &&
+            ride.status == RideStatus.cancelled &&
+            !_callbackTriggered) {
+          _callbackTriggered = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              print(
+                  '[RideWaitingScreen] 🚫 Ride cancelled. Reason: ${ride.cancellationReason}');
+              Navigator.pop(context); // Dismiss the waiting bottom-sheet
+              Future.delayed(const Duration(milliseconds: 100), () {
+                if (mounted) {
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (ctx) => AlertDialog(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16)),
+                      title: const Row(
+                        children: [
+                          Icon(Icons.directions_car, color: Color(0xFFFF8A00)),
+                          SizedBox(width: 8),
+                          Text('No Drivers Found',
+                              style: TextStyle(
+                                  fontSize: 18, fontWeight: FontWeight.w700)),
+                        ],
+                      ),
+                      content: Text(
+                        ride.cancellationReason ??
+                            'No drivers are available in your area right now. Please try again shortly.',
+                        style: const TextStyle(
+                            fontSize: 14, color: Colors.black87),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () {
+                            Navigator.of(ctx).pop();
+                            widget.onCancelRide();
+                          },
+                          child: const Text('OK',
+                              style: TextStyle(
+                                  color: Color(0xFFFF8A00),
+                                  fontWeight: FontWeight.w700)),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+              });
+            }
+          });
+          return const SizedBox.shrink();
         }
 
         // If driver accepted the ride
         if (ride != null &&
             ride.driverId != null &&
             ride.status == RideStatus.accepted) {
-          print('[RideWaitingScreen] ✅ Driver accepted! Triggering callback...');
+          print(
+              '[RideWaitingScreen] ✅ Driver accepted! Triggering callback...');
           if (!_callbackTriggered && ride.driver != null) {
             _callbackTriggered = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) {
-                print('[RideWaitingScreen] Calling onRideAccepted with driver: ${ride.driver!.name}');
+                print(
+                    '[RideWaitingScreen] Calling onRideAccepted with driver: ${ride.driver!.name}');
                 // Pop first, then trigger callback to avoid context issues
                 Navigator.pop(context);
                 // Small delay to ensure modal is fully dismissed
@@ -100,239 +158,246 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
               minChildSize: 0.80,
               maxChildSize: 0.80,
               builder: (context, scrollController) {
-            return Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(24),
-                ),
-                boxShadow: [
-                   BoxShadow(
-                     color: Colors.black.withValues(alpha: 0.1),
-                     blurRadius: 24,
-                     offset: const Offset(0, -4),
-                   ),
-                 ],
-              ),
-              child: SingleChildScrollView(
-                controller: scrollController,
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      // Drag Handle
-                      Container(
-                        width: 36,
-                        height: 4,
-                        margin: const EdgeInsets.only(bottom: 20),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-
-                      // Main content
-                      Column(
-                        children: [
-                          // Title
-                          const Text(
-                            'Finding your driver',
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.black,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-
-                          const SizedBox(height: 24),
-
-                          // Animated Search Pulse with larger size
-                          ScaleTransition(
-                            scale: Tween<double>(begin: 1, end: 1.2).animate(
-                              CurvedAnimation(
-                                parent: _pulseController,
-                                curve: Curves.easeInOut,
-                              ),
-                            ),
-                            child: Container(
-                              width: 100,
-                              height: 100,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: primaryColor.withValues(alpha: 0.08),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: primaryColor.withValues(alpha: 0.15),
-                                    blurRadius: 20,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: const Icon(
-                                Icons.directions_car_rounded,
-                                size: 48,
-                                color: primaryColor,
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 24),
-
-                          // Loading Dots
-                          SizedBox(
-                            height: 12,
-                            child: LoadingDots(controller: _dotController),
-                          ),
-
-                          const SizedBox(height: 20),
-
-                          // Subtitle
-                          Text(
-                            'We\'re searching for nearby drivers',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                              fontWeight: FontWeight.w500,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-
-                          const SizedBox(height: 32),
-
-                          // Ride Info Card
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[50],
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color: Colors.grey[200]!,
-                                width: 1,
-                              ),
-                            ),
-                            child: Column(
-                              children: [
-                                if (ride != null) ...[
-                                  _buildInfoRow(
-                                    'Pickup Location',
-                                    ride.pickupAddress ?? 'Pickup Location',
-                                    Icons.location_on_rounded,
-                                    primaryColor,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Divider(color: Colors.grey[200]),
-                                  const SizedBox(height: 16),
-                                  _buildInfoRow(
-                                    'Dropoff Location',
-                                    ride.dropoffAddress ?? 'Dropoff Location',
-                                    Icons.location_on_rounded,
-                                    primaryColor,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Divider(color: Colors.grey[200]),
-                                  const SizedBox(height: 16),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: _buildInfoRow(
-                                          'Estimated Fare',
-                                          'MK${ride.estimatedFare.toStringAsFixed(0)}',
-                                          Icons.wallet_giftcard_rounded,
-                                          primaryColor,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      Expanded(
-                                        child: _buildInfoRow(
-                                          'Estimated Distance',
-                                          '${ride.estimatedDistance.toStringAsFixed(1)} km',
-                                          Icons.schedule_rounded,
-                                          primaryColor,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 24),
-
-                          // Cancel Button
-                          SizedBox(
-                            width: double.infinity,
-                            height: 52,
-                            child: ElevatedButton(
-                              onPressed: _isCancelling
-                                  ? null
-                                  : () {
-                                      setState(() => _isCancelling = true);
-                                      httpService
-                                          .cancelRide(rideId)
-                                          .then((_) {
-                                        widget.onCancelRide();
-                                      }).catchError((_) {
-                                        if (mounted) {
-                                          setState(() => _isCancelling = false);
-                                          if (context.mounted) {
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              SnackBar(
-                                                content: const Text(
-                                                  'Failed to cancel ride',
-                                                ),
-                                                backgroundColor: Colors.red[400],
-                                                behavior:
-                                                    SnackBarBehavior.floating,
-                                                margin: const EdgeInsets.all(16),
-                                              ),
-                                            );
-                                          }
-                                        }
-                                      });
-                                    },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.white,
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  side: const BorderSide(
-                                    color: primaryColor,
-                                    width: 2,
-                                  ),
-                                ),
-                                disabledBackgroundColor: Colors.grey[100],
-                              ),
-                              child: _isCancelling
-                                  ? const SizedBox(
-                                      height: 20,
-                                      width: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.5,
-                                        valueColor: AlwaysStoppedAnimation(
-                                          primaryColor,
-                                        ),
-                                      ),
-                                    )
-                                  : const Text(
-                                      'Cancel Ride',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        color: primaryColor,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                        ],
+                return Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.1),
+                        blurRadius: 24,
+                        offset: const Offset(0, -4),
                       ),
                     ],
                   ),
-                ),
-              ),
-            );
+                  child: SingleChildScrollView(
+                    controller: scrollController,
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        children: [
+                          // Drag Handle
+                          Container(
+                            width: 36,
+                            height: 4,
+                            margin: const EdgeInsets.only(bottom: 20),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+
+                          // Main content
+                          Column(
+                            children: [
+                              // Title
+                              const Text(
+                                'Finding your driver',
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.black,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+
+                              const SizedBox(height: 24),
+
+                              // Animated Search Pulse with larger size
+                              ScaleTransition(
+                                scale:
+                                    Tween<double>(begin: 1, end: 1.2).animate(
+                                  CurvedAnimation(
+                                    parent: _pulseController,
+                                    curve: Curves.easeInOut,
+                                  ),
+                                ),
+                                child: Container(
+                                  width: 100,
+                                  height: 100,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: primaryColor.withValues(alpha: 0.08),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: primaryColor.withValues(
+                                            alpha: 0.15),
+                                        blurRadius: 20,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.directions_car_rounded,
+                                    size: 48,
+                                    color: primaryColor,
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 24),
+
+                              // Loading Dots
+                              SizedBox(
+                                height: 12,
+                                child: LoadingDots(controller: _dotController),
+                              ),
+
+                              const SizedBox(height: 20),
+
+                              // Subtitle
+                              Text(
+                                'We\'re searching for nearby drivers',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+
+                              const SizedBox(height: 32),
+
+                              // Ride Info Card
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[50],
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: Colors.grey[200]!,
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Column(
+                                  children: [
+                                    if (ride != null) ...[
+                                      _buildInfoRow(
+                                        'Pickup Location',
+                                        ride.pickupAddress ?? 'Pickup Location',
+                                        Icons.location_on_rounded,
+                                        primaryColor,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Divider(color: Colors.grey[200]),
+                                      const SizedBox(height: 16),
+                                      _buildInfoRow(
+                                        'Dropoff Location',
+                                        ride.dropoffAddress ??
+                                            'Dropoff Location',
+                                        Icons.location_on_rounded,
+                                        primaryColor,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Divider(color: Colors.grey[200]),
+                                      const SizedBox(height: 16),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: _buildInfoRow(
+                                              'Estimated Fare',
+                                              'MK${ride.estimatedFare.toStringAsFixed(0)}',
+                                              Icons.wallet_giftcard_rounded,
+                                              primaryColor,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 16),
+                                          Expanded(
+                                            child: _buildInfoRow(
+                                              'Estimated Distance',
+                                              '${ride.estimatedDistance.toStringAsFixed(1)} km',
+                                              Icons.schedule_rounded,
+                                              primaryColor,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+
+                              const SizedBox(height: 24),
+
+                              // Cancel Button
+                              SizedBox(
+                                width: double.infinity,
+                                height: 52,
+                                child: ElevatedButton(
+                                  onPressed: _isCancelling
+                                      ? null
+                                      : () {
+                                          setState(() => _isCancelling = true);
+                                          httpService
+                                              .cancelRide(rideId)
+                                              .then((_) {
+                                            widget.onCancelRide();
+                                          }).catchError((_) {
+                                            if (mounted) {
+                                              setState(
+                                                  () => _isCancelling = false);
+                                              if (context.mounted) {
+                                                ScaffoldMessenger.of(context)
+                                                    .showSnackBar(
+                                                  SnackBar(
+                                                    content: const Text(
+                                                      'Failed to cancel ride',
+                                                    ),
+                                                    backgroundColor:
+                                                        Colors.red[400],
+                                                    behavior: SnackBarBehavior
+                                                        .floating,
+                                                    margin:
+                                                        const EdgeInsets.all(
+                                                            16),
+                                                  ),
+                                                );
+                                              }
+                                            }
+                                          });
+                                        },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      side: const BorderSide(
+                                        color: primaryColor,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    disabledBackgroundColor: Colors.grey[100],
+                                  ),
+                                  child: _isCancelling
+                                      ? const SizedBox(
+                                          height: 20,
+                                          width: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.5,
+                                            valueColor: AlwaysStoppedAnimation(
+                                              primaryColor,
+                                            ),
+                                          ),
+                                        )
+                                      : const Text(
+                                          'Cancel Ride',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                            color: primaryColor,
+                                          ),
+                                        ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
               },
             ),
           ),
@@ -395,9 +460,9 @@ class _RideWaitingScreenState extends State<RideWaitingScreen>
 }
 
 class LoadingDots extends StatelessWidget {
-   final AnimationController controller;
- 
-   const LoadingDots({super.key, required this.controller});
+  final AnimationController controller;
+
+  const LoadingDots({super.key, required this.controller});
 
   @override
   Widget build(BuildContext context) {

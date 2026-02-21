@@ -15,7 +15,7 @@ class CommonCard extends StatelessWidget {
   final BoxConstraints? constraints;
 
   const CommonCard({
-    Key? key,
+    super.key,
     required this.child,
     this.padding = const EdgeInsets.all(CarRentalSpacing.lg),
     this.backgroundColor = CarRentalColors.card,
@@ -26,7 +26,7 @@ class CommonCard extends StatelessWidget {
     this.height,
     this.width,
     this.constraints,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -70,7 +70,7 @@ class ImageCard extends StatelessWidget {
   final BoxFit imageFit;
 
   const ImageCard({
-    Key? key,
+    super.key,
     this.imageUrl,
     this.imageHeight = CarRentalSizes.imageCardHeight,
     required this.content,
@@ -78,12 +78,13 @@ class ImageCard extends StatelessWidget {
     this.onTap,
     this.imageOverlay,
     this.imageFit = BoxFit.cover,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
     Widget card = CommonCard(
       padding: EdgeInsets.zero,
+      onTap: onTap,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -132,7 +133,6 @@ class ImageCard extends StatelessWidget {
           ),
         ],
       ),
-      onTap: onTap,
     );
 
     return card;
@@ -168,14 +168,14 @@ class InfoCard extends StatelessWidget {
   final Widget? trailing;
 
   const InfoCard({
-    Key? key,
+    super.key,
     required this.icon,
     required this.label,
     required this.value,
     this.iconColor,
     this.onTap,
     this.trailing,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -225,14 +225,14 @@ class SectionCard extends StatelessWidget {
   final bool initiallyExpanded;
 
   const SectionCard({
-    Key? key,
+    super.key,
     required this.title,
     this.subtitle,
     required this.content,
     this.actions,
     this.expandable = false,
     this.initiallyExpanded = true,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

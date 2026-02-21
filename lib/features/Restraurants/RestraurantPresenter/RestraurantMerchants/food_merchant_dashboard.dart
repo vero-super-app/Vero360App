@@ -184,7 +184,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
           .get();
       
       _menuItems = snapshot.docs.map((doc) {
-        final data = doc.data() as Map<String, dynamic>;
+        final data = doc.data();
         return {
           'id': doc.id,
           ...data,
@@ -613,7 +613,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
                 ),
               ),
             );
-          }).toList(),
+          }),
       ],
     );
   }
@@ -767,7 +767,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
                 ),
               ),
             );
-          }).toList(),
+          }),
       ],
     );
   }

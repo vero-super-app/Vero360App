@@ -87,8 +87,8 @@ class MarketplaceDetailModel {
       image: rawImage,
       imageBytes: bytes,
       description:
-          data['description'] == null ? null : data['description'].toString(),
-      location: data['location'] == null ? null : data['location'].toString(),
+          data['description']?.toString(),
+      location: data['location']?.toString(),
       isActive: data['isActive'] is bool ? data['isActive'] as bool : true,
       createdAt: created,
       sqlItemId: sqlId, // 👈 set here

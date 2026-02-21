@@ -15,7 +15,7 @@ class DriverRequestAcceptDialog extends StatefulWidget {
   final Function()? onRejected;
 
   const DriverRequestAcceptDialog({
-    Key? key,
+    super.key,
     required this.request,
     required this.driverId,
     required this.driverName,
@@ -24,7 +24,7 @@ class DriverRequestAcceptDialog extends StatefulWidget {
     this.vehicleId,
     this.onAccepted,
     this.onRejected,
-  }) : super(key: key);
+  });
 
   @override
   State<DriverRequestAcceptDialog> createState() =>

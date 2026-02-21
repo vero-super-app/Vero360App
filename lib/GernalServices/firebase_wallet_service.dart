@@ -23,7 +23,7 @@ class FirebaseWalletService {
         // Return existing wallet
         final walletDoc = walletQuery.docs.first;
         return WalletModel.fromMap({
-          ...walletDoc.data() as Map<String, dynamic>,
+          ...walletDoc.data(),
           'walletId': walletDoc.id,
         });
       } else {
@@ -57,7 +57,7 @@ class FirebaseWalletService {
   static Future<String> _generateWalletId() async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final random = (DateTime.now().microsecondsSinceEpoch % 10000).toString().padLeft(4, '0');
-    return 'WLT${timestamp}${random}';
+    return 'WLT$timestamp$random';
   }
 
   // Get real-time wallet stream
@@ -72,7 +72,7 @@ class FirebaseWalletService {
         if (snapshot.docs.isEmpty) return null;
         final doc = snapshot.docs.first;
         return WalletModel.fromMap({
-          ...doc.data() as Map<String, dynamic>,
+          ...doc.data(),
           'walletId': doc.id,
         });
       });
@@ -102,7 +102,7 @@ class FirebaseWalletService {
       }
 
       final walletDoc = walletQuery.docs.first;
-      final walletData = walletDoc.data() as Map<String, dynamic>;
+      final walletData = walletDoc.data();
       final currentBalance = (walletData['balance'] ?? 0.0).toDouble();
 
       if (currentBalance < amount) {
@@ -140,7 +140,7 @@ class FirebaseWalletService {
           'createdAt': Timestamp.now(),
         });
 
-        await firestoreTransaction.update(walletRef, {
+        firestoreTransaction.update(walletRef, {
           'balance': newBalance,
           'pendingBalance': FieldValue.increment(amount),
           'updatedAt': Timestamp.now(),
@@ -217,7 +217,7 @@ class FirebaseWalletService {
           'createdAt': Timestamp.now(),
         });
 
-        await firestoreTransaction.update(walletRef, {
+        firestoreTransaction.update(walletRef, {
           'balance': newBalance,
           'updatedAt': Timestamp.now(),
           'transactions': transactions,
@@ -250,7 +250,7 @@ class FirebaseWalletService {
         .map((snapshot) {
       return snapshot.docs.map((doc) {
         return WalletTransaction.fromMap({
-          ...doc.data() as Map<String, dynamic>,
+          ...doc.data(),
           'transactionId': doc.id,
         });
       }).toList();

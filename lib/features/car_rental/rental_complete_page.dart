@@ -52,8 +52,8 @@ class RentalCompletePage extends StatefulWidget {
     required this.totalDistance,
     required this.elapsedSeconds,
     required this.car,
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   State<RentalCompletePage> createState() => _RentalCompletePageState();

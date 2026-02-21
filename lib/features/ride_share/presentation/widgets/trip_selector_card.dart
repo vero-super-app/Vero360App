@@ -10,8 +10,8 @@ class TripSelectorCard extends StatelessWidget {
     required this.currentLocation,
     this.selectedDropoffPlace,
     required this.onSelectDropoff,
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context) {

@@ -122,7 +122,7 @@ final pickupDisplayProvider = FutureProvider<PickupDisplay>((ref) async {
       savedAddr.isNotEmpty &&
       savedAddr.toLowerCase() != 'no address';
 
-  if (useSavedAddress && savedAddr != null) {
+  if (useSavedAddress) {
     return PickupDisplay(
       userName: userName,
       profilePictureUrl: profilePictureUrl,

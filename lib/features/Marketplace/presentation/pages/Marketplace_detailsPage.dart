@@ -29,8 +29,8 @@ class DetailsPage extends StatefulWidget {
   const DetailsPage({
     required this.item,
     required this.cartService,
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   State<DetailsPage> createState() => _DetailsPageState();

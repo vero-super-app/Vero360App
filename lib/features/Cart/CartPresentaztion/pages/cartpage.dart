@@ -25,7 +25,7 @@ String mwk(num n) => _mwkFmt.format(n);
 
 class CartPage extends StatefulWidget {
   final CartService cartService;
-  const CartPage({required this.cartService, Key? key}) : super(key: key);
+  const CartPage({required this.cartService, super.key});
 
   @override
   State<CartPage> createState() => _CartPageState();

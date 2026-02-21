@@ -18,7 +18,7 @@ class DriverRideActiveScreen extends StatefulWidget {
   final VoidCallback onRideCompleted;
   final RideShareHttpService? httpService;
 
-  const DriverRideActiveScreen({
+  const DriverRideActiveScreen({super.key, 
     required this.rideId,
     required this.passengerName,
     required this.pickupAddress,

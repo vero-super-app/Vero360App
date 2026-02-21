@@ -544,7 +544,7 @@ class AuthService {
         return null;
       }
 
-      final GoogleSignInAccount? account = await _google.authenticate();
+      final GoogleSignInAccount account = await _google.authenticate();
       if (account == null) return null;
 
       // Prefer server auth code for backend exchange
@@ -559,7 +559,7 @@ class AuthService {
       // Fallback tokens (if your backend still accepts idToken)
       String? idToken;
       try {
-        final auth = await account.authentication;
+        final auth = account.authentication;
         idToken = auth.idToken;
       } catch (_) {}
 

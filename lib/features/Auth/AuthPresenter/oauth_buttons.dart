@@ -52,7 +52,6 @@ class _SocialButton extends StatelessWidget {
   final IconData fallbackIcon;
 
   const _SocialButton({
-    super.key,
     required this.asset,
     required this.label,
     required this.semanticLabel,

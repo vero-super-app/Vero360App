@@ -5,7 +5,7 @@ import 'package:vero360_app/utils/error_handler.dart';
 import 'package:vero360_app/utils/formatters.dart';
 
 class MyCarsPage extends ConsumerStatefulWidget {
-  const MyCarsPage({Key? key}) : super(key: key);
+  const MyCarsPage({super.key});
 
   @override
   ConsumerState<MyCarsPage> createState() => _MyCarsPageState();
@@ -164,7 +164,7 @@ class _MyCarsPageState extends ConsumerState<MyCarsPage> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    CarHireFormatters.formatCurrency(car.dailyRate) + ' / day',
+                    '${CarHireFormatters.formatCurrency(car.dailyRate)} / day',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                           color: Colors.green,

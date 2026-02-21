@@ -12,12 +12,12 @@ class PaymentPage extends ConsumerStatefulWidget {
   final bool includeInsurance;
 
   const PaymentPage({
-    Key? key,
+    super.key,
     required this.car,
     required this.startDate,
     required this.endDate,
     required this.includeInsurance,
-  }) : super(key: key);
+  });
 
   @override
   ConsumerState<PaymentPage> createState() => _PaymentPageState();

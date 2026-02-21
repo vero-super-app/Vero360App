@@ -376,7 +376,7 @@ class _ToShipPageState extends State<ToShipPage> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<ShippingMethod>(
-                  value: method,
+                  initialValue: method,
                   decoration: const InputDecoration(
                     labelText: 'Shipment method',
                     border: OutlineInputBorder(),

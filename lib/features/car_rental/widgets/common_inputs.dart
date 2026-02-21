@@ -23,7 +23,7 @@ class CommonTextField extends StatefulWidget {
   final String? helperText;
 
   const CommonTextField({
-    Key? key,
+    super.key,
     required this.label,
     this.hint,
     this.controller,
@@ -42,7 +42,7 @@ class CommonTextField extends StatefulWidget {
     this.isEnabled = true,
     this.isRequired = false,
     this.helperText,
-  }) : super(key: key);
+  });
 
   @override
   State<CommonTextField> createState() => _CommonTextFieldState();
@@ -111,7 +111,7 @@ class CommonDropdown<T> extends StatelessWidget {
   final String? hint;
 
   const CommonDropdown({
-    Key? key,
+    super.key,
     required this.label,
     this.value,
     required this.items,
@@ -121,12 +121,12 @@ class CommonDropdown<T> extends StatelessWidget {
     this.isEnabled = true,
     this.prefixIcon,
     this.hint,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
     return DropdownButtonFormField<T>(
-      value: value,
+      initialValue: value,
       items: items,
       onChanged: isEnabled ? onChanged : null,
       validator: validator,
@@ -153,7 +153,7 @@ class CommonDateField extends StatefulWidget {
   final String? Function(DateTime?)? validator;
 
   const CommonDateField({
-    Key? key,
+    super.key,
     required this.label,
     this.value,
     required this.onDateChanged,
@@ -161,7 +161,7 @@ class CommonDateField extends StatefulWidget {
     this.lastDate,
     this.isRequired = false,
     this.validator,
-  }) : super(key: key);
+  });
 
   @override
   State<CommonDateField> createState() => _CommonDateFieldState();
@@ -233,12 +233,12 @@ class CommonCheckbox extends StatelessWidget {
   final bool isRequired;
 
   const CommonCheckbox({
-    Key? key,
+    super.key,
     required this.value,
     required this.onChanged,
     required this.label,
     this.isRequired = false,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -277,13 +277,13 @@ class CommonRadioGroup<T> extends StatelessWidget {
   final Axis direction;
 
   const CommonRadioGroup({
-    Key? key,
+    super.key,
     required this.value,
     required this.options,
     required this.onChanged,
     this.label,
     this.direction = Axis.vertical,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

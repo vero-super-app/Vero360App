@@ -123,24 +123,24 @@ class MarketplaceDetailModel {
   });
 
   factory MarketplaceDetailModel.fromJson(Map<String, dynamic> j) {
-    List<String> _arr(dynamic v) =>
+    List<String> arr(dynamic v) =>
         (v is List) ? v.map((e) => '$e').where((s) => s.isNotEmpty).cast<String>().toList() : const <String>[];
-    double _num(dynamic v) => (v is num) ? v.toDouble() : double.tryParse('$v') ?? 0.0;
+    double num(dynamic v) => (v is num) ? v.toDouble() : double.tryParse('$v') ?? 0.0;
 
-    final String? _sellerUserId =
+    final String? sellerUserId =
         (j['sellerUserId'] ?? j['ownerId'])?.toString();
 
     return MarketplaceDetailModel(
       id: j['id'] ?? 0,
       name: '${j['name'] ?? ''}',
       image: '${j['image'] ?? ''}',
-      price: _num(j['price'] ?? 0),
+      price: num(j['price'] ?? 0),
       description: '${j['description'] ?? ''}',
       location: '${j['location'] ?? ''}',
       comment: j['comment']?.toString(),
       category: j['category']?.toString(),
-      gallery: _arr(j['gallery']),
-      videos: _arr(j['videos']),
+      gallery: arr(j['gallery']),
+      videos: arr(j['videos']),
       sellerBusinessName: j['sellerBusinessName']?.toString(),
       sellerOpeningHours: j['sellerOpeningHours']?.toString(),
       sellerStatus: j['sellerStatus']?.toString(),
@@ -150,7 +150,7 @@ class MarketplaceDetailModel {
           : double.tryParse('${j['sellerRating']}'),
       sellerLogoUrl: j['sellerLogoUrl']?.toString(),
       serviceProviderId: j['serviceProviderId']?.toString(),
-      sellerUserId: _sellerUserId,
+      sellerUserId: sellerUserId,
       merchantId: j['merchantId']?.toString(),
       merchantName: j['merchantName']?.toString(),
       serviceType: j['serviceType']?.toString() ?? 'marketplace',

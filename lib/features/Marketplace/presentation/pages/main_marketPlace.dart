@@ -202,8 +202,8 @@ class MarketplaceDetailModel {
       image: rawImage,
       imageBytes: bytes,
       description:
-          data['description'] == null ? null : data['description'].toString(),
-      location: data['location'] == null ? null : data['location'].toString(),
+          data['description']?.toString(),
+      location: data['location']?.toString(),
       isActive: data['isActive'] is bool ? data['isActive'] as bool : true,
       createdAt: created,
       sqlItemId: sqlId,
@@ -362,7 +362,7 @@ Widget _statusChip(String? status) {
 /// --------------------
 class MarketPage extends StatefulWidget {
   final CartService cartService;
-  const MarketPage({required this.cartService, Key? key}) : super(key: key);
+  const MarketPage({required this.cartService, super.key});
 
   @override
   State<MarketPage> createState() => _MarketPageState();
@@ -858,8 +858,9 @@ class _MarketPageState extends State<MarketPage> {
   String _getAiHighlight(MarketplaceDetailModel item) {
     final sb = StringBuffer();
     final rating = item.sellerRating ?? 0;
-    if (rating >= 4.5) sb.write('Top-rated seller');
-    else if (rating >= 4) sb.write('Reliable seller');
+    if (rating >= 4.5) {
+      sb.write('Top-rated seller');
+    } else if (rating >= 4) sb.write('Reliable seller');
     if (sb.isNotEmpty && item.price > 0) sb.write(' • ');
     sb.write(_mwk(item.price));
     if ((item.description ?? '').toLowerCase().contains('new') ||

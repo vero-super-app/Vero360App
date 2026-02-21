@@ -63,8 +63,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
         driverProfile.whenData((driver) async {
           if (driver['id'] == null) {
-            if (kDebugMode)
+            if (kDebugMode) {
               print('[DriverDashboard] Driver profile incomplete');
+            }
             return;
           }
 
@@ -80,8 +81,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
           // If no taxi exists, create one
           if (taxiId == null) {
-            if (kDebugMode)
+            if (kDebugMode) {
               print('[DriverDashboard] No taxi found, creating default taxi...');
+            }
             try {
               final timestamp = DateTime.now().millisecondsSinceEpoch;
               final taxiPayload = {
@@ -94,14 +96,16 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                 'color': 'White',
                 'registrationNumber': 'REG${driver['id']}-$timestamp',
               };
-              if (kDebugMode)
+              if (kDebugMode) {
                 print(
                     '[DriverDashboard] Creating taxi with payload: $taxiPayload');
+              }
 
               final newTaxi = await _driverService.createTaxi(taxiPayload);
               taxiId = newTaxi['id'];
-              if (kDebugMode)
+              if (kDebugMode) {
                 print('[DriverDashboard] ✓ Created taxi with ID: $taxiId');
+              }
             } catch (e) {
               if (kDebugMode) {
                 print('[DriverDashboard] ✗ Error creating taxi: $e');

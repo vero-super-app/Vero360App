@@ -179,7 +179,7 @@ class RideShareHttpService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data is List) {
-          return (data as List)
+          return (data)
               .map((v) => Vehicle.fromJson(v as Map<String, dynamic>))
               .toList();
         } else if (data is Map && data.containsKey('vehicles')) {
@@ -285,7 +285,7 @@ class RideShareHttpService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data is List) {
-          return (data as List)
+          return (data)
               .map((r) => Ride.fromJson(r as Map<String, dynamic>))
               .toList();
         } else if (data is Map && data.containsKey('rides')) {
@@ -526,7 +526,7 @@ class RideShareHttpService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data is List) {
-          return (data as List)
+          return (data)
               .map((r) => Ride.fromJson(r as Map<String, dynamic>))
               .toList();
         }

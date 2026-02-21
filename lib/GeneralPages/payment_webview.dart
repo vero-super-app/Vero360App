@@ -9,11 +9,11 @@ class PaymentWebView extends StatefulWidget {
   final String? failureUrlPrefix;
 
   const PaymentWebView({
-    Key? key,
+    super.key,
     required this.checkoutUrl,
     this.successUrlPrefix,
     this.failureUrlPrefix,
-  }) : super(key: key);
+  });
 
   @override
   State<PaymentWebView> createState() => _PaymentWebViewState();

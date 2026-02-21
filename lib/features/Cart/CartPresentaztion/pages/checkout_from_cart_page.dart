@@ -22,7 +22,7 @@ enum DeliveryType { speed, cts, pickup }
 
 class CheckoutFromCartPage extends StatefulWidget {
   final List<CartModel> items;
-  const CheckoutFromCartPage({Key? key, required this.items}) : super(key: key);
+  const CheckoutFromCartPage({super.key, required this.items});
 
   @override
   State<CheckoutFromCartPage> createState() => _CheckoutFromCartPageState();
@@ -500,7 +500,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<DeliveryType>(
-                    value: _deliveryType,
+                    initialValue: _deliveryType,
                     isExpanded: true,
                     decoration: InputDecoration(
                       labelText: 'Choose delivery option',
@@ -754,13 +754,13 @@ class InAppPaymentPage extends StatefulWidget {
   final String? digitalProductName;
 
   const InAppPaymentPage({
-    Key? key,
+    super.key,
     required this.checkoutUrl,
     required this.txRef,
     required this.totalAmount,
     required this.rootContext,
     this.digitalProductName,
-  }) : super(key: key);
+  });
 
   @override
   State<InAppPaymentPage> createState() => _InAppPaymentPageState();

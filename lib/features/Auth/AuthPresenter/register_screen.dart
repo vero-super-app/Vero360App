@@ -814,7 +814,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                             if (_role == UserRole.merchant) ...[
                               DropdownButtonFormField<MerchantService>(
-                                value: _selectedMerchantService,
+                                initialValue: _selectedMerchantService,
                                 decoration: _dec(
                                   label: 'Service You Provide',
                                   hint: 'Select your service',

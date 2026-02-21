@@ -12,9 +12,9 @@ class BookingDetailPage extends ConsumerWidget {
   final int bookingId;
 
   const BookingDetailPage({
-    Key? key,
+    super.key,
     required this.bookingId,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -526,7 +526,7 @@ class BookingDetailPage extends ConsumerWidget {
   }
 
   void _showRatingDialog(BuildContext context) {
-    double _rating = 0;
+    double rating = 0;
     final reviewController = TextEditingController();
     
     showDialog(
@@ -541,9 +541,9 @@ class BookingDetailPage extends ConsumerWidget {
               const Text('How would you rate this car?'),
               const SizedBox(height: 12),
               StarRatingInput(
-                initialRating: _rating,
+                initialRating: rating,
                 onRatingChanged: (rating) {
-                  setState(() => _rating = rating);
+                  setState(() => rating = rating);
                 },
               ),
               const SizedBox(height: 16),

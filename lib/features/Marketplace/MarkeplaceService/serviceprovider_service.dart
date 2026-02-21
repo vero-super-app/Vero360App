@@ -313,7 +313,7 @@ class ServiceproviderService {
   Future<bool> hasValidShop() async {
     try {
       final shop = await fetchMine();
-      return shop != null && shop.id != null && shop.businessName != null;
+      return shop != null && shop.id != null;
     } catch (e) {
       debugPrint('Error checking shop: $e');
       return false;

@@ -53,43 +53,43 @@ class Vehicle {
 
   factory Vehicle.fromJson(Map<String, dynamic> json) {
     // Helper to safely parse doubles
-    double _parseDouble(dynamic value) {
+    double parseDouble(dynamic value) {
       if (value is num) return value.toDouble();
       if (value is String) return double.tryParse(value) ?? 0.0;
       return 0.0;
     }
 
-    int _parseInt(dynamic value) {
+    int parseInt(dynamic value) {
       if (value is int) return value;
       if (value is String) return int.tryParse(value) ?? 0;
       return 0;
     }
 
-    bool _parseBool(dynamic value) {
+    bool parseBool(dynamic value) {
       if (value is bool) return value;
       if (value is String) return value.toLowerCase() == 'true';
       return false;
     }
 
     return Vehicle(
-      id: _parseInt(json['id']),
-      driverId: _parseInt(json['driverId']),
+      id: parseInt(json['id']),
+      driverId: parseInt(json['driverId']),
       vehicleClass: json['vehicleClass'] as String? ?? json['taxiClass'] as String? ?? 'STANDARD',
       make: json['make'] as String? ?? '',
       model: json['model'] as String? ?? '',
-      year: _parseInt(json['year']),
+      year: parseInt(json['year']),
       licensePlate: json['licensePlate'] as String? ?? '',
       color: json['color'] as String?,
-      seats: _parseInt(json['seats']),
-      isAvailable: _parseBool(json['isAvailable']),
-      latitude: _parseDouble(json['latitude']),
-      longitude: _parseDouble(json['longitude']),
-      rating: _parseDouble(json['rating']),
-      totalRides: _parseInt(json['totalRides']),
+      seats: parseInt(json['seats']),
+      isAvailable: parseBool(json['isAvailable']),
+      latitude: parseDouble(json['latitude']),
+      longitude: parseDouble(json['longitude']),
+      rating: parseDouble(json['rating']),
+      totalRides: parseInt(json['totalRides']),
       driver: json['driver'] != null && json['driver'] is Map
           ? DriverInfo.fromJson(json['driver'] as Map<String, dynamic>)
           : null,
-      distanceFromUser: _parseDouble(json['distanceFromUser']),
+      distanceFromUser: parseDouble(json['distanceFromUser']),
     );
   }
 
@@ -151,13 +151,13 @@ class DriverInfo {
     }
     
     // Helper to safely parse numbers
-    double _parseDouble(dynamic value) {
+    double parseDouble(dynamic value) {
       if (value is num) return value.toDouble();
       if (value is String) return double.tryParse(value) ?? 0.0;
       return 0.0;
     }
 
-    int _parseInt(dynamic value) {
+    int parseInt(dynamic value) {
       if (value is int) return value;
       if (value is String) return int.tryParse(value) ?? 0;
       return 0;
@@ -176,16 +176,16 @@ class DriverInfo {
     }
     
     return DriverInfo(
-      id: _parseInt(json['id']),
+      id: parseInt(json['id']),
       firstName: firstName.isEmpty ? 'Driver' : firstName,
       lastName: lastName,
       phone: userData['phone'] as String?,
-      rating: _parseDouble(userData['rating']),
-      completedRides: _parseInt(userData['completedRides']),
+      rating: parseDouble(userData['rating']),
+      completedRides: parseInt(userData['completedRides']),
       vehicleType: json['vehicleType'] as String? ?? userData['vehicleClass'] as String?,
       vehiclePlate: json['vehiclePlate'] as String? ?? json['licensePlate'] as String?,
-      latitude: _parseDouble(json['latitude']),
-      longitude: _parseDouble(json['longitude']),
+      latitude: parseDouble(json['latitude']),
+      longitude: parseDouble(json['longitude']),
       avatar: userData['avatar'] as String? ?? '',
     );
   }
@@ -261,19 +261,19 @@ class Ride {
 
   factory Ride.fromJson(Map<String, dynamic> json) {
     // Helper function to safely parse num/string to double
-    double _parseDouble(dynamic value) {
+    double parseDouble(dynamic value) {
       if (value is num) return value.toDouble();
       if (value is String) return double.tryParse(value) ?? 0.0;
       return 0.0;
     }
 
-    int? _parseInt(dynamic value) {
+    int? parseInt(dynamic value) {
       if (value is int) return value;
       if (value is String) return int.tryParse(value);
       return null;
     }
 
-    DateTime _parseDateTime(dynamic value, {DateTime? fallback}) {
+    DateTime parseDateTime(dynamic value, {DateTime? fallback}) {
       if (value == null) return fallback ?? DateTime.now();
       if (value is String) {
         try {
@@ -286,35 +286,35 @@ class Ride {
     }
 
     return Ride(
-      id: _parseInt(json['id']) ?? 0,
-      passengerId: _parseInt(json['passengerId']) ?? 0,
-      driverId: _parseInt(json['driverId']),
-      vehicleId: _parseInt(json['vehicleId']),
-      pickupLatitude: _parseDouble(json['pickupLatitude']),
-      pickupLongitude: _parseDouble(json['pickupLongitude']),
+      id: parseInt(json['id']) ?? 0,
+      passengerId: parseInt(json['passengerId']) ?? 0,
+      driverId: parseInt(json['driverId']),
+      vehicleId: parseInt(json['vehicleId']),
+      pickupLatitude: parseDouble(json['pickupLatitude']),
+      pickupLongitude: parseDouble(json['pickupLongitude']),
       pickupAddress: json['pickupAddress'] as String?,
-      dropoffLatitude: _parseDouble(json['dropoffLatitude']),
-      dropoffLongitude: _parseDouble(json['dropoffLongitude']),
+      dropoffLatitude: parseDouble(json['dropoffLatitude']),
+      dropoffLongitude: parseDouble(json['dropoffLongitude']),
       dropoffAddress: json['dropoffAddress'] as String?,
-      estimatedDistance: _parseDouble(json['estimatedDistance']),
+      estimatedDistance: parseDouble(json['estimatedDistance']),
       actualDistance: json['actualDistance'] != null
-          ? _parseDouble(json['actualDistance'])
+          ? parseDouble(json['actualDistance'])
           : null,
-      estimatedFare: _parseDouble(json['estimatedFare']),
+      estimatedFare: parseDouble(json['estimatedFare']),
       actualFare: json['actualFare'] != null
-          ? _parseDouble(json['actualFare'])
+          ? parseDouble(json['actualFare'])
           : null,
       status: json['status'] as String? ?? 'REQUESTED',
       startTime: json['startTime'] != null
-          ? _parseDateTime(json['startTime'])
+          ? parseDateTime(json['startTime'])
           : null,
       endTime: json['endTime'] != null
-          ? _parseDateTime(json['endTime'])
+          ? parseDateTime(json['endTime'])
           : null,
       cancellationReason: json['cancellationReason'] as String?,
       passengerNotes: json['passengerNotes'] as String?,
-      createdAt: _parseDateTime(json['createdAt']),
-      updatedAt: _parseDateTime(json['updatedAt']),
+      createdAt: parseDateTime(json['createdAt']),
+      updatedAt: parseDateTime(json['updatedAt']),
       vehicle: json['vehicle'] != null
           ? Vehicle.fromJson(json['vehicle'] as Map<String, dynamic>)
           : null,

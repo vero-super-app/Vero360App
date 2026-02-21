@@ -6,7 +6,7 @@ import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class AddressPage extends StatefulWidget {
-  const AddressPage({Key? key}) : super(key: key);
+  const AddressPage({super.key});
 
   @override
   State<AddressPage> createState() => _AddressPageState();
@@ -603,12 +603,12 @@ class _GlassSheet extends StatelessWidget {
 
 class AddressFormSheet extends StatefulWidget {
   const AddressFormSheet({
-    Key? key,
+    super.key,
     required this.title,
     required this.onSubmit,
     required this.accent,
     this.initial,
-  }) : super(key: key);
+  });
 
   final String title;
   final AddressPayload? initial;
@@ -832,7 +832,7 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
       child: Column(
         children: [
           DropdownButtonFormField<AddressType>(
-            value: _type,
+            initialValue: _type,
             decoration: const InputDecoration(
               labelText: 'Type',
               border: OutlineInputBorder(),
@@ -911,7 +911,7 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         DropdownButtonFormField<AddressType>(
-          value: _type,
+          initialValue: _type,
           decoration: const InputDecoration(
             labelText: 'Type',
             border: OutlineInputBorder(),

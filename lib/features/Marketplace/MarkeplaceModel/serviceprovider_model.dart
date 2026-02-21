@@ -25,9 +25,9 @@ class ServiceProvider {
   });
 
   factory ServiceProvider.fromJson(Map<String, dynamic> json) {
-    double? _d(v) =>
+    double? d(v) =>
         v == null ? null : (v is num ? v.toDouble() : double.tryParse('$v'));
-    String? _logo(Map<String, dynamic> m) {
+    String? logo(Map<String, dynamic> m) {
       final raw =
           (m['logoUrl'] ?? m['logourl'] ?? m['logoimage'])?.toString().trim();
       if (raw == null || raw.isEmpty) return null;
@@ -43,9 +43,9 @@ class ServiceProvider {
       businessDescription: json['businessDescription']?.toString(),
       status: json['status']?.toString(),
       openingHours: json['openingHours']?.toString(),
-      logoUrl: _logo(json),
+      logoUrl: logo(json),
       isVerified: json['isVerified'] as bool?,
-      rating: _d(json['rating']),
+      rating: d(json['rating']),
     );
   }
 }

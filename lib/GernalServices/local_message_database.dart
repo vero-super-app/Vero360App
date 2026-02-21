@@ -416,11 +416,9 @@ class LocalMessageDatabase {
   Future<void> setSyncMetadata(String key, dynamic value) async {
     try {
       final metadata = (_configBox.get('sync_metadata') ?? {});
-      if (metadata is Map) {
-        metadata[key] = value;
-        await _configBox.put('sync_metadata', metadata);
-      }
-    } catch (e) {
+      metadata[key] = value;
+      await _configBox.put('sync_metadata', metadata);
+        } catch (e) {
       print('[LocalMessageDatabase] Error setting sync metadata: $e');
       rethrow;
     }
@@ -430,10 +428,8 @@ class LocalMessageDatabase {
   dynamic getSyncMetadata(String key) {
     try {
       final metadata = (_configBox.get('sync_metadata') ?? {});
-      if (metadata is Map) {
-        return metadata[key];
-      }
-      return null;
+      return metadata[key];
+          return null;
     } catch (e) {
       print('[LocalMessageDatabase] Error getting sync metadata: $e');
       return null;

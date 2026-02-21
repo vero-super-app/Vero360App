@@ -6,7 +6,7 @@ import 'package:vero360_app/utils/validators.dart';
 import 'package:vero360_app/utils/error_handler.dart';
 
 class AddCarPage extends ConsumerStatefulWidget {
-  const AddCarPage({Key? key}) : super(key: key);
+  const AddCarPage({super.key});
 
   @override
   ConsumerState<AddCarPage> createState() => _AddCarPageState();
@@ -256,7 +256,7 @@ class _AddCarPageState extends ConsumerState<AddCarPage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: DropdownButtonFormField<String>(
-                      value: _selectedFuelType,
+                      initialValue: _selectedFuelType,
                       decoration: InputDecoration(
                         labelText: 'Fuel Type',
                         border: OutlineInputBorder(

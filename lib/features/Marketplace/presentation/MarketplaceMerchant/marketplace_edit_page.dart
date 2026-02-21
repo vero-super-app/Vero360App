@@ -2,7 +2,6 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:mime/mime.dart';
 
 import '../../MarkeplaceModel/marketplace.model.dart';
 import '../../MarkeplaceService/marketplace.service.dart';

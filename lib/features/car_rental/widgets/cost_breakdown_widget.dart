@@ -11,7 +11,7 @@ class CostBreakdownWidget extends StatelessWidget {
   final String? breakdown;
 
   const CostBreakdownWidget({
-    Key? key,
+    super.key,
     required this.baseCost,
     this.distanceCost = 0,
     this.surcharges = 0,
@@ -19,7 +19,7 @@ class CostBreakdownWidget extends StatelessWidget {
     this.insurance = 0,
     required this.total,
     this.breakdown,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

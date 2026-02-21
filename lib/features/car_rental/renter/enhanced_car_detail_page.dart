@@ -10,9 +10,9 @@ class EnhancedCarDetailPage extends ConsumerStatefulWidget {
   final CarModel car;
 
   const EnhancedCarDetailPage({
-    Key? key,
+    super.key,
     required this.car,
-  }) : super(key: key);
+  });
 
   @override
   ConsumerState<EnhancedCarDetailPage> createState() =>

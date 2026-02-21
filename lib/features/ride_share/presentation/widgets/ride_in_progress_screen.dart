@@ -16,7 +16,7 @@ class RideInProgressScreen extends StatefulWidget {
   final VoidCallback onRideCompleted;
   final RideShareHttpService? httpService;
 
-  const RideInProgressScreen({
+  const RideInProgressScreen({super.key, 
     required this.rideId,
     required this.driverId,
     required this.passengerName,
@@ -298,7 +298,7 @@ class _RideInProgressScreenState extends State<RideInProgressScreen> {
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
-                                    '${remainingTime} min',
+                                    '$remainingTime min',
                                     style: const TextStyle(
                                       fontSize: 18,
                                       fontWeight: FontWeight.w700,

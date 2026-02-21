@@ -33,7 +33,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   late Set<Marker> _markers;
   late Set<Polyline> _polylines;
   late CameraPosition _initialCameraPosition;
-  MapType _mapType = MapType.normal;
+  final MapType _mapType = MapType.normal;
   String? _mapStyleJson;
 
   @override
@@ -407,7 +407,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
     // Smooth animation with more padding and longer duration
     Future.delayed(const Duration(milliseconds: 100), () {
-      if (mounted && _mapController != null) {
+      if (mounted) {
         _mapController.animateCamera(
           CameraUpdate.newLatLngBounds(bounds, 150),
         );
@@ -422,7 +422,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     Duration duration = const Duration(milliseconds: 800),
   }) {
     Future.delayed(const Duration(milliseconds: 50), () {
-      if (mounted && _mapController != null) {
+      if (mounted) {
         _mapController.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(
@@ -550,9 +550,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
   @override
   void dispose() {
-    if (_mapController != null) {
-      _mapController.dispose();
-    }
-    super.dispose();
+    _mapController.dispose();
+      super.dispose();
   }
 }

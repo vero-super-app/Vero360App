@@ -667,7 +667,7 @@ class CarDetailModal extends StatelessWidget {
                             size: 14, color: AppColors.brandOrange),
                         const SizedBox(width: 4),
                         Text(
-                          '${car.rating.toStringAsFixed(1)}',
+                          car.rating.toStringAsFixed(1),
                           style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,

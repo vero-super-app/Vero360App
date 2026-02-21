@@ -13,10 +13,10 @@ class MerchantWalletPage extends StatefulWidget {
   final String merchantName;
 
   const MerchantWalletPage({
-    Key? key,
+    super.key,
     required this.merchantId,
     required this.merchantName,
-  }) : super(key: key);
+  });
 
   @override
   State<MerchantWalletPage> createState() => _MerchantWalletPageState();
@@ -236,7 +236,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<int>(
-                        value: _selectedBankIndex,
+                        initialValue: _selectedBankIndex,
                         decoration: InputDecoration(
                           labelText: 'Select Bank',
                           border: OutlineInputBorder(
@@ -303,7 +303,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: _selectedMobileProvider,
+                        initialValue: _selectedMobileProvider,
                         decoration: InputDecoration(
                           labelText: 'Mobile Money Provider',
                           border: OutlineInputBorder(

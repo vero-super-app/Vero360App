@@ -74,7 +74,7 @@ class ApiConfig {
   static Future<void> useProd() => init();
 
   /// Keep compatibility with existing code (ignored param).
-  static Future<void> setBase(String _ignored) => useProd();
+  static Future<void> setBase(String ignored) => useProd();
 
   // ---------------------------------------------------------------------------
   // URL BUILDERS

@@ -18,8 +18,8 @@ class PlaceSearchWidget extends ConsumerStatefulWidget {
     required this.onToggleBookmarkedPlaces,
     this.readOnly = false,
     this.onTap,
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   ConsumerState<PlaceSearchWidget> createState() => _PlaceSearchWidgetState();

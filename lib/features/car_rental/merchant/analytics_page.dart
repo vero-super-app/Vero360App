@@ -5,7 +5,7 @@ import 'package:vero360_app/utils/error_handler.dart';
 import 'package:vero360_app/utils/formatters.dart';
 
 class AnalyticsPage extends ConsumerStatefulWidget {
-  const AnalyticsPage({Key? key}) : super(key: key);
+  const AnalyticsPage({super.key});
 
   @override
   ConsumerState<AnalyticsPage> createState() => _AnalyticsPageState();

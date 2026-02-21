@@ -4,7 +4,7 @@ import 'package:vero360_app/GernalServices/changepassword_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class ChangePasswordPage extends StatefulWidget {
-  const ChangePasswordPage({Key? key}) : super(key: key);
+  const ChangePasswordPage({super.key});
 
   @override
   State<ChangePasswordPage> createState() => _ChangePasswordPageState();

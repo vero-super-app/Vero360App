@@ -691,7 +691,7 @@ class _ChipFilter extends StatelessWidget {
 
 class _NavIcon extends StatelessWidget {
   final IconData icon; final String label; final bool active;
-  const _NavIcon({required this.icon, required this.label, this.active = false});
+  const _NavIcon({required this.icon, required this.label});
   @override
   Widget build(BuildContext context) {
     return Column(mainAxisSize: MainAxisSize.min, children: [

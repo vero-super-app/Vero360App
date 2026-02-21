@@ -6,7 +6,6 @@ import 'package:vero360_app/GernalServices/offline_message_queue.dart';
 import 'package:vero360_app/GernalServices/message_sync_service.dart';
 import 'dart:io';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
-import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 class FakePathProviderPlatform extends PathProviderPlatform {
   @override

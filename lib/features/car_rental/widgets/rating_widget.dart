@@ -7,12 +7,12 @@ class RatingWidget extends StatelessWidget {
   final bool showLabel;
 
   const RatingWidget({
-    Key? key,
+    super.key,
     required this.rating,
     required this.reviewCount,
     this.onTap,
     this.showLabel = true,
-  }) : super(key: key);
+  });
 
   Widget _buildStars() {
     return Row(
@@ -71,12 +71,12 @@ class StarRatingInput extends StatefulWidget {
   final double starSize;
 
   const StarRatingInput({
-    Key? key,
+    super.key,
     required this.initialRating,
     required this.onRatingChanged,
     this.starCount = 5,
     this.starSize = 32,
-  }) : super(key: key);
+  });
 
   @override
   State<StarRatingInput> createState() => _StarRatingInputState();

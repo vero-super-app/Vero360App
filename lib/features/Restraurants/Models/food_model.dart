@@ -26,21 +26,21 @@ class FoodModel {
   });
 
   factory FoodModel.fromJson(Map<String, dynamic> json) {
-    int _id(dynamic v) {
+    int id(dynamic v) {
       if (v is int) return v;
       if (v is String) return int.tryParse(v) ?? 0;
       return 0;
     }
 
-    double _double(dynamic v) {
+    double double(dynamic v) {
       if (v is num) return v.toDouble();
       return double.tryParse(v?.toString() ?? '') ?? 0.0;
     }
 
-    String _str(dynamic v) => (v == null) ? '' : v.toString();
+    String str(dynamic v) => (v == null) ? '' : v.toString();
 
     // 🔁 same style as MarketplaceDetailModel
-    List<String> _arr(dynamic v) =>
+    List<String> arr(dynamic v) =>
         (v is List)
             ? v
                 .map((e) => '$e')
@@ -50,15 +50,15 @@ class FoodModel {
             : const <String>[];
 
     return FoodModel(
-      id: _id(json['id']),
-      FoodName: _str(json['FoodName']),
-      FoodImage: _str(json['FoodImage']),
-      RestrauntName: _str(json['RestrauntName']),
-      price: _double(json['price']),
+      id: id(json['id']),
+      FoodName: str(json['FoodName']),
+      FoodImage: str(json['FoodImage']),
+      RestrauntName: str(json['RestrauntName']),
+      price: double(json['price']),
       description: json['description']?.toString(),
       category: json['category']?.toString(),
-      gallery: _arr(json['gallery']),
-      videos: _arr(json['videos']),
+      gallery: arr(json['gallery']),
+      videos: arr(json['videos']),
     );
   }
 

@@ -7,7 +7,7 @@ import 'package:vero360_app/Quickservices/customerservice.dart';
 import 'package:vero360_app/Quickservices/social.dart';
 
 class MorePage extends StatelessWidget {
-  const MorePage({Key? key}) : super(key: key);
+  const MorePage({super.key});
 
   static const _brandOrange = Color(0xFFFF8A00);
   static const _brandOrangeSoft = Color(0xFFFFF4E6);
@@ -83,10 +83,10 @@ class _MiniIconsGrid extends StatelessWidget {
   final void Function(String key) onOpen;
 
   const _MiniIconsGrid({
-    Key? key,
+    super.key,
     required this.items,
     required this.onOpen,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

@@ -9,12 +9,12 @@ class StatusBadgeWidget extends StatelessWidget {
   final bool showLabel;
 
   const StatusBadgeWidget({
-    Key? key,
+    super.key,
     required this.status,
     this.fontSize,
     this.padding,
     this.showLabel = true,
-  }) : super(key: key);
+  });
 
   Color _getStatusColor() {
     return CarRentalDesignSystem.getStatusColor(status);

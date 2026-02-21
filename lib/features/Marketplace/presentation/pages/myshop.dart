@@ -659,9 +659,8 @@ class _ServiceCard extends StatelessWidget {
                   style: TextStyle(color: Colors.grey.shade700),
                 ),
                 const SizedBox(height: 6),
-                if (sp.serviceProviderId != null)
-                  Text('ServiceProviderID: ${sp.serviceProviderId}',
-                      style: const TextStyle(fontSize: 12)),
+                Text('ServiceProviderID: ${sp.serviceProviderId}',
+                    style: const TextStyle(fontSize: 12)),
               ],
             ),
           ),

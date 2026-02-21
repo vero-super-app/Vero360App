@@ -1,6 +1,4 @@
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:vero360_app/GernalServices/driver_request_service.dart';
 
 class RideNotificationService {
   static final _functions = FirebaseFunctions.instance;

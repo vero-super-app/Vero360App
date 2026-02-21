@@ -374,10 +374,12 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
         });
       }
     } catch (_) {
-      if (mounted) setState(() {
+      if (mounted) {
+        setState(() {
         _destSuggestions = [];
         _loadingSuggestions = false;
       });
+      }
     }
   }
 
@@ -883,7 +885,7 @@ class _AirportChips extends StatelessWidget {
                 children: [
                   Icon(Icons.flight_land_rounded, size: 20, color: isSelected ? _AirportpickuppageState._brandOrange : Colors.grey.shade700),
                   const SizedBox(width: 8),
-                  Text('${a.code}', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: isSelected ? Colors.black87 : Colors.black87)),
+                  Text(a.code, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: isSelected ? Colors.black87 : Colors.black87)),
                   const SizedBox(width: 4),
                   Text('• ${a.city}', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
                 ],
@@ -1040,7 +1042,6 @@ class _ModernTextField extends StatelessWidget {
     required this.hint,
     required this.icon,
     this.keyboardType,
-    this.maxLines = 1,
     this.validator,
   });
 

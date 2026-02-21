@@ -37,7 +37,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({Key? key}) : super(key: key);
+  const ProfilePage({super.key});
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -514,7 +514,7 @@ class _ProfilePageState extends State<ProfilePage> {
     setState(() => _loading = true);
     await ApiConfig.init();
 
-    Future<String?> _tryDirectUserUpload() async {
+    Future<String?> tryDirectUserUpload() async {
       final uri = ApiConfig.endpoint('/users/me/profile-picture');
       final req = http.MultipartRequest('POST', uri)
         ..headers['Authorization'] = 'Bearer $token'
@@ -537,7 +537,7 @@ class _ProfilePageState extends State<ProfilePage> {
       throw Exception('Upload failed (${resp.statusCode}) ${resp.body}');
     }
 
-    Future<String> _uploadGetUrlThenPutUser() async {
+    Future<String> uploadGetUrlThenPutUser() async {
       final uploadUri = ApiConfig.endpoint('/upload');
       final upReq = http.MultipartRequest('POST', uploadUri)
         ..headers['Authorization'] = 'Bearer $token'
@@ -574,7 +574,7 @@ class _ProfilePageState extends State<ProfilePage> {
       return url;
     }
 
-    Future<String> _uploadToFirebaseStorage(String uid, XFile file) async {
+    Future<String> uploadToFirebaseStorage(String uid, XFile file) async {
       final rawExt = file.name.contains('.') ? file.name.split('.').last : 'jpg';
       final ext = rawExt.isEmpty || rawExt.length > 4 ? 'jpg' : rawExt;
       final path = 'profile_photos/${uid}_${DateTime.now().millisecondsSinceEpoch}.$ext';
@@ -586,8 +586,8 @@ class _ProfilePageState extends State<ProfilePage> {
     }
 
     try {
-      String? url = await _tryDirectUserUpload();
-      url ??= await _uploadGetUrlThenPutUser();
+      String? url = await tryDirectUserUpload();
+      url ??= await uploadGetUrlThenPutUser();
 
       final profilePictureUrl = url;
       setState(() => profileUrl = profilePictureUrl);
@@ -616,7 +616,7 @@ class _ProfilePageState extends State<ProfilePage> {
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
         try {
-          final url = await _uploadToFirebaseStorage(user.uid, picked);
+          final url = await uploadToFirebaseStorage(user.uid, picked);
           setState(() => profileUrl = url);
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('profilepicture', url);

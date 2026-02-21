@@ -15,9 +15,10 @@ import 'package:flutter/scheduler.dart';
 // Deep links
 import 'package:app_links/app_links.dart';
 
-// Firebase (Auth only - keep for legacy auth support)
+// Firebase
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 // HTTP + prefs
 import 'package:http/http.dart' as http;
@@ -42,6 +43,7 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/messaging_initialization_service.dart';
 import 'package:vero360_app/GernalServices/websocket_messaging_service.dart';
 import 'package:vero360_app/GernalServices/websocket_manager.dart';
+import 'package:vero360_app/GernalServices/notification_service.dart';           // ← NEW
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -50,16 +52,57 @@ import 'package:vero360_app/GernalServices/driver_service.dart';
 
 final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
 
+// ───────────────────────────────────────────────
+//  BACKGROUND MESSAGE HANDLER - must be top-level
+// ───────────────────────────────────────────────
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  debugPrint("Background/terminated FCM message: ${message.messageId}");
+
+  // You can add minimal logic here (e.g. update local storage)
+  // Full display logic is already in NotificationService
+}
+
+// ───────────────────────────────────────────────
+//  MAIN
+// ───────────────────────────────────────────────
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize Google Maps configuration from .env
   await GoogleMapsConfig.initialize();
 
+  try {
+    // Initialize Firebase
+    await Firebase.initializeApp(
+      options: const FirebaseOptions(
+        apiKey: "AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk",
+        authDomain: "vero360app-ca423.firebaseapp.com",
+        projectId: "vero360app-ca423",
+        storageBucket: "vero360app-ca423.firebasestorage.app",
+        messagingSenderId: "1010595167807",
+        appId: "1:1010595167807:android:f63d7c7959bdb2891dc28a",
+      ),
+    );
+    debugPrint("Firebase initialized ✅");
+
+    // Register background handler FIRST (important for FCM)
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+    // Initialize push notification service
+    await NotificationService.instance.initialize();
+    debugPrint("NotificationService initialized ✅");
+  } catch (e) {
+    debugPrint("Firebase / Notification init error: $e");
+  }
+
   runApp(const AppBootstrap());
 }
 
-/// ----------------- ✅ SELF-HEAL BOOTSTRAP (NO nested MaterialApp navigation) -----------------
+// ───────────────────────────────────────────────
+//  AppBootstrap (self-healing bootstrap) - unchanged
+// ───────────────────────────────────────────────
 class AppBootstrap extends StatefulWidget {
   const AppBootstrap({super.key});
 
@@ -76,7 +119,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
   bool _scheduled = false;
 
   void _log(String msg) {
-    final t = DateTime.now().toIso8601String().substring(11, 19); // HH:mm:ss
+    final t = DateTime.now().toIso8601String().substring(11, 19);
     final next = List<String>.from(_logs.value)..add("[$t] $msg");
     _logs.value = next.length > 150 ? next.sublist(next.length - 150) : next;
   }
@@ -92,36 +135,20 @@ class _AppBootstrapState extends State<AppBootstrap> {
     bool clearedOldCache = false;
 
     _log("Starting Vero360App…");
-    _log("Initializing Firebase (Auth)…");
+    _log("Firebase already initialized in main()");
 
-    try {
-      await Firebase.initializeApp(
-        options: const FirebaseOptions(
-          apiKey: "AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk",
-          authDomain: "vero360app-ca423.firebaseapp.com",
-          projectId: "vero360app-ca423",
-          storageBucket: "vero360app-ca423.firebasestorage.app",
-          messagingSenderId: "1010595167807",
-          appId: "1:1010595167807:android:f63d7c7959bdb2891dc28a",
-        ),
-      );
-      firebaseOk = true;
-      _log("Firebase Auth OK ✅");
-    } catch (e) {
-      _log("Firebase init failed (continuing): $e");
-    }
+    firebaseOk = true; // since we did it in main()
 
     _log("Configuring API…");
     await ApiConfig.useProd();
     _log("API config OK ✅");
 
-    // Initialize messaging services (WebSocket + offline support)
-    _log("Initializing messaging services…");
+    _log("Initializing other messaging services…");
     try {
       await MessagingInitializationService.initialize();
       _log("Messaging services initialized ✅");
     } catch (e) {
-      _log("Messaging init warning (continuing): $e");
+      _log("Messaging init warning: $e");
     }
 
     _log("Launch ready 🚀");
@@ -169,7 +196,6 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
         final state = snap.data!;
 
-        // ✅ show repair message briefly, then rebuild into MyApp (no navigation)
         if (state.clearedOldCache && !_goMain) {
           if (!_scheduled) {
             _scheduled = true;
@@ -190,14 +216,13 @@ class _AppBootstrapState extends State<AppBootstrap> {
           );
         }
 
-        // ✅ main app with ride share data preloader
         return const _RideSharePreloader(child: MyApp());
       },
     );
   }
 }
 
-class _BootState {
+te {
   final bool firebaseOk;
   final bool clearedOldCache;
   const _BootState({required this.firebaseOk, required this.clearedOldCache});
@@ -672,7 +697,7 @@ class _MyAppState extends State<MyApp> {
       SharedPreferences prefs, Map<String, dynamic> u) async {
     String join(String? a, String? b) {
       final parts = [a, b]
-          .where((x) => x != null && x!.trim().isNotEmpty)
+          .where((x) => x != null && x.trim().isNotEmpty)
           .map((x) => x!.trim())
           .toList();
       return parts.isEmpty ? '' : parts.join(' ');

@@ -48,8 +48,8 @@ class VehicleTypeModal extends ConsumerStatefulWidget {
     required this.userLng,
     required this.onRideRequested,
     this.allowedVehicleClasses,
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   ConsumerState<VehicleTypeModal> createState() => _VehicleTypeModalState();
@@ -66,7 +66,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
   late AnimationController _animationController;
   // Deprecated: kept for backward compatibility only (no longer used).
   // ignore: unused_field
-  String _filterType = 'all';
+  final String _filterType = 'all';
 
   @override
   void initState() {

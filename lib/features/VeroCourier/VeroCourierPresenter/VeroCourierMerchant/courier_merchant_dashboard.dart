@@ -196,7 +196,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
       if (mounted) {
         setState(() {
           _couriers = snapshot.docs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
+            final data = doc.data();
             return {
               'id': doc.id,
               ...data,
@@ -753,7 +753,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
                 ),
               ),
             );
-          }).toList(),
+          }),
       ],
     );
   }
@@ -831,7 +831,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
                 ),
               ),
             );
-          }).toList(),
+          }),
       ],
     );
   }
@@ -1138,7 +1138,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
                     child: const Text('Assign'),
                   ),
                 );
-              }).toList(),
+              }),
             ],
           ),
         );

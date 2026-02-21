@@ -10,9 +10,7 @@ import '../../Home/homepage.dart';
 import '../Marketplace/presentation/pages/main_marketPlace.dart';
 import '../Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
-import 'package:vero360_app/settings/Settings.dart';
 
-import '../Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
 

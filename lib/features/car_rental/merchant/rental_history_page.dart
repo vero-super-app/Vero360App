@@ -10,9 +10,9 @@ class RentalHistoryPage extends ConsumerStatefulWidget {
   final int? carId; // If provided, filter by specific car
 
   const RentalHistoryPage({
-    Key? key,
+    super.key,
     this.carId,
-  }) : super(key: key);
+  });
 
   @override
   ConsumerState<RentalHistoryPage> createState() => _RentalHistoryPageState();

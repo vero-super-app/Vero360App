@@ -8,7 +8,7 @@ import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:path_provider/path_provider.dart';
 
 class OrdersPage extends StatefulWidget {
-  const OrdersPage({Key? key}) : super(key: key);
+  const OrdersPage({super.key});
 
   @override
   State<OrdersPage> createState() => _OrdersPageState();

@@ -7,10 +7,10 @@ class PushNotificationInitializer extends StatefulWidget {
   final Widget child;
 
   const PushNotificationInitializer({
-    Key? key,
+    super.key,
     required this.driverId,
     required this.child,
-  }) : super(key: key);
+  });
 
   @override
   State<PushNotificationInitializer> createState() =>

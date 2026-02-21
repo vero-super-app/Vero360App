@@ -343,7 +343,7 @@ class ChatService {
       final mSnap = await tx.get(mRef);
       if (!mSnap.exists) throw Exception('Message not found');
 
-      final data = mSnap.data() as Map<String, dynamic>? ?? {};
+      final data = mSnap.data() ?? {};
       if ('${data['fromAppId'] ?? ''}' != myAppId) {
         throw Exception('You can only edit your own messages');
       }
@@ -365,7 +365,7 @@ class ChatService {
 
       // update lastText only if this is the latest message
       final tSnap = await tx.get(tRef);
-      final tData = tSnap.data() as Map<String, dynamic>? ?? {};
+      final tData = tSnap.data() ?? {};
       final lastId = '${tData['lastMessageId'] ?? ''}';
       if (lastId == messageId) {
         tx.set(tRef, {'lastText': _previewForThread(newText)}, SetOptions(merge: true));
@@ -387,7 +387,7 @@ class ChatService {
       final mSnap = await tx.get(mRef);
       if (!mSnap.exists) return;
 
-      final data = mSnap.data() as Map<String, dynamic>? ?? {};
+      final data = mSnap.data() ?? {};
       if ('${data['fromAppId'] ?? ''}' != myAppId) {
         throw Exception('You can only delete your own messages');
       }
@@ -405,7 +405,7 @@ class ChatService {
       });
 
       final tSnap = await tx.get(tRef);
-      final tData = tSnap.data() as Map<String, dynamic>? ?? {};
+      final tData = tSnap.data() ?? {};
       final lastId = '${tData['lastMessageId'] ?? ''}';
       if (lastId == messageId) {
         tx.set(tRef, {'lastText': 'Message deleted'}, SetOptions(merge: true));

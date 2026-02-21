@@ -1,16 +1,12 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GeneralModels/car_booking_model.dart';
 import 'package:vero360_app/GeneralModels/car_model.dart';
-import 'package:vero360_app/GeneralModels/payment_model.dart';
 import 'package:vero360_app/GeneralModels/analytics_model.dart';
 import 'package:vero360_app/dto/create_car_dto.dart';
 import 'package:vero360_app/dto/update_car_dto.dart';
-import 'package:vero360_app/dto/payment_dto.dart';
-import 'package:vero360_app/dto/create_booking_dto.dart';
 import 'package:vero360_app/dto/geofence_dto.dart';
 
 class CarRentalService {

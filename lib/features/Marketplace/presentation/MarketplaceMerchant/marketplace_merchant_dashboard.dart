@@ -71,7 +71,9 @@ String _sanitizePhone(String s) {
   final t = (s ?? '').trim();
   if (t.isEmpty) return '';
   if (t.toLowerCase().startsWith('+firebase_') ||
-      t.toLowerCase().contains('firebase_')) return '';
+      t.toLowerCase().contains('firebase_')) {
+    return '';
+  }
   return t;
 }
 
@@ -501,10 +503,12 @@ class _MarketplaceMerchantDashboardState
       if (picVal.isNotEmpty) await prefs.setString('profilepicture', picVal);
       if (!mounted) return;
       setState(() {
-        if (phoneVal.isNotEmpty && _merchantPhone == 'No Phone')
+        if (phoneVal.isNotEmpty && _merchantPhone == 'No Phone') {
           _merchantPhone = phoneVal;
-        if (picVal.isNotEmpty && _merchantProfileUrl.trim().isEmpty)
+        }
+        if (picVal.isNotEmpty && _merchantProfileUrl.trim().isEmpty) {
           _merchantProfileUrl = picVal;
+        }
       });
     } catch (_) {}
   }
@@ -1175,7 +1179,7 @@ class _MarketplaceMerchantDashboardState
     final body = jsonDecode(resp.body);
     final data = (body is Map && body['data'] is Map)
         ? body['data'] as Map
-        : (body is Map ? Map<String, dynamic>.from(body as Map) : <String, dynamic>{});
+        : (body is Map ? Map<String, dynamic>.from(body) : <String, dynamic>{});
     final url = (data['profilepicture'] ?? data['profilePicture'] ?? data['url'])?.toString();
     if (url == null || url.isEmpty) throw Exception('No URL in response');
     return url;
@@ -1619,7 +1623,7 @@ class _MarketplaceMerchantDashboardState
                     ),
                     const SizedBox(height: 10),
                     DropdownButtonFormField<String>(
-                      value: category,
+                      initialValue: category,
                       items: _kCategories
                           .map((c) => DropdownMenuItem(
                                 value: c,
@@ -2442,7 +2446,7 @@ class _MarketplaceMerchantDashboardState
                 ),
               ),
             );
-          }).toList(),
+          }),
       ],
     );
   }
@@ -2683,7 +2687,7 @@ class _MarketplaceMerchantDashboardState
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
-                value: _category,
+                initialValue: _category,
                 items: _kCategories
                     .map((c) => DropdownMenuItem(
                           value: c,

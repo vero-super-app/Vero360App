@@ -19,11 +19,11 @@ class AuthGuard extends StatefulWidget {
   final bool showChildBehindDialog;
 
   const AuthGuard({
-    Key? key,
+    super.key,
     required this.child,
     this.featureName = 'this feature',
     this.showChildBehindDialog = false,
-  }) : super(key: key);
+  });
 
   @override
   State<AuthGuard> createState() => _AuthGuardState();

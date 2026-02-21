@@ -38,6 +38,10 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   bool _checkingConnectivity = true;
   bool _isOffline = false;
   RideShareHttpService? _rideHttpService;
+  // Real ride data threaded from VehicleTypeModal
+  double _rideEstimatedFare = 0.0;
+  double _rideDistanceKm = 0.0;
+  int _rideDurationMin = 0;
 
   void _onMapCreated(GoogleMapController controller) {
     mapController = controller;
@@ -107,8 +111,13 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
             dropoffPlace: dropoffPlace,
             userLat: position.latitude,
             userLng: position.longitude,
-            onRideRequested: (rideId) {
-              setState(() => _isLoadingRide = true);
+            onRideRequested: (rideId, fare, distKm, durMin) {
+              setState(() {
+                _isLoadingRide = true;
+                _rideEstimatedFare = fare;
+                _rideDistanceKm = distKm;
+                _rideDurationMin = durMin;
+              });
               _showWaitingForDriverScreen(rideId);
             },
           ),
@@ -177,7 +186,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
               pickupLng: position.longitude,
               dropoffLat: selectedDropoffPlace.latitude,
               dropoffLng: selectedDropoffPlace.longitude,
-              estimatedFare: 250.0,
+              estimatedFare: _rideEstimatedFare,
               driverLocation:
                   LatLng(driver.latitude ?? 0.0, driver.longitude ?? 0.0),
               httpService: _rideHttpService,
@@ -188,8 +197,8 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                   driver.name,
                   'Your Location',
                   selectedDropoffPlace.name,
-                  250.0,
-                  25,
+                  _rideEstimatedFare,
+                  _rideDurationMin > 0 ? _rideDurationMin : 10,
                   driver.rating,
                 );
               },
@@ -235,11 +244,11 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       context,
       MaterialPageRoute(
         builder: (context) => RideCompletionScreen(
-          baseFare: 50.0,
-          distanceFare: 200.0,
-          totalFare: 250.0,
-          distance: 5.2,
-          duration: 12,
+          baseFare: _rideEstimatedFare * 0.20, // 20% base portion
+          distanceFare: _rideEstimatedFare * 0.80, // 80% distance portion
+          totalFare: _rideEstimatedFare,
+          distance: _rideDistanceKm,
+          duration: _rideDurationMin > 0 ? _rideDurationMin : 10,
           driverName: driverName,
           driverRating: driverRating,
           onPaymentCompleted: () {

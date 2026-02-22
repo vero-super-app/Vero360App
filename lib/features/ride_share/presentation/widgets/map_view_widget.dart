@@ -35,6 +35,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   late CameraPosition _initialCameraPosition;
   MapType _mapType = MapType.normal;
   String? _mapStyleJson;
+  late BitmapDescriptor _taxiMarkerIcon;
 
   @override
   void initState() {
@@ -45,6 +46,9 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
     // Load map style from assets
     _loadMapStyle();
+
+    // Load custom taxi marker icon
+    _loadTaxiMarkerIcon();
 
     // Initial route draw if both places are provided
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -83,6 +87,25 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
       if (kDebugMode) {
         debugPrint('[MapViewWidget] Error loading map style: $e');
       }
+    }
+  }
+
+  Future<void> _loadTaxiMarkerIcon() async {
+    try {
+      // Load the custom car marker PNG (2000x2000) and scale to 120x120 for map display
+      _taxiMarkerIcon = await BitmapDescriptor.fromAssetImage(
+        const ImageConfiguration(size: Size(120, 120)),
+        'assets/icons/car-location-marker.png',
+      );
+      if (kDebugMode) {
+        debugPrint('[MapViewWidget] Taxi marker icon loaded successfully');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[MapViewWidget] Error loading taxi marker icon: $e');
+      }
+      // Fallback to default marker
+      _taxiMarkerIcon = BitmapDescriptor.defaultMarker;
     }
   }
 
@@ -462,21 +485,9 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     }
   }
 
-  /// Get marker color based on taxi class
+  /// Get custom marker icon for all taxi classes
   BitmapDescriptor _getTaxiMarkerIcon(String taxiClass) {
-    switch (taxiClass) {
-      case 'BIKE':
-        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen);
-      case 'STANDARD':
-        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
-      case 'EXECUTIVE':
-        return BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueOrange);
-      case 'BUSINESS':
-        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
-      default:
-        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
-    }
+    return _taxiMarkerIcon;
   }
 
   @override

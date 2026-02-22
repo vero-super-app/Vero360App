@@ -1029,12 +1029,12 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       final driverPhone = (driverProfile['user']?['phone'] ?? '').toString();
       final driverAvatar = driverProfile['user']?['profilepicture']?.toString();
       
-      // Extract vehicle ID from taxis list
-      int? vehicleId;
+      // Extract taxi ID from taxis list
+      int? taxiId;
       if (driverProfile['taxis'] is List && (driverProfile['taxis'] as List).isNotEmpty) {
         final taxiData = driverProfile['taxis'][0];
         if (taxiData is Map && taxiData.containsKey('id')) {
-          vehicleId = taxiData['id'] as int?;
+          taxiId = taxiData['id'] as int?;
         }
       }
 
@@ -1042,7 +1042,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         print('[DriverDashboard] Navigating to ride requests:');
         print('  Driver ID: $driverId');
         print('  Driver Name: $driverName');
-        print('  Vehicle ID: $vehicleId');
+        print('  Taxi ID: $taxiId');
       }
 
       if (mounted) {
@@ -1053,7 +1053,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               driverName: driverName,
               driverPhone: driverPhone,
               driverAvatar: driverAvatar,
-              vehicleId: vehicleId,
+              taxiId: taxiId,
             ),
           ),
         );

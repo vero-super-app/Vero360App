@@ -2,25 +2,25 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
-import 'package:vero360_app/GernalServices/vehicle_realtime_service.dart';
+import 'package:vero360_app/GernalServices/taxi_realtime_service.dart' show TaxiRealtimeService, TaxiLocationUpdate;
 
-/// Provider for NearbyVehiclesService instance
+/// Provider for NearbyTaxisService instance
 final nearbyVehiclesServiceProvider = Provider((ref) {
-  return NearbyVehiclesService();
+  return NearbyTaxisService();
 });
 
-/// Provider for VehicleRealtimeService instance
+/// Provider for TaxiRealtimeService instance
 final vehicleRealtimeServiceProvider = Provider((ref) {
-  final service = VehicleRealtimeService();
+  final service = TaxiRealtimeService();
   ref.onDispose(() async {
     await service.dispose();
   });
   return service;
 });
 
-/// State for nearby vehicles
+/// State for nearby taxis
 class NearbyVehiclesState {
-  final List<NearbyVehicle> vehicles;
+  final List<NearbyTaxi> vehicles;
   final bool isLoading;
   final String? error;
   final double? userLatitude;
@@ -39,7 +39,7 @@ class NearbyVehiclesState {
   });
 
   NearbyVehiclesState copyWith({
-    List<NearbyVehicle>? vehicles,
+    List<NearbyTaxi>? vehicles,
     bool? isLoading,
     String? error,
     double? userLatitude,
@@ -59,17 +59,17 @@ class NearbyVehiclesState {
   }
 }
 
-/// Notifier for managing nearby vehicles state
+/// Notifier for managing nearby taxis state
 class NearbyVehiclesNotifier extends StateNotifier<NearbyVehiclesState> {
-  final NearbyVehiclesService _vehiclesService;
-  final VehicleRealtimeService _realtimeService;
-  StreamSubscription<VehicleLocationUpdate>? _locationSubscription;
+  final NearbyTaxisService _taxisService;
+  final TaxiRealtimeService _realtimeService;
+  StreamSubscription<TaxiLocationUpdate>? _locationSubscription;
   Timer? _pollTimer;
 
-  NearbyVehiclesNotifier(this._vehiclesService, this._realtimeService)
+  NearbyVehiclesNotifier(this._taxisService, this._realtimeService)
       : super(const NearbyVehiclesState());
 
-  /// Fetch nearby vehicles and start real-time updates
+  /// Fetch nearby taxis and start real-time updates
   Future<void> fetchAndSubscribe({
     required double latitude,
     required double longitude,
@@ -85,16 +85,16 @@ class NearbyVehiclesNotifier extends StateNotifier<NearbyVehiclesState> {
 
     try {
       // Initial fetch
-      final vehicles = await _vehiclesService.fetchNearbyVehicles(
+      final taxis = await _taxisService.fetchNearbyTaxis(
         latitude: latitude,
         longitude: longitude,
         radiusKm: radiusKm,
       );
 
-      await _vehiclesService.cacheVehicles(vehicles);
+      await _taxisService.cacheTaxis(taxis);
 
       state = state.copyWith(
-        vehicles: vehicles,
+        vehicles: taxis,
         isLoading: false,
         lastUpdated: DateTime.now(),
       );
@@ -102,7 +102,7 @@ class NearbyVehiclesNotifier extends StateNotifier<NearbyVehiclesState> {
       // Connect to real-time updates
       _connectToRealtimeUpdates();
     } catch (e) {
-      print('[NearbyVehiclesNotifier] Error fetching vehicles: $e');
+      print('[NearbyVehiclesNotifier] Error fetching taxis: $e');
       state = state.copyWith(
         isLoading: false,
         error: e.toString(),
@@ -117,12 +117,12 @@ class NearbyVehiclesNotifier extends StateNotifier<NearbyVehiclesState> {
     // Attempt to connect to WebSocket
     _realtimeService.connect().then((connected) {
       if (connected) {
-        _realtimeService.subscribeToVehicleUpdates();
+        _realtimeService.subscribeToTaxiUpdates();
 
         // Listen to real-time location updates
         _locationSubscription =
             _realtimeService.locationUpdates.listen((update) {
-          _updateVehicleLocation(update);
+          _updateTaxiLocation(update);
         });
 
         print('[NearbyVehiclesNotifier] Connected to real-time updates');
@@ -136,29 +136,29 @@ class NearbyVehiclesNotifier extends StateNotifier<NearbyVehiclesState> {
     });
   }
 
-  /// Update a single vehicle's location
-  void _updateVehicleLocation(VehicleLocationUpdate update) {
-    final updatedVehicles = state.vehicles.map((vehicle) {
-      if (vehicle.id == update.vehicleId) {
-        return NearbyVehicle(
-          id: vehicle.id,
-          driverId: vehicle.driverId,
+  /// Update a single taxi's location
+  void _updateTaxiLocation(TaxiLocationUpdate update) {
+    final updatedTaxis = state.vehicles.map((taxi) {
+      if (taxi.id == update.taxiId) {
+        return NearbyTaxi(
+          id: taxi.id,
+          driverId: taxi.driverId,
           latitude: update.latitude,
           longitude: update.longitude,
-          distance: vehicle.distance,
-          vehicleClass: vehicle.vehicleClass,
-          make: vehicle.make,
-          model: vehicle.model,
-          licensePlate: vehicle.licensePlate,
-          rating: vehicle.rating,
-          totalRides: vehicle.totalRides,
+          distance: taxi.distance,
+          taxiClass: taxi.taxiClass,
+          make: taxi.make,
+          model: taxi.model,
+          licensePlate: taxi.licensePlate,
+          rating: taxi.rating,
+          totalRides: taxi.totalRides,
         );
       }
-      return vehicle;
+      return taxi;
     }).toList();
 
     state = state.copyWith(
-      vehicles: updatedVehicles,
+      vehicles: updatedTaxis,
       lastUpdated: DateTime.now(),
     );
   }
@@ -169,14 +169,14 @@ class NearbyVehiclesNotifier extends StateNotifier<NearbyVehiclesState> {
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
       if (state.userLatitude != null && state.userLongitude != null) {
         try {
-          final vehicles = await _vehiclesService.fetchNearbyVehicles(
+          final taxis = await _taxisService.fetchNearbyTaxis(
             latitude: state.userLatitude!,
             longitude: state.userLongitude!,
             radiusKm: state.radiusKm,
           );
 
           state = state.copyWith(
-            vehicles: vehicles,
+            vehicles: taxis,
             lastUpdated: DateTime.now(),
           );
         } catch (e) {
@@ -210,19 +210,19 @@ final nearbyVehiclesProvider =
   return NearbyVehiclesNotifier(vehiclesService, realtimeService);
 });
 
-/// Filtered vehicles by vehicle class (optional)
+/// Filtered taxis by taxi class (optional)
 final filteredVehiclesProvider =
-    Provider.family<List<NearbyVehicle>, String?>((ref, vehicleClass) {
+    Provider.family<List<NearbyTaxi>, String?>((ref, taxiClass) {
   final state = ref.watch(nearbyVehiclesProvider);
 
-  if (vehicleClass == null || vehicleClass.isEmpty) {
+  if (taxiClass == null || taxiClass.isEmpty) {
     return state.vehicles;
   }
 
-  return state.vehicles.where((v) => v.vehicleClass == vehicleClass).toList();
+  return state.vehicles.where((t) => t.taxiClass == taxiClass).toList();
 });
 
-/// Get closest vehicle
+/// Get closest taxi
 final closestVehicleProvider = Provider((ref) {
   final state = ref.watch(nearbyVehiclesProvider);
 
@@ -231,7 +231,7 @@ final closestVehicleProvider = Provider((ref) {
   return state.vehicles.reduce((a, b) => a.distance < b.distance ? a : b);
 });
 
-/// Get vehicles sorted by distance
+/// Get taxis sorted by distance
 final vehiclesByDistanceProvider = Provider((ref) {
   final state = ref.watch(nearbyVehiclesProvider);
 

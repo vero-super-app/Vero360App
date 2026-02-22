@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -12,26 +13,26 @@ double _parseDouble(dynamic value) {
   return 0.0;
 }
 
-class NearbyVehicle {
+class NearbyTaxi {
   final int id;
   final int driverId;
   double latitude;
   double longitude;
   final double distance;
-  final String vehicleClass;
+  final String taxiClass;
   final String make;
   final String model;
   final String licensePlate;
   final double rating;
   final int totalRides;
 
-  NearbyVehicle({
+  NearbyTaxi({
     required this.id,
     required this.driverId,
     required this.latitude,
     required this.longitude,
     required this.distance,
-    required this.vehicleClass,
+    required this.taxiClass,
     required this.make,
     required this.model,
     required this.licensePlate,
@@ -39,14 +40,14 @@ class NearbyVehicle {
     required this.totalRides,
   });
 
-  factory NearbyVehicle.fromJson(Map<String, dynamic> json) {
-    return NearbyVehicle(
+  factory NearbyTaxi.fromJson(Map<String, dynamic> json) {
+    return NearbyTaxi(
       id: json['id'] ?? 0,
       driverId: json['driverId'] ?? 0,
       latitude: _parseDouble(json['latitude']),
       longitude: _parseDouble(json['longitude']),
       distance: _parseDouble(json['distance']),
-      vehicleClass: json['vehicleClass'] ?? 'BIKE',
+      taxiClass: json['taxiClass'] ?? 'BIKE',
       make: json['make'] ?? '',
       model: json['model'] ?? '',
       licensePlate: json['licensePlate'] ?? '',
@@ -62,7 +63,7 @@ class NearbyVehicle {
       'latitude': latitude,
       'longitude': longitude,
       'distance': distance,
-      'vehicleClass': vehicleClass,
+      'taxiClass': taxiClass,
       'make': make,
       'model': model,
       'licensePlate': licensePlate,
@@ -72,15 +73,15 @@ class NearbyVehicle {
   }
 }
 
-/// Service to fetch and manage nearby vehicles in real-time
-class NearbyVehiclesService {
+/// Service to fetch and manage nearby taxis in real-time
+class NearbyTaxisService {
   final http.Client _httpClient;
 
-  NearbyVehiclesService({http.Client? httpClient})
+  NearbyTaxisService({http.Client? httpClient})
       : _httpClient = httpClient ?? http.Client();
 
-  /// Fetch nearby vehicles from backend
-  Future<List<NearbyVehicle>> fetchNearbyVehicles({
+  /// Fetch nearby taxis from backend
+  Future<List<NearbyTaxi>> fetchNearbyTaxis({
     required double latitude,
     required double longitude,
     double radiusKm = 5.0,
@@ -88,59 +89,70 @@ class NearbyVehiclesService {
     try {
       final baseUrl = await ApiConfig.readBase();
       final uri = Uri.parse(
-        '$baseUrl/vero/ride-share/map/nearby-vehicles'
+        '$baseUrl/vero/taxis'
         '?latitude=$latitude'
         '&longitude=$longitude'
         '&radiusKm=$radiusKm',
       );
 
+      // Get Firebase auth token
+      final user = FirebaseAuth.instance.currentUser;
+      final token = user != null ? await user.getIdToken() : null;
+
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await _httpClient
-          .get(uri)
+          .get(uri, headers: headers)
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
-        final vehiclesJson = (json['vehicles'] as List?) ?? [];
+        final taxisJson = (json['taxis'] as List?) ?? [];
 
-        return vehiclesJson
-            .map((v) => NearbyVehicle.fromJson(v as Map<String, dynamic>))
+        return taxisJson
+            .map((t) => NearbyTaxi.fromJson(t as Map<String, dynamic>))
             .toList();
       } else {
         throw Exception(
-          'Failed to fetch nearby vehicles: ${response.statusCode}',
+          'Failed to fetch nearby taxis: ${response.statusCode}',
         );
       }
     } catch (e) {
-      print('[NearbyVehiclesService] Error fetching vehicles: $e');
+      print('[NearbyTaxisService] Error fetching taxis: $e');
       rethrow;
     }
   }
 
-  /// Get cached vehicles (fallback)
-  Future<List<NearbyVehicle>> getCachedVehicles() async {
+  /// Get cached taxis (fallback)
+  Future<List<NearbyTaxi>> getCachedTaxis() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final cached = prefs.getString('nearby_vehicles_cache');
+      final cached = prefs.getString('nearby_taxis_cache');
       if (cached != null) {
         final List<dynamic> decoded = jsonDecode(cached);
         return decoded
-            .map((v) => NearbyVehicle.fromJson(v as Map<String, dynamic>))
+            .map((t) => NearbyTaxi.fromJson(t as Map<String, dynamic>))
             .toList();
       }
     } catch (e) {
-      print('[NearbyVehiclesService] Error reading cache: $e');
+      print('[NearbyTaxisService] Error reading cache: $e');
     }
     return [];
   }
 
-  /// Cache vehicles locally
-  Future<void> cacheVehicles(List<NearbyVehicle> vehicles) async {
+  /// Cache taxis locally
+  Future<void> cacheTaxis(List<NearbyTaxi> taxis) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final json = vehicles.map((v) => v.toJson()).toList();
-      await prefs.setString('nearby_vehicles_cache', jsonEncode(json));
+      final json = taxis.map((t) => t.toJson()).toList();
+      await prefs.setString('nearby_taxis_cache', jsonEncode(json));
     } catch (e) {
-      print('[NearbyVehiclesService] Error caching vehicles: $e');
+      print('[NearbyTaxisService] Error caching taxis: $e');
     }
   }
 

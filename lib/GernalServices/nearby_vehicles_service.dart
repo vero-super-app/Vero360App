@@ -89,7 +89,7 @@ class NearbyTaxisService {
     try {
       final baseUrl = await ApiConfig.readBase();
       final uri = Uri.parse(
-        '$baseUrl/vero/taxis'
+        '$baseUrl/vero/taxis/nearby'
         '?latitude=$latitude'
         '&longitude=$longitude'
         '&radiusKm=$radiusKm',

@@ -21,8 +21,10 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   static const Color primaryColor = Color(0xFFFF8A00);
   GoogleMapController? mapController;
   Timer? _locationBroadcastTimer;
+  Timer? _mapCenteringTimer;
   final DriverService _driverService = DriverService();
   bool _isOnline = false;
+  Position? _lastPosition;
 
   @override
   void initState() {
@@ -30,6 +32,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _startLocationBroadcasting();
+        _startMapCentering();
       }
     });
   }
@@ -38,6 +41,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   void dispose() {
     mapController?.dispose();
     _stopLocationBroadcasting();
+    _stopMapCentering();
     super.dispose();
   }
 
@@ -57,6 +61,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             timeLimit: Duration(seconds: 5),
           ),
         );
+
+        // Update last position for map centering
+        _lastPosition = position;
 
         // Get driver profile and ensure taxi exists
         final driverProfile = ref.read(myDriverProfileProvider);
@@ -92,7 +99,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                 'year': DateTime.now().year,
                 'licensePlate': 'DRV${driver['id']}-$timestamp',
                 'seats': 4,
-                'taxiClass': 'ECONOMY',
+                'taxiClass': 'STANDARD',
                 'color': 'White',
                 'registrationNumber': 'REG${driver['id']}-$timestamp',
               };
@@ -151,6 +158,32 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     _locationBroadcastTimer?.cancel();
     _locationBroadcastTimer = null;
     setState(() => _isOnline = false);
+  }
+
+  /// Start auto-centering map on driver location
+  void _startMapCentering() {
+    _mapCenteringTimer =
+        Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (mapController != null && _lastPosition != null) {
+        await mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(
+                _lastPosition!.latitude,
+                _lastPosition!.longitude,
+              ),
+              zoom: 15.0,
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  /// Stop map auto-centering
+  void _stopMapCentering() {
+    _mapCenteringTimer?.cancel();
+    _mapCenteringTimer = null;
   }
 
   @override
@@ -255,14 +288,33 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
   Widget _buildMap() {
     return GoogleMap(
-      onMapCreated: (controller) => mapController = controller,
-      initialCameraPosition: const CameraPosition(
-        target: LatLng(-13.1939, 34.3015),
-        zoom: 12,
+      onMapCreated: (controller) {
+        mapController = controller;
+        // Animate to driver's last known position if available
+        if (_lastPosition != null) {
+          Future.delayed(const Duration(milliseconds: 300), () {
+            mapController?.animateCamera(
+              CameraUpdate.newCameraPosition(
+                CameraPosition(
+                  target: LatLng(_lastPosition!.latitude, _lastPosition!.longitude),
+                  zoom: 15.0,
+                ),
+              ),
+            );
+          });
+        }
+      },
+      initialCameraPosition: CameraPosition(
+        target: _lastPosition != null
+            ? LatLng(_lastPosition!.latitude, _lastPosition!.longitude)
+            : const LatLng(-13.1939, 34.3015),
+        zoom: 15,
       ),
       myLocationEnabled: true,
       myLocationButtonEnabled: true,
-      zoomControlsEnabled: false,
+      zoomControlsEnabled: true,
+      compassEnabled: true,
+      mapToolbarEnabled: false,
     );
   }
 
@@ -653,67 +705,358 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   }
 
   Widget _buildActionsSection(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(bottom: 12),
-          child: Text(
-            'Quick Actions',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: Colors.black87,
-            ),
-          ),
-        ),
-        // Online/Offline Toggle
-        SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: ElevatedButton.icon(
-            onPressed: () {
-              if (_isOnline) {
-                _stopLocationBroadcasting();
-              } else {
-                _startLocationBroadcasting();
-              }
-            },
-            icon: Icon(_isOnline ? Icons.cloud_done : Icons.cloud_off),
-            label: Text(_isOnline ? 'Go Offline' : 'Go Online'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _isOnline ? Colors.green : Colors.grey,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+    final driverProfile = ref.watch(myDriverProfileProvider);
+
+    return driverProfile.when(
+      data: (driver) {
+        final isVerified = _getBoolValue(driver['isVerified']);
+        final hasTaxis = driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text(
+                'Quick Actions',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
               ),
-              elevation: 0,
             ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        // View Ride Requests Button
-        SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: ElevatedButton.icon(
-            onPressed: () {
-              _navigateToRideRequests(context);
-            },
-            icon: const Icon(Icons.local_taxi_outlined),
-            label: const Text('View Ride Requests'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+
+            // Development Section Header
+            if (!isVerified || !hasTaxis)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue[200]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info, color: Colors.blue[700], size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Complete setup to start receiving rides',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.blue[700],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              elevation: 0,
+
+            // Taxi Management Section
+            if (!hasTaxis)
+              Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showCreateTaxiDialog(context),
+                      icon: const Icon(Icons.add_circle_outline),
+                      label: const Text('Create Taxi'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              )
+            else
+              Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showTaxiDetailsDialog(context, driver['taxis'][0]),
+                      icon: const Icon(Icons.directions_car),
+                      label: const Text('Manage Taxi'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.purple,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ),
+
+            // Verification Section
+            if (!isVerified)
+              Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showVerifyDriverDialog(context, driver['id']),
+                      icon: const Icon(Icons.verified_user),
+                      label: const Text('Verify Profile'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ),
+
+            // Online/Offline Toggle
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  if (_isOnline) {
+                    _stopLocationBroadcasting();
+                  } else {
+                    _startLocationBroadcasting();
+                  }
+                },
+                icon: Icon(_isOnline ? Icons.cloud_done : Icons.cloud_off),
+                label: Text(_isOnline ? 'Go Offline' : 'Go Online'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isOnline ? Colors.green : Colors.grey,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
+                ),
+              ),
             ),
-          ),
-        ),
-      ],
+            const SizedBox(height: 12),
+            // View Ride Requests Button
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: isVerified && hasTaxis
+                    ? () => _navigateToRideRequests(context)
+                    : null,
+                icon: const Icon(Icons.local_taxi_outlined),
+                label: const Text('View Ride Requests'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: (isVerified && hasTaxis) ? primaryColor : Colors.grey[400],
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (error, stack) => const SizedBox.shrink(),
     );
+  }
+
+  void _showCreateTaxiDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Create Taxi'),
+        content: const Text(
+          'A default taxi will be created with standard specifications. You can edit it later.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _createDefaultTaxi();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+            ),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _createDefaultTaxi() async {
+    try {
+      final driverProfile = await ref.read(myDriverProfileProvider.future);
+      if (driverProfile['id'] == null) return;
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final taxiPayload = {
+        'make': 'Toyota',
+        'model': 'Corolla',
+        'year': DateTime.now().year,
+        'licensePlate': 'DRV${driverProfile['id']}-$timestamp',
+        'seats': 4,
+        'taxiClass': 'STANDARD',
+        'color': 'White',
+        'registrationNumber': 'REG${driverProfile['id']}-$timestamp',
+      };
+
+      await _driverService.createTaxi(taxiPayload);
+      
+      if (mounted) {
+        ref.refresh(myDriverProfileProvider);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Taxi created successfully'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error creating taxi: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    }
+  }
+
+  void _showTaxiDetailsDialog(BuildContext context, Map<String, dynamic> taxi) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Taxi Details'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _detailRow('Make', taxi['make']),
+            _detailRow('Model', taxi['model']),
+            _detailRow('Year', '${taxi['year']}'),
+            _detailRow('License Plate', taxi['licensePlate']),
+            _detailRow('Seats', '${taxi['seats']}'),
+            _detailRow('Class', taxi['taxiClass']),
+            _detailRow('Color', taxi['color'] ?? 'N/A'),
+            _detailRow('Status', taxi['status']),
+            _detailRow('Available', taxi['isAvailable'] ? 'Yes' : 'No'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, dynamic value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+          ),
+          Text(
+            value.toString(),
+            style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showVerifyDriverDialog(BuildContext context, int driverId) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Verify Profile'),
+        content: const Text(
+          'This will mark your profile as verified for development/testing purposes. In production, verification requires document review.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _verifyDriver(driverId);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+            ),
+            child: const Text('Verify'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _verifyDriver(int driverId) async {
+    try {
+      await _driverService.verifyDriver(driverId);
+      if (mounted) {
+        ref.refresh(myDriverProfileProvider);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Profile verified successfully'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error verifying profile: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    }
   }
 
   void _navigateToRideRequests(BuildContext context) async {
@@ -742,12 +1085,12 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       final driverPhone = (driverProfile['user']?['phone'] ?? '').toString();
       final driverAvatar = driverProfile['user']?['profilepicture']?.toString();
       
-      // Extract vehicle ID from taxis list
-      int? vehicleId;
+      // Extract taxi ID from taxis list
+      int? taxiId;
       if (driverProfile['taxis'] is List && (driverProfile['taxis'] as List).isNotEmpty) {
         final taxiData = driverProfile['taxis'][0];
         if (taxiData is Map && taxiData.containsKey('id')) {
-          vehicleId = taxiData['id'] as int?;
+          taxiId = taxiData['id'] as int?;
         }
       }
 
@@ -755,7 +1098,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         print('[DriverDashboard] Navigating to ride requests:');
         print('  Driver ID: $driverId');
         print('  Driver Name: $driverName');
-        print('  Vehicle ID: $vehicleId');
+        print('  Taxi ID: $taxiId');
       }
 
       if (mounted) {
@@ -766,7 +1109,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               driverName: driverName,
               driverPhone: driverPhone,
               driverAvatar: driverAvatar,
-              vehicleId: vehicleId,
+              taxiId: taxiId,
             ),
           ),
         );

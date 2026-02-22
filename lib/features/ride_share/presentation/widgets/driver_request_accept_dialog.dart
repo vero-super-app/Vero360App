@@ -10,7 +10,7 @@ class DriverRequestAcceptDialog extends StatefulWidget {
   final String driverName;
   final String driverPhone;
   final String? driverAvatar;
-  final int? vehicleId;
+  final int? taxiId;
   final Function()? onAccepted;
   final Function()? onRejected;
 
@@ -21,7 +21,7 @@ class DriverRequestAcceptDialog extends StatefulWidget {
     required this.driverName,
     required this.driverPhone,
     this.driverAvatar,
-    this.vehicleId,
+    this.taxiId,
     this.onAccepted,
     this.onRejected,
   });
@@ -63,7 +63,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         driverName: widget.driverName,
         driverPhone: widget.driverPhone,
         driverAvatar: widget.driverAvatar,
-        vehicleId: widget.vehicleId,
+        taxiId: widget.taxiId,
       );
 
       // Try to create ride thread and send message, but don't fail if they error

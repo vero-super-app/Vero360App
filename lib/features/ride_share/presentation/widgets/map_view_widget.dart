@@ -8,7 +8,7 @@ import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/config/map_style_constants.dart';
 import 'package:vero360_app/providers/ride_share/nearby_vehicles_provider.dart';
-import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
+import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart'; // Note: Service class renamed to NearbyTaxisService internally
 
 class MapViewWidget extends ConsumerStatefulWidget {
   final Function(GoogleMapController) onMapCreated;
@@ -35,6 +35,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   late CameraPosition _initialCameraPosition;
   final MapType _mapType = MapType.normal;
   String? _mapStyleJson;
+  late BitmapDescriptor _taxiMarkerIcon;
 
   @override
   void initState() {
@@ -45,6 +46,9 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
     // Load map style from assets
     _loadMapStyle();
+
+    // Load custom taxi marker icon
+    _loadTaxiMarkerIcon();
 
     // Initial route draw if both places are provided
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -83,6 +87,25 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
       if (kDebugMode) {
         debugPrint('[MapViewWidget] Error loading map style: $e');
       }
+    }
+  }
+
+  Future<void> _loadTaxiMarkerIcon() async {
+    try {
+      // Load the custom car marker PNG (2000x2000) and scale to 120x120 for map display
+      _taxiMarkerIcon = await BitmapDescriptor.fromAssetImage(
+        const ImageConfiguration(size: Size(120, 120)),
+        'assets/icons/car-location-marker.png',
+      );
+      if (kDebugMode) {
+        debugPrint('[MapViewWidget] Taxi marker icon loaded successfully');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[MapViewWidget] Error loading taxi marker icon: $e');
+      }
+      // Fallback to default marker
+      _taxiMarkerIcon = BitmapDescriptor.defaultMarker;
     }
   }
 
@@ -435,24 +458,24 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     });
   }
 
-  /// Update vehicle markers on the map from nearby vehicles data
-  void _updateVehicleMarkers(List<NearbyVehicle> vehicles) {
-    // Remove old vehicle markers (keep user, pickup, dropoff, route)
+  /// Update taxi markers on the map from nearby taxis data
+  void _updateTaxiMarkers(List<NearbyTaxi> taxis) {
+    // Remove old taxi markers (keep user, pickup, dropoff, route)
     _markers
-        .removeWhere((marker) => marker.markerId.value.startsWith('vehicle_'));
+        .removeWhere((marker) => marker.markerId.value.startsWith('taxi_'));
 
-    // Add new vehicle markers
-    for (final vehicle in vehicles) {
+    // Add new taxi markers
+    for (final taxi in taxis) {
       _markers.add(
         Marker(
-          markerId: MarkerId('vehicle_${vehicle.id}'),
-          position: LatLng(vehicle.latitude, vehicle.longitude),
+          markerId: MarkerId('taxi_${taxi.id}'),
+          position: LatLng(taxi.latitude, taxi.longitude),
           infoWindow: InfoWindow(
-            title: '${vehicle.make} ${vehicle.model}',
+            title: '${taxi.make} ${taxi.model}',
             snippet:
-                '${vehicle.distance.toStringAsFixed(1)}km • ⭐${vehicle.rating}',
+                '${taxi.distance.toStringAsFixed(1)}km • ⭐${taxi.rating}',
           ),
-          icon: _getVehicleMarkerIcon(vehicle.vehicleClass),
+          icon: _getTaxiMarkerIcon(taxi.taxiClass),
         ),
       );
     }
@@ -462,31 +485,19 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     }
   }
 
-  /// Get marker color based on vehicle class
-  BitmapDescriptor _getVehicleMarkerIcon(String vehicleClass) {
-    switch (vehicleClass) {
-      case 'BIKE':
-        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen);
-      case 'STANDARD':
-        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
-      case 'EXECUTIVE':
-        return BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueOrange);
-      case 'BUSINESS':
-        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
-      default:
-        return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
-    }
+  /// Get custom marker icon for all taxi classes
+  BitmapDescriptor _getTaxiMarkerIcon(String taxiClass) {
+    return _taxiMarkerIcon;
   }
 
   @override
   Widget build(BuildContext context) {
-    final nearbyVehiclesState = ref.watch(nearbyVehiclesProvider);
+    final nearbyTaxisState = ref.watch(nearbyVehiclesProvider);
 
     ref.listen(nearbyVehiclesProvider, (prev, next) {
       if (next.vehicles.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _updateVehicleMarkers(next.vehicles);
+          if (mounted) _updateTaxiMarkers(next.vehicles);
         });
       }
     });
@@ -506,8 +517,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
           mapToolbarEnabled: false,
           compassEnabled: true,
         ),
-        // Nearby vehicles indicator
-        if (nearbyVehiclesState.vehicles.isNotEmpty)
+        // Nearby taxis indicator
+        if (nearbyTaxisState.vehicles.isNotEmpty)
           Positioned(
             top: 16,
             right: 16,
@@ -533,7 +544,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    '${nearbyVehiclesState.vehicles.length} nearby',
+                    '${nearbyTaxisState.vehicles.length} nearby',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,

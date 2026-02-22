@@ -21,8 +21,10 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   static const Color primaryColor = Color(0xFFFF8A00);
   GoogleMapController? mapController;
   Timer? _locationBroadcastTimer;
+  Timer? _mapCenteringTimer;
   final DriverService _driverService = DriverService();
   bool _isOnline = false;
+  Position? _lastPosition;
 
   @override
   void initState() {
@@ -30,6 +32,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _startLocationBroadcasting();
+        _startMapCentering();
       }
     });
   }
@@ -38,6 +41,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   void dispose() {
     mapController?.dispose();
     _stopLocationBroadcasting();
+    _stopMapCentering();
     super.dispose();
   }
 
@@ -57,6 +61,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             timeLimit: Duration(seconds: 5),
           ),
         );
+
+        // Update last position for map centering
+        _lastPosition = position;
 
         // Get driver profile and ensure taxi exists
         final driverProfile = ref.read(myDriverProfileProvider);
@@ -147,6 +154,32 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     _locationBroadcastTimer?.cancel();
     _locationBroadcastTimer = null;
     setState(() => _isOnline = false);
+  }
+
+  /// Start auto-centering map on driver location
+  void _startMapCentering() {
+    _mapCenteringTimer =
+        Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (mapController != null && _lastPosition != null) {
+        await mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(
+                _lastPosition!.latitude,
+                _lastPosition!.longitude,
+              ),
+              zoom: 15.0,
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  /// Stop map auto-centering
+  void _stopMapCentering() {
+    _mapCenteringTimer?.cancel();
+    _mapCenteringTimer = null;
   }
 
   @override
@@ -251,14 +284,33 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
   Widget _buildMap() {
     return GoogleMap(
-      onMapCreated: (controller) => mapController = controller,
-      initialCameraPosition: const CameraPosition(
-        target: LatLng(-13.1939, 34.3015),
-        zoom: 12,
+      onMapCreated: (controller) {
+        mapController = controller;
+        // Animate to driver's last known position if available
+        if (_lastPosition != null) {
+          Future.delayed(const Duration(milliseconds: 300), () {
+            mapController?.animateCamera(
+              CameraUpdate.newCameraPosition(
+                CameraPosition(
+                  target: LatLng(_lastPosition!.latitude, _lastPosition!.longitude),
+                  zoom: 15.0,
+                ),
+              ),
+            );
+          });
+        }
+      },
+      initialCameraPosition: CameraPosition(
+        target: _lastPosition != null
+            ? LatLng(_lastPosition!.latitude, _lastPosition!.longitude)
+            : const LatLng(-13.1939, 34.3015),
+        zoom: 15,
       ),
       myLocationEnabled: true,
       myLocationButtonEnabled: true,
-      zoomControlsEnabled: false,
+      zoomControlsEnabled: true,
+      compassEnabled: true,
+      mapToolbarEnabled: false,
     );
   }
 

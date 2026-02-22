@@ -212,7 +212,7 @@ class Ride {
   final int id;
   final int passengerId;
   final int? driverId;
-  final int? vehicleId;
+  final int? taxiId;
   final double pickupLatitude;
   final double pickupLongitude;
   final String? pickupAddress;
@@ -230,14 +230,14 @@ class Ride {
   final String? passengerNotes;
   final DateTime createdAt;
   final DateTime updatedAt;
-  final Vehicle? vehicle;
+  final Vehicle? taxi;
   final DriverInfo? driver;
 
   Ride({
     required this.id,
     required this.passengerId,
     this.driverId,
-    this.vehicleId,
+    this.taxiId,
     required this.pickupLatitude,
     required this.pickupLongitude,
     this.pickupAddress,
@@ -255,7 +255,7 @@ class Ride {
     this.passengerNotes,
     required this.createdAt,
     required this.updatedAt,
-    this.vehicle,
+    this.taxi,
     this.driver,
   });
 
@@ -289,7 +289,7 @@ class Ride {
       id: _parseInt(json['id']) ?? 0,
       passengerId: _parseInt(json['passengerId']) ?? 0,
       driverId: _parseInt(json['driverId']),
-      vehicleId: _parseInt(json['vehicleId']),
+      taxiId: _parseInt(json['taxiId']),
       pickupLatitude: _parseDouble(json['pickupLatitude']),
       pickupLongitude: _parseDouble(json['pickupLongitude']),
       pickupAddress: json['pickupAddress'] as String?,
@@ -315,20 +315,13 @@ class Ride {
       passengerNotes: json['passengerNotes'] as String?,
       createdAt: _parseDateTime(json['createdAt']),
       updatedAt: _parseDateTime(json['updatedAt']),
-      vehicle: json['vehicle'] != null
-          ? Vehicle.fromJson(json['vehicle'] as Map<String, dynamic>)
+      taxi: json['taxi'] != null
+          ? Vehicle.fromJson(json['taxi'] as Map<String, dynamic>)
           : null,
       driver: () {
         // Try to get driver from direct field first
         if (json['driver'] != null && json['driver'] is Map) {
           return DriverInfo.fromJson(json['driver'] as Map<String, dynamic>);
-        }
-        // Fallback: try to get driver from taxi object
-        if (json['taxi'] != null && json['taxi'] is Map) {
-          final taxi = json['taxi'] as Map<String, dynamic>;
-          if (taxi['driver'] != null && taxi['driver'] is Map) {
-            return DriverInfo.fromJson(taxi['driver'] as Map<String, dynamic>);
-          }
         }
         return null;
       }(),
@@ -352,7 +345,7 @@ class Ride {
         'id': id,
         'passengerId': passengerId,
         'driverId': driverId,
-        'vehicleId': vehicleId,
+        'taxiId': taxiId,
         'pickupLatitude': pickupLatitude,
         'pickupLongitude': pickupLongitude,
         'pickupAddress': pickupAddress,
@@ -370,7 +363,7 @@ class Ride {
         'passengerNotes': passengerNotes,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
-        'vehicle': vehicle?.toJson(),
+        'taxi': taxi?.toJson(),
       };
 }
 

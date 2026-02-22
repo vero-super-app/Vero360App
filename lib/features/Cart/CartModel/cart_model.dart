@@ -29,12 +29,12 @@ class CartModel {
   });
 
   factory CartModel.fromJson(Map<String, dynamic> json) {
-    int int(Object? v, {int def = 0}) {
+    int safeInt(Object? v, {int def = 0}) {
       if (v is int) return v;
       return int.tryParse('${v ?? ''}') ?? def;
     }
 
-    double double(Object? v, {double def = 0}) {
+    double safeDouble(Object? v, {double def = 0}) {
       if (v is num) return v.toDouble();
       return double.tryParse('${v ?? ''}') ?? def;
     }
@@ -43,11 +43,11 @@ class CartModel {
 
     return CartModel(
       userId: str(json['userId'] ?? json['user_id']),
-      item: int(json['item']),
-      quantity: int(json['quantity'], def: 1),
+      item: safeInt(json['item']),
+      quantity: safeInt(json['quantity'], def: 1),
       image: str(json['image']),
       name: str(json['name']),
-      price: double(json['price']),
+      price: safeDouble(json['price']),
       description: str(json['description']),
       comment: json['comment'] == null ? null : str(json['comment']),
       merchantId: str(json['merchantId'] ?? json['merchant_id'] ?? 'unknown'),

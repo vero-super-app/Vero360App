@@ -125,7 +125,7 @@ class MarketplaceDetailModel {
   factory MarketplaceDetailModel.fromJson(Map<String, dynamic> j) {
     List<String> arr(dynamic v) =>
         (v is List) ? v.map((e) => '$e').where((s) => s.isNotEmpty).cast<String>().toList() : const <String>[];
-    double num(dynamic v) => (v is num) ? v.toDouble() : double.tryParse('$v') ?? 0.0;
+    double toDoubleVal(dynamic v) => (v is num) ? v.toDouble() : double.tryParse('$v') ?? 0.0;
 
     final String? sellerUserId =
         (j['sellerUserId'] ?? j['ownerId'])?.toString();
@@ -134,7 +134,7 @@ class MarketplaceDetailModel {
       id: j['id'] ?? 0,
       name: '${j['name'] ?? ''}',
       image: '${j['image'] ?? ''}',
-      price: num(j['price'] ?? 0),
+      price: toDoubleVal(j['price'] ?? 0),
       description: '${j['description'] ?? ''}',
       location: '${j['location'] ?? ''}',
       comment: j['comment']?.toString(),

@@ -1,10 +1,15 @@
 // lib/services/notification_service.dart
 import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart'
+    show kDebugMode, kIsWeb, defaultTargetPlatform, TargetPlatform, debugPrint;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:http/http.dart' as http;
+
+import 'package:vero360_app/config/api_config.dart';
 
 /// Central service for handling Firebase Cloud Messaging (FCM) + local notifications
 class NotificationService {
@@ -55,7 +60,7 @@ class NotificationService {
 
     // 2. Request notification permissions
     final messaging = FirebaseMessaging.instance;
-    final settings = await messaging.requestPermission(
+    final permission = await messaging.requestPermission(
       alert: true,
       announcement: false,
       badge: true,
@@ -67,7 +72,7 @@ class NotificationService {
 
     if (kDebugMode) {
       debugPrint(
-          'Notification permission: ${settings.authorizationStatus.name}');
+          'Notification permission: ${permission.authorizationStatus.name}');
     }
 
     // 3. Foreground message handler
@@ -82,17 +87,71 @@ class NotificationService {
       _handleInitialMessage(initial);
     }
 
-    // 6. Optional: token & refresh
+    // 6. FCM token: register with backend (if user logged in)
     final token = await messaging.getToken();
-    if (token != null && kDebugMode) {
-      debugPrint("FCM Token: $token");
-      // → TODO: Send to your backend / save to Firestore per user
+    if (token != null) {
+      if (kDebugMode) debugPrint("FCM Token: $token");
+      await _registerTokenWithBackend(token);
     }
 
-    messaging.onTokenRefresh.listen((newToken) {
+    messaging.onTokenRefresh.listen((newToken) async {
       if (kDebugMode) debugPrint("FCM token refreshed: $newToken");
-      // → TODO: Update backend
+      await _registerTokenWithBackend(newToken);
     });
+
+    // Register token when user signs in (handles login after app start)
+    FirebaseAuth.instance.authStateChanges().listen((user) async {
+      if (user != null) {
+        await registerTokenWithBackend();
+      }
+    });
+  }
+
+  /// Register FCM token with backend. Call this when user logs in, or it runs
+  /// automatically on init/token refresh (no-op if not logged in).
+  Future<void> registerTokenWithBackend() async {
+    final token = await FirebaseMessaging.instance.getToken();
+    if (token != null) {
+      await _registerTokenWithBackend(token);
+    }
+  }
+
+  Future<void> _registerTokenWithBackend(String fcmToken) async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final idToken = await user.getIdToken();
+      if (idToken == null || idToken.isEmpty) return;
+
+      await ApiConfig.init();
+      final uri = ApiConfig.endpoint('/api/v1/notifications/register-token');
+      final platform = kIsWeb
+          ? 'web'
+          : (defaultTargetPlatform == TargetPlatform.iOS
+              ? 'ios'
+              : 'android');
+
+      final res = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $idToken',
+        },
+        body: jsonEncode({
+          'token': fcmToken,
+          'platform': platform,
+        }),
+      );
+
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        if (kDebugMode) debugPrint("FCM token registered with backend ✅");
+      } else if (kDebugMode) {
+        debugPrint("FCM token register failed: ${res.statusCode} ${res.body}");
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint("FCM token register error: $e");
+    }
   }
 
   // ───────────────────────────────────────────────
@@ -127,7 +186,7 @@ class NotificationService {
     if (response.payload == null) return;
     try {
       final data = jsonDecode(response.payload!) as Map<String, dynamic>;
-      _navigateBasedOnPayload(data);
+      instance._navigateBasedOnPayload(data);
     } catch (e) {
       debugPrint("Invalid notification payload: $e");
     }

@@ -1042,6 +1042,7 @@ class _ModernTextField extends StatelessWidget {
     required this.hint,
     required this.icon,
     this.keyboardType,
+    this.maxLines = 1,
     this.validator,
   });
 

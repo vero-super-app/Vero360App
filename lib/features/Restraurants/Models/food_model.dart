@@ -32,7 +32,7 @@ class FoodModel {
       return 0;
     }
 
-    double double(dynamic v) {
+    double safeDouble(dynamic v) {
       if (v is num) return v.toDouble();
       return double.tryParse(v?.toString() ?? '') ?? 0.0;
     }
@@ -54,7 +54,7 @@ class FoodModel {
       FoodName: str(json['FoodName']),
       FoodImage: str(json['FoodImage']),
       RestrauntName: str(json['RestrauntName']),
-      price: double(json['price']),
+      price: safeDouble(json['price']),
       description: json['description']?.toString(),
       category: json['category']?.toString(),
       gallery: arr(json['gallery']),

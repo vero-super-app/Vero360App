@@ -222,7 +222,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
   }
 }
 
-te {
+class _BootState {
   final bool firebaseOk;
   final bool clearedOldCache;
   const _BootState({required this.firebaseOk, required this.clearedOldCache});

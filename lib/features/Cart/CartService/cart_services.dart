@@ -273,13 +273,13 @@ class CartService {
           .orderBy('updatedAt', descending: true)
           .get();
 
-      int int(Object? v, {int def = 0}) {
+      int safeInt(Object? v, {int def = 0}) {
         if (v is int) return v;
         if (v is num) return v.toInt();
         return int.tryParse('${v ?? ''}') ?? def;
       }
 
-      double double(Object? v, {double def = 0}) {
+      double safeDouble(Object? v, {double def = 0}) {
         if (v is num) return v.toDouble();
         return double.tryParse('${v ?? ''}') ?? def;
       }
@@ -288,11 +288,11 @@ class CartService {
         final data = d.data();
         return CartModel(
           userId: userKey,
-          item: int(data['itemId'] ?? data['item']),
-          quantity: int(data['quantity'], def: 1),
+          item: safeInt(data['itemId'] ?? data['item']),
+          quantity: safeInt(data['quantity'], def: 1),
           name: (data['name'] ?? '').toString(),
           image: (data['image'] ?? '').toString(),
-          price: double(data['price']),
+          price: safeDouble(data['price']),
           description: (data['description'] ?? '').toString(),
           comment: data['comment']?.toString(),
           merchantId: (data['merchantId'] ?? '').toString(),

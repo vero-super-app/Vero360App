@@ -1,9 +1,10 @@
 import 'dart:async';
-import 'dart:math' as Math;
+import 'dart:math' as math;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
-import 'package:vero360_app/GernalServices/taxi_realtime_service.dart' show TaxiRealtimeService, TaxiLocationUpdate;
+import 'package:vero360_app/GernalServices/taxi_realtime_service.dart'
+    show TaxiRealtimeService, TaxiLocationUpdate;
 
 /// Provider for NearbyTaxisService instance
 final nearbyVehiclesServiceProvider = Provider((ref) {
@@ -80,11 +81,11 @@ class NearbyVehiclesNotifier extends StateNotifier<NearbyVehiclesState> {
     final locationChanged = state.userLatitude == null ||
         state.userLongitude == null ||
         _calculateDistance(
-          state.userLatitude!,
-          state.userLongitude!,
-          latitude,
-          longitude,
-        ) >
+              state.userLatitude!,
+              state.userLongitude!,
+              latitude,
+              longitude,
+            ) >
             0.01; // ~10 meters
 
     if (!locationChanged) {
@@ -143,13 +144,13 @@ class NearbyVehiclesNotifier extends StateNotifier<NearbyVehiclesState> {
     final dLat = ((lat2 - lat1) * 3.141592653589793) / 180.0;
     final dLng = ((lng2 - lng1) * 3.141592653589793) / 180.0;
 
-    final a = (Math.sin(dLat / 2) * Math.sin(dLat / 2)) +
-        (Math.cos((lat1 * 3.141592653589793) / 180.0) *
-            Math.cos((lat2 * 3.141592653589793) / 180.0) *
-            Math.sin(dLng / 2) *
-            Math.sin(dLng / 2));
+    final a = (math.sin(dLat / 2) * math.sin(dLat / 2)) +
+        (math.cos((lat1 * 3.141592653589793) / 180.0) *
+            math.cos((lat2 * 3.141592653589793) / 180.0) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2));
 
-    final c = 2.0 * Math.atan2(Math.sqrt(a), Math.sqrt(1.0 - a));
+    final c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a));
 
     return earthRadius * c;
   }

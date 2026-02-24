@@ -49,6 +49,7 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
   GoogleMapController? mapController;
   final Set<Marker> markers = {};
   late AnimationController _pulseController;
+  bool _driverArrived = false;
   bool _rideStarted = false;
   StreamSubscription<Ride>? _rideUpdateSubscription;
 
@@ -76,10 +77,16 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
 
       print('[UserAwaitingDriverScreen] Ride update: status=${ride.status}');
       
+      // Track driver arrival
+      if (ride.status == RideStatus.driverArrived) {
+        print('[UserAwaitingDriverScreen] Driver has arrived! Status is DRIVER_ARRIVED');
+        setState(() => _driverArrived = true);
+      }
+      
       // When driver starts the ride (IN_PROGRESS)
       if (ride.status == RideStatus.inProgress && !_rideStarted) {
         print('[UserAwaitingDriverScreen] Driver started ride! Status is IN_PROGRESS');
-        _rideStarted = true;
+        setState(() => _rideStarted = true);
         // Only call onStartRide if not already navigating away
         if (mounted) {
           widget.onStartRide();
@@ -238,7 +245,11 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF10B981).withOpacity(0.1),
+                        color: _rideStarted
+                            ? const Color(0xFF059669).withOpacity(0.1)
+                            : _driverArrived
+                                ? const Color(0xFF2563EB).withOpacity(0.1)
+                                : const Color(0xFF10B981).withOpacity(0.1),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
@@ -247,17 +258,29 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                           Container(
                             width: 6,
                             height: 6,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF10B981),
+                            decoration: BoxDecoration(
+                              color: _rideStarted
+                                  ? const Color(0xFF059669)
+                                  : _driverArrived
+                                      ? const Color(0xFF2563EB)
+                                      : const Color(0xFF10B981),
                               shape: BoxShape.circle,
                             ),
                           ),
                           const SizedBox(width: 6),
-                          const Text(
-                            'Driver Arriving',
+                          Text(
+                            _rideStarted
+                                ? 'Ride in Progress'
+                                : _driverArrived
+                                    ? 'Driver Arrived'
+                                    : 'Driver Arriving',
                             style: TextStyle(
                               fontSize: 12,
-                              color: Color(0xFF10B981),
+                              color: _rideStarted
+                                  ? const Color(0xFF059669)
+                                  : _driverArrived
+                                      ? const Color(0xFF2563EB)
+                                      : const Color(0xFF10B981),
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -468,29 +491,61 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                   ),
                   const SizedBox(height: 16),
 
-                  // Start ride button
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton.icon(
-                      onPressed: _handleStartRide,
-                      icon: const Icon(Icons.play_arrow_rounded, size: 22),
-                      label: const Text(
-                        'Start Ride',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
+                  // Start ride button - only show when driver arrived but ride not started
+                  if (!_rideStarted && _driverArrived)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton.icon(
+                        onPressed: _handleStartRide,
+                        icon: const Icon(Icons.play_arrow_rounded, size: 22),
+                        label: const Text(
+                          'Start Ride',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 0,
                         ),
                       ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF10B981),
-                        shape: RoundedRectangleBorder(
+                    )
+                  else if (_rideStarted)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF059669),
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        elevation: 0,
+                        child: const Center(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.check_circle, 
+                                size: 22,
+                                color: Colors.white,
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'Ride in Progress',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),

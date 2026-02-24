@@ -145,74 +145,68 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           print('[DriverDashboard] Extracted taxiId: $taxiId');
         }
 
-        if (taxiId == null) {
-          if (kDebugMode) print('[DriverDashboard] No taxi found, creating default taxi...');
-          try {
-            final timestamp = DateTime.now().millisecondsSinceEpoch;
-            final taxiPayload = {
-              'make': 'Default',
-              'model': 'Vehicle',
-              'year': DateTime.now().year,
-              'licensePlate': 'DRV${driver['id']}-$timestamp',
-              'seats': 4,
-              'taxiClass': 'ECONOMY',
-              'color': 'White',
-              'registrationNumber': 'REG${driver['id']}-$timestamp',
-            };
-            if (kDebugMode) print('[DriverDashboard] Creating taxi with payload: $taxiPayload');
-            final newTaxi = await _driverService.createTaxi(taxiPayload);
-            taxiId = newTaxi['id'];
-            if (kDebugMode) print('[DriverDashboard] ✓ Created taxi with ID: $taxiId');
-          } catch (e) {
-            if (kDebugMode) {
-              print('[DriverDashboard] ✗ Error creating taxi: $e');
-              print('[DriverDashboard] Error type: ${e.runtimeType}');
-              if (e is DioException) {
-                print('[DriverDashboard] Status code: ${e.response?.statusCode}');
-                print('[DriverDashboard] Response: ${e.response?.data}');
+          // If no taxi exists, create one
+          if (taxiId == null) {
+            if (kDebugMode)
+              print('[DriverDashboard] No taxi found, creating default taxi...');
+            try {
+              final timestamp = DateTime.now().millisecondsSinceEpoch;
+              final taxiPayload = {
+                'make': 'Default',
+                'model': 'Vehicle',
+                'year': DateTime.now().year,
+                'licensePlate': 'DRV${driver['id']}-$timestamp',
+                'seats': 4,
+                'taxiClass': 'STANDARD',
+                'color': 'White',
+                'registrationNumber': 'REG${driver['id']}-$timestamp',
+              };
+              if (kDebugMode)
+                print(
+                    '[DriverDashboard] Creating taxi with payload: $taxiPayload');
+
+              final newTaxi = await _driverService.createTaxi(taxiPayload);
+              taxiId = newTaxi['id'];
+              if (kDebugMode)
+                print('[DriverDashboard] ✓ Created taxi with ID: $taxiId');
+            } catch (e) {
+              if (kDebugMode) {
+                print('[DriverDashboard] ✗ Error creating taxi: $e');
+                print('[DriverDashboard] Error type: ${e.runtimeType}');
+                if (e is DioException) {
+                  print(
+                      '[DriverDashboard] Status code: ${e.response?.statusCode}');
+                  print('[DriverDashboard] Response: ${e.response?.data}');
+                }
+              }
+              return;
+            }
+          }
+
+          // Broadcast location
+          if (taxiId != null) {
+            try {
+              await _driverService.updateTaxiLocation(
+                  int.parse(taxiId.toString()),
+                  position.latitude,
+                  position.longitude);
+              if (kDebugMode) {
+                print(
+                    '[DriverDashboard] ✓ Broadcasting location to taxi $taxiId: ${position.latitude}, ${position.longitude}');
+              }
+            } catch (e) {
+              if (kDebugMode) {
+                print('[DriverDashboard] ✗ Error updating taxi location: $e');
               }
             }
-            return;
           }
+        });
+      } catch (e) {
+        if (kDebugMode) {
+          print('[DriverDashboard] Error getting position: $e');
         }
-
-        if (taxiId != null) {
-          try {
-            await _driverService.updateTaxiLocation(
-              int.parse(taxiId.toString()),
-              position.latitude,
-              position.longitude,
-            );
-          } catch (_) {}
-        }
-      },
-      loading: () async {},
-      error: (_, __) async {},
-    );
-  }
-
-  /// Center map on driver's current location
-  Future<void> _centerOnMyLocation() async {
-    final locationService = ref.read(locationServiceProvider);
-    final position = await locationService.getCurrentLocation();
-    if (position != null && mapController != null && mounted) {
-      mapController!.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(
-            target: LatLng(position.latitude, position.longitude),
-            zoom: 15,
-          ),
-        ),
-      );
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Could not get location. Enable location and try again.'),
-          backgroundColor: primaryColor,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
+      }
+    });
   }
 
   /// Stop broadcasting driver location
@@ -1008,11 +1002,11 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       if (mounted) {
         ref.invalidate(myDriverProfileProvider);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Taxi created successfully'),
+          const SnackBar(
+            content: Text('Taxi created successfully'),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
+            margin: EdgeInsets.all(16),
           ),
         );
       }

@@ -7,7 +7,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -27,7 +27,9 @@ import 'package:vero360_app/Home/Messages.dart';
 import 'package:vero360_app/GernalServices/chat_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/config/api_config.dart';
 
 /// ✅ Removes scrollbars + glow everywhere inside bottom-sheet
 class _NoBarsScrollBehavior extends MaterialScrollBehavior {
@@ -436,11 +438,18 @@ class _MarketPageState extends State<MarketPage> {
         RegExp(r'^[A-Za-z0-9+/=\s]+$').hasMatch(x);
   }
 
-  Future<String?> _toFirebaseDownloadUrl(String raw) async {
+  Future<String?> _toDownloadUrl(String raw) async {
     final s = raw.trim();
     if (s.isEmpty) return null;
 
     if (_isHttp(s)) return s;
+
+    // Backend-relative paths (e.g. /uploads/xxx)
+    if (s.startsWith('/')) {
+      final base = await ApiConfig.readBase();
+      final baseNorm = base.endsWith('/') ? base : '$base/';
+      return '$baseNorm${s.startsWith('/') ? s.substring(1) : s}';
+    }
 
     if (_dlUrlCache.containsKey(s)) return _dlUrlCache[s]!.then((v) => v);
 
@@ -519,9 +528,9 @@ class _MarketPageState extends State<MarketPage> {
       ));
     }
 
-    // firebase gs:// or storage path
+    // firebase gs:// or storage path, or backend-relative /uploads/...
     return FutureBuilder<String?>(
-      future: _toFirebaseDownloadUrl(s),
+      future: _toDownloadUrl(s),
       builder: (context, snap) {
         final url = snap.data;
         if (url == null || url.isEmpty) {
@@ -573,7 +582,7 @@ class _MarketPageState extends State<MarketPage> {
     }
 
     return FutureBuilder<String?>(
-      future: _toFirebaseDownloadUrl(s),
+      future: _toDownloadUrl(s),
       builder: (_, snap) {
         final url = snap.data;
         if (url == null || url.isEmpty) {
@@ -875,18 +884,106 @@ class _MarketPageState extends State<MarketPage> {
     return sb.toString().trim().isEmpty ? _mwk(item.price) : sb.toString();
   }
 
-  Future<List<MarketplaceDetailModel>> _searchByPhoto(File file) async {
+  /// Convert API (core) model to local Firestore-compatible model.
+  MarketplaceDetailModel _fromCoreMarketplace(core.MarketplaceDetailModel c) {
+    return MarketplaceDetailModel(
+      id: c.id.toString(),
+      sqlItemId: c.id,
+      name: c.name,
+      category: (c.category ?? '').toLowerCase(),
+      price: c.price,
+      image: c.image,
+      imageBytes: null,
+      description: c.description.isEmpty ? null : c.description,
+      location: c.location.isEmpty ? null : c.location,
+      isActive: true,
+      createdAt: null,
+      gallery: c.gallery,
+      sellerBusinessName: c.sellerBusinessName,
+      sellerOpeningHours: c.sellerOpeningHours,
+      sellerStatus: c.sellerStatus,
+      sellerBusinessDescription: c.sellerBusinessDescription,
+      sellerRating: c.sellerRating,
+      sellerLogoUrl: c.sellerLogoUrl,
+      serviceProviderId: c.serviceProviderId,
+      sellerUserId: c.sellerUserId,
+      merchantId: c.merchantId,
+      merchantName: c.merchantName,
+      serviceType: c.serviceType ?? 'marketplace',
+    );
+  }
+
+  Future<List<MarketplaceDetailModel>> _searchByPhoto(dynamic imageSource) async {
     setState(() {
       _loading = true;
       _photoMode = true;
       _selectedCategory = null;
+      _aiSummary = '';
     });
     try {
-      if (mounted) {
+      await ApiConfig.init();
+      final Uint8List bytes;
+      final String filename;
+      if (imageSource is XFile) {
+        bytes = await imageSource.readAsBytes();
+        final path = imageSource.path.toLowerCase();
+        if (path.endsWith('.png')) {
+          filename = 'photo.png';
+        } else if (path.endsWith('.webp')) {
+          filename = 'photo.webp';
+        } else {
+          filename = 'photo.jpg';
+        }
+      } else if (imageSource is File) {
+        bytes = await imageSource.readAsBytes();
+        final path = imageSource.path.toLowerCase();
+        if (path.endsWith('.png')) {
+          filename = 'photo.png';
+        } else if (path.endsWith('.webp')) {
+          filename = 'photo.webp';
+        } else {
+          filename = 'photo.jpg';
+        }
+      } else {
+        throw StateError('Invalid image source');
+      }
+      final service = MarketplaceService();
+      final apiResults = await service.searchByPhotoBytes(bytes, filename: filename);
+      final converted = apiResults.map(_fromCoreMarketplace).toList();
+      if (mounted && converted.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Found ${converted.length} visually similar product${converted.length == 1 ? '' : 's'}.'),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      } else if (mounted && converted.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content:
-                Text('Photo search not implemented yet. Showing all items.'),
+            content: Text('No visually similar products found. Showing all items.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return _loadAll(category: null);
+      }
+      return converted;
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('Photo search error: $e\n$st');
+      if (mounted) {
+        final msg = e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '').split('\n').first;
+        final isNetwork = msg.toLowerCase().contains('socket') ||
+            msg.toLowerCase().contains('connection') ||
+            msg.toLowerCase().contains('failed host lookup') ||
+            msg.toLowerCase().contains('timeout');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isNetwork
+                  ? 'Cannot reach backend. Use same WiFi as your PC, or set API_BASE_URL to your PC IP (e.g. 192.168.1.x:3000).'
+                  : 'Photo search failed: ${msg.length > 60 ? '${msg.substring(0, 60)}...' : msg}',
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
           ),
         );
       }
@@ -1065,7 +1162,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
         : ((item.sellerBusinessName ?? 'Seller').trim());
 
     final rawAvatar = (item.sellerLogoUrl ?? '').trim();
-    final sellerAvatar = (await _toFirebaseDownloadUrl(rawAvatar)) ?? rawAvatar;
+    final sellerAvatar = (await _toDownloadUrl(rawAvatar)) ?? rawAvatar;
 
     await ChatService.ensureFirebaseAuth();
     final me = await ChatService.myAppUserId();
@@ -1183,8 +1280,8 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                   maxWidth: 1280,
                 );
                 if (picked != null) {
-                  final file = File(picked.path);
-                  setState(() => _future = _searchByPhoto(file));
+                  final future = _searchByPhoto(picked);
+                  setState(() { _future = future; });
                 }
               },
             ),
@@ -1199,8 +1296,8 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                   maxWidth: 1280,
                 );
                 if (picked != null) {
-                  final file = File(picked.path);
-                  setState(() => _future = _searchByPhoto(file));
+                  final future = _searchByPhoto(picked);
+                  setState(() { _future = future; });
                 }
               },
             ),
@@ -1857,17 +1954,197 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
       s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
 
   final TextEditingController _askQuestionCtrl = TextEditingController();
+  bool _veroAiLoading = false;
 
-  void _onAskQuestionSubmitted() {
+  Future<void> _onAskQuestionSubmitted() async {
     final q = _askQuestionCtrl.text.trim();
     if (q.isEmpty) return;
     _askQuestionCtrl.clear();
     if (!mounted) return;
-    ToastHelper.showCustomToast(
-      context,
-      'AI chat coming soon! Ask questions like "Compare these products" or "Best value?"',
-      isSuccess: true,
-      errorMessage: 'Vero AI',
+
+    setState(() => _veroAiLoading = true);
+    try {
+      final items = await _future;
+      final answer = _answerVeroAiQuestion(q, items);
+      if (!mounted) return;
+      _showVeroAiAnswerSheet(q, answer);
+    } finally {
+      if (mounted) setState(() => _veroAiLoading = false);
+    }
+  }
+
+  /// Generates a correct answer based on the question and current product list.
+  String _answerVeroAiQuestion(String question, List<MarketplaceDetailModel> items) {
+    final q = question.toLowerCase().trim();
+    if (items.isEmpty) {
+      return 'There are no products to answer questions about. Try searching for something first, or switch to "All Products" to see everything.';
+    }
+
+    // Cheapest / lowest price
+    if (_matches(q, ['cheapest', 'lowest', 'cheap', 'budget', 'affordable', 'least expensive'])) {
+      final sorted = List<MarketplaceDetailModel>.from(items)
+        ..sort((a, b) => a.price.compareTo(b.price));
+      final best = sorted.first;
+      return 'The cheapest option is **${best.name}** at ${_mwk(best.price)}${best.location != null && best.location!.isNotEmpty ? ' from ${best.location}' : ''}.';
+    }
+
+    // Most expensive
+    if (_matches(q, ['expensive', 'highest', 'most expensive', 'top price'])) {
+      final sorted = List<MarketplaceDetailModel>.from(items)
+        ..sort((a, b) => b.price.compareTo(a.price));
+      final top = sorted.first;
+      return 'The most expensive option is **${top.name}** at ${_mwk(top.price)}.';
+    }
+
+    // Best value (price + rating)
+    if (_matches(q, ['best value', 'best deal', 'value for money', 'recommend', 'which one'])) {
+      final scored = items.map((i) {
+        final rating = (i.sellerRating ?? 0).clamp(0.0, 5.0);
+        final score = rating > 0 ? (rating / 5) * 100 - (i.price / 10000) : -i.price / 10000;
+        return MapEntry(i, score);
+      }).toList();
+      scored.sort((a, b) => b.value.compareTo(a.value));
+      final best = scored.first.key;
+      final rating = best.sellerRating;
+      return 'Based on price and seller rating, I recommend **${best.name}** at ${_mwk(best.price)}'
+          '${rating != null && rating >= 4 ? ' (${_fmtRating(rating)}★ seller)' : ''}.';
+    }
+
+    // Price range
+    if (_matches(q, ['price range', 'price range?', 'how much', 'cost', 'prices'])) {
+      final prices = items.map((i) => i.price).toList();
+      final min = prices.reduce((a, b) => a < b ? a : b);
+      final max = prices.reduce((a, b) => a > b ? a : b);
+      return 'Prices range from ${_mwk(min)} to ${_mwk(max)} across ${items.length} products.';
+    }
+
+    // Compare
+    if (_matches(q, ['compare', 'comparison', 'difference'])) {
+      if (items.length < 2) {
+        return 'There\'s only one product. Try searching for more to compare.';
+      }
+      final top3 = items.take(3).toList();
+      final sb = StringBuffer('Here\'s a quick comparison of the top results:\n\n');
+      for (int i = 0; i < top3.length; i++) {
+        final it = top3[i];
+        sb.write('${i + 1}. **${it.name}** – ${_mwk(it.price)}');
+        if (it.sellerRating != null) sb.write(' (${_fmtRating(it.sellerRating!)}★)');
+        sb.writeln();
+      }
+      return sb.toString().trimRight();
+    }
+
+    // Categories
+    if (_matches(q, ['categories', 'category', 'types', 'what kind'])) {
+      final cats = <String, int>{};
+      for (final i in items) {
+        final c = i.category.isEmpty ? 'other' : i.category;
+        cats[c] = (cats[c] ?? 0) + 1;
+      }
+      final list = cats.entries.map((e) => '${_titleCase(e.key)} (${e.value})').join(', ');
+      return 'These products span ${cats.length} categories: $list.';
+    }
+
+    // Count / how many
+    if (_matches(q, ['how many', 'count', 'number of', 'total'])) {
+      return 'There are ${items.length} product${items.length == 1 ? '' : 's'} matching your search.';
+    }
+
+    // Location / where
+    if (_matches(q, ['where', 'location', 'locations', 'from where'])) {
+      final locs = <String>{};
+      for (final i in items) {
+        if (i.location != null && i.location!.trim().isNotEmpty) {
+          locs.add(i.location!.trim());
+        }
+      }
+      if (locs.isEmpty) return 'Location details aren\'t available for these products.';
+      return 'Sellers are from: ${locs.take(5).join(', ')}${locs.length > 5 ? ' and ${locs.length - 5} more' : ''}.';
+    }
+
+    // Default: summarize what we have
+    return 'Based on the ${items.length} products you\'re viewing, prices range from '
+        '${_mwk(items.map((i) => i.price).reduce((a, b) => a < b ? a : b))} to '
+        '${_mwk(items.map((i) => i.price).reduce((a, b) => a > b ? a : b))}. '
+        'Ask "cheapest?", "best value?", "compare", or "price range" for more specific answers.';
+  }
+
+  bool _matches(String q, List<String> keywords) =>
+      keywords.any((k) => q.contains(k));
+
+  void _showVeroAiAnswerSheet(String question, String answer) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        margin: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.15),
+              blurRadius: 20,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: DraggableScrollableSheet(
+          initialChildSize: 0.5,
+          minChildSize: 0.35,
+          maxChildSize: 0.85,
+          expand: false,
+          builder: (_, scrollCtrl) => SingleChildScrollView(
+            controller: scrollCtrl,
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Icon(Icons.auto_awesome, color: Colors.blue.shade700, size: 24),
+                    const SizedBox(width: 10),
+                    const Text(
+                      'Vero AI',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Q: $question',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[700],
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SelectableText(
+                  answer.replaceAll('**', ''),
+                  style: const TextStyle(fontSize: 15, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -2113,6 +2390,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                     child: TextField(
                       controller: _askQuestionCtrl,
                       onSubmitted: (_) => _onAskQuestionSubmitted(),
+                      enabled: !_veroAiLoading,
                       decoration: InputDecoration(
                         hintText: 'Ask Vero AI a question about your search...',
                         hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade600),
@@ -2130,14 +2408,23 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: _onAskQuestionSubmitted,
-                    icon: const Icon(Icons.send_rounded, size: 22),
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFF1E88E5),
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
+                  _veroAiLoading
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : IconButton.filled(
+                          onPressed: _onAskQuestionSubmitted,
+                          icon: const Icon(Icons.send_rounded, size: 22),
+                          style: IconButton.styleFrom(
+                            backgroundColor: const Color(0xFF1E88E5),
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
                 ],
               ),
             ),

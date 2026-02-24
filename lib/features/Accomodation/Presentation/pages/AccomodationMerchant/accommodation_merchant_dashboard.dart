@@ -408,9 +408,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Row(
+                    
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Add Property', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                      const Text('Add Accomodation', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
                       IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
                     ],
                   ),
@@ -582,7 +583,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                   const SizedBox(height: 12),
                   TextField(
                     controller: nameController,
-                    decoration: const InputDecoration(labelText: 'Property Name *', hintText: 'e.g. Sunset Lodge'),
+                    decoration: const InputDecoration(labelText: 'Accomodation Name *', hintText: 'e.g. Sunset Lodge'),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -592,14 +593,14 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                   const SizedBox(height: 12),
                   TextField(
                     controller: descriptionController,
-                    decoration: const InputDecoration(labelText: 'Description', hintText: 'Describe your property', alignLabelWithHint: true),
+                    decoration: const InputDecoration(labelText: 'Description', hintText: 'Describe your Accomodation', alignLabelWithHint: true),
                     maxLines: 4,
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: priceController,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Price per Night (MWK) *', hintText: 'e.g. 40000'),
+                    decoration: const InputDecoration(labelText: 'Price per Night (MWK) *', hintText: 'e.g. mwk 40,000'),
                   ),
                   const SizedBox(height: 24),
                   FilledButton(
@@ -652,7 +653,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                         Navigator.pop(ctx);
                         await _loadRooms();
                         _accommodationTabs?.animateTo(1);
-                        ToastHelper.showCustomToast(context, 'Property added successfully', isSuccess: true, errorMessage: '');
+                        ToastHelper.showCustomToast(context, 'Accomodation added successfully', isSuccess: true, errorMessage: '');
                       } catch (e) {
                         if (ctx.mounted) setLocal(() => submitting = false);
                         final String msg = e is FirebaseException
@@ -666,7 +667,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                     style: FilledButton.styleFrom(backgroundColor: _brandOrange, padding: const EdgeInsets.symmetric(vertical: 14)),
                     child: submitting
                         ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('Add Property'),
+                        : const Text('Add Accomodation'),
                   ),
                 ],
               ),
@@ -677,79 +678,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     );
   }
 
-  void _showManageServicesSheet() {
-    const allServices = [
-      'Conferences', 'Bar', 'Pool', 'Spa', 'Restaurant', 'Gym',
-      'Wi-Fi', 'Parking', 'Airport shuttle', 'Laundry', 'Room service',
-    ];
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (_, setLocal) => Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Manage Services', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-                    TextButton(
-                      onPressed: () async {
-                        await _saveServicesOffered();
-                        if (ctx.mounted) Navigator.pop(ctx);
-                      },
-                      child: const Text('Save'),
-                    ),
-                  ],
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  'Select services you offer (conferences, bar, pool, etc.)',
-                  style: TextStyle(color: Colors.black54, fontSize: 14),
-                ),
-              ),
-              const SizedBox(height: 12),
-              ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.5),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                  itemCount: allServices.length,
-                  itemBuilder: (_, i) {
-                    final s = allServices[i];
-                    final enabled = _servicesOffered.contains(s);
-                    return SwitchListTile(
-                      title: Text(s),
-                      value: enabled,
-                      onChanged: (v) {
-                        setLocal(() {
-                          if (v) {
-                            _servicesOffered.add(s);
-                          } else {
-                            _servicesOffered.remove(s);
-                          }
-                        });
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+ 
 
   Future<void> _loadWalletBalance() async {
     try {
@@ -1185,7 +1114,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
             indicatorColor: _brandOrange,
             tabs: const [
               Tab(text: 'Dashboard'),
-              Tab(text: 'Rooms'),
+             // Tab(text: 'Rooms'),
               Tab(text: 'Bookings'),
             ],
           ),
@@ -1851,20 +1780,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               color: Colors.green,
               onTap: () => _accommodationTabs?.animateTo(2),
             ),
-            _QuickActionTile(
-              title: 'Manage Services',
-              icon: Icons.room_service_outlined,
-              color: _brandNavy,
-              onTap: _showManageServicesSheet,
-            ),
-            _QuickActionTile(
-              title: 'Calendar',
-              icon: Icons.calendar_today_outlined,
-              color: Colors.blue,
-              onTap: () {
-                // Calendar view
-              },
-            ),
+       
+           
+            
             _QuickActionTile(
               title: 'Promotions',
               icon: Icons.campaign_outlined,
@@ -1873,14 +1791,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                 // Promotions for rooms
               },
             ),
-            _QuickActionTile(
-              title: 'Support',
-              icon: Icons.support_agent,
-              color: Colors.purple,
-              onTap: () {
-                // Support / help
-              },
-            ),
+        
           ],
         ),
       ],

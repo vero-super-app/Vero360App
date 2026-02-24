@@ -9,11 +9,14 @@ class ToastHelper {
     String message, {
     bool isSuccess = true,
     Duration duration = const Duration(seconds: 3),
-    String assetPath = 'assets/logo_mark.png', required String errorMessage, // default logo path
+    String assetPath = 'assets/logo_mark.png',
+    required String errorMessage, // default logo path
   }) {
     final fToast = FToast()..init(context);
 
     final bg = isSuccess ? Colors.green.shade700 : Colors.red.shade700;
+
+    final hasErrorDetails = !isSuccess && errorMessage.trim().isNotEmpty;
 
     final toast = Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -43,9 +46,28 @@ class ToastHelper {
           ),
           const SizedBox(width: 10),
           Flexible(
-            child: Text(
-              message,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  message,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
+                if (hasErrorDetails) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    errorMessage,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ],

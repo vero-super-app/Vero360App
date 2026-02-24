@@ -315,17 +315,37 @@ class MarketplaceService {
 
   /// Photo search => POST /marketplace/search/photo
   Future<List<MarketplaceDetailModel>> searchByPhoto(File imageFile) async {
+    final bytes = await imageFile.readAsBytes();
+    return searchByPhotoBytes(bytes, filename: imageFile.path.split('/').last);
+  }
+
+  /// Photo search from bytes (works with XFile, content URIs, etc.)
+  Future<List<MarketplaceDetailModel>> searchByPhotoBytes(
+    Uint8List bytes, {
+    String filename = 'photo.jpg',
+  }) async {
     try {
+      await ApiConfig.init();
       final uri = ApiConfig.endpoint('/marketplace/search/photo');
+      final ext = filename.toLowerCase().split('.').last;
+      MediaType contentType;
+      if (ext == 'png') {
+        contentType = MediaType('image', 'png');
+      } else if (ext == 'webp') {
+        contentType = MediaType('image', 'webp');
+      } else {
+        contentType = MediaType('image', 'jpeg');
+      }
       final req = http.MultipartRequest('POST', uri)
         ..headers['Accept'] = 'application/json'
-        ..files.add(await http.MultipartFile.fromPath(
+        ..files.add(http.MultipartFile.fromBytes(
           'photo',
-          imageFile.path,
-          contentType: MediaType('image', 'jpeg'),
+          bytes,
+          filename: filename,
+          contentType: contentType,
         ));
 
-      final streamed = await req.send();
+      final streamed = await req.send().timeout(const Duration(seconds: 30));
       final resp = await http.Response.fromStream(streamed);
       final body = _decodeOrThrowMultipart(resp);
       final list = body is Map ? body['data'] : body;
@@ -339,10 +359,10 @@ class MarketplaceService {
       return [];
     } on ApiException catch (e) {
       if (kDebugMode) debugPrint('searchByPhoto ApiException: ${e.message}');
-      return [];
+      rethrow;
     } catch (e) {
       if (kDebugMode) debugPrint('searchByPhoto error: $e');
-      return [];
+      rethrow;
     }
   }
 

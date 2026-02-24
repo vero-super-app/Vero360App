@@ -37,6 +37,8 @@ class AddressService {
   }
 
   Future<Map<String, String>> _authHeaders() async {
+    // Ensure ApiConfig loads persisted base URL before any endpoint() calls.
+    await ApiConfig.init();
     final t = await _getTokenOrThrow();
     return {
       'Accept': 'application/json',
@@ -50,6 +52,47 @@ class AddressService {
       throw AuthRequiredException('Unauthorized or session expired');
     }
     throw Exception('HTTP ${r.statusCode}: ${r.body}');
+  }
+
+  dynamic _decodeJsonBody(http.Response r, {required String endpointName}) {
+    try {
+      return jsonDecode(r.body);
+    } catch (_) {
+      final snippet = r.body.length > 220 ? '${r.body.substring(0, 220)}...' : r.body;
+      throw Exception(
+        '$endpointName returned non-JSON response (${r.statusCode}). Body: $snippet',
+      );
+    }
+  }
+
+  List<Map<String, dynamic>> _extractPredictions(dynamic data) {
+    if (data is List) {
+      return data.whereType<Map<String, dynamic>>().toList();
+    }
+
+    if (data is! Map) return <Map<String, dynamic>>[];
+
+    final directPredictions = data['predictions'];
+    if (directPredictions is List) {
+      return directPredictions.whereType<Map<String, dynamic>>().toList();
+    }
+
+    final nestedData = data['data'];
+    if (nestedData is List) {
+      return nestedData.whereType<Map<String, dynamic>>().toList();
+    }
+    if (nestedData is Map && nestedData['predictions'] is List) {
+      return (nestedData['predictions'] as List)
+          .whereType<Map<String, dynamic>>()
+          .toList();
+    }
+
+    final results = data['results'];
+    if (results is List) {
+      return results.whereType<Map<String, dynamic>>().toList();
+    }
+
+    return <Map<String, dynamic>>[];
   }
 
   /// Render cold starts can exceed 20s. Use 60s + retry with small backoff.
@@ -145,28 +188,71 @@ class AddressService {
     final u = ApiConfig.endpoint('addresses/places/autocomplete')
         .replace(queryParameters: {
       'q': q,
+      // Compatibility with handlers that expect Google's original key name.
+      'input': q,
       if (sessionToken != null) 'st': sessionToken,
+      if (sessionToken != null) 'sessionToken': sessionToken,
     });
 
     final r = await _sendWithRetry(() => http.get(u, headers: h));
     if (r.statusCode != 200) _handleBad(r);
-    final data = jsonDecode(r.body);
-    final List preds = (data['predictions'] ?? []) as List;
-    return preds.cast<Map<String, dynamic>>();
+    final data = _decodeJsonBody(r, endpointName: 'places autocomplete');
+    final preds = _extractPredictions(data);
+
+    if (preds.isNotEmpty) return preds;
+
+    if (data is Map) {
+      final status = (data['status'] ?? data['error'] ?? '').toString();
+      final message = (data['message'] ?? '').toString();
+      if (status.isNotEmpty || message.isNotEmpty) {
+        throw Exception('Autocomplete failed: $status ${message.trim()}'.trim());
+      }
+    }
+
+    return <Map<String, dynamic>>[];
   }
 
   Future<Map<String, dynamic>?> placeDetails(String placeId,
       {String? sessionToken}) async {
     final h = await _authHeaders();
-    final u = ApiConfig.endpoint('addresses/places/details/$placeId')
+    final directPath = ApiConfig.endpoint('addresses/places/details/$placeId')
         .replace(queryParameters: {
       if (sessionToken != null) 'st': sessionToken,
+      if (sessionToken != null) 'sessionToken': sessionToken,
     });
 
-    final r = await _sendWithRetry(() => http.get(u, headers: h));
+    http.Response r = await _sendWithRetry(() => http.get(directPath, headers: h));
+
+    // Compatibility fallback when backend expects query parameter instead of path segment.
+    if (r.statusCode == 404) {
+      final queryPath = ApiConfig.endpoint('addresses/places/details').replace(
+        queryParameters: {
+          'placeId': placeId,
+          if (sessionToken != null) 'st': sessionToken,
+          if (sessionToken != null) 'sessionToken': sessionToken,
+        },
+      );
+      r = await _sendWithRetry(() => http.get(queryPath, headers: h));
+    }
+
     if (r.statusCode != 200) _handleBad(r);
-    final data = jsonDecode(r.body);
-    return (data['result'] ?? data) as Map<String, dynamic>?;
+    final data = _decodeJsonBody(r, endpointName: 'place details');
+
+    if (data is Map<String, dynamic>) {
+      if (data['result'] is Map<String, dynamic>) {
+        return data['result'] as Map<String, dynamic>;
+      }
+      if (data['data'] is Map<String, dynamic>) {
+        final nested = data['data'] as Map<String, dynamic>;
+        if (nested['result'] is Map<String, dynamic>) {
+          return nested['result'] as Map<String, dynamic>;
+        }
+        return nested;
+      }
+      return data;
+    }
+
+    throw Exception('Place details returned invalid response shape');
   }
 
   // POST /vero/addresses (Firebase auth)

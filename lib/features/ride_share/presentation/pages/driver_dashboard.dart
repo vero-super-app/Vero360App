@@ -85,45 +85,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             print('[DriverDashboard] Extracted taxiId: $taxiId');
           }
 
-          // If no taxi exists, create one
-          if (taxiId == null) {
-            if (kDebugMode)
-              print('[DriverDashboard] No taxi found, creating default taxi...');
-            try {
-              final timestamp = DateTime.now().millisecondsSinceEpoch;
-              final taxiPayload = {
-                'make': 'Default',
-                'model': 'Vehicle',
-                'year': DateTime.now().year,
-                'licensePlate': 'DRV${driver['id']}-$timestamp',
-                'seats': 4,
-                'taxiClass': 'STANDARD',
-                'color': 'White',
-                'registrationNumber': 'REG${driver['id']}-$timestamp',
-              };
-              if (kDebugMode)
-                print(
-                    '[DriverDashboard] Creating taxi with payload: $taxiPayload');
-
-              final newTaxi = await _driverService.createTaxi(taxiPayload);
-              taxiId = newTaxi['id'];
-              if (kDebugMode)
-                print('[DriverDashboard] ✓ Created taxi with ID: $taxiId');
-            } catch (e) {
-              if (kDebugMode) {
-                print('[DriverDashboard] ✗ Error creating taxi: $e');
-                print('[DriverDashboard] Error type: ${e.runtimeType}');
-                if (e is DioException) {
-                  print(
-                      '[DriverDashboard] Status code: ${e.response?.statusCode}');
-                  print('[DriverDashboard] Response: ${e.response?.data}');
-                }
-              }
-              return;
-            }
-          }
-
-          // Broadcast location
+          // Broadcast location only if taxi exists
           if (taxiId != null) {
             try {
               await _driverService.updateTaxiLocation(
@@ -928,11 +890,11 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       if (mounted) {
         ref.refresh(myDriverProfileProvider);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Taxi created successfully'),
+          const SnackBar(
+            content: Text('Taxi created successfully'),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
+            margin: EdgeInsets.all(16),
           ),
         );
       }

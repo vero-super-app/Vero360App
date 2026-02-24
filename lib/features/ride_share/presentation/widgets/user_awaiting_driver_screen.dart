@@ -22,7 +22,8 @@ class UserAwaitingDriverScreen extends StatefulWidget {
   final VoidCallback onStartRide;
   final RideShareHttpService? httpService;
 
-  const UserAwaitingDriverScreen({super.key, 
+  const UserAwaitingDriverScreen({
+    super.key,
     required this.rideId,
     required this.driverName,
     required this.vehicleType,
@@ -41,17 +42,20 @@ class UserAwaitingDriverScreen extends StatefulWidget {
   });
 
   @override
-  State<UserAwaitingDriverScreen> createState() => _UserAwaitingDriverScreenState();
+  State<UserAwaitingDriverScreen> createState() =>
+      _UserAwaitingDriverScreenState();
 }
 
 class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
     with SingleTickerProviderStateMixin {
   GoogleMapController? mapController;
   final Set<Marker> markers = {};
+  final Set<Polyline> polylines = {};
   late AnimationController _pulseController;
   bool _driverArrived = false;
   bool _rideStarted = false;
   StreamSubscription<Ride>? _rideUpdateSubscription;
+  static const Color primaryColor = Color(0xFFFF8A00);
 
   @override
   void initState() {
@@ -61,31 +65,34 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
-    
+
     // Listen to ride status updates
     _listenToRideUpdates();
   }
-  
+
   void _listenToRideUpdates() {
     final httpService = widget.httpService ?? RideShareHttpService();
     _rideUpdateSubscription = httpService.rideUpdateStream.listen((ride) {
       // Ignore updates if widget is already unmounted
       if (!mounted) {
-        print('[UserAwaitingDriverScreen] Received update after unmount, ignoring');
+        print(
+            '[UserAwaitingDriverScreen] Received update after unmount, ignoring');
         return;
       }
 
       print('[UserAwaitingDriverScreen] Ride update: status=${ride.status}');
-      
+
       // Track driver arrival
       if (ride.status == RideStatus.driverArrived) {
-        print('[UserAwaitingDriverScreen] Driver has arrived! Status is DRIVER_ARRIVED');
+        print(
+            '[UserAwaitingDriverScreen] Driver has arrived! Status is DRIVER_ARRIVED');
         setState(() => _driverArrived = true);
       }
-      
+
       // When driver starts the ride (IN_PROGRESS)
       if (ride.status == RideStatus.inProgress && !_rideStarted) {
-        print('[UserAwaitingDriverScreen] Driver started ride! Status is IN_PROGRESS');
+        print(
+            '[UserAwaitingDriverScreen] Driver started ride! Status is IN_PROGRESS');
         setState(() => _rideStarted = true);
         // Only call onStartRide if not already navigating away
         if (mounted) {
@@ -107,26 +114,55 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
   void _setupMapMarkers() {
     setState(() {
       markers.clear();
+      polylines.clear();
 
+      // Pickup marker
       markers.add(
         Marker(
           markerId: const MarkerId('pickup'),
           position: LatLng(widget.pickupLat, widget.pickupLng),
-          infoWindow: const InfoWindow(title: 'Your Pickup Location'),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+          infoWindow: const InfoWindow(title: 'Pickup Location'),
+          icon:
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
         ),
       );
 
+      // Dropoff marker
+      markers.add(
+        Marker(
+          markerId: const MarkerId('dropoff'),
+          position: LatLng(widget.dropoffLat, widget.dropoffLng),
+          infoWindow: const InfoWindow(title: 'Dropoff Location'),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        ),
+      );
+
+      // Driver location marker
       if (widget.driverLocation != null) {
         markers.add(
           Marker(
             markerId: const MarkerId('driver'),
             position: widget.driverLocation!,
             infoWindow: InfoWindow(title: 'Driver ${widget.driverName}'),
-            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+            icon:
+                BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
           ),
         );
       }
+
+      // Route polyline
+      polylines.add(
+        Polyline(
+          polylineId: const PolylineId('route'),
+          points: [
+            LatLng(widget.pickupLat, widget.pickupLng),
+            LatLng(widget.dropoffLat, widget.dropoffLng),
+          ],
+          color: primaryColor,
+          width: 5,
+          geodesic: true,
+        ),
+      );
     });
   }
 
@@ -151,8 +187,9 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
               await _startRideWithBackend();
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF10B981),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              backgroundColor: const Color(0xFFFF8A00),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
             ),
             child: const Text(
               'Yes, Start Ride',
@@ -166,38 +203,76 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
 
   Future<void> _startRideWithBackend() async {
     try {
-      print('[UserAwaitingDriverScreen] Calling backend to start ride: ${widget.rideId}');
-      
+      print(
+          '[UserAwaitingDriverScreen] Calling backend to start ride: ${widget.rideId}');
+
       final httpService = widget.httpService ?? RideShareHttpService();
       final rideIdInt = int.tryParse(widget.rideId) ?? 0;
-      
+
       if (rideIdInt <= 0) {
         throw Exception('Invalid ride ID');
       }
 
       // Call backend to update ride status to IN_PROGRESS
       final ride = await httpService.startRide(rideIdInt);
-      print('[UserAwaitingDriverScreen] Ride started successfully. New status: ${ride.status}');
-      
+      print(
+          '[UserAwaitingDriverScreen] Ride started successfully. New status: ${ride.status}');
+
       if (!mounted) {
-        print('[UserAwaitingDriverScreen] Widget unmounted, skipping UI updates');
+        print(
+            '[UserAwaitingDriverScreen] Widget unmounted, skipping UI updates');
         return;
       }
-      
+
       widget.onStartRide();
     } catch (e) {
       print('[UserAwaitingDriverScreen] Error starting ride: $e');
       if (!mounted) {
-        print('[UserAwaitingDriverScreen] Widget unmounted, skipping error display');
+        print(
+            '[UserAwaitingDriverScreen] Widget unmounted, skipping error display');
         return;
       }
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to start ride: $e'),
           backgroundColor: Colors.red,
         ),
       );
+    }
+  }
+
+  Future<void> _fitMarkersOnScreen() async {
+    if (mapController == null) return;
+
+    try {
+      LatLngBounds bounds = LatLngBounds(
+        southwest: LatLng(
+          widget.pickupLat < widget.dropoffLat
+              ? widget.pickupLat
+              : widget.dropoffLat,
+          widget.pickupLng < widget.dropoffLng
+              ? widget.pickupLng
+              : widget.dropoffLng,
+        ),
+        northeast: LatLng(
+          widget.pickupLat > widget.dropoffLat
+              ? widget.pickupLat
+              : widget.dropoffLat,
+          widget.pickupLng > widget.dropoffLng
+              ? widget.pickupLng
+              : widget.dropoffLng,
+        ),
+      );
+
+      CameraUpdate cameraUpdate = CameraUpdate.newLatLngBounds(
+        bounds,
+        100,
+      );
+
+      await mapController!.animateCamera(cameraUpdate);
+    } catch (e) {
+      debugPrint('Error fitting markers: $e');
     }
   }
 
@@ -208,12 +283,16 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
         children: [
           // Map
           GoogleMap(
-            onMapCreated: (controller) => mapController = controller,
+            onMapCreated: (controller) {
+              mapController = controller;
+              _fitMarkersOnScreen();
+            },
             initialCameraPosition: CameraPosition(
               target: LatLng(widget.pickupLat, widget.pickupLng),
               zoom: 15,
             ),
             markers: markers,
+            polylines: polylines,
             myLocationEnabled: true,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
@@ -243,13 +322,14 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                   children: [
                     // Status label
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
                         color: _rideStarted
-                            ? const Color(0xFF059669).withOpacity(0.1)
+                            ? Color(0xFFFF8A00).withOpacity(0.1)
                             : _driverArrived
-                                ? const Color(0xFF2563EB).withOpacity(0.1)
-                                : const Color(0xFF10B981).withOpacity(0.1),
+                                ? const Color(0xFFFF8A00).withOpacity(0.1)
+                                : Color(0xFFFF8A00).withOpacity(0.1),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
@@ -260,10 +340,10 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                             height: 6,
                             decoration: BoxDecoration(
                               color: _rideStarted
-                                  ? const Color(0xFF059669)
+                                  ? Color(0xFFFF8A00)
                                   : _driverArrived
-                                      ? const Color(0xFF2563EB)
-                                      : const Color(0xFF10B981),
+                                      ? Color(0xFFFF8A00)
+                                      : Color(0xFFFF8A00),
                               shape: BoxShape.circle,
                             ),
                           ),
@@ -277,10 +357,10 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                             style: TextStyle(
                               fontSize: 12,
                               color: _rideStarted
-                                  ? const Color(0xFF059669)
+                                  ? Color(0xFFFF8A00)
                                   : _driverArrived
-                                      ? const Color(0xFF2563EB)
-                                      : const Color(0xFF10B981),
+                                      ? const Color(0xFFFF8A00)
+                                      : Color(0xFFFF8A00),
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -401,16 +481,17 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF3B82F6).withOpacity(0.1),
+                              color: const Color(0xFFFF8A00).withOpacity(0.1),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: const Text(
                               'Arriving',
                               style: TextStyle(
                                 fontSize: 11,
-                                color: Color(0xFF3B82F6),
+                                color: Color(0xFFFF8A00),
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -452,12 +533,12 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF10B981).withOpacity(0.1),
+                          color: Color(0xFFFF8A00).withOpacity(0.1),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.location_on_rounded,
-                          color: Color(0xFF10B981),
+                          color: Color(0xFFFF8A00),
                           size: 20,
                         ),
                       ),
@@ -507,7 +588,7 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                           ),
                         ),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF10B981),
+                          backgroundColor: Color(0xFFFF8A00),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -521,14 +602,15 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                       height: 52,
                       child: Container(
                         decoration: BoxDecoration(
-                          color: const Color(0xFF059669),
+                          color: Color(0xFFFF8A00),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: const Center(
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.check_circle, 
+                              Icon(
+                                Icons.check_circle,
                                 size: 22,
                                 color: Colors.white,
                               ),

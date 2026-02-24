@@ -625,10 +625,8 @@ class _MyAppState extends State<MyApp> {
   String _fixLocalhostIfNeeded(String base) {
     if (kIsWeb) return base;
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return base
-          .replaceFirst(
-              'https://heflexitservice.co.za', 'https://heflexitservice.co.za')
-          .replaceFirst('localhost', 'https://heflexitservice.co.za');
+      return base.replaceFirst(
+          'localhost', 'https://vero-backend-2.onrender.com');
     }
     return base;
   }
@@ -835,10 +833,8 @@ class AuthFlow {
   static String _fixLocalhostIfNeeded(String base) {
     if (kIsWeb) return base;
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return base
-          .replaceFirst(
-              'https://heflexitservice.co.za', 'https://heflexitservice.co.za')
-          .replaceFirst('localhost', 'https://heflexitservice.co.za');
+      return base.replaceFirst(
+          'localhost', 'https://vero-backend-2.onrender.com');
     }
     return base;
   }

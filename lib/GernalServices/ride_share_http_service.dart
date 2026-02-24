@@ -160,34 +160,6 @@ class RideShareHttpService {
     }
   }
 
-
-<<<<<<< HEAD
-      final response = await http.get(ApiConfig.endpoint(path));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is List) {
-          return (data)
-              .map((v) => Vehicle.fromJson(v as Map<String, dynamic>))
-              .toList();
-        } else if (data is Map && data.containsKey('vehicles')) {
-          final vehicles = data['vehicles'] as List;
-          return vehicles
-              .map((v) => Vehicle.fromJson(v as Map<String, dynamic>))
-              .toList();
-        }
-        return [];
-      } else {
-        throw Exception('Failed to get vehicles: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error getting vehicles: $e');
-      rethrow;
-    }
-  }
-=======
->>>>>>> cf36011d6d2fd3f62745c8b7fc705c63ad4326d7
-
   /// Request a new ride
   Future<Ride> requestRide({
     required double pickupLatitude,

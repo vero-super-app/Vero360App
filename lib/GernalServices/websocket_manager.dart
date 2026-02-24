@@ -31,8 +31,8 @@ class WebSocketManager {
       // Get auth token
       final idToken = await user.getIdToken();
 
-      // Configure WebSocket URL (change to your backend)
-      const wsUrl = 'ws://localhost:3000'; // ← Change to your backend
+      // Configure WebSocket URL
+      const wsUrl = 'wss://vero-backend-2.onrender.com';
 
       print('[WebSocketManager] Initializing WebSocket at $wsUrl');
 

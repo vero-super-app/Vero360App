@@ -785,6 +785,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(NavigationDelegate(
         onNavigationRequest: (NavigationRequest request) {
+          debugPrint('[CheckoutWebView] navigating to ${request.url}');
           final uri = Uri.tryParse(request.url);
           if (uri == null) return NavigationDecision.navigate;
 
@@ -800,8 +801,14 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
             return NavigationDecision.prevent;
           }
 
-          final isBackendReturnUrl = request.url.startsWith(PayChanguConfig.returnUrl);
-          if (isBackendReturnUrl) {
+          // PayChangu may redirect the browser to either our return URL
+          // or our callback URL. Treat both as "we're done" and let our
+          // own status polling / backend verification decide success/failure.
+          final isBackendReturnUrl =
+              request.url.startsWith(PayChanguConfig.returnUrl);
+          final isBackendCallbackUrl =
+              request.url.startsWith(PayChanguConfig.callbackUrl);
+          if (isBackendReturnUrl || isBackendCallbackUrl) {
             final status = (uri.queryParameters['status'] ?? '').toLowerCase();
             if (status == 'failed' || status == 'cancelled') {
               _handlePaymentFailure();
@@ -839,11 +846,24 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final status = (data['data']?['status'] as String?)?.toLowerCase();
+        debugPrint('[CheckoutWebView] verify response: ${response.body}');
+        final dataNode = (data['data'] is Map) ? data['data'] as Map<String, dynamic> : <String, dynamic>{};
+        final rawStatus = (dataNode['status'] ??
+                dataNode['payment_status'] ??
+                dataNode['paymentStatus'] ??
+                '')
+            .toString();
+        final status = rawStatus.toLowerCase();
 
-        if (status == 'successful' || status == 'success') {
+        // PayChangu may return 'successful', 'success', 'paid', 'completed', etc.
+        if (status == 'successful' ||
+            status == 'success' ||
+            status == 'paid' ||
+            status == 'completed') {
+          debugPrint('[CheckoutWebView] verify => success (status=$status)');
           _handlePaymentSuccess();
         } else if (status == 'failed' || status == 'cancelled') {
+          debugPrint('[CheckoutWebView] verify => failure (status=$status)');
           _handlePaymentFailure();
         }
       }

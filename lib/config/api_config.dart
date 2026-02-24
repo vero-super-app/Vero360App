@@ -5,14 +5,12 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiConfig {
-  /// API prefix (your endpoints are /vero/...)https://unbigamous-unappositely-kory.ngrok-free.dev
+  /// API prefix (your endpoints are /vero/...)
   static const String apiPrefix = '/vero';
 
-  /// PROD root (as you requested)
-  // static const String _defaultProdRoot = 'https://heflexitservice.co.za';
-
+  /// Default root (ngrok tunnel - no /vero here)
   static const String _defaultProdRoot =
-      'https://unbigamous-unappositely-kory.ngrok-free.dev';
+      'https://7b85-102-70-93-84.ngrok-free.app';
 
   // static const String _defaultProdRoot =
   //     'http://10.0.2.2:3000'; // Android emulator localhost
@@ -63,6 +61,10 @@ class ApiConfig {
 
     // pick best (if you add more servers later)
     await _selectBestBase();
+
+    // Adjust localhost for Android emulator (10.0.2.2)
+    _baseRoot = _platformAdjust(_baseRoot);
+
     _inited = true;
   }
 
@@ -146,6 +148,25 @@ class ApiConfig {
   // ---------------------------------------------------------------------------
   // INTERNAL
   // ---------------------------------------------------------------------------
+
+  /// For Android emulators, map localhost/127.0.0.1 to 10.0.2.2 so the
+  /// app can reach the backend running on your development machine.
+  static String _platformAdjust(String raw) {
+    final normalized = _normalizeBase(raw);
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      final u = Uri.parse(normalized);
+      if (u.host == 'localhost' || u.host == '127.0.0.1') {
+        return Uri(
+          scheme: u.scheme.isEmpty ? 'http' : u.scheme,
+          host: '10.0.2.2',
+          port: u.hasPort ? u.port : null,
+        ).toString();
+      }
+    }
+
+    return normalized;
+  }
 
   static String _normalizeBase(String s) =>
       s.trim().replaceFirst(RegExp(r'/+$'), '');

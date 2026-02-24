@@ -286,21 +286,12 @@ class Ride {
     }
 
     return Ride(
-<<<<<<< HEAD
       id: parseInt(json['id']) ?? 0,
       passengerId: parseInt(json['passengerId']) ?? 0,
       driverId: parseInt(json['driverId']),
-      vehicleId: parseInt(json['vehicleId']),
+      taxiId: parseInt(json['taxiId']) ?? parseInt(json['vehicleId']),
       pickupLatitude: parseDouble(json['pickupLatitude']),
       pickupLongitude: parseDouble(json['pickupLongitude']),
-=======
-      id: _parseInt(json['id']) ?? 0,
-      passengerId: _parseInt(json['passengerId']) ?? 0,
-      driverId: _parseInt(json['driverId']),
-      taxiId: _parseInt(json['taxiId']),
-      pickupLatitude: _parseDouble(json['pickupLatitude']),
-      pickupLongitude: _parseDouble(json['pickupLongitude']),
->>>>>>> cf36011d6d2fd3f62745c8b7fc705c63ad4326d7
       pickupAddress: json['pickupAddress'] as String?,
       dropoffLatitude: parseDouble(json['dropoffLatitude']),
       dropoffLongitude: parseDouble(json['dropoffLongitude']),
@@ -322,17 +313,10 @@ class Ride {
           : null,
       cancellationReason: json['cancellationReason'] as String?,
       passengerNotes: json['passengerNotes'] as String?,
-<<<<<<< HEAD
       createdAt: parseDateTime(json['createdAt']),
       updatedAt: parseDateTime(json['updatedAt']),
-      vehicle: json['vehicle'] != null
-          ? Vehicle.fromJson(json['vehicle'] as Map<String, dynamic>)
-=======
-      createdAt: _parseDateTime(json['createdAt']),
-      updatedAt: _parseDateTime(json['updatedAt']),
-      taxi: json['taxi'] != null
-          ? Vehicle.fromJson(json['taxi'] as Map<String, dynamic>)
->>>>>>> cf36011d6d2fd3f62745c8b7fc705c63ad4326d7
+      taxi: (json['taxi'] ?? json['vehicle']) != null
+          ? Vehicle.fromJson((json['taxi'] ?? json['vehicle']) as Map<String, dynamic>)
           : null,
       driver: () {
         // Try to get driver from direct field first

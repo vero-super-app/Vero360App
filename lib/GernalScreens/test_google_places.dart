@@ -3,7 +3,7 @@ import 'package:vero360_app/GernalServices/google_places_service.dart';
 
 /// Test widget to verify Google Places API key is working
 class TestGooglePlacesScreen extends StatefulWidget {
-  const TestGooglePlacesScreen({Key? key}) : super(key: key);
+  const TestGooglePlacesScreen({super.key});
 
   @override
   State<TestGooglePlacesScreen> createState() => _TestGooglePlacesScreenState();

@@ -11,7 +11,7 @@ import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
 
 class FoodPage extends StatefulWidget {
-  const FoodPage({Key? key}) : super(key: key);
+  const FoodPage({super.key});
 
   @override
   _FoodPageState createState() => _FoodPageState();

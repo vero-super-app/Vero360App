@@ -12,7 +12,7 @@ class PayChanguInlinePopup extends StatefulWidget {
   final String name;
 
   const PayChanguInlinePopup({
-    Key? key,
+    super.key,
     required this.publicKey,
     required this.amount,
     required this.currency,
@@ -20,7 +20,7 @@ class PayChanguInlinePopup extends StatefulWidget {
     required this.returnUrl,
     required this.email,
     required this.name,
-  }) : super(key: key);
+  });
 
   @override
   State<PayChanguInlinePopup> createState() => _PayChanguInlinePopupState();

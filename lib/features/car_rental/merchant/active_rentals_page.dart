@@ -6,7 +6,7 @@ import 'package:vero360_app/utils/formatters.dart';
 import 'package:vero360_app/features/car_rental/widgets/status_badge_widget.dart';
 
 class ActiveRentalsPage extends ConsumerStatefulWidget {
-  const ActiveRentalsPage({Key? key}) : super(key: key);
+  const ActiveRentalsPage({super.key});
 
   @override
   ConsumerState<ActiveRentalsPage> createState() => _ActiveRentalsPageState();

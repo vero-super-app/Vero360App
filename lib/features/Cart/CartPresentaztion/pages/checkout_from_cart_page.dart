@@ -22,7 +22,7 @@ enum DeliveryType { speed, cts, pickup }
 
 class CheckoutFromCartPage extends StatefulWidget {
   final List<CartModel> items;
-  const CheckoutFromCartPage({Key? key, required this.items}) : super(key: key);
+  const CheckoutFromCartPage({super.key, required this.items});
 
   @override
   State<CheckoutFromCartPage> createState() => _CheckoutFromCartPageState();
@@ -500,7 +500,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<DeliveryType>(
-                    value: _deliveryType,
+                    initialValue: _deliveryType,
                     isExpanded: true,
                     decoration: InputDecoration(
                       labelText: 'Choose delivery option',
@@ -754,13 +754,13 @@ class InAppPaymentPage extends StatefulWidget {
   final String? digitalProductName;
 
   const InAppPaymentPage({
-    Key? key,
+    super.key,
     required this.checkoutUrl,
     required this.txRef,
     required this.totalAmount,
     required this.rootContext,
     this.digitalProductName,
-  }) : super(key: key);
+  });
 
   @override
   State<InAppPaymentPage> createState() => _InAppPaymentPageState();
@@ -770,6 +770,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   late final WebViewController _controller;
   Timer? _pollTimer;
   bool _isLoading = true;
+  bool _resultHandled = false;
 
   @override
   void initState() {
@@ -783,6 +784,35 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(NavigationDelegate(
+        onNavigationRequest: (NavigationRequest request) {
+          final uri = Uri.tryParse(request.url);
+          if (uri == null) return NavigationDecision.navigate;
+
+          final isPaymentCompleteDeepLink =
+              uri.scheme == 'vero360' && uri.host == 'payment-complete';
+          if (isPaymentCompleteDeepLink) {
+            final status = (uri.queryParameters['status'] ?? '').toLowerCase();
+            if (status == 'failed' || status == 'cancelled') {
+              _handlePaymentFailure();
+            } else {
+              _handlePaymentSuccess();
+            }
+            return NavigationDecision.prevent;
+          }
+
+          final isBackendReturnUrl = request.url.startsWith(PayChanguConfig.returnUrl);
+          if (isBackendReturnUrl) {
+            final status = (uri.queryParameters['status'] ?? '').toLowerCase();
+            if (status == 'failed' || status == 'cancelled') {
+              _handlePaymentFailure();
+            } else if (status.isNotEmpty) {
+              _handlePaymentSuccess();
+            }
+            return NavigationDecision.prevent;
+          }
+
+          return NavigationDecision.navigate;
+        },
         onProgress: (int progress) => setState(() => _isLoading = progress < 100),
         onPageStarted: (String url) => setState(() => _isLoading = true),
         onPageFinished: (String url) => setState(() => _isLoading = false),
@@ -821,6 +851,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   }
 
   void _handlePaymentSuccess() {
+    if (_resultHandled) return;
+    _resultHandled = true;
     _pollTimer?.cancel();
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
     final productName = widget.digitalProductName ?? 'your order';
@@ -868,6 +900,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   }
 
   void _handlePaymentFailure() {
+    if (_resultHandled) return;
+    _resultHandled = true;
     _pollTimer?.cancel();
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
 

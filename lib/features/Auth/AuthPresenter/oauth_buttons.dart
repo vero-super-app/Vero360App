@@ -6,18 +6,43 @@ class OAuthButtonsRow extends StatelessWidget {
   final VoidCallback? onGoogle;
   final VoidCallback? onApple;
   final bool dense;
+  /// When true, shows only icon buttons in a horizontal row (no labels).
+  final bool iconOnly;
 
   const OAuthButtonsRow({
     super.key,
     required this.onGoogle,
     required this.onApple,
     this.dense = false,
+    this.iconOnly = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final gap = dense ? 10.0 : 14.0;
+    if (iconOnly) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _SocialIconButton(
+            asset: 'assets/google.png',
+            semanticLabel: 'Continue with Google',
+            darkBg: false,
+            onPressed: onGoogle,
+            fallbackIcon: Icons.g_mobiledata,
+          ),
+          const SizedBox(width: 20),
+          _SocialIconButton(
+            asset: 'assets/apple.webp',
+            semanticLabel: 'Continue with Apple',
+            darkBg: true,
+            onPressed: Platform.isIOS ? onApple : null,
+            fallbackIcon: Icons.apple,
+          ),
+        ],
+      );
+    }
 
+    final gap = dense ? 10.0 : 14.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -27,7 +52,7 @@ class OAuthButtonsRow extends StatelessWidget {
           semanticLabel: 'Continue with Google',
           darkBg: false,
           onPressed: onGoogle,
-          fallbackIcon: Icons.g_mobiledata, // safe, always available
+          fallbackIcon: Icons.g_mobiledata,
         ),
         SizedBox(height: gap),
         _SocialButton(
@@ -35,10 +60,63 @@ class OAuthButtonsRow extends StatelessWidget {
           label: 'Continue with Apple',
           semanticLabel: 'Continue with Apple',
           darkBg: true,
-          onPressed: Platform.isIOS ? onApple : null, // enabled tap only on iOS
-          fallbackIcon: Icons.phone_iphone, // safe fallback (no Cupertino dependency)
+          onPressed: Platform.isIOS ? onApple : null,
+          fallbackIcon: Icons.phone_iphone,
         ),
       ],
+    );
+  }
+}
+
+class _SocialIconButton extends StatelessWidget {
+  final String asset;
+  final String semanticLabel;
+  final bool darkBg;
+  final VoidCallback? onPressed;
+  final IconData fallbackIcon;
+
+  const _SocialIconButton({
+    required this.asset,
+    required this.semanticLabel,
+    required this.darkBg,
+    required this.onPressed,
+    required this.fallbackIcon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final size = 52.0;
+    final btn = Material(
+      color: darkBg ? Colors.black : Colors.white,
+      shape: const CircleBorder(),
+      elevation: 2,
+      shadowColor: Colors.black26,
+      child: InkWell(
+        onTap: onPressed,
+        customBorder: const CircleBorder(),
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: Center(
+            child: Image.asset(
+              asset,
+              width: 26,
+              height: 26,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => Icon(
+                fallbackIcon,
+                size: 26,
+                color: darkBg ? Colors.white : Colors.black87,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    return Semantics(
+      label: semanticLabel,
+      button: true,
+      child: btn,
     );
   }
 }
@@ -52,7 +130,6 @@ class _SocialButton extends StatelessWidget {
   final IconData fallbackIcon;
 
   const _SocialButton({
-    super.key,
     required this.asset,
     required this.label,
     required this.semanticLabel,

@@ -11,10 +11,10 @@ class EditCarPage extends ConsumerStatefulWidget {
   final CarModel initialCar;
 
   const EditCarPage({
-    Key? key,
+    super.key,
     required this.carId,
     required this.initialCar,
-  }) : super(key: key);
+  });
 
   @override
   ConsumerState<EditCarPage> createState() => _EditCarPageState();
@@ -225,7 +225,7 @@ class _EditCarPageState extends ConsumerState<EditCarPage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: DropdownButtonFormField<String>(
-                      value: _selectedFuelType,
+                      initialValue: _selectedFuelType,
                       decoration: InputDecoration(
                         labelText: 'Fuel Type',
                         border: OutlineInputBorder(

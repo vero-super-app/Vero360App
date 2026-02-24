@@ -10,21 +10,21 @@ class DriverRequestAcceptDialog extends StatefulWidget {
   final String driverName;
   final String driverPhone;
   final String? driverAvatar;
-  final int? vehicleId;
+  final int? taxiId;
   final Function()? onAccepted;
   final Function()? onRejected;
 
   const DriverRequestAcceptDialog({
-    Key? key,
+    super.key,
     required this.request,
     required this.driverId,
     required this.driverName,
     required this.driverPhone,
     this.driverAvatar,
-    this.vehicleId,
+    this.taxiId,
     this.onAccepted,
     this.onRejected,
-  }) : super(key: key);
+  });
 
   @override
   State<DriverRequestAcceptDialog> createState() =>
@@ -63,7 +63,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         driverName: widget.driverName,
         driverPhone: widget.driverPhone,
         driverAvatar: widget.driverAvatar,
-        vehicleId: widget.vehicleId,
+        taxiId: widget.taxiId,
       );
 
       // Try to create ride thread and send message, but don't fail if they error

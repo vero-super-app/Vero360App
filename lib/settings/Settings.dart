@@ -34,7 +34,9 @@ String _sanitizePhone(String s) {
   final t = (s ?? '').trim();
   if (t.isEmpty) return '';
   if (t.toLowerCase().startsWith('+firebase_') ||
-      t.toLowerCase().contains('firebase_')) return '';
+      t.toLowerCase().contains('firebase_')) {
+    return '';
+  }
   return t;
 }
 
@@ -861,7 +863,7 @@ class _SettingsPageState extends State<SettingsPage> {
       width: 40,
       height: 40,
       decoration: BoxDecoration(
-        color: kBrandOrange.withOpacity(0.12),
+        color: kBrandOrange.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Icon(icon, color: kBrandOrange),
@@ -1234,14 +1236,14 @@ class _SettingsPageState extends State<SettingsPage> {
         child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [kBrandNavy, kBrandOrange.withOpacity(0.95)],
+              colors: [kBrandNavy, kBrandOrange.withValues(alpha: 0.95)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(18),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.08),
+                color: Colors.black.withValues(alpha: 0.08),
                 blurRadius: 16,
                 offset: const Offset(0, 10),
               ),
@@ -1256,7 +1258,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: Container(
                     width: 58,
                     height: 58,
-                    color: Colors.white.withOpacity(0.15),
+                    color: Colors.white.withValues(alpha: 0.15),
                     child: _photoUrl.isEmpty
                         ? const Icon(Icons.person, color: Colors.white, size: 30)
                         : Image.network(
@@ -1288,7 +1290,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.9),
+                          color: Colors.white.withValues(alpha: 0.9),
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -1309,7 +1311,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 Icon(
                   Icons.edit_outlined,
-                  color: Colors.white.withOpacity(0.9),
+                  color: Colors.white.withValues(alpha: 0.9),
                   size: 22,
                 ),
               ],
@@ -1324,7 +1326,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.14),
+        color: Colors.white.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
@@ -1408,7 +1410,7 @@ class _SettingsTile extends StatelessWidget {
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          color: (iconColor ?? kBrandOrange).withOpacity(0.12),
+          color: (iconColor ?? kBrandOrange).withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(14),
         ),
         child: Icon(icon, color: iconColor ?? kBrandOrange),

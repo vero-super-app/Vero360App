@@ -1024,7 +1024,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 const SizedBox(height: 12),
 
                 DropdownButtonFormField<String>(
-                  value: _category,
+                  initialValue: _category,
                   items: _kCategories
                       .map(
                         (c) => DropdownMenuItem<String>(

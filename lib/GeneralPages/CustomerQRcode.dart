@@ -15,13 +15,13 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 
 class ProfileQrPage extends StatefulWidget {
   const ProfileQrPage({
-    Key? key,
+    super.key,
     this.name,
     this.email,
     this.phone,
     this.address,
     this.profilePictureUrl,
-  }) : super(key: key);
+  });
 
   final String? name;
   final String? email;

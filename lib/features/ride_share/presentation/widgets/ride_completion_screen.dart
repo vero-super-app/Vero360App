@@ -10,7 +10,7 @@ class RideCompletionScreen extends StatefulWidget {
   final double driverRating;
   final VoidCallback onPaymentCompleted;
 
-  const RideCompletionScreen({
+  const RideCompletionScreen({super.key, 
     required this.baseFare,
     required this.distanceFare,
     required this.totalFare,

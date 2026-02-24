@@ -7,7 +7,7 @@ import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodati
 
 
 class AccommodationMainPage extends StatefulWidget {
-  const AccommodationMainPage({Key? key}) : super(key: key);
+  const AccommodationMainPage({super.key});
 
   @override
   State<AccommodationMainPage> createState() => _AccommodationMainPageState();
@@ -547,7 +547,7 @@ Widget accImageFromAnySource(
 class _AccommodationCard extends StatelessWidget {
   final Accommodation accommodation;
 
-  const _AccommodationCard({Key? key, required this.accommodation}) : super(key: key);
+  const _AccommodationCard({super.key, required this.accommodation});
 
   @override
   Widget build(BuildContext context) {

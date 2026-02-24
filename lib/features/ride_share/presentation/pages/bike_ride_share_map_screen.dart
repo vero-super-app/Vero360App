@@ -108,7 +108,7 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
             userLng: position.longitude,
             // Bike-only services
             allowedVehicleClasses: const [VehicleClass.bike],
-            onRideRequested: (rideId) {
+            onRideRequested: (rideId, lat, lng, vehicleType) {
               setState(() => _isLoadingRide = true);
               _showWaitingForDriverScreen(rideId);
             },
@@ -358,9 +358,8 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
                                   },
                                   loading: () => const Center(
                                     child: CircularProgressIndicator(
-                                      valueColor:
-                                          AlwaysStoppedAnimation<Color>(
-                                              Color(0xFFFF8A00)),
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                          Color(0xFFFF8A00)),
                                     ),
                                   ),
                                   error: (error, __) => Center(
@@ -423,7 +422,8 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
                                               children: [
                                                 _buildPickupLocationCard(),
                                                 const SizedBox(height: 14),
-                                                if (selectedDropoffPlace == null)
+                                                if (selectedDropoffPlace ==
+                                                    null)
                                                   PlaceSearchWidget(
                                                     searchController:
                                                         _searchController,
@@ -483,7 +483,8 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
                                                 boxShadow: [
                                                   BoxShadow(
                                                     color: Colors.black
-                                                        .withValues(alpha: 0.12),
+                                                        .withValues(
+                                                            alpha: 0.12),
                                                     blurRadius: 24,
                                                     offset: const Offset(0, 8),
                                                     spreadRadius: 2,
@@ -556,8 +557,9 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
           CircleAvatar(
             radius: 22,
             backgroundColor: Colors.blue.withValues(alpha: 0.12),
-            backgroundImage:
-                profilePictureUrl.isNotEmpty ? NetworkImage(profilePictureUrl) : null,
+            backgroundImage: profilePictureUrl.isNotEmpty
+                ? NetworkImage(profilePictureUrl)
+                : null,
             child: profilePictureUrl.isEmpty
                 ? const Icon(
                     Icons.person_rounded,
@@ -691,8 +693,7 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
               _focusSearchBar();
             },
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(6),
@@ -850,8 +851,7 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFFF8A00),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -907,8 +907,7 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFFF8A00),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -977,4 +976,3 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
     );
   }
 }
-

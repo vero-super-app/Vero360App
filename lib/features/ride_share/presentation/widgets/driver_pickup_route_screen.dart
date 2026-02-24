@@ -13,7 +13,7 @@ class DriverPickupRouteScreen extends StatefulWidget {
   final double estimatedFare;
   final VoidCallback onArrived;
 
-  const DriverPickupRouteScreen({
+  const DriverPickupRouteScreen({super.key, 
     required this.rideId,
     required this.passengerName,
     required this.passengerPhone,

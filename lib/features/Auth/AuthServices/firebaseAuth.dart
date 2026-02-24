@@ -54,9 +54,9 @@ class FirebaseAuthService {
         print('Google Sign-In not supported on this platform');
         return null;
       }
-      final GoogleSignInAccount? account = await _google.authenticate();
+      final GoogleSignInAccount account = await _google.authenticate();
       if (account == null) return null;
-      final auth = await account.authentication;
+      final auth = account.authentication;
       final credential = GoogleAuthProvider.credential(idToken: auth.idToken);
       final userCred = await _auth.signInWithCredential(credential);
       await logCurrentIdToken();

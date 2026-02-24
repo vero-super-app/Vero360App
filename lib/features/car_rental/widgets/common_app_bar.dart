@@ -16,7 +16,7 @@ class CommonAppBar extends StatelessWidget implements PreferredSizeWidget {
   final Color? foregroundColor;
 
   const CommonAppBar({
-    Key? key,
+    super.key,
     required this.title,
     this.showBackButton = true,
     this.onBackPressed,
@@ -27,7 +27,7 @@ class CommonAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.backgroundColor,
     this.elevation = 0,
     this.foregroundColor,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -67,14 +67,14 @@ class SimpleHeader extends StatelessWidget {
   final EdgeInsetsGeometry padding;
 
   const SimpleHeader({
-    Key? key,
+    super.key,
     required this.title,
     this.subtitle,
     this.padding = const EdgeInsets.symmetric(
       horizontal: CarRentalSpacing.lg,
       vertical: CarRentalSpacing.md,
     ),
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -116,7 +116,7 @@ class PageHeader extends StatelessWidget {
   final BorderRadiusGeometry borderRadius;
 
   const PageHeader({
-    Key? key,
+    super.key,
     required this.title,
     this.subtitle,
     this.trailing,
@@ -127,7 +127,7 @@ class PageHeader extends StatelessWidget {
       bottomLeft: Radius.circular(CarRentalBorderRadius.lg),
       bottomRight: Radius.circular(CarRentalBorderRadius.lg),
     ),
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

@@ -100,7 +100,7 @@ class FoodService {
   }
 
   Map<String, dynamic> _adaptMarketplaceToFoodJson(Map raw) {
-    String _s(dynamic v) => v?.toString() ?? '';
+    String s(dynamic v) => v?.toString() ?? '';
 
     final sp = raw['serviceProvider'] ?? raw['merchant'] ?? raw['seller'];
     final sellerName = (sp is Map)
@@ -109,8 +109,8 @@ class FoodService {
 
     return {
       'id': int.tryParse(raw['id']?.toString() ?? '') ?? 0,
-      'FoodName': _s(raw['name']),
-      'FoodImage': _s(raw['image']),
+      'FoodName': s(raw['name']),
+      'FoodImage': s(raw['image']),
       'RestrauntName': sellerName,
       'price': double.tryParse(raw['price']?.toString() ?? '0') ?? 0.0,
       'description': raw['description']?.toString(),

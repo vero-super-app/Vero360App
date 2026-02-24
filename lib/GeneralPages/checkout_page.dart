@@ -22,7 +22,7 @@ enum DeliveryType { speed, cts, pickup }
 
 class CheckoutPage extends StatefulWidget {
   final MarketplaceDetailModel item;
-  const CheckoutPage({required this.item, Key? key}) : super(key: key);
+  const CheckoutPage({required this.item, super.key});
 
   @override
   State<CheckoutPage> createState() => _CheckoutPageState();
@@ -702,7 +702,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       const SizedBox(height: 10),
 
                       DropdownButtonFormField<DeliveryType>(
-                        value: _deliveryType,
+                        initialValue: _deliveryType,
                         isExpanded: true,
 
                         // ✅ THIS is what fixes the bottom overflow in the CLOSED field

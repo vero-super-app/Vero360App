@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 
@@ -29,26 +31,7 @@ class RideShareService {
     }
   }
 
-  /// Get available vehicles by location and optional class filter
-  Future<dynamic> getAvailableVehicles({
-    required double latitude,
-    required double longitude,
-    String? vehicleClass,
-    double radiusKm = 5,
-  }) async {
-    try {
-      final vehicles = await _httpService.getAvailableVehicles(
-        latitude: latitude,
-        longitude: longitude,
-        vehicleClass: vehicleClass,
-        radiusKm: radiusKm,
-      );
-      return vehicles.map((v) => v.toJson()).toList();
-    } catch (e) {
-      print('Error getting vehicles: $e');
-      rethrow;
-    }
-  }
+
 
   /// Request a new ride
   Future<Map<String, dynamic>> requestRide({
@@ -102,13 +85,13 @@ class RideShareService {
   }
 
   /// Subscribe to passenger ride tracking
-  void subscribeToRideTracking(int rideId) {
-    _httpService.subscribeToRideTracking(rideId);
+  Future<void> subscribeToRideTracking(int rideId) async {
+    await _httpService.subscribeToRideTracking(rideId);
   }
 
   /// Unsubscribe from ride tracking
-  void unsubscribeFromRideTracking() {
-    _httpService.unsubscribeFromRideTracking();
+  Future<void> unsubscribeFromRideTracking() async {
+    await _httpService.unsubscribeFromRideTracking();
   }
 
   /// Listen to driver location updates

@@ -36,7 +36,9 @@ class VehicleTypeModal extends ConsumerStatefulWidget {
   final Place dropoffPlace;
   final double userLat;
   final double userLng;
-  final Function(String) onRideRequested;
+  /// Called when a ride is successfully created.
+  /// Parameters: (rideId, estimatedFare, distanceKm, durationMinutes)
+  final Function(String, double, double, int) onRideRequested;
   final List<String>? allowedVehicleClasses;
 
   const VehicleTypeModal({
@@ -46,8 +48,8 @@ class VehicleTypeModal extends ConsumerStatefulWidget {
     required this.userLng,
     required this.onRideRequested,
     this.allowedVehicleClasses,
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   ConsumerState<VehicleTypeModal> createState() => _VehicleTypeModalState();
@@ -64,7 +66,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
   late AnimationController _animationController;
   // Deprecated: kept for backward compatibility only (no longer used).
   // ignore: unused_field
-  String _filterType = 'all';
+  final String _filterType = 'all';
 
   @override
   void initState() {
@@ -267,7 +269,12 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
 
       if (mounted) {
         Navigator.pop(context);
-        widget.onRideRequested(ride['id'].toString());
+        widget.onRideRequested(
+          ride['id'].toString(),
+          (ride['estimatedFare'] as num?)?.toDouble() ?? estimatedFare,
+          distance,
+          duration,
+        );
       }
     } catch (e) {
       if (kDebugMode) {

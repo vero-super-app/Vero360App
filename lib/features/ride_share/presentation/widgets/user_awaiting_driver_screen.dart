@@ -22,7 +22,7 @@ class UserAwaitingDriverScreen extends StatefulWidget {
   final VoidCallback onStartRide;
   final RideShareHttpService? httpService;
 
-  const UserAwaitingDriverScreen({
+  const UserAwaitingDriverScreen({super.key, 
     required this.rideId,
     required this.driverName,
     required this.vehicleType,
@@ -307,7 +307,7 @@ class _UserAwaitingDriverScreenState extends State<UserAwaitingDriverScreen>
                                   ),
                                   const SizedBox(width: 4),
                                   Text(
-                                    '${widget.driverRating.toStringAsFixed(1)}',
+                                    widget.driverRating.toStringAsFixed(1),
                                     style: const TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.w600,

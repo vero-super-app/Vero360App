@@ -15,7 +15,6 @@ import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
-import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -95,8 +94,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final FirebaseAuthService _firebaseAuthService = FirebaseAuthService();
 
   final _name = TextEditingController();
-  final _email = TextEditingController();
-  final _phone = TextEditingController();
+  final _identifier = TextEditingController(); // email or phone (one field)
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   final _businessName = TextEditingController();
@@ -118,8 +116,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void dispose() {
     _dummyTimer?.cancel();
     _name.dispose();
-    _email.dispose();
-    _phone.dispose();
+    _identifier.dispose();
     _password.dispose();
     _confirm.dispose();
     _businessName.dispose();
@@ -139,23 +136,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return null;
   }
 
-  String? _validateEmail(String? v) {
-    final s = v?.trim() ?? '';
-    if (s.isEmpty) return 'Email is required';
-    final ok = RegExp(r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(s);
-    return ok ? null : 'Enter a valid email';
+  static bool _looksLikeEmail(String s) =>
+      RegExp(r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(s.trim());
+
+  static bool _looksLikePhone(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return false;
+    final digits = t.replaceAll(RegExp(r'\D'), '');
+    return RegExp(r'^(08|09)\d{8}$').hasMatch(digits) ||
+        RegExp(r'^\+265[89]\d{8}$').hasMatch(t);
   }
 
-  String? _validatePhone(String? v) {
+  String get _identifierValue => _identifier.text.trim();
+
+  String get _identifierEmail =>
+      _looksLikeEmail(_identifierValue) ? _identifierValue : '';
+
+  String get _identifierPhone =>
+      _looksLikePhone(_identifierValue) ? _identifierValue : '';
+
+  String? _validateIdentifier(String? v) {
     final s = v?.trim() ?? '';
-    if (s.isEmpty) return 'Mobile number is required';
-    final digits = s.replaceAll(RegExp(r'\D'), '');
-    final isLocal = RegExp(r'^(08|09)\d{8}$').hasMatch(digits);
-    final isE164 = RegExp(r'^\+265[89]\d{8}$').hasMatch(s);
-    if (!isLocal && !isE164) {
-      return 'Use 08/09xxxxxxxx or +2659xxxxxxxx';
-    }
-    return null;
+    if (s.isEmpty) return 'Email or phone number is required';
+    if (_looksLikeEmail(s)) return null;
+    if (_looksLikePhone(s)) return null;
+    return 'Enter a valid email or phone (08/09xxxxxxxx or +2659xxxxxxxx)';
   }
 
   String? _validatePassword(String? v) {
@@ -210,7 +215,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     final displayId = user['email']?.toString() ??
         user['phone']?.toString() ??
-        _email.text.trim();
+        _identifierValue;
     if (displayId.isNotEmpty) {
       await prefs.setString('email', displayId);
     }
@@ -303,18 +308,55 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     if (profile.isEmpty) {
+      final newRole = _role == UserRole.merchant ? 'merchant' : 'customer';
       profile = {
-        'email': user.email,
+        'email': user.email ?? _identifierEmail,
         'name': user.displayName ?? _name.text.trim(),
-        'phone': _phone.text.trim(),
-        'role': _role == UserRole.merchant ? 'merchant' : 'customer',
+        'phone': _identifierPhone,
+        'role': newRole,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'authProvider': 'firebase_only',
       };
+      if (_role == UserRole.merchant && _selectedMerchantService != null) {
+        profile['merchantService'] = _selectedMerchantService!.key;
+        profile['businessName'] = _businessName.text.trim();
+        profile['businessAddress'] = _businessAddress.text.trim();
+        profile['status'] = 'pending';
+        profile['isActive'] = false;
+      }
       try {
-        await _firestore.collection('users').doc(user.uid).set({
-          ...profile,
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+        await _firestore.collection('users').doc(user.uid).set(
+              profile,
+              SetOptions(merge: true),
+            );
+        if (_role == UserRole.merchant &&
+            _selectedMerchantService != null &&
+            _businessName.text.trim().isNotEmpty) {
+          final merchantProfile = {
+            'uid': user.uid,
+            'email': user.email ?? _identifierEmail,
+            'name': user.displayName ?? _name.text.trim(),
+            'phone': _identifierPhone,
+            'businessName': _businessName.text.trim(),
+            'businessAddress': _businessAddress.text.trim(),
+            'serviceType': _selectedMerchantService!.key,
+            'status': 'pending',
+            'isActive': false,
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+            'rating': 0.0,
+            'totalRatings': 0,
+            'completedOrders': 0,
+          };
+          final collectionName = _selectedMerchantService!.key == 'marketplace'
+              ? 'marketplace_merchants'
+              : '${_selectedMerchantService!.key}_merchants';
+          await _firestore
+              .collection(collectionName)
+              .doc(user.uid)
+              .set(merchantProfile);
+        }
       } catch (_) {}
     }
 
@@ -328,9 +370,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       'user': <String, dynamic>{
         'uid': user.uid,
         'firebaseUid': user.uid,
-        'email': user.email ?? _email.text.trim(),
+        'email': user.email ?? _identifierEmail,
         'name': profile['name']?.toString() ?? _name.text.trim(),
-        'phone': profile['phone']?.toString() ?? _phone.text.trim(),
+        'phone': profile['phone']?.toString() ?? _identifierPhone,
         'role': role,
         'merchantService':
             _role == UserRole.merchant ? _selectedMerchantService?.key : null,
@@ -344,12 +386,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   /// Syncs the chosen role (and merchant data) to the backend so the API user
   /// is created/updated as merchant. Uses PUT /users/me (backend uses Put, not Patch).
+  /// When form fields are empty (e.g. after Google/Apple sign-in), uses [user] email/displayName.
   Future<void> _syncProfileToBackend(User user) async {
     final role = _role == UserRole.merchant ? 'merchant' : 'customer';
+    final name = _name.text.trim().isEmpty
+        ? (user.displayName ?? user.email ?? '')
+        : _name.text.trim();
+    final email = _identifierEmail.isEmpty
+        ? (user.email ?? '')
+        : _identifierEmail;
     final body = <String, dynamic>{
-      'name': _name.text.trim(),
-      'email': _email.text.trim(),
-      'phone': _phone.text.trim(),
+      'name': name,
+      'email': email,
+      'phone': _identifierPhone,
       'role': role,
     };
     if (_role == UserRole.merchant) {
@@ -395,6 +444,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
+    final email = _identifierEmail;
+    final phone = _identifierPhone;
+    if (email.isEmpty && phone.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Enter email or phone number.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (email.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Email is required to create an account (use email/password sign up).',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
     if (_role == UserRole.merchant) {
       final serviceErr = _validateMerchantService(_selectedMerchantService);
       if (serviceErr != null) {
@@ -424,7 +494,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _registering = true);
     try {
       final userCredential = await _auth.createUserWithEmailAndPassword(
-        email: _email.text.trim(),
+        email: email,
         password: _password.text,
       );
 
@@ -435,9 +505,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       final userData = <String, dynamic>{
         'uid': user.uid,
-        'email': _email.text.trim(),
+        'email': _identifierEmail,
         'name': _name.text.trim(),
-        'phone': _phone.text.trim(),
+        'phone': _identifierPhone,
         'role': role,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -453,9 +523,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
         final merchantProfile = {
           'uid': user.uid,
-          'email': _email.text.trim(),
+          'email': _identifierEmail,
           'name': _name.text.trim(),
-          'phone': _phone.text.trim(),
+          'phone': _identifierPhone,
           'businessName': _businessName.text.trim(),
           'businessAddress': _businessAddress.text.trim(),
           'serviceType': _selectedMerchantService!.key,
@@ -483,14 +553,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('uid', user.uid);
-      await prefs.setString('email', _email.text.trim());
+      await prefs.setString(
+        'email',
+        _identifierEmail.isNotEmpty ? _identifierEmail : _identifierValue,
+      );
+      if (_identifierPhone.isNotEmpty) {
+        await prefs.setString('phone', _identifierPhone);
+      }
       final nameVal = _name.text.trim();
       if (nameVal.isNotEmpty) {
         await prefs.setString('fullName', nameVal);
         await prefs.setString('name', nameVal);
       }
-      final phoneVal = _phone.text.trim();
-      if (phoneVal.isNotEmpty) await prefs.setString('phone', phoneVal);
       await prefs.setString('role', role);
       await prefs.setString('auth_provider', 'firebase_only');
 
@@ -558,6 +632,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       final result = await _buildResultFromUser(user);
+      await _syncProfileToBackend(user);
+      if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
         'Signed in with Google',
@@ -592,6 +668,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       final result = await _buildResultFromUser(user);
+      await _syncProfileToBackend(user);
+      if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
         'Signed in with Apple',
@@ -609,6 +687,40 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } finally {
       if (mounted) setState(() => _socialLoading = false);
     }
+  }
+
+  // ---------- Terms & Conditions (aligned with Settings) ----------
+
+  static const String _termsConditionsText =
+      'By using Vero360, you agree to the following terms:\n\n'
+      '• Use the app in a lawful and responsible manner.\n'
+      '• Do not upload or share illegal, harmful, or misleading content.\n'
+      '• Respect other users, merchants, and service providers.\n'
+      '• The system holds money until both parties are satisfied with the business.\n'
+      '• Merchants are responsible for the accuracy of their products and services.\n'
+      '• Vero360 acts as a technology platform and is not the direct provider of services.\n\n'
+      'We reserve the right to update these terms and policies as the platform evolves. '
+      'Continued use of the app indicates acceptance of any updates.';
+
+  void _showTermsAndConditionsDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Terms & Conditions'),
+        content: SingleChildScrollView(
+          child: Text(
+            _termsConditionsText,
+            style: const TextStyle(height: 1.35),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   // ---------- UI helpers ----------
@@ -713,12 +825,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 10),
 
-                    OAuthButtonsRow(
-                      onGoogle: _socialLoading ? null : _google,
-                      onApple: _socialLoading ? null : _apple,
-                    ),
-                    const SizedBox(height: 18),
-
                     Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
@@ -787,28 +893,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ],
 
                             TextFormField(
-                              controller: _email,
+                              controller: _identifier,
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
                               decoration: _dec(
-                                label: 'Email',
-                                hint: 'you@vero.com',
-                                icon: Icons.alternate_email,
+                                label: 'Email or phone number',
+                                hint: 'you@example.com or 09xxxxxxxx',
+                                icon: Icons.contact_mail_outlined,
                               ),
-                              validator: _validateEmail,
-                            ),
-                            const SizedBox(height: 14),
-                            TextFormField(
-                              controller: _phone,
-                              keyboardType: TextInputType.phone,
-                              textInputAction: TextInputAction.next,
-                              decoration: _dec(
-                                label: 'Mobile number',
-                                hint:
-                                    '08xxxxxxxx, 09xxxxxxxx or +2659xxxxxxxx',
-                                icon: Icons.phone_iphone,
-                              ),
-                              validator: _validatePhone,
+                              validator: _validateIdentifier,
                             ),
                             const SizedBox(height: 14),
 
@@ -895,18 +988,36 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             const SizedBox(height: 10),
 
                             Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
                                 Checkbox(
                                   value: _agree,
                                   onChanged: (v) =>
                                       setState(() => _agree = v ?? false),
+                                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: VisualDensity.compact,
                                 ),
-                                const Expanded(
-                                  child: Text(
-                                    'I agree to the Terms & Privacy Policy',
-                                    style: TextStyle(
-                                      color: AppColors.body,
-                                      fontWeight: FontWeight.w600,
+                                Expanded(
+                                  child: GestureDetector(
+                                    onTap: _showTermsAndConditionsDialog,
+                                    child: const Text.rich(
+                                      TextSpan(
+                                        text: 'I agree to the ',
+                                        style: TextStyle(
+                                          color: AppColors.body,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        children: [
+                                          TextSpan(
+                                            text: 'Terms & Privacy Policy',
+                                            style: TextStyle(
+                                              color: AppColors.brandOrange,
+                                              fontWeight: FontWeight.w700,
+                                              decoration: TextDecoration.underline,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -942,6 +1053,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           ],
                         ),
                       ),
+                    ),
+
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(child: Divider(color: Colors.grey.shade300)),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text(
+                            'or',
+                            style: TextStyle(
+                              color: AppColors.body,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        Expanded(child: Divider(color: Colors.grey.shade300)),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    OAuthButtonsRow(
+                      onGoogle: _socialLoading ? null : _google,
+                      onApple: _socialLoading ? null : _apple,
+                      iconOnly: true,
                     ),
 
                     const SizedBox(height: 14),

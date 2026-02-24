@@ -253,11 +253,11 @@ class DriverRequestService {
     required String driverName,
     required String driverPhone,
     required String? driverAvatar,
-    int? vehicleId,
+    int? taxiId,
   }) async {
     try {
       final body = <String, dynamic>{
-        'vehicleId': vehicleId,
+        'taxiId': taxiId,
       };
       
       final response = await http.patch(

@@ -11,14 +11,14 @@ class EmptyState extends StatelessWidget {
   final double iconSize;
 
   const EmptyState({
-    Key? key,
+    super.key,
     required this.icon,
     required this.title,
     this.subtitle,
     this.action,
     this.iconColor,
     this.iconSize = 64,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -67,13 +67,13 @@ class ErrorState extends StatelessWidget {
   final Color? backgroundColor;
 
   const ErrorState({
-    Key? key,
+    super.key,
     required this.title,
     this.message,
     this.icon = Icons.error_outline,
     this.onRetry,
     this.backgroundColor,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -125,10 +125,10 @@ class LoadingState extends StatelessWidget {
   final Color? backgroundColor;
 
   const LoadingState({
-    Key? key,
+    super.key,
     this.message,
     this.backgroundColor,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -160,9 +160,9 @@ class NoConnectionState extends StatelessWidget {
   final VoidCallback? onRetry;
 
   const NoConnectionState({
-    Key? key,
+    super.key,
     this.onRetry,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -189,10 +189,10 @@ class ShimmerLoadingCard extends StatelessWidget {
   final double borderRadius;
 
   const ShimmerLoadingCard({
-    Key? key,
+    super.key,
     this.height = 100,
     this.borderRadius = CarRentalBorderRadius.md,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -212,10 +212,10 @@ class ShimmerLoadingList extends StatelessWidget {
   final double itemHeight;
 
   const ShimmerLoadingList({
-    Key? key,
+    super.key,
     this.itemCount = 5,
     this.itemHeight = 100,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -236,10 +236,10 @@ class ShimmerLoadingList extends StatelessWidget {
 
 /// Success message with snackbar
 class SuccessSnackBar extends SnackBar {
-  SuccessSnackBar({
+  SuccessSnackBar({super.key, 
     required String message,
-    Duration duration = const Duration(seconds: 3),
-    SnackBarAction? action,
+    super.duration = const Duration(seconds: 3),
+    super.action,
   }) : super(
           content: Row(
             children: [
@@ -254,17 +254,15 @@ class SuccessSnackBar extends SnackBar {
             ],
           ),
           backgroundColor: CarRentalColors.successLight,
-          duration: duration,
-          action: action,
         );
 }
 
 /// Error message with snackbar
 class ErrorSnackBar extends SnackBar {
-  ErrorSnackBar({
+  ErrorSnackBar({super.key, 
     required String message,
-    Duration duration = const Duration(seconds: 3),
-    SnackBarAction? action,
+    super.duration = const Duration(seconds: 3),
+    super.action,
   }) : super(
           content: Row(
             children: [
@@ -279,17 +277,15 @@ class ErrorSnackBar extends SnackBar {
             ],
           ),
           backgroundColor: CarRentalColors.errorLight,
-          duration: duration,
-          action: action,
         );
 }
 
 /// Info message with snackbar
 class InfoSnackBar extends SnackBar {
-  InfoSnackBar({
+  InfoSnackBar({super.key, 
     required String message,
-    Duration duration = const Duration(seconds: 3),
-    SnackBarAction? action,
+    super.duration = const Duration(seconds: 3),
+    super.action,
   }) : super(
           content: Row(
             children: [
@@ -304,7 +300,5 @@ class InfoSnackBar extends SnackBar {
             ],
           ),
           backgroundColor: CarRentalColors.infoLight,
-          duration: duration,
-          action: action,
         );
 }

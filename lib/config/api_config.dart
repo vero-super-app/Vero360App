@@ -11,11 +11,11 @@ class ApiConfig {
   /// PROD root (as you requested)
   // static const String _defaultProdRoot = 'https://heflexitservice.co.za';
 
-  // static const String _defaultProdRoot =
-  //     'https://unbigamous-unappositely-kory.ngrok-free.dev';
-
   static const String _defaultProdRoot =
-      'http://10.0.2.2:3000'; // Android emulator localhost
+      'https://unbigamous-unappositely-kory.ngrok-free.dev';
+// 'https://vero-backend-2.onrender.com';
+  // static const String _defaultProdRoot =
+  //     'http://10.0.2.2:3000'; // Android emulator localhost
 
   /// Optional override at build time:
   /// flutter run --dart-define=API_BASE_URL=http://127.0.0.1:3000
@@ -74,7 +74,7 @@ class ApiConfig {
   static Future<void> useProd() => init();
 
   /// Keep compatibility with existing code (ignored param).
-  static Future<void> setBase(String _ignored) => useProd();
+  static Future<void> setBase(String ignored) => useProd();
 
   // ---------------------------------------------------------------------------
   // URL BUILDERS

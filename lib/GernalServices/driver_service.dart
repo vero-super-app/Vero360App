@@ -225,10 +225,14 @@ class DriverService {
     }
   }
 
-  Future<Map<String, dynamic>> getTaxisByClass(String taxiClass) async {
+  Future<List<Map<String, dynamic>>> getTaxisByClass(String taxiClass) async {
     try {
       final response = await _dio.get('/vero/taxis/class/$taxiClass');
-      return response.data as Map<String, dynamic>;
+      final data = response.data;
+      if (data is List) {
+        return List<Map<String, dynamic>>.from(data);
+      }
+      return [];
     } catch (e) {
       throw _handleError(e);
     }

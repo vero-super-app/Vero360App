@@ -12,10 +12,10 @@ class CallScreen extends ConsumerStatefulWidget {
   final bool isInitiator;
 
   const CallScreen({
-    Key? key,
+    super.key,
     required this.call,
     this.isInitiator = false,
-  }) : super(key: key);
+  });
 
   @override
   ConsumerState<CallScreen> createState() => _CallScreenState();
@@ -169,9 +169,9 @@ class IncomingCallScreen extends ConsumerStatefulWidget {
   final CallSession call;
 
   const IncomingCallScreen({
-    Key? key,
+    super.key,
     required this.call,
-  }) : super(key: key);
+  });
 
   @override
   ConsumerState<IncomingCallScreen> createState() => _IncomingCallScreenState();
@@ -237,7 +237,7 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen> {
 
 /// Screen for displaying call history
 class CallHistoryScreen extends ConsumerWidget {
-  const CallHistoryScreen({Key? key}) : super(key: key);
+  const CallHistoryScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

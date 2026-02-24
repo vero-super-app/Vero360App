@@ -14,10 +14,10 @@ class MerchantProductsPage extends StatefulWidget {
   final String merchantName;
 
   const MerchantProductsPage({
-    Key? key,
+    super.key,
     required this.merchantId,
     required this.merchantName,
-  }) : super(key: key);
+  });
 
   @override
   State<MerchantProductsPage> createState() => _MerchantProductsPageState();
@@ -293,11 +293,11 @@ class _MerchantProductCard extends StatelessWidget {
   final Widget Function(MarketplaceDetailModel) imageBuilder;
 
   const _MerchantProductCard({
-    Key? key,
+    super.key,
     required this.item,
     required this.onOpen,
     required this.imageBuilder,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

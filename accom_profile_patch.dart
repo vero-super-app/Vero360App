@@ -72,7 +72,7 @@ Future<String?> _getBearerTokenForApi({bool forceRefresh = false}) async {
     final body = jsonDecode(resp.body);
     final data = (body is Map && body['data'] is Map)
         ? body['data'] as Map
-        : (body is Map ? Map<String, dynamic>.from(body as Map) : <String, dynamic>{});
+        : (body is Map ? Map<String, dynamic>.from(body) : <String, dynamic>{});
     final url = (data['profilepicture'] ?? data['profilePicture'] ?? data['url'])?.toString();
     if (url == null || url.isEmpty) throw Exception('No URL in response');
     return url;

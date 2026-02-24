@@ -52,8 +52,9 @@ class MyBookingService {
 
   Future<bool> _isMerchant() async {
     final prefs = await SharedPreferences.getInstance();
-    if ((prefs.getBool('is_merchant') ?? prefs.getBool('merchant')) == true)
+    if ((prefs.getBool('is_merchant') ?? prefs.getBool('merchant')) == true) {
       return true;
+    }
     final roleStr =
         (prefs.getString('role') ?? prefs.getString('userRole') ?? '')
             .toLowerCase();
@@ -68,8 +69,9 @@ class MyBookingService {
         if (role.contains('merchant')) return true;
         final roles = p['roles'];
         if (roles is List &&
-            roles.map((e) => '$e'.toLowerCase()).contains('merchant'))
+            roles.map((e) => '$e'.toLowerCase()).contains('merchant')) {
           return true;
+        }
         final scope = (p['scope'] ?? '').toString().toLowerCase();
         if (scope.contains('merchant')) return true;
       }

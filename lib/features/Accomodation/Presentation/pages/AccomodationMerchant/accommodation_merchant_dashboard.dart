@@ -251,7 +251,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       if (mounted) {
         setState(() {
           _rooms = snapshot.docs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
+            final data = doc.data();
             return {
               'id': doc.id,
               ...data,
@@ -574,7 +574,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                   const SizedBox(height: 14),
                   DropdownButtonFormField<String>(
                     decoration: const InputDecoration(labelText: 'Accommodation Type *'),
-                    value: selectedType,
+                    initialValue: selectedType,
                     items: accommodationTypes
                         .map((t) => DropdownMenuItem(value: t, child: Text(t[0].toUpperCase() + t.substring(1))))
                         .toList(),
@@ -1324,7 +1324,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     final body = jsonDecode(resp.body);
     final data = (body is Map && body['data'] is Map)
         ? body['data'] as Map
-        : (body is Map ? Map<String, dynamic>.from(body as Map) : <String, dynamic>{});
+        : (body is Map ? Map<String, dynamic>.from(body) : <String, dynamic>{});
     final url = (data['profilepicture'] ?? data['profilePicture'] ?? data['url'])?.toString();
     if (url == null || url.isEmpty) throw Exception('No URL in response');
     return url;
@@ -1954,7 +1954,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                 ),
               ),
             );
-          }).toList(),
+          }),
       ],
     );
   }
@@ -2120,7 +2120,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                 ),
               ),
             );
-          }).toList(),
+          }),
       ],
     );
   }

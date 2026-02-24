@@ -5,7 +5,7 @@ import 'package:vero360_app/Gernalproviders/search_provider.dart';
 
 /// Screen for searching messages and chats
 class SearchScreen extends ConsumerStatefulWidget {
-  const SearchScreen({Key? key}) : super(key: key);
+  const SearchScreen({super.key});
 
   @override
   ConsumerState<SearchScreen> createState() => _SearchScreenState();
@@ -13,7 +13,7 @@ class SearchScreen extends ConsumerStatefulWidget {
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   late TextEditingController _searchController;
-  String _selectedFilter = 'all'; // 'all', 'messages', 'chats'
+  final String _selectedFilter = 'all'; // 'all', 'messages', 'chats'
 
   @override
   void initState() {
@@ -198,7 +198,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           TabBar(
             tabs: [
               Tab(
-                text: 'All (${totalResults})',
+                text: 'All ($totalResults)',
               ),
               Tab(
                 text: 'Messages (${searchState.messageResults.length})',

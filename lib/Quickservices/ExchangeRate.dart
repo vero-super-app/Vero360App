@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class ExchangeRateScreen extends StatefulWidget {
-  const ExchangeRateScreen({Key? key}) : super(key: key);
+  const ExchangeRateScreen({super.key});
 
   @override
   _ExchangeRateScreenState createState() => _ExchangeRateScreenState();

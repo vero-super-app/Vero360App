@@ -99,16 +99,18 @@ class OrderService {
 
         final roles = p['roles'];
         if (roles is List &&
-            roles.map((e) => '$e'.toLowerCase()).contains('merchant'))
+            roles.map((e) => '$e'.toLowerCase()).contains('merchant')) {
           return true;
+        }
 
         final scope = (p['scope'] ?? '').toString().toLowerCase();
         if (scope.contains('merchant')) return true;
 
         final perms = p['permissions'];
         if (perms is List &&
-            perms.map((e) => '$e'.toLowerCase()).contains('merchant'))
+            perms.map((e) => '$e'.toLowerCase()).contains('merchant')) {
           return true;
+        }
       }
     } catch (_) {}
     return false;
@@ -121,16 +123,20 @@ class OrderService {
       };
 
   String _friendlyMessageForStatus(int code, {required String action}) {
-    if (code == 401 || code == 403)
+    if (code == 401 || code == 403) {
       return 'Your session has expired. Please sign in again.';
+    }
     if (code == 404) return 'We couldn’t find what you requested.';
     if (code == 408) return 'Request timed out. Please try again.';
-    if (code == 409)
+    if (code == 409) {
       return 'This request couldn’t be completed due to a conflict. Please refresh and try again.';
-    if (code == 422 || code == 400)
+    }
+    if (code == 422 || code == 400) {
       return 'We couldn’t $action. Please check your details and try again.';
-    if (code >= 500)
+    }
+    if (code >= 500) {
       return 'We couldn’t $action right now. Please try again shortly.';
+    }
     return 'We couldn’t $action. Please try again.';
   }
 
@@ -329,8 +335,9 @@ class OrderService {
 
     final r = await _retry(() => http.patch(u, headers: h, body: body),
         action: 'update the order');
-    if (r.statusCode < 200 || r.statusCode >= 300)
+    if (r.statusCode < 200 || r.statusCode >= 300) {
       _bad(r, action: 'update the order');
+    }
   }
 
   // Cancel, else delete as fallback.
@@ -348,8 +355,9 @@ class OrderService {
       final h = await _headers();
       final r = await _retry(() => http.delete(u, headers: h),
           action: 'cancel the order');
-      if (r.statusCode < 200 || r.statusCode >= 300)
+      if (r.statusCode < 200 || r.statusCode >= 300) {
         _bad(r, action: 'cancel the order');
+      }
       return false;
     }
   }

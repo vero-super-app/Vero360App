@@ -17,7 +17,7 @@ class CarWebSocketService {
   Timer? _reconnectTimer;
   bool _isConnected = false;
   bool _isDisposed = false;
-  Set<String> _subscribedCars = {};
+  final Set<String> _subscribedCars = {};
 
   /// Stream of car location updates
   Stream<List<CarModel>> get carUpdates {
@@ -189,7 +189,7 @@ class CarWebSocketService {
   void _handlePositionUpdate(dynamic payload) {
     try {
       if (payload is List) {
-        final cars = (payload as List)
+        final cars = (payload)
             .map((e) => CarModel.fromJson(e as Map<String, dynamic>))
             .toList();
 

@@ -10,11 +10,11 @@ class IncomingCallWidget extends ConsumerWidget {
   final VoidCallback onDecline;
 
   const IncomingCallWidget({
-    Key? key,
+    super.key,
     required this.call,
     required this.onAccept,
     required this.onDecline,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -109,14 +109,14 @@ class ActiveCallWidget extends ConsumerWidget {
   final VoidCallback? onSwitchCamera;
 
   const ActiveCallWidget({
-    Key? key,
+    super.key,
     required this.call,
     required this.onEndCall,
     required this.onToggleMic,
     required this.onToggleCamera,
     required this.onToggleSpeaker,
     this.onSwitchCamera,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -272,10 +272,10 @@ class CallHistoryItemWidget extends StatelessWidget {
   final VoidCallback onTap;
 
   const CallHistoryItemWidget({
-    Key? key,
+    super.key,
     required this.entry,
     required this.onTap,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

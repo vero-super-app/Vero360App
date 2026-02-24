@@ -5,7 +5,7 @@ import 'package:vero360_app/GeneralModels/order_model.dart';   // OrderItem + Or
 import 'package:vero360_app/GernalServices/order_service.dart';
 
 class DeliveredOrdersPage extends StatefulWidget {
-  const DeliveredOrdersPage({Key? key}) : super(key: key);
+  const DeliveredOrdersPage({super.key});
 
   @override
   State<DeliveredOrdersPage> createState() => _DeliveredOrdersPageState();

@@ -82,36 +82,36 @@ class TaxiRealtimeService {
 
       print('[TaxiRealtimeService] Connecting to $wsUrl');
 
-       _channel = WebSocketChannel.connect(
-         Uri.parse(wsUrl),
-       );
+      _channel = WebSocketChannel.connect(
+        Uri.parse(wsUrl),
+      );
 
-       // Wait for connection to establish
-       await _channel!.ready;
+      // Wait for connection to establish
+      await _channel!.ready;
 
-       // Send authentication message
-       _channel!.sink.add(
-         jsonEncode({
-           'type': 'auth',
-           'token': authToken,
-         }),
-       );
+      // Send authentication message
+      _channel!.sink.add(
+        jsonEncode({
+          'type': 'auth',
+          'token': authToken,
+        }),
+      );
 
-       // Listen to incoming messages
-       _channel!.stream.listen(
-         _handleMessage,
-         onError: _handleError,
-         onDone: _handleConnectionClosed,
-       );
+      // Listen to incoming messages
+      _channel!.stream.listen(
+        _handleMessage,
+        onError: _handleError,
+        onDone: _handleConnectionClosed,
+      );
 
-       _isConnected = true;
-       _reconnectAttempts = 0;
-       _isConnecting = false;
+      _isConnected = true;
+      _reconnectAttempts = 0;
+      _isConnecting = false;
 
-       print('[TaxiRealtimeService] Connected ✅');
-       return true;
-      } catch (e) {
-       print('[TaxiRealtimeService] Connection failed: $e');
+      print('[TaxiRealtimeService] Connected ✅');
+      return true;
+    } catch (e) {
+      print('[TaxiRealtimeService] Connection failed: $e');
       _isConnecting = false;
       _scheduleReconnect();
       return false;

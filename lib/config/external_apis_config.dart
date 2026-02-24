@@ -94,7 +94,7 @@ class GoogleMapsConfig {
   /// Build Google Maps search URL
   static Uri getMapsSearchUri(String query) {
     final encodedQuery = Uri.encodeComponent(query);
-    return Uri.parse('${mapsSearchBase}?api=1&query=$encodedQuery');
+    return Uri.parse('$mapsSearchBase?api=1&query=$encodedQuery');
   }
 
   /// Build Google Maps embed URL for a location

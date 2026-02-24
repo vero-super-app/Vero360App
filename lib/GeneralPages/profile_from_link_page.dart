@@ -5,7 +5,7 @@ import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 
 class ProfileFromLinkPage extends StatefulWidget {
-  const ProfileFromLinkPage({Key? key}) : super(key: key);
+  const ProfileFromLinkPage({super.key});
 
   @override
   State<ProfileFromLinkPage> createState() => _ProfileFromLinkPageState();
@@ -259,8 +259,7 @@ class _ProfileFromLinkPageState extends State<ProfileFromLinkPage> {
 class _EmptyState extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onLogin;
-  const _EmptyState({Key? key, required this.onRetry, required this.onLogin})
-      : super(key: key);
+  const _EmptyState({super.key, required this.onRetry, required this.onLogin});
 
   @override
   Widget build(BuildContext context) {

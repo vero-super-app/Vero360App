@@ -31,7 +31,7 @@ class _ActiveRentalPageState extends State<ActiveRentalPage> {
   late Timer _costTimer;
   bool _ending = false;
   double _liveCost = 0;
-  double _fuelLevel = 85.0;
+  final double _fuelLevel = 85.0;
   String _currentLocationAddress = 'Loading location...';
   bool _showIssueReport = false;
 

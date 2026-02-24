@@ -9,8 +9,8 @@ class SkeletonLoader extends StatefulWidget {
     this.height = 16,
     this.width = double.infinity,
     this.borderRadius = const BorderRadius.all(Radius.circular(8)),
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   State<SkeletonLoader> createState() => _SkeletonLoaderState();
@@ -67,7 +67,7 @@ class _SkeletonLoaderState extends State<SkeletonLoader>
 }
 
 class SearchResultSkeletonLoader extends StatelessWidget {
-  const SearchResultSkeletonLoader({Key? key}) : super(key: key);
+  const SearchResultSkeletonLoader({super.key});
 
   @override
   Widget build(BuildContext context) {

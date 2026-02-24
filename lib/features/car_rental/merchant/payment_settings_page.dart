@@ -5,7 +5,7 @@ import 'package:vero360_app/utils/error_handler.dart';
 import 'package:vero360_app/utils/formatters.dart';
 
 class PaymentSettingsPage extends ConsumerStatefulWidget {
-  const PaymentSettingsPage({Key? key}) : super(key: key);
+  const PaymentSettingsPage({super.key});
 
   @override
   ConsumerState<PaymentSettingsPage> createState() =>
@@ -341,7 +341,7 @@ class _PaymentSettingsPageState extends ConsumerState<PaymentSettingsPage> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
-                      value: 'Weekly',
+                      initialValue: 'Weekly',
                       decoration: InputDecoration(
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),

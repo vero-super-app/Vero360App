@@ -11,7 +11,7 @@ const Color _brandSoft = Color(0xFFFFE8CC);
 class FoodDetailsPage extends StatefulWidget {
   final FoodModel foodItem;
 
-  const FoodDetailsPage({required this.foodItem, Key? key}) : super(key: key);
+  const FoodDetailsPage({required this.foodItem, super.key});
 
   @override
   State<FoodDetailsPage> createState() => _FoodDetailsPageState();

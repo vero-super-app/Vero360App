@@ -361,6 +361,53 @@ class AuthService {
     }
   }
 
+  // -------------------- Forgot password (email or phone) --------------------
+
+  /// Sends password reset to [identifier] (email or phone).
+  /// Email: Firebase sendPasswordResetEmail. Phone: backend OTP (if endpoint exists) or requestOtp.
+  /// Returns true if sent, false otherwise. Shows toast using [context]; ensure context is mounted.
+  Future<bool> requestPasswordReset({
+    required String identifier,
+    required BuildContext context,
+  }) async {
+    final trimmed = identifier.trim();
+    if (trimmed.isEmpty) {
+      _toast(context, 'Enter email or phone number', ok: false);
+      return false;
+    }
+
+    final isEmail = RegExp(r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(trimmed);
+    if (isEmail) {
+      try {
+        await _firebaseAuth.sendPasswordResetEmail(email: trimmed);
+        _toast(context, 'Check your email for a password reset link.', ok: true);
+        return true;
+      } on FirebaseAuthException catch (e) {
+        _toast(context, e.message ?? 'Failed to send reset email.', ok: false);
+        return false;
+      } catch (e) {
+        _toast(context, 'Failed to send reset email. Try again.', ok: false);
+        return false;
+      }
+    }
+
+    // Phone: send OTP via backend (user can then reset password with code)
+    try {
+      final ok = await requestOtp(
+        channel: 'phone',
+        phone: trimmed,
+        context: context,
+      );
+      if (ok) {
+        _toast(context, 'Verification code sent to your number.', ok: true);
+      }
+      return ok;
+    } catch (_) {
+      _toast(context, 'Failed to send code to number. Try again.', ok: false);
+      return false;
+    }
+  }
+
   // -------------------- OTP --------------------
 
   Future<bool> requestOtp({
@@ -544,7 +591,7 @@ class AuthService {
         return null;
       }
 
-      final GoogleSignInAccount? account = await _google.authenticate();
+      final GoogleSignInAccount account = await _google.authenticate();
       if (account == null) return null;
 
       // Prefer server auth code for backend exchange
@@ -559,7 +606,7 @@ class AuthService {
       // Fallback tokens (if your backend still accepts idToken)
       String? idToken;
       try {
-        final auth = await account.authentication;
+        final auth = account.authentication;
         idToken = auth.idToken;
       } catch (_) {}
 

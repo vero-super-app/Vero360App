@@ -29,30 +29,30 @@ class CartModel {
   });
 
   factory CartModel.fromJson(Map<String, dynamic> json) {
-    int _int(Object? v, {int def = 0}) {
+    int safeInt(Object? v, {int def = 0}) {
       if (v is int) return v;
       return int.tryParse('${v ?? ''}') ?? def;
     }
 
-    double _double(Object? v, {double def = 0}) {
+    double safeDouble(Object? v, {double def = 0}) {
       if (v is num) return v.toDouble();
       return double.tryParse('${v ?? ''}') ?? def;
     }
 
-    String _str(Object? v) => (v ?? '').toString();
+    String str(Object? v) => (v ?? '').toString();
 
     return CartModel(
-      userId: _str(json['userId'] ?? json['user_id']),
-      item: _int(json['item']),
-      quantity: _int(json['quantity'], def: 1),
-      image: _str(json['image']),
-      name: _str(json['name']),
-      price: _double(json['price']),
-      description: _str(json['description']),
-      comment: json['comment'] == null ? null : _str(json['comment']),
-      merchantId: _str(json['merchantId'] ?? json['merchant_id'] ?? 'unknown'),
-      merchantName: _str(json['merchantName'] ?? json['merchant_name'] ?? 'Unknown Merchant'),
-      serviceType: _str(json['serviceType'] ?? json['service_type'] ?? 'marketplace'),
+      userId: str(json['userId'] ?? json['user_id']),
+      item: safeInt(json['item']),
+      quantity: safeInt(json['quantity'], def: 1),
+      image: str(json['image']),
+      name: str(json['name']),
+      price: safeDouble(json['price']),
+      description: str(json['description']),
+      comment: json['comment'] == null ? null : str(json['comment']),
+      merchantId: str(json['merchantId'] ?? json['merchant_id'] ?? 'unknown'),
+      merchantName: str(json['merchantName'] ?? json['merchant_name'] ?? 'Unknown Merchant'),
+      serviceType: str(json['serviceType'] ?? json['service_type'] ?? 'marketplace'),
     );
   }
 

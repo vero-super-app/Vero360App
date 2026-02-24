@@ -13,7 +13,7 @@ class PrimaryButton extends StatelessWidget {
   final MainAxisAlignment mainAxisAlignment;
 
   const PrimaryButton({
-    Key? key,
+    super.key,
     required this.label,
     required this.onPressed,
     this.isLoading = false,
@@ -22,7 +22,7 @@ class PrimaryButton extends StatelessWidget {
     this.height = CarRentalSizes.buttonHeightMedium,
     this.icon,
     this.mainAxisAlignment = MainAxisAlignment.center,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -69,7 +69,7 @@ class SecondaryButton extends StatelessWidget {
   final MainAxisAlignment mainAxisAlignment;
 
   const SecondaryButton({
-    Key? key,
+    super.key,
     required this.label,
     required this.onPressed,
     this.isLoading = false,
@@ -78,7 +78,7 @@ class SecondaryButton extends StatelessWidget {
     this.height = CarRentalSizes.buttonHeightMedium,
     this.icon,
     this.mainAxisAlignment = MainAxisAlignment.center,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -124,7 +124,7 @@ class DangerButton extends StatelessWidget {
   final Widget? icon;
 
   const DangerButton({
-    Key? key,
+    super.key,
     required this.label,
     required this.onPressed,
     this.isLoading = false,
@@ -132,7 +132,7 @@ class DangerButton extends StatelessWidget {
     this.width,
     this.height = CarRentalSizes.buttonHeightMedium,
     this.icon,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -179,7 +179,7 @@ class OutlinedButtonWidget extends StatelessWidget {
   final Color? color;
 
   const OutlinedButtonWidget({
-    Key? key,
+    super.key,
     required this.label,
     required this.onPressed,
     this.isLoading = false,
@@ -188,7 +188,7 @@ class OutlinedButtonWidget extends StatelessWidget {
     this.height = CarRentalSizes.buttonHeightMedium,
     this.icon,
     this.color,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -233,14 +233,14 @@ class TextButtonWidget extends StatelessWidget {
   final Color? color;
 
   const TextButtonWidget({
-    Key? key,
+    super.key,
     required this.label,
     required this.onPressed,
     this.isLoading = false,
     this.isEnabled = true,
     this.icon,
     this.color,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -279,13 +279,13 @@ class FAB extends StatelessWidget {
   final Color? foregroundColor;
 
   const FAB({
-    Key? key,
+    super.key,
     required this.icon,
     required this.onPressed,
     this.tooltip,
     this.backgroundColor,
     this.foregroundColor,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

@@ -13,12 +13,12 @@ class FilePickerWidget extends ConsumerStatefulWidget {
   final VoidCallback? onStartUpload;
 
   const FilePickerWidget({
-    Key? key,
+    super.key,
     required this.messageId,
     required this.uploadedBy,
     required this.onFileUploaded,
     this.onStartUpload,
-  }) : super(key: key);
+  });
 
   @override
   ConsumerState<FilePickerWidget> createState() => _FilePickerWidgetState();
@@ -153,11 +153,11 @@ class AttachmentPreviewWidget extends ConsumerWidget {
   final VoidCallback? onTap;
 
   const AttachmentPreviewWidget({
-    Key? key,
+    super.key,
     required this.attachment,
     this.onDelete,
     this.onTap,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -298,10 +298,10 @@ class AttachmentListWidget extends ConsumerWidget {
   final VoidCallback? onAttachmentDeleted;
 
   const AttachmentListWidget({
-    Key? key,
+    super.key,
     required this.messageId,
     this.onAttachmentDeleted,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

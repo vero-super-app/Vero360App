@@ -1,3 +1,5 @@
+import 'dart:core';
+
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
@@ -160,43 +162,6 @@ class RideShareHttpService {
     }
   }
 
-  /// Get available vehicles by location and optional class filter
-  Future<List<Vehicle>> getAvailableVehicles({
-    required double latitude,
-    required double longitude,
-    String? vehicleClass,
-    double radiusKm = 5,
-  }) async {
-    try {
-      String path =
-          '/ride-share/vehicles?latitude=$latitude&longitude=$longitude&radiusKm=$radiusKm';
-      if (vehicleClass != null) {
-        path += '&vehicleClass=$vehicleClass';
-      }
-
-      final response = await http.get(ApiConfig.endpoint(path));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is List) {
-          return (data as List)
-              .map((v) => Vehicle.fromJson(v as Map<String, dynamic>))
-              .toList();
-        } else if (data is Map && data.containsKey('vehicles')) {
-          final vehicles = data['vehicles'] as List;
-          return vehicles
-              .map((v) => Vehicle.fromJson(v as Map<String, dynamic>))
-              .toList();
-        }
-        return [];
-      } else {
-        throw Exception('Failed to get vehicles: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error getting vehicles: $e');
-      rethrow;
-    }
-  }
 
   /// Request a new ride
   Future<Ride> requestRide({
@@ -285,7 +250,7 @@ class RideShareHttpService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data is List) {
-          return (data as List)
+          return (data)
               .map((r) => Ride.fromJson(r as Map<String, dynamic>))
               .toList();
         } else if (data is Map && data.containsKey('rides')) {
@@ -452,69 +417,9 @@ class RideShareHttpService {
     }
   }
 
-  // ============== VEHICLE MANAGEMENT ==============
-
-  /// Get vehicle details
-  Future<Vehicle> getVehicle(int vehicleId) async {
-    try {
-      final response =
-          await http.get(ApiConfig.endpoint('/ride-share/vehicles/$vehicleId'));
-
-      if (response.statusCode == 200) {
-        return Vehicle.fromJson(jsonDecode(response.body));
-      } else {
-        throw Exception('Failed to get vehicle: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error getting vehicle: $e');
-      rethrow;
-    }
-  }
-
-  /// Update vehicle location (real-time tracking)
-  Future<Vehicle> updateVehicleLocation(
-    int vehicleId,
-    double latitude,
-    double longitude,
-  ) async {
-    try {
-      final response = await http.patch(
-        ApiConfig.endpoint('/ride-share/vehicles/$vehicleId/location'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'latitude': latitude,
-          'longitude': longitude,
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        return Vehicle.fromJson(jsonDecode(response.body));
-      } else {
-        throw Exception('Failed to update vehicle location: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error updating vehicle location: $e');
-      rethrow;
-    }
-  }
-
-  /// Get vehicle statistics
-  Future<Map<String, dynamic>> getVehicleStats(int vehicleId) async {
-    try {
-      final response = await http.get(
-        ApiConfig.endpoint('/ride-share/vehicles/$vehicleId/stats'),
-      );
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        throw Exception('Failed to get vehicle stats: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error getting vehicle stats: $e');
-      rethrow;
-    }
-  }
+  // ============== TAXI MANAGEMENT ==============
+  // Note: Taxi management is handled through DriverService
+  // This service focuses on ride operations, not vehicle/taxi registration
 
   /// Get active rides for driver
   Future<List<Ride>> getActiveRidesForDriver(int driverId) async {
@@ -526,7 +431,7 @@ class RideShareHttpService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data is List) {
-          return (data as List)
+          return (data)
               .map((r) => Ride.fromJson(r as Map<String, dynamic>))
               .toList();
         }
@@ -593,7 +498,8 @@ class RideShareHttpService {
   /// Update driver location via websocket
   Future<void> updateDriverLocationWebSocket(int rideId, double latitude, double longitude) async {
     await _ensureSocketInitialized();
-    socket.emit('driver:location:update', {
+    // Event name must match the backend SubscribeMessage('driver:location') handler
+    socket.emit('driver:location', {
       'rideId': rideId,
       'latitude': latitude,
       'longitude': longitude,

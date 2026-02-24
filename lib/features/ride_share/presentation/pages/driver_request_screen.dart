@@ -7,7 +7,7 @@ class DriverRequestScreen extends StatefulWidget {
   final String driverName;
   final String driverPhone;
   final String? driverAvatar;
-  final int? vehicleId;
+  final int? taxiId;
 
   const DriverRequestScreen({
     super.key,
@@ -15,7 +15,7 @@ class DriverRequestScreen extends StatefulWidget {
     required this.driverName,
     required this.driverPhone,
     this.driverAvatar,
-    this.vehicleId,
+    this.taxiId,
   });
 
   @override
@@ -45,7 +45,7 @@ class _DriverRequestScreenState extends State<DriverRequestScreen> {
         driverName: widget.driverName,
         driverPhone: widget.driverPhone,
         driverAvatar: widget.driverAvatar,
-        vehicleId: widget.vehicleId,
+        taxiId: widget.taxiId,
         onAccepted: () {
           // Show success message or navigate
           if (mounted) {

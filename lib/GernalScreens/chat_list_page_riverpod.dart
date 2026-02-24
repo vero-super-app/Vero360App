@@ -360,7 +360,7 @@ class _ChatRow extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          isTyping ? '${name} is typing...' : lastText,
+                          isTyping ? '$name is typing...' : lastText,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

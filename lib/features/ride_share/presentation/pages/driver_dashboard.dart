@@ -6,9 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
 import 'dart:async';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
-import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
-import 'package:vero360_app/GernalServices/location_service.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'driver_request_screen.dart';
 
@@ -47,57 +45,11 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     super.dispose();
   }
 
-  /// Ensure location permission and services before broadcasting
-  Future<bool> _ensureLocationReady() async {
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Please enable location services to go online.'),
-            backgroundColor: primaryColor,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-      return false;
-    }
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Location permission is required to share your position with riders.',
-            ),
-            backgroundColor: primaryColor,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-      return false;
-    }
-    return true;
-  }
-
   /// Start broadcasting driver location to nearby car service
-  Future<void> _startLocationBroadcasting() async {
+  void _startLocationBroadcasting() {
     if (_isOnline) return; // Already broadcasting
 
-    final ready = await _ensureLocationReady();
-    if (!ready || !mounted) return;
-
     setState(() => _isOnline = true);
-
-    final locationService = ref.read(locationServiceProvider);
-
-    // Fetch location immediately (don't wait for first timer tick)
-    _broadcastLocationOnce(locationService);
 
     // Broadcast location every 5 seconds
     _locationBroadcastTimer =
@@ -109,81 +61,31 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             timeLimit: Duration(seconds: 5),
           ),
         );
-        if (mounted) setState(() => _lastPosition = position);
-        await _broadcastPositionToService(position);
-      } catch (_) {}
-    });
-  }
 
-  /// Fetch location and broadcast once (used at start)
-  Future<void> _broadcastLocationOnce(LocationService locationService) async {
-    try {
-      final position = await locationService.getCurrentLocation();
-      if (position != null && mounted) {
-        setState(() => _lastPosition = position);
-        await _broadcastPositionToService(position);
-      }
-    } catch (_) {}
-  }
+        // Update last position for map centering
+        _lastPosition = position;
 
-  /// Broadcast position to driver service (creates taxi if needed, updates location)
-  Future<void> _broadcastPositionToService(Position position) async {
-    final driverProfile = ref.read(myDriverProfileProvider);
-    await driverProfile.when(
-      data: (driver) async {
-        if (driver['id'] == null) {
-          if (kDebugMode) print('[DriverDashboard] Driver profile incomplete');
-          return;
-        }
+        // Get driver profile and ensure taxi exists
+        final driverProfile = ref.read(myDriverProfileProvider);
 
-        var taxiId = driver['taxis']?.isNotEmpty == true
-            ? driver['taxis'][0]['id']
-            : null;
-
-        if (kDebugMode) {
-          print('[DriverDashboard] Driver ID: ${driver['id']}, Taxis: ${driver['taxis']}');
-          print('[DriverDashboard] Extracted taxiId: $taxiId');
-        }
-
-          // If no taxi exists, create one
-          if (taxiId == null) {
+        driverProfile.whenData((driver) async {
+          if (driver['id'] == null) {
             if (kDebugMode)
-              print('[DriverDashboard] No taxi found, creating default taxi...');
-            try {
-              final timestamp = DateTime.now().millisecondsSinceEpoch;
-              final taxiPayload = {
-                'make': 'Default',
-                'model': 'Vehicle',
-                'year': DateTime.now().year,
-                'licensePlate': 'DRV${driver['id']}-$timestamp',
-                'seats': 4,
-                'taxiClass': 'STANDARD',
-                'color': 'White',
-                'registrationNumber': 'REG${driver['id']}-$timestamp',
-              };
-              if (kDebugMode)
-                print(
-                    '[DriverDashboard] Creating taxi with payload: $taxiPayload');
-
-              final newTaxi = await _driverService.createTaxi(taxiPayload);
-              taxiId = newTaxi['id'];
-              if (kDebugMode)
-                print('[DriverDashboard] ✓ Created taxi with ID: $taxiId');
-            } catch (e) {
-              if (kDebugMode) {
-                print('[DriverDashboard] ✗ Error creating taxi: $e');
-                print('[DriverDashboard] Error type: ${e.runtimeType}');
-                if (e is DioException) {
-                  print(
-                      '[DriverDashboard] Status code: ${e.response?.statusCode}');
-                  print('[DriverDashboard] Response: ${e.response?.data}');
-                }
-              }
-              return;
-            }
+              print('[DriverDashboard] Driver profile incomplete');
+            return;
           }
 
-          // Broadcast location
+          var taxiId = driver['taxis']?.isNotEmpty == true
+              ? driver['taxis'][0]['id']
+              : null;
+
+          if (kDebugMode) {
+            print(
+                '[DriverDashboard] Driver ID: ${driver['id']}, Taxis: ${driver['taxis']}');
+            print('[DriverDashboard] Extracted taxiId: $taxiId');
+          }
+
+          // Broadcast location only if taxi exists
           if (taxiId != null) {
             try {
               await _driverService.updateTaxiLocation(
@@ -218,8 +120,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
   /// Start auto-centering map on driver location
   void _startMapCentering() {
-    _mapCenteringTimer =
-        Timer.periodic(const Duration(seconds: 5), (_) async {
+    _mapCenteringTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (mapController != null && _lastPosition != null) {
         await mapController!.animateCamera(
           CameraUpdate.newCameraPosition(
@@ -269,20 +170,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         children: [
           // Map Background
           _buildMap(),
-
-          // Center on my location FAB
-          Positioned(
-            right: 16,
-            bottom: 200,
-            child: FloatingActionButton.small(
-              heroTag: 'center_location',
-              backgroundColor: Colors.white,
-              foregroundColor: primaryColor,
-              onPressed: _centerOnMyLocation,
-              tooltip: 'Center on my location',
-              child: const Icon(Icons.my_location),
-            ),
-          ),
 
           // Bottom Sheet with Info
           DraggableScrollableSheet(
@@ -366,7 +253,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             mapController?.animateCamera(
               CameraUpdate.newCameraPosition(
                 CameraPosition(
-                  target: LatLng(_lastPosition!.latitude, _lastPosition!.longitude),
+                  target:
+                      LatLng(_lastPosition!.latitude, _lastPosition!.longitude),
                   zoom: 15.0,
                 ),
               ),
@@ -780,7 +668,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     return driverProfile.when(
       data: (driver) {
         final isVerified = _getBoolValue(driver['isVerified']);
-        final hasTaxis = driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
+        final hasTaxis =
+            driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -857,7 +746,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton.icon(
-                      onPressed: () => _showTaxiDetailsDialog(context, driver['taxis'][0]),
+                      onPressed: () =>
+                          _showTaxiDetailsDialog(context, driver['taxis'][0]),
                       icon: const Icon(Icons.directions_car),
                       label: const Text('Manage Taxi'),
                       style: ElevatedButton.styleFrom(
@@ -882,7 +772,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton.icon(
-                      onPressed: () => _showVerifyDriverDialog(context, driver['id']),
+                      onPressed: () =>
+                          _showVerifyDriverDialog(context, driver['id']),
                       icon: const Icon(Icons.verified_user),
                       label: const Text('Verify Profile'),
                       style: ElevatedButton.styleFrom(
@@ -935,7 +826,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                 icon: const Icon(Icons.local_taxi_outlined),
                 label: const Text('View Ride Requests'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: (isVerified && hasTaxis) ? primaryColor : Colors.grey[400],
+                  backgroundColor: (isVerified && hasTaxis)
+                      ? primaryColor
+                      : Colors.grey[400],
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -998,9 +891,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       };
 
       await _driverService.createTaxi(taxiPayload);
-      
+
       if (mounted) {
-        ref.invalidate(myDriverProfileProvider);
+        ref.refresh(myDriverProfileProvider);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Taxi created successfully'),
@@ -1105,7 +998,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     try {
       await _driverService.verifyDriver(driverId);
       if (mounted) {
-        ref.invalidate(myDriverProfileProvider);
+        ref.refresh(myDriverProfileProvider);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Profile verified successfully'),
@@ -1154,10 +1047,11 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           (driverProfile['user']?['name'] ?? 'Driver').toString();
       final driverPhone = (driverProfile['user']?['phone'] ?? '').toString();
       final driverAvatar = driverProfile['user']?['profilepicture']?.toString();
-      
+
       // Extract taxi ID from taxis list
       int? taxiId;
-      if (driverProfile['taxis'] is List && (driverProfile['taxis'] as List).isNotEmpty) {
+      if (driverProfile['taxis'] is List &&
+          (driverProfile['taxis'] as List).isNotEmpty) {
         final taxiData = driverProfile['taxis'][0];
         if (taxiData is Map && taxiData.containsKey('id')) {
           taxiId = taxiData['id'] as int?;

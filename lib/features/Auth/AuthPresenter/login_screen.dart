@@ -14,6 +14,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 
 class AppColors {
@@ -34,6 +35,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuthService _firebaseAuthService = FirebaseAuthService();
+  final AuthService _authService = AuthService();
 
   final _identifier = TextEditingController();
   final _password = TextEditingController();
@@ -282,19 +284,34 @@ class _LoginScreenState extends State<LoginScreen> {
     };
   }
 
-  // -------------------- Email/password submit via Firebase --------------------
+  // -------------------- Email/phone + password submit --------------------
+
+  static bool _looksLikeEmail(String v) =>
+      RegExp(r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(v);
 
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
 
+    final identifier = _identifier.text.trim();
+    final password = _password.text.trim();
+
     setState(() => _loading = true);
     try {
-      final email = _identifier.text.trim();
-      final password = _password.text.trim();
+      // Phone or backend-first: use AuthService (backend + Firebase fallback for email)
+      if (!_looksLikeEmail(identifier)) {
+        final result = await _authService.loginWithIdentifier(
+          identifier,
+          password,
+          context,
+        );
+        if (result != null && mounted) await _handleAuthResult(result);
+        return;
+      }
 
+      // Email: try Firebase first
       final cred = await _auth.signInWithEmailAndPassword(
-        email: email,
+        email: identifier,
         password: password,
       );
       final user = cred.user;
@@ -309,7 +326,6 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       final result = await _buildResultFromUser(user);
-
       ToastHelper.showCustomToast(
         context,
         'Logged in successfully',
@@ -317,7 +333,7 @@ class _LoginScreenState extends State<LoginScreen> {
         errorMessage: '',
       );
       await _handleAuthResult(result);
-    }     on FirebaseAuthException catch (e) {
+    } on FirebaseAuthException catch (e) {
       String msg;
       switch (e.code) {
         case 'user-not-found':
@@ -363,6 +379,37 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  // -------------------- Forgot password (email or phone) --------------------
+
+  static bool _looksLikePhone(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return false;
+    final digits = t.replaceAll(RegExp(r'\D'), '');
+    return RegExp(r'^(08|09)\d{8}$').hasMatch(digits) ||
+        RegExp(r'^\+265[89]\d{8}$').hasMatch(t);
+  }
+
+  Future<void> _showForgotPasswordDialog() async {
+    if (!mounted) return;
+    final identifier = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => _ForgotPasswordDialog(
+        initialValue: _identifier.text.trim(),
+        looksLikeEmail: _looksLikeEmail,
+        looksLikePhone: _looksLikePhone,
+      ),
+    );
+    if (identifier == null || identifier.isEmpty || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await _authService.requestPasswordReset(
+        identifier: identifier,
+        context: context,
+      );
+    });
   }
 
   // -------------------- Social sign-in via Firebase (no platform lock) --------------------
@@ -515,12 +562,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 8),
 
-                    OAuthButtonsRow(
-                      onGoogle: _socialLoading ? null : _google,
-                      onApple: _socialLoading ? null : _apple,
-                    ),
-                    const SizedBox(height: 18),
-
                     Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
@@ -543,20 +584,19 @@ class _LoginScreenState extends State<LoginScreen> {
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
                               decoration: _fieldDecoration(
-                                label: 'Email',
-                                hint: 'you@example.com',
+                                label: 'Email or phone number',
+                                hint: 'you@example.com or +265...',
                                 icon: Icons.person_outline,
                               ),
                               validator: (v) {
                                 final val = v?.trim() ?? '';
-                                if (val.isEmpty) {
-                                  return 'Email is required';
-                                }
+                                if (val.isEmpty) return 'Email or phone is required';
                                 final isEmail = RegExp(
                                   r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$',
                                 ).hasMatch(val);
-                                if (!isEmail) {
-                                  return 'Enter a valid email address';
+                                final isPhone = RegExp(r'^\+?[\d\s\-]{8,}$').hasMatch(val.replaceAll(' ', ''));
+                                if (!isEmail && !isPhone) {
+                                  return 'Enter a valid email or phone number';
                                 }
                                 return null;
                               },
@@ -592,7 +632,22 @@ class _LoginScreenState extends State<LoginScreen> {
                                 return null;
                               },
                             ),
-                            const SizedBox(height: 18),
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: _loading ? null : _showForgotPasswordDialog,
+                                child: const Text(
+                                  'Forgot password?',
+                                  style: TextStyle(
+                                    color: AppColors.brandOrange,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
                             SizedBox(
                               width: double.infinity,
                               height: 50,
@@ -617,6 +672,31 @@ class _LoginScreenState extends State<LoginScreen> {
                           ],
                         ),
                       ),
+                    ),
+
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(child: Divider(color: Colors.grey.shade300)),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text(
+                            'or',
+                            style: TextStyle(
+                              color: AppColors.body,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        Expanded(child: Divider(color: Colors.grey.shade300)),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    OAuthButtonsRow(
+                      onGoogle: _socialLoading ? null : _google,
+                      onApple: _socialLoading ? null : _apple,
+                      iconOnly: true,
                     ),
 
                     const SizedBox(height: 14),
@@ -658,6 +738,84 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ]),
+    );
+  }
+}
+
+/// Self-contained dialog so controller and form key are disposed with the dialog.
+/// Pops with the identifier string on submit; no async or parent context used inside.
+class _ForgotPasswordDialog extends StatefulWidget {
+  final String initialValue;
+  final bool Function(String) looksLikeEmail;
+  final bool Function(String) looksLikePhone;
+
+  const _ForgotPasswordDialog({
+    required this.initialValue,
+    required this.looksLikeEmail,
+    required this.looksLikePhone,
+  });
+
+  @override
+  State<_ForgotPasswordDialog> createState() => _ForgotPasswordDialogState();
+}
+
+class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
+  late final TextEditingController _controller;
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    final identifier = _controller.text.trim();
+    Navigator.of(context).pop(identifier);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Forgot password'),
+      content: Form(
+        key: _formKey,
+        child: TextFormField(
+          controller: _controller,
+          keyboardType: TextInputType.emailAddress,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Email or phone number',
+            hintText: 'you@example.com or 09xxxxxxxx',
+          ),
+          validator: (v) {
+            final val = v?.trim() ?? '';
+            if (val.isEmpty) return 'Email or phone is required';
+            if (widget.looksLikeEmail(val)) return null;
+            if (widget.looksLikePhone(val)) return null;
+            return 'Enter a valid email or phone number';
+          },
+          onFieldSubmitted: (_) => _submit(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _submit,
+          style: ElevatedButton.styleFrom(backgroundColor: AppColors.brandOrange),
+          child: const Text('Send code / reset link'),
+        ),
+      ],
     );
   }
 }

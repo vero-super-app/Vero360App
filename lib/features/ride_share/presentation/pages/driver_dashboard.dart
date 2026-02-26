@@ -70,9 +70,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
         driverProfile.whenData((driver) async {
           if (driver['id'] == null) {
-            if (kDebugMode) {
+            if (kDebugMode)
               print('[DriverDashboard] Driver profile incomplete');
-            }
             return;
           }
 
@@ -86,48 +85,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             print('[DriverDashboard] Extracted taxiId: $taxiId');
           }
 
-          // If no taxi exists, create one
-          if (taxiId == null) {
-            if (kDebugMode) {
-              print('[DriverDashboard] No taxi found, creating default taxi...');
-            }
-            try {
-              final timestamp = DateTime.now().millisecondsSinceEpoch;
-              final taxiPayload = {
-                'make': 'Default',
-                'model': 'Vehicle',
-                'year': DateTime.now().year,
-                'licensePlate': 'DRV${driver['id']}-$timestamp',
-                'seats': 4,
-                'taxiClass': 'STANDARD',
-                'color': 'White',
-                'registrationNumber': 'REG${driver['id']}-$timestamp',
-              };
-              if (kDebugMode) {
-                print(
-                    '[DriverDashboard] Creating taxi with payload: $taxiPayload');
-              }
-
-              final newTaxi = await _driverService.createTaxi(taxiPayload);
-              taxiId = newTaxi['id'];
-              if (kDebugMode) {
-                print('[DriverDashboard] ✓ Created taxi with ID: $taxiId');
-              }
-            } catch (e) {
-              if (kDebugMode) {
-                print('[DriverDashboard] ✗ Error creating taxi: $e');
-                print('[DriverDashboard] Error type: ${e.runtimeType}');
-                if (e is DioException) {
-                  print(
-                      '[DriverDashboard] Status code: ${e.response?.statusCode}');
-                  print('[DriverDashboard] Response: ${e.response?.data}');
-                }
-              }
-              return;
-            }
-          }
-
-          // Broadcast location
+          // Broadcast location only if taxi exists
           if (taxiId != null) {
             try {
               await _driverService.updateTaxiLocation(
@@ -162,8 +120,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
   /// Start auto-centering map on driver location
   void _startMapCentering() {
-    _mapCenteringTimer =
-        Timer.periodic(const Duration(seconds: 5), (_) async {
+    _mapCenteringTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (mapController != null && _lastPosition != null) {
         await mapController!.animateCamera(
           CameraUpdate.newCameraPosition(
@@ -296,7 +253,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             mapController?.animateCamera(
               CameraUpdate.newCameraPosition(
                 CameraPosition(
-                  target: LatLng(_lastPosition!.latitude, _lastPosition!.longitude),
+                  target:
+                      LatLng(_lastPosition!.latitude, _lastPosition!.longitude),
                   zoom: 15.0,
                 ),
               ),
@@ -710,7 +668,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     return driverProfile.when(
       data: (driver) {
         final isVerified = _getBoolValue(driver['isVerified']);
-        final hasTaxis = driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
+        final hasTaxis =
+            driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -787,7 +746,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton.icon(
-                      onPressed: () => _showTaxiDetailsDialog(context, driver['taxis'][0]),
+                      onPressed: () =>
+                          _showTaxiDetailsDialog(context, driver['taxis'][0]),
                       icon: const Icon(Icons.directions_car),
                       label: const Text('Manage Taxi'),
                       style: ElevatedButton.styleFrom(
@@ -812,7 +772,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton.icon(
-                      onPressed: () => _showVerifyDriverDialog(context, driver['id']),
+                      onPressed: () =>
+                          _showVerifyDriverDialog(context, driver['id']),
                       icon: const Icon(Icons.verified_user),
                       label: const Text('Verify Profile'),
                       style: ElevatedButton.styleFrom(
@@ -865,7 +826,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                 icon: const Icon(Icons.local_taxi_outlined),
                 label: const Text('View Ride Requests'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: (isVerified && hasTaxis) ? primaryColor : Colors.grey[400],
+                  backgroundColor: (isVerified && hasTaxis)
+                      ? primaryColor
+                      : Colors.grey[400],
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -928,15 +891,15 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       };
 
       await _driverService.createTaxi(taxiPayload);
-      
+
       if (mounted) {
         ref.refresh(myDriverProfileProvider);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Taxi created successfully'),
+          const SnackBar(
+            content: Text('Taxi created successfully'),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
+            margin: EdgeInsets.all(16),
           ),
         );
       }
@@ -1084,10 +1047,11 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           (driverProfile['user']?['name'] ?? 'Driver').toString();
       final driverPhone = (driverProfile['user']?['phone'] ?? '').toString();
       final driverAvatar = driverProfile['user']?['profilepicture']?.toString();
-      
+
       // Extract taxi ID from taxis list
       int? taxiId;
-      if (driverProfile['taxis'] is List && (driverProfile['taxis'] as List).isNotEmpty) {
+      if (driverProfile['taxis'] is List &&
+          (driverProfile['taxis'] as List).isNotEmpty) {
         final taxiData = driverProfile['taxis'][0];
         if (taxiData is Map && taxiData.containsKey('id')) {
           taxiId = taxiData['id'] as int?;

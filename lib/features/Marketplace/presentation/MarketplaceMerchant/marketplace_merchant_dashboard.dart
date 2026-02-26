@@ -1925,6 +1925,7 @@ class _MarketplaceMerchantDashboardState
               Tab(text: 'Dashboard'),
               Tab(text: 'Add Item'),
               Tab(text: 'My Items'),
+             //  Tab(text: 'Vero Ride'),
             ],
           ),
         ),
@@ -2257,6 +2258,12 @@ class _MarketplaceMerchantDashboardState
             _QuickActionTile(
               title: 'Promotions',
               icon: Icons.campaign_outlined,
+              color: Colors.orange,
+              onTap: () => _openBottomSheet(const PromotionsCrudPage()),
+            ),
+              _QuickActionTile(
+              title: 'My Vero Ride',
+              icon: Icons.local_taxi,
               color: Colors.orange,
               onTap: () => _openBottomSheet(const PromotionsCrudPage()),
             ),

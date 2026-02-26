@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 
@@ -83,13 +85,13 @@ class RideShareService {
   }
 
   /// Subscribe to passenger ride tracking
-  void subscribeToRideTracking(int rideId) {
-    _httpService.subscribeToRideTracking(rideId);
+  Future<void> subscribeToRideTracking(int rideId) async {
+    await _httpService.subscribeToRideTracking(rideId);
   }
 
   /// Unsubscribe from ride tracking
-  void unsubscribeFromRideTracking() {
-    _httpService.unsubscribeFromRideTracking();
+  Future<void> unsubscribeFromRideTracking() async {
+    await _httpService.unsubscribeFromRideTracking();
   }
 
   /// Listen to driver location updates

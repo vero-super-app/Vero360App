@@ -43,6 +43,7 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
   bool _isCompletingRide = false;
   bool _hasArrived = false;
   bool _rideStarted = false;
+  bool _isStartingRide = false;
   static const Color primaryColor = Color(0xFFFF8A00);
   StreamSubscription<Ride>? _rideUpdateSubscription;
 
@@ -216,6 +217,104 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
     }
   }
 
+  void _handleStartRide() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Start Ride?',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+          ),
+        ),
+        content: const Text(
+          'Confirm that the passenger is in the vehicle and ready to start.',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.black87,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Not Ready',
+              style: TextStyle(
+                color: Colors.grey,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _startRideWithBackend();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade600,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              elevation: 0,
+            ),
+            child: const Text(
+              'Start Ride',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _startRideWithBackend() async {
+    try {
+      setState(() => _isStartingRide = true);
+      final httpService = widget.httpService ?? RideShareHttpService();
+      final rideIdInt = int.tryParse(widget.rideId) ?? 0;
+
+      if (rideIdInt <= 0) {
+        throw Exception('Invalid ride ID');
+      }
+
+      await httpService.startRide(rideIdInt);
+      print('[DriverRideActiveScreen] Ride started');
+
+      if (!mounted) return;
+
+      setState(() {
+        _isStartingRide = false;
+        _rideStarted = true;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ride in progress'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      print('[DriverRideActiveScreen] Error starting ride: $e');
+      if (!mounted) return;
+
+      setState(() => _isStartingRide = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start ride: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   void _handleCompleteRide() {
     showDialog(
       context: context,
@@ -251,12 +350,7 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              setState(() => _isCompletingRide = true);
-              Future.delayed(const Duration(seconds: 1), () {
-                if (mounted) {
-                  widget.onRideCompleted();
-                }
-              });
+              _completeRideWithBackend();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green.shade600,
@@ -276,6 +370,51 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _completeRideWithBackend() async {
+    try {
+      setState(() => _isCompletingRide = true);
+      final httpService = widget.httpService ?? RideShareHttpService();
+      final rideIdInt = int.tryParse(widget.rideId) ?? 0;
+
+      if (rideIdInt <= 0) {
+        throw Exception('Invalid ride ID');
+      }
+
+      await httpService.completeRide(rideIdInt);
+      print('[DriverRideActiveScreen] Ride completed');
+
+      if (!mounted) return;
+
+      setState(() => _isCompletingRide = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ride completed successfully'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      // Wait a moment before calling the callback
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          widget.onRideCompleted();
+        }
+      });
+    } catch (e) {
+      print('[DriverRideActiveScreen] Error completing ride: $e');
+      if (!mounted) return;
+
+      setState(() => _isCompletingRide = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to complete ride: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   @override
@@ -377,22 +516,32 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
                             decoration: BoxDecoration(
                               color: _rideStarted
                                   ? Colors.green.shade50
-                                  : Colors.orange.shade50,
+                                  : _hasArrived
+                                      ? Colors.blue.shade50
+                                      : Colors.orange.shade50,
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
                                 color: _rideStarted
                                     ? Colors.green.shade200
-                                    : Colors.orange.shade200,
+                                    : _hasArrived
+                                        ? Colors.blue.shade200
+                                        : Colors.orange.shade200,
                               ),
                             ),
                             child: Text(
-                              _rideStarted ? 'In Progress' : 'Awaiting Pickup',
+                              _rideStarted
+                                  ? 'In Progress'
+                                  : _hasArrived
+                                      ? 'Arrived'
+                                      : 'Awaiting Pickup',
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
                                 color: _rideStarted
                                     ? Colors.green.shade600
-                                    : Colors.orange.shade600,
+                                    : _hasArrived
+                                        ? Colors.blue.shade600
+                                        : Colors.orange.shade600,
                               ),
                             ),
                           ),
@@ -470,6 +619,42 @@ class _DriverRideActiveScreenState extends State<DriverRideActiveScreen> {
                               color: Colors.white,
                             ),
                           ),
+                        ),
+                      )
+                    else if (!_rideStarted)
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton(
+                          onPressed:
+                              _isStartingRide ? null : _handleStartRide,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange.shade600,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 0,
+                            disabledBackgroundColor: Colors.grey[300],
+                          ),
+                          child: _isStartingRide
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.white,
+                                    ),
+                                  ),
+                                )
+                              : const Text(
+                                  'Start Ride',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                                ),
                         ),
                       )
                     else

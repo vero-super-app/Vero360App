@@ -1,3 +1,5 @@
+import 'dart:core';
+
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
@@ -367,16 +369,24 @@ class RideShareHttpService {
         headers['Authorization'] = 'Bearer $token';
       }
 
+      final body = <String, dynamic>{};
+      if (actualDistance != null) {
+        body['actualDistance'] = actualDistance;
+      }
+
+      print('[RideShareHttpService] Completing ride $rideId with body: $body');
       final response = await http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/complete'),
         headers: headers,
-        body: jsonEncode({'actualDistance': actualDistance}),
+        body: jsonEncode(body),
       );
 
+      print('[RideShareHttpService] Complete ride response: ${response.statusCode}');
       if (response.statusCode == 200) {
         return Ride.fromJson(jsonDecode(response.body));
       } else {
-        throw Exception('Failed to complete ride: ${response.statusCode}');
+        print('[RideShareHttpService] Error response: ${response.body}');
+        throw Exception('Failed to complete ride: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
       print('Error completing ride: $e');

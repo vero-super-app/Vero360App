@@ -1,4 +1,4 @@
-// lib/main.dart
+                                         // lib/main.dart
 import 'dart:async';
 import 'dart:convert';
 
@@ -47,6 +47,7 @@ import 'package:vero360_app/GernalServices/notification_service.dart';          
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 
@@ -97,7 +98,15 @@ Future<void> main() async {
     debugPrint("Firebase / Notification init error: $e");
   }
 
-  runApp(const AppBootstrap());
+  runApp(
+    ScreenUtilInit(
+      designSize: const Size(390, 844),
+      minTextAdapt: true,
+      splitScreenMode: true,
+builder: (_, child) => child ?? const AppBootstrap(),
+      child: const AppBootstrap(),
+    ),
+  );
 }
 
 // ───────────────────────────────────────────────

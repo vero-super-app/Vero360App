@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
+import 'package:vero360_app/GernalServices/google_places_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class AddressPage extends StatefulWidget {
@@ -647,6 +648,7 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
         (widget.initial?.placeId?.isNotEmpty ?? false) ||
         (widget.initial?.formattedAddress?.isNotEmpty ?? false)) {
       _useGoogle = true;
+      _sessionToken = _newSessionToken();
       _googleSearchCtrl.text =
           widget.initial?.formattedAddress ?? widget.initial?.city ?? '';
     }
@@ -661,7 +663,98 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
   }
 
   // ----------------- Google proxy -----------------
+  String _newSessionToken() {
+    return DateTime.now().microsecondsSinceEpoch.toString();
+  }
+
+  String _firstAddressComponent(
+    Map<String, dynamic> place,
+    List<String> wantedTypes,
+  ) {
+    final comps = place['address_components'];
+    if (comps is! List) return '';
+    for (final item in comps) {
+      if (item is! Map) continue;
+      final types = item['types'];
+      if (types is! List) continue;
+      final hasWanted = wantedTypes.any((t) => types.contains(t));
+      if (!hasWanted) continue;
+      final longName = item['long_name']?.toString() ?? '';
+      if (longName.isNotEmpty) return longName;
+    }
+    return '';
+  }
+
+  String _deriveCityLabel(Map<String, dynamic> place) {
+    final locality = _firstAddressComponent(place, const ['locality']);
+    if (locality.isNotEmpty) return locality;
+    final admin2 = _firstAddressComponent(
+      place,
+      const ['administrative_area_level_2'],
+    );
+    if (admin2.isNotEmpty) return admin2;
+    final admin1 = _firstAddressComponent(
+      place,
+      const ['administrative_area_level_1'],
+    );
+    if (admin1.isNotEmpty) return admin1;
+    final formatted = (place['formatted_address'] ?? '').toString();
+    if (formatted.isEmpty) return '';
+    return formatted.split(',').first.trim();
+  }
+
+  String _deriveDescription(Map<String, dynamic> place) {
+    final streetNumber = _firstAddressComponent(place, const ['street_number']);
+    final route = _firstAddressComponent(place, const ['route']);
+    final neighborhood =
+        _firstAddressComponent(place, const ['neighborhood']);
+    final sublocality = _firstAddressComponent(
+      place,
+      const ['sublocality', 'sublocality_level_1'],
+    );
+    final postalCode = _firstAddressComponent(place, const ['postal_code']);
+
+    final parts = <String>[
+      [streetNumber, route].where((e) => e.isNotEmpty).join(' '),
+      neighborhood,
+      sublocality,
+      postalCode.isNotEmpty ? 'Postal code: $postalCode' : '',
+    ].where((e) => e.isNotEmpty).toList();
+
+    return parts.join(', ');
+  }
+
+  bool _isRequestDeniedError(Object error) {
+    final msg = error.toString().toUpperCase();
+    return msg.contains('REQUEST_DENIED') ||
+        msg.contains('HTTP 403') ||
+        msg.contains('BILLING');
+  }
+
+  Future<List<Map<String, dynamic>>> _autocompleteViaClient(String q) async {
+    final svc = GooglePlacesService();
+    final predictions = await svc.autocompleteSearch(q);
+    return predictions
+        .map(
+          (p) => <String, dynamic>{
+            'description': p.fullText,
+            'place_id': p.placeId,
+            'structured_formatting': <String, dynamic>{
+              'main_text': p.mainText,
+              'secondary_text': p.secondaryText,
+            },
+          },
+        )
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> _placeDetailsViaClient(String placeId) async {
+    final svc = GooglePlacesService();
+    return svc.getPlaceDetails(placeId);
+  }
+
   Future<void> _onQueryChanged(String q) async {
+    _sessionToken ??= _newSessionToken();
     if (q.trim().length < 2) {
       setState(() => _predictions = []);
       return;
@@ -672,16 +765,88 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
           await svc.placesAutocomplete(q, sessionToken: _sessionToken);
       if (!mounted) return;
       setState(() => _predictions = preds);
-    } catch (_) {}
+    } catch (e) {
+      // If backend Google key is denied, fallback to the same client-side Google
+      // service used by ride-share so address search can still work.
+      if (_isRequestDeniedError(e)) {
+        try {
+          final fallbackPredictions = await _autocompleteViaClient(q);
+          if (!mounted) return;
+          setState(() => _predictions = fallbackPredictions);
+          return;
+        } catch (fallbackError) {
+          if (!mounted) return;
+          setState(() => _predictions = []);
+          ToastHelper.showCustomToast(
+            context,
+            'Google address search failed',
+            isSuccess: false,
+            errorMessage:
+                'Primary: ${e.toString()} | Fallback: ${fallbackError.toString()}',
+          );
+          return;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() => _predictions = []);
+      ToastHelper.showCustomToast(
+        context,
+        'Google address search failed',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
   }
 
   Future<void> _selectPrediction(Map<String, dynamic> p) async {
-    final placeId = (p['place_id'] ?? p['placeId'] ?? '').toString();
-    if (placeId.isEmpty) return;
-    final svc = AddressService();
-    final det = await svc.placeDetails(placeId, sessionToken: _sessionToken);
-    if (!mounted) return;
-    setState(() => _selectedPlace = det);
+    try {
+      final placeId = (p['place_id'] ?? p['placeId'] ?? '').toString();
+      if (placeId.isEmpty) return;
+      Map<String, dynamic>? det;
+      try {
+        final svc = AddressService();
+        det = await svc.placeDetails(placeId, sessionToken: _sessionToken);
+      } catch (e) {
+        if (_isRequestDeniedError(e)) {
+          det = await _placeDetailsViaClient(placeId);
+        } else {
+          rethrow;
+        }
+      }
+
+      if (!mounted) return;
+      final selected = det?['result'] ?? det ?? <String, dynamic>{};
+      final selectedMap = selected is Map<String, dynamic>
+          ? selected
+          : <String, dynamic>{};
+      final formatted = (selectedMap['formatted_address'] ?? '').toString();
+      final city = _deriveCityLabel(selectedMap);
+      final description = _deriveDescription(selectedMap);
+
+      setState(() {
+        _selectedPlace = selectedMap;
+        _predictions = [];
+        if (formatted.isNotEmpty) {
+          _googleSearchCtrl.text = formatted;
+        }
+        if (city.isNotEmpty) {
+          _cityCtrl.text = city;
+        }
+        if (description.isNotEmpty) {
+          _descCtrl.text = description;
+        }
+        _sessionToken = _newSessionToken();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Failed to load place details',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
   }
 
   // ----------------- Submissions -----------------
@@ -803,13 +968,22 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
                   ChoiceChip(
                     label: const Text('Manual'),
                     selected: !_useGoogle,
-                    onSelected: (v) => setState(() => _useGoogle = !v),
+                    onSelected: (v) {
+                      setState(() {
+                        _useGoogle = !v;
+                      });
+                    },
                   ),
                   const SizedBox(width: 8),
                   ChoiceChip(
                     label: const Text('Google'),
                     selected: _useGoogle,
-                    onSelected: (v) => setState(() => _useGoogle = v),
+                    onSelected: (v) {
+                      setState(() {
+                        _useGoogle = v;
+                        if (v) _sessionToken = _newSessionToken();
+                      });
+                    },
                   ),
                 ],
               ),

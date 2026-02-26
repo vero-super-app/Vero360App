@@ -51,6 +51,7 @@ dependencies:
 
   # UI / UX
   carousel_slider: ^5.0.0
+  flutter_screenutil: ^5.9.3
   url_launcher: ^6.3.0
 
   # Media

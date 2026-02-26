@@ -315,11 +315,12 @@ class Ride {
       passengerNotes: json['passengerNotes'] as String?,
       createdAt: parseDateTime(json['createdAt']),
       updatedAt: parseDateTime(json['updatedAt']),
-      taxi: (json['taxi'] ?? json['vehicle']) != null
-          ? Vehicle.fromJson((json['taxi'] ?? json['vehicle']) as Map<String, dynamic>)
-          : null,
+      taxi: json['taxi'] != null
+          ? Vehicle.fromJson(json['taxi'] as Map<String, dynamic>)
+          : (json['vehicle'] != null
+              ? Vehicle.fromJson(json['vehicle'] as Map<String, dynamic>)
+              : null),
       driver: () {
-        // Try to get driver from direct field first
         if (json['driver'] != null && json['driver'] is Map) {
           return DriverInfo.fromJson(json['driver'] as Map<String, dynamic>);
         }

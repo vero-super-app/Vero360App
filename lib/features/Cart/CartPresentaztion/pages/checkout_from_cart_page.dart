@@ -783,53 +783,71 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
-      ..setNavigationDelegate(NavigationDelegate(
-        onNavigationRequest: (NavigationRequest request) {
-          debugPrint('[CheckoutWebView] navigating to ${request.url}');
-          final uri = Uri.tryParse(request.url);
-          if (uri == null) return NavigationDecision.navigate;
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (NavigationRequest request) {
+            debugPrint('[CheckoutWebView] navigating to ${request.url}');
+            final uri = Uri.tryParse(request.url);
+            if (uri == null) return NavigationDecision.navigate;
 
-          final isPaymentCompleteDeepLink =
-              uri.scheme == 'vero360' && uri.host == 'payment-complete';
-          if (isPaymentCompleteDeepLink) {
-            final status = (uri.queryParameters['status'] ?? '').toLowerCase();
-            if (status == 'failed' || status == 'cancelled') {
-              _handlePaymentFailure();
-            } else {
-              _handlePaymentSuccess();
+            // Deep link vero360://payment-complete
+            final isPaymentCompleteDeepLink =
+                uri.scheme == 'vero360' && uri.host == 'payment-complete';
+            if (isPaymentCompleteDeepLink) {
+              final status = (uri.queryParameters['status'] ?? '').toLowerCase();
+              if (status == 'failed' || status == 'cancelled') {
+                _handlePaymentFailure();
+              } else {
+                _handlePaymentSuccess();
+              }
+              return NavigationDecision.prevent;
             }
-            return NavigationDecision.prevent;
-          }
 
-          // PayChangu may redirect the browser to either our return URL
-          // or our callback URL. Treat both as "we're done" and let our
-          // own status polling / backend verification decide success/failure.
-          final isBackendReturnUrl =
-              request.url.startsWith(PayChanguConfig.returnUrl);
-          final isBackendCallbackUrl =
-              request.url.startsWith(PayChanguConfig.callbackUrl);
-          if (isBackendReturnUrl || isBackendCallbackUrl) {
-            final status = (uri.queryParameters['status'] ?? '').toLowerCase();
-            if (status == 'failed' || status == 'cancelled') {
-              _handlePaymentFailure();
-            } else if (status.isNotEmpty) {
-              _handlePaymentSuccess();
+            // PayChangu redirects to callback_url on success, return_url on cancel/fail.
+            // Use contains() so we match regardless of query params or ngrok interstitial.
+            final url = request.url.toLowerCase();
+            if (url.contains('/vero/payments/callback') ||
+                url.contains('/vero/payments/return')) {
+              final status = (uri.queryParameters['status'] ?? '').toLowerCase();
+              if (status == 'failed' || status == 'cancelled') {
+                _handlePaymentFailure();
+              } else {
+                _handlePaymentSuccess();
+              }
+              return NavigationDecision.prevent;
             }
-            return NavigationDecision.prevent;
-          }
 
-          return NavigationDecision.navigate;
-        },
-        onProgress: (int progress) => setState(() => _isLoading = progress < 100),
-        onPageStarted: (String url) => setState(() => _isLoading = true),
-        onPageFinished: (String url) => setState(() => _isLoading = false),
-        onWebResourceError: (_) => setState(() => _isLoading = false),
-      ))
+            return NavigationDecision.navigate;
+          },
+          onProgress: (int progress) =>
+              setState(() => _isLoading = progress < 100),
+          onPageStarted: (String url) =>
+              setState(() => _isLoading = true),
+          onPageFinished: (String url) {
+            setState(() => _isLoading = false);
+            // Backup: if we land on callback/return (e.g. ngrok interstitial),
+            // treat as payment complete
+            final lower = url.toLowerCase();
+            if (lower.contains('/vero/payments/callback') ||
+                lower.contains('/vero/payments/return')) {
+              final uri = Uri.tryParse(url);
+              final status = (uri?.queryParameters['status'] ?? '').toLowerCase();
+              if (status == 'failed' || status == 'cancelled') {
+                _handlePaymentFailure();
+              } else {
+                _handlePaymentSuccess();
+              }
+            }
+          },
+          onWebResourceError: (_) =>
+              setState(() => _isLoading = false),
+        ),
+      )
       ..loadRequest(Uri.parse(widget.checkoutUrl));
   }
 
   void _startStatusPolling() {
-    _pollTimer = Timer.periodic(const Duration(seconds: 7), (timer) async {
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
       await _checkPaymentStatus();
     });
   }

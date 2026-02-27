@@ -121,12 +121,12 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
         errorMessage: 'Logged out',
       );
 
-      // Navigate to login screen and remove all routes
+      // Navigate to login screen; keep root so back stays in app
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (_) => LoginScreen()),
-          (_) => false,
+          (route) => route.isFirst,
         );
       }
     } catch (e) {
@@ -389,7 +389,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
               MaterialPageRoute(
                 builder: (_) => Bottomnavbar(email: widget.email),
               ),
-              (_) => false,
+              (route) => route.isFirst,
             );
           },
         ),

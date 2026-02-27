@@ -959,7 +959,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-        (_) => false,
+        (route) => route.isFirst,
       );
     }
   }
@@ -1049,7 +1049,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-        (_) => false,
+        (route) => route.isFirst,
       );
     } catch (_) {
       ToastHelper.showCustomToast(context, _t('Delete failed', 'Kuchotsa kudagonjetsedwa'),

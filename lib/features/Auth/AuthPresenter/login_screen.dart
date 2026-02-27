@@ -183,7 +183,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => merchantDashboard),
-          (_) => false,
+          (route) => route.isFirst,
         );
       } else {
         Navigator.of(context).pushAndRemoveUntil(
@@ -193,7 +193,7 @@ class _LoginScreenState extends State<LoginScreen> {
               onBackToHomeTab: () {},
             ),
           ),
-          (_) => false,
+          (route) => route.isFirst,
         );
       }
     } else {
@@ -201,7 +201,7 @@ class _LoginScreenState extends State<LoginScreen> {
         MaterialPageRoute(
           builder: (_) => Bottomnavbar(email: displayId),
         ),
-        (_) => false,
+        (route) => route.isFirst,
       );
     }
   }

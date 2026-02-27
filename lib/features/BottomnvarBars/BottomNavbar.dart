@@ -138,7 +138,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (_) => page),
-      (_) => false,
+      (route) => route.isFirst,
     );
   }
 

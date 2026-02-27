@@ -739,7 +739,7 @@ class _MyAppState extends State<MyApp> {
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(
           builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
-      (_) => false,
+      (route) => route.isFirst,
     );
   }
 
@@ -748,7 +748,7 @@ class _MyAppState extends State<MyApp> {
     _currentShell = 'customer';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
-      (_) => false,
+      (route) => route.isFirst,
     );
   }
 
@@ -882,25 +882,25 @@ class AuthFlow {
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(
                 builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
-            (_) => false,
+            (route) => route.isFirst,
           );
         } else {
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
-            (_) => false,
+            (route) => route.isFirst,
           );
         }
       } else {
         navKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-          (_) => false,
+          (route) => route.isFirst,
         );
       }
     } catch (e) {
       debugPrint("onLoginSuccess error: $e");
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-        (_) => false,
+        (route) => route.isFirst,
       );
     }
   }
@@ -921,7 +921,7 @@ class AuthFlow {
 
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-      (_) => false,
+      (route) => route.isFirst,
     );
   }
 

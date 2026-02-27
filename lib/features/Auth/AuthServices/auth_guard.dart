@@ -83,7 +83,7 @@ class _AuthGuardState extends State<AuthGuard> with WidgetsBindingObserver {
   void _goHome() {
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-      (_) => false,
+      (route) => route.isFirst,
     );
   }
 

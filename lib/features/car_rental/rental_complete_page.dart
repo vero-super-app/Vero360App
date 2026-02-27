@@ -107,7 +107,7 @@ class _RentalCompletePageState extends State<RentalCompletePage> {
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (_) => const CarListPage()),
-      (route) => false,
+      (route) => route.isFirst,
     );
   }
 

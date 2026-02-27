@@ -251,7 +251,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             _getMerchantDashboard(serviceKey, displayId);
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => merchantDashboard),
-          (_) => false,
+          (route) => route.isFirst,
         );
       } else {
         Navigator.of(context).pushAndRemoveUntil(
@@ -261,7 +261,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               onBackToHomeTab: () {},
             ),
           ),
-          (_) => false,
+          (route) => route.isFirst,
         );
       }
     } else {
@@ -269,7 +269,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         MaterialPageRoute(
           builder: (_) => Bottomnavbar(email: displayId),
         ),
-        (_) => false,
+        (route) => route.isFirst,
       );
     }
   }

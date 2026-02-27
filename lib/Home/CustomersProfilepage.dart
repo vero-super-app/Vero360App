@@ -676,7 +676,7 @@ class _ProfilePageState extends State<ProfilePage> {
       setState(() => _loading = false);
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const LoginScreen()),
-        (route) => false,
+        (route) => route.isFirst,
       );
     }
   }

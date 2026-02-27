@@ -14,6 +14,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
+import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -323,6 +324,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               txRef: txRef,
               totalAmount: _total,
               rootContext: context,
+              clearCartOnSuccess: true,
             ),
           ));
         } else {
@@ -752,6 +754,8 @@ class InAppPaymentPage extends StatefulWidget {
   final BuildContext rootContext;
   /// When set, this is a digital product purchase: show product-specific messages and go back to homepage after payment.
   final String? digitalProductName;
+  /// When true, clears the cart (backend + local backup) after a successful payment.
+  final bool clearCartOnSuccess;
 
   const InAppPaymentPage({
     super.key,
@@ -760,6 +764,7 @@ class InAppPaymentPage extends StatefulWidget {
     required this.totalAmount,
     required this.rootContext,
     this.digitalProductName,
+    this.clearCartOnSuccess = false,
   });
 
   @override
@@ -892,6 +897,16 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     if (_resultHandled) return;
     _resultHandled = true;
     _pollTimer?.cancel();
+    if (widget.clearCartOnSuccess) {
+      unawaited(() async {
+        try {
+          final cart = CartServiceProvider.getInstance();
+          await cart.clearCart();
+        } catch (e) {
+          debugPrint('[InAppPaymentPage] Failed to clear cart: $e');
+        }
+      }());
+    }
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
     final productName = widget.digitalProductName ?? 'your order';
 

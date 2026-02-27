@@ -14,6 +14,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
+import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -325,6 +326,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               totalAmount: _total,
               rootContext: context,
               clearCartOnSuccess: true,
+              cartItemsForMerchantCredit: widget.items,
             ),
           ));
         } else {
@@ -394,6 +396,11 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new),
+          onPressed: () => Navigator.of(context).pop(),
+          tooltip: 'Back to cart',
+        ),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
@@ -746,6 +753,18 @@ class _DeliveryAddressCard extends StatelessWidget {
   }
 }
 
+// Helper for grouping cart total by merchant (marketplace wallet credit)
+class _MerchantTotal {
+  final String merchantId;
+  final String merchantName;
+  double amount;
+  _MerchantTotal({
+    required this.merchantId,
+    required this.merchantName,
+    required this.amount,
+  });
+}
+
 // ────────────────────── IN-APP PAYMENT PAGE ──────────────────────
 class InAppPaymentPage extends StatefulWidget {
   final String checkoutUrl;
@@ -756,6 +775,8 @@ class InAppPaymentPage extends StatefulWidget {
   final String? digitalProductName;
   /// When true, clears the cart (backend + local backup) after a successful payment.
   final bool clearCartOnSuccess;
+  /// Cart items for marketplace: on success, credit each merchant's wallet with their portion.
+  final List<CartModel>? cartItemsForMerchantCredit;
 
   const InAppPaymentPage({
     super.key,
@@ -765,6 +786,7 @@ class InAppPaymentPage extends StatefulWidget {
     required this.rootContext,
     this.digitalProductName,
     this.clearCartOnSuccess = false,
+    this.cartItemsForMerchantCredit,
   });
 
   @override
@@ -857,6 +879,39 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     });
   }
 
+  /// Credits each merchant's Firestore wallet with their portion of the sale (marketplace).
+  Future<void> _creditMerchantWallets(List<CartModel> items) async {
+    try {
+      final byMerchant = <String, _MerchantTotal>{};
+      for (final it in items) {
+        if (!it.hasValidMerchant) continue;
+        final id = it.merchantId.trim();
+        if (id.isEmpty) continue;
+        byMerchant.putIfAbsent(
+          id,
+          () => _MerchantTotal(merchantId: id, merchantName: it.merchantName, amount: 0),
+        );
+        byMerchant[id]!.amount += it.price * it.quantity;
+      }
+      for (final entry in byMerchant.values) {
+        if (entry.amount <= 0) continue;
+        await FirebaseWalletService.getOrCreateWallet(
+          merchantId: entry.merchantId,
+          merchantName: entry.merchantName,
+        );
+        await FirebaseWalletService.creditWallet(
+          merchantId: entry.merchantId,
+          amount: entry.amount,
+          description: 'Marketplace sale',
+          reference: widget.txRef,
+          type: 'sale',
+        );
+      }
+    } catch (e) {
+      debugPrint('[InAppPaymentPage] Failed to credit merchant wallets: $e');
+    }
+  }
+
   Future<void> _checkPaymentStatus() async {
     try {
       final response = await http.get(
@@ -907,6 +962,11 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         }
       }());
     }
+    // Credit each marketplace merchant's wallet with their portion of the sale
+    final items = widget.cartItemsForMerchantCredit;
+    if (items != null && items.isNotEmpty) {
+      unawaited(_creditMerchantWallets(items));
+    }
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
     final productName = widget.digitalProductName ?? 'your order';
 
@@ -944,9 +1004,10 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     } else {
       if (mounted) {
         Navigator.of(context).pop(); // close webview
+        // Keep root (e.g. BottomNavbar) so back from Orders stays in app
         Navigator.of(widget.rootContext).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const OrdersPage()),
-          (_) => false,
+          (route) => route.isFirst,
         );
       }
     }
@@ -1005,15 +1066,56 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     super.dispose();
   }
 
+  Future<void> _onBackPressed() async {
+    final isCartCheckout = widget.cartItemsForMerchantCredit != null &&
+        widget.cartItemsForMerchantCredit!.isNotEmpty;
+    if (isCartCheckout) {
+      final goBack = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Cancel payment?'),
+          content: const Text(
+            'You can complete payment later from your cart.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Stay'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Back to checkout'),
+            ),
+          ],
+        ),
+      );
+      if (goBack == true && mounted) Navigator.of(context).pop();
+    } else {
+      if (mounted) Navigator.of(context).pop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Complete Payment'),
-        backgroundColor: const Color(0xFFFF8A00),
-      ),
-      body: Stack(
-        children: [
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _onBackPressed();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Complete Payment'),
+          backgroundColor: const Color(0xFFFF8A00),
+          foregroundColor: Colors.white,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new),
+            onPressed: _onBackPressed,
+            tooltip: 'Back to checkout',
+          ),
+        ),
+        body: Stack(
+          children: [
           WebViewWidget(controller: _controller),
           if (_isLoading)
             Container(
@@ -1034,7 +1136,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
                 ),
               ),
             ),
-        ],
+          ],
+        ),
       ),
     );
   }

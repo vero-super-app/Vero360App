@@ -603,10 +603,10 @@ class _MyAppState extends State<MyApp> {
           MaterialPageRoute(builder: (_) => const ProfileFromLinkPage()),
         );
       } else if (uri.scheme == 'vero360' && uri.host == 'payment-complete') {
-        // Paychangu redirects here after payment – go straight to My Orders
+        // PayChangu redirects here after payment – go to My Orders; keep root so back stays in app
         navKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const OrdersPage()),
-          (_) => false,
+          (route) => route.isFirst,
         );
       }
     }, onError: (_) {});

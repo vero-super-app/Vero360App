@@ -133,7 +133,7 @@ class MarketplaceDetailModel {
     return MarketplaceDetailModel(
       id: j['id'] ?? 0,
       name: '${j['name'] ?? ''}',
-      image: '${j['image'] ?? ''}',
+      image: '${j['image'] ?? j['imageUrl'] ?? j['photo'] ?? j['picture'] ?? ''}',
       price: toDoubleVal(j['price'] ?? 0),
       description: '${j['description'] ?? ''}',
       location: '${j['location'] ?? ''}',

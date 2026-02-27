@@ -135,7 +135,13 @@ class MarketplaceDetailModel {
   factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
     final data = (doc.data() as Map<String, dynamic>?) ?? {};
 
-    final rawImage = (data['image'] ?? '').toString().trim();
+    final rawImage = (data['image'] ??
+            data['imageUrl'] ??
+            data['photo'] ??
+            data['picture'] ??
+            '')
+        .toString()
+        .trim();
 
     bool looksLikeBase64(String s) {
       final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
@@ -359,6 +365,97 @@ Widget _statusChip(String? status) {
   );
 }
 
+/// Network image that on load error retries with the other scheme (http <-> https).
+class _ResilientNetworkImage extends StatefulWidget {
+  const _ResilientNetworkImage({
+    required this.url,
+    this.fit = BoxFit.cover,
+    this.width,
+    this.height,
+  });
+
+  final String url;
+  final BoxFit fit;
+  final double? width;
+  final double? height;
+
+  @override
+  State<_ResilientNetworkImage> createState() => _ResilientNetworkImageState();
+}
+
+class _ResilientNetworkImageState extends State<_ResilientNetworkImage> {
+  String get _currentUrl => _tryAlternate ? _alternateUrl : widget.url;
+  late String _alternateUrl;
+  bool _tryAlternate = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _alternateUrl = _flipScheme(widget.url);
+  }
+
+  static String _flipScheme(String url) {
+    final u = url.trim().toLowerCase();
+    if (u.startsWith('https://')) return 'http://${url.substring(8)}';
+    if (u.startsWith('http://')) return 'https://${url.substring(7)}';
+    return url;
+  }
+
+  Widget _buildImage(String url) {
+    return Image.network(
+      url,
+      fit: widget.fit,
+      width: widget.width,
+      height: widget.height,
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) {
+        if (!_tryAlternate && _flipScheme(url) != url) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _tryAlternate = true);
+          });
+          return Container(
+            width: widget.width,
+            height: widget.height,
+            color: Colors.grey.shade100,
+            alignment: Alignment.center,
+            child: const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          );
+        }
+        return Container(
+          width: widget.width,
+          height: widget.height,
+          color: Colors.grey.shade200,
+          alignment: Alignment.center,
+          child: const Icon(Icons.image_not_supported_rounded),
+        );
+      },
+      loadingBuilder: (c, child, progress) {
+        if (progress == null) return child;
+        return Container(
+          width: widget.width,
+          height: widget.height,
+          color: Colors.grey.shade100,
+          alignment: Alignment.center,
+          child: const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _buildImage(_currentUrl);
+  }
+}
+
 /// --------------------
 /// Market Page
 /// --------------------
@@ -424,18 +521,31 @@ class _MarketPageState extends State<MarketPage> {
   String _aiSummary = '';
 
   // ✅ Cache firebase download URLs to avoid repeated calls
-  final Map<String, Future<String>> _dlUrlCache = {};
+  final Map<String, Future<String?>> _dlUrlCache = {};
 
-  bool _isHttp(String s) => s.startsWith('http://') || s.startsWith('https://');
+  bool _isHttp(String s) {
+    final lower = s.toLowerCase();
+    return lower.startsWith('http://') || lower.startsWith('https://');
+  }
   bool _isGs(String s) => s.startsWith('gs://');
+
+  /// True if string looks like a relative path (no scheme).
+  bool _isRelativePath(String s) =>
+      s.isNotEmpty && !s.contains('://') && !_looksLikeBase64(s);
 
   bool _looksLikeBase64(String s) {
     final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
     if (x.isEmpty) return false;
-    // Allow shorter encoded images as well; URLs/storage paths contain characters
-    // like ':' and '/' so they will fail this charset check.
     return x.length >= 40 &&
         RegExp(r'^[A-Za-z0-9+/=\s]+$').hasMatch(x);
+  }
+
+  /// Build full URL for backend-relative path (e.g. /uploads/x or uploads/x).
+  Future<String> _backendUrlForPath(String path) async {
+    final base = await ApiConfig.readBase();
+    final baseNorm = base.endsWith('/') ? base : '$base/';
+    final p = path.startsWith('/') ? path.substring(1) : path;
+    return '$baseNorm$p';
   }
 
   Future<String?> _toDownloadUrl(String raw) async {
@@ -444,28 +554,42 @@ class _MarketPageState extends State<MarketPage> {
 
     if (_isHttp(s)) return s;
 
-    // Backend-relative paths (e.g. /uploads/xxx)
+    // Backend-relative paths starting with / (e.g. /uploads/xxx)
     if (s.startsWith('/')) {
-      final base = await ApiConfig.readBase();
-      final baseNorm = base.endsWith('/') ? base : '$base/';
-      return '$baseNorm${s.startsWith('/') ? s.substring(1) : s}';
+      try {
+        final url = await _backendUrlForPath(s);
+        if (url.isNotEmpty) return url;
+      } catch (_) {}
+      return null;
     }
 
-    if (_dlUrlCache.containsKey(s)) return _dlUrlCache[s]!.then((v) => v);
-
-    Future<String> fut() async {
-      if (_isGs(s)) {
-        return FirebaseStorage.instance.refFromURL(s).getDownloadURL();
+    if (_dlUrlCache.containsKey(s)) {
+      try {
+        return await _dlUrlCache[s]!;
+      } catch (_) {
+        _dlUrlCache.remove(s);
       }
-      return FirebaseStorage.instance.ref(s).getDownloadURL();
+    }
+
+    Future<String?> fut() async {
+      try {
+        if (_isGs(s)) {
+          return await FirebaseStorage.instance.refFromURL(s).getDownloadURL();
+        }
+        return await FirebaseStorage.instance.ref(s).getDownloadURL();
+      } catch (_) {
+        // Fallback: try as backend-relative (e.g. marketplace_items/xxx from API)
+        if (_isRelativePath(s)) {
+          try {
+            return await _backendUrlForPath(s);
+          } catch (_) {}
+        }
+        return null;
+      }
     }
 
     _dlUrlCache[s] = fut();
-    try {
-      return await _dlUrlCache[s]!;
-    } catch (_) {
-      return null;
-    }
+    return _dlUrlCache[s]!;
   }
 
   Widget _imageFromAnySource(
@@ -501,34 +625,17 @@ class _MarketPageState extends State<MarketPage> {
       } catch (_) {}
     }
 
-    // http(s)
+    // http(s) – use resilient loader (retries with alternate scheme on error)
     if (_isHttp(s)) {
-      return wrap(Image.network(
-        s,
+      return wrap(_ResilientNetworkImage(
+        url: s,
         fit: fit,
         width: width,
         height: height,
-        errorBuilder: (_, __, ___) => Container(
-          width: width,
-          height: height,
-          color: Colors.grey.shade200,
-          alignment: Alignment.center,
-          child: const Icon(Icons.image_not_supported_rounded),
-        ),
-        loadingBuilder: (c, child, progress) {
-          if (progress == null) return child;
-          return Container(
-            width: width,
-            height: height,
-            color: Colors.grey.shade100,
-            alignment: Alignment.center,
-            child: const CircularProgressIndicator(strokeWidth: 2),
-          );
-        },
       ));
     }
 
-    // firebase gs:// or storage path, or backend-relative /uploads/...
+    // firebase gs:// or storage path, or backend-relative
     return FutureBuilder<String?>(
       future: _toDownloadUrl(s),
       builder: (context, snap) {
@@ -542,18 +649,11 @@ class _MarketPageState extends State<MarketPage> {
             child: const Icon(Icons.image_not_supported_rounded),
           ));
         }
-        return wrap(Image.network(
-          url,
+        return wrap(_ResilientNetworkImage(
+          url: url,
           fit: fit,
           width: width,
           height: height,
-          errorBuilder: (_, __, ___) => Container(
-            width: width,
-            height: height,
-            color: Colors.grey.shade200,
-            alignment: Alignment.center,
-            child: const Icon(Icons.image_not_supported_rounded),
-          ),
         ));
       },
     );
@@ -1317,13 +1417,17 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     await _future;
   }
 
-  // ✅ Grid image widget (supports base64 + http + firebase)
+  // ✅ Grid image widget (supports base64 + http + firebase + gallery fallback)
   Widget _buildItemImageWidget(MarketplaceDetailModel item) {
     if (item.imageBytes != null) {
       return Image.memory(item.imageBytes!, fit: BoxFit.cover, width: double.infinity);
     }
+    final mainImage = item.image.trim();
+    final fallbackUrl = mainImage.isEmpty && item.gallery.isNotEmpty
+        ? item.gallery.first.toString().trim()
+        : null;
     return _imageFromAnySource(
-      item.image,
+      mainImage.isNotEmpty ? mainImage : (fallbackUrl ?? ''),
       fit: BoxFit.cover,
       width: double.infinity,
       height: double.infinity,

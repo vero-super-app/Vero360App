@@ -43,6 +43,7 @@ import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
 
 import 'package:vero360_app/Home/myorders.dart';
+import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/GeneralPages/ToRefund.dart';
 import 'package:vero360_app/GeneralPages/Toreceive.dart';
 import 'package:vero360_app/GeneralPages/Toship.dart';
@@ -1873,6 +1874,29 @@ class _MarketplaceMerchantDashboardState
       title: const Text('Merchant Dashboard'),
       backgroundColor: _brandOrange,
       actions: [
+        IconButton(
+          icon: const Icon(Icons.auto_stories_rounded),
+          tooltip: 'Post story (24h)',
+          onPressed: () {
+            final uid = _auth.currentUser?.uid;
+            if (uid == null) {
+              _toastErr('Please sign in to post a story');
+              return;
+            }
+            Navigator.push(
+              context,
+              MaterialPageRoute<bool>(
+                builder: (_) => PostStoryPage(
+                  merchantId: uid,
+                  merchantName: _businessName.isNotEmpty
+                      ? _businessName
+                      : (_auth.currentUser?.displayName ?? 'Merchant'),
+                  merchantImageUrl: _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
+                ),
+              ),
+            );
+          },
+        ),
         IconButton(
           icon: const Icon(Icons.settings),
           tooltip: 'Settings',

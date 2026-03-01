@@ -42,6 +42,31 @@ class NotificationService {
     enableVibration: true,
   );
 
+  /// Action IDs for interactive notifications (reply, react)
+  static const String _actionReply = 'reply';
+  static const String _actionLike = 'like';
+
+  /// Actions shown on interactive notifications: Reply (with inline text) and Like
+  static List<AndroidNotificationAction> get _interactiveActions =>
+      [
+        AndroidNotificationAction(
+          _actionReply,
+          'Reply',
+          cancelNotification: false,
+          inputs: [
+            const AndroidNotificationActionInput(
+              label: 'Type a reply...',
+              allowFreeFormInput: true,
+            ),
+          ],
+        ),
+        AndroidNotificationAction(
+          _actionLike,
+          'Like',
+          cancelNotification: false,
+        ),
+      ];
+
   /// Initialize everything needed for notifications
   /// Call this once early in app startup (after Firebase.initializeApp)
   Future<void> initialize() async {
@@ -202,16 +227,33 @@ class NotificationService {
     }
 
     final notificationId = message.hashCode.abs();
+    final interactive = _isInteractivePayload(data);
+    if (kDebugMode && interactive) {
+      debugPrint("Showing interactive notification (Reply/Like actions). data.interactive or type triggered it.");
+    }
     try {
       await _showLocalNotification(
         id: notificationId,
         title: title,
         body: body,
         payload: jsonEncode(data),
+        interactive: interactive,
       );
     } catch (e) {
       debugPrint("Show local notification failed: $e");
     }
+  }
+
+  /// True when the notification supports Reply / Like (comment, post, mention, or explicit flag).
+  bool _isInteractivePayload(Map<String, dynamic> data) {
+    if (data['interactive'] == true || data['interactive'] == 'true') return true;
+    final type = (data['type'] as String?)?.toLowerCase();
+    return type != null &&
+        (type == 'comment' ||
+            type == 'post_comment' ||
+            type == 'mention' ||
+            type == 'new_comment' ||
+            type == 'reply');
   }
 
   void _handleMessageOpenedApp(RemoteMessage message) {
@@ -238,12 +280,107 @@ class NotificationService {
   }
 
   static void _onDidReceiveNotificationResponse(NotificationResponse response) {
-    if (response.payload == null) return;
+    Map<String, dynamic>? data;
+    if (response.payload != null && response.payload!.isNotEmpty) {
+      try {
+        data = jsonDecode(response.payload!) as Map<String, dynamic>;
+      } catch (e) {
+        debugPrint("Invalid notification payload: $e");
+      }
+    }
+
+    // User tapped an action button (Reply or Like)
+    if (response.notificationResponseType ==
+        NotificationResponseType.selectedNotificationAction) {
+      final actionId = response.actionId;
+      if (actionId == _actionReply && response.input != null) {
+        instance._submitReply(data ?? {}, response.input!.trim());
+        return;
+      }
+      if (actionId == _actionLike) {
+        instance._submitReaction(data ?? {});
+        return;
+      }
+    }
+
+    // User tapped the notification body → navigate
+    if (data != null) instance._navigateBasedOnPayload(data);
+  }
+
+  /// Send reply text to backend; backend can push to other users in real time.
+  Future<void> _submitReply(Map<String, dynamic> payload, String text) async {
+    if (text.isEmpty) return;
     try {
-      final data = jsonDecode(response.payload!) as Map<String, dynamic>;
-      instance._navigateBasedOnPayload(data);
+      await ApiConfig.init();
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+      final idToken = await user.getIdToken();
+      if (idToken == null || idToken.isEmpty) return;
+
+      final uri = ApiConfig.endpoint('/api/v1/notifications/interactive/reply');
+      final res = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $idToken',
+        },
+        body: jsonEncode({
+          ...payload,
+          'text': text,
+        }),
+      );
+
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        if (kDebugMode) debugPrint("Notification reply sent ✅");
+        _showLocalNotification(
+          id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          title: 'Reply sent',
+          body: text.length > 40 ? '${text.substring(0, 40)}...' : text,
+          payload: null,
+        );
+      } else if (kDebugMode) {
+        debugPrint("Notification reply failed: ${res.statusCode} ${res.body}");
+      }
     } catch (e) {
-      debugPrint("Invalid notification payload: $e");
+      if (kDebugMode) debugPrint("Notification reply error: $e");
+    }
+  }
+
+  /// Send reaction (e.g. like) to backend; backend can update and push in real time.
+  Future<void> _submitReaction(Map<String, dynamic> payload) async {
+    try {
+      await ApiConfig.init();
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+      final idToken = await user.getIdToken();
+      if (idToken == null || idToken.isEmpty) return;
+
+      final uri = ApiConfig.endpoint('/api/v1/notifications/interactive/react');
+      final res = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $idToken',
+        },
+        body: jsonEncode({
+          ...payload,
+          'reaction': 'like',
+        }),
+      );
+
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        if (kDebugMode) debugPrint("Notification reaction sent ✅");
+        _showLocalNotification(
+          id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          title: 'Liked',
+          body: 'Your reaction was sent',
+          payload: null,
+        );
+      } else if (kDebugMode) {
+        debugPrint("Notification reaction failed: ${res.statusCode} ${res.body}");
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint("Notification reaction error: $e");
     }
   }
 
@@ -256,6 +393,7 @@ class NotificationService {
     required String title,
     required String body,
     String? payload,
+    bool interactive = false,
   }) async {
     await _localNotifications.show(
       id,
@@ -271,6 +409,7 @@ class NotificationService {
           icon: '@mipmap/ic_launcher',
           enableVibration: true,
           visibility: NotificationVisibility.public,
+          actions: interactive ? _interactiveActions : null,
         ),
         iOS: const DarwinNotificationDetails(
           presentAlert: true,
@@ -325,11 +464,12 @@ class NotificationService {
     }
   }
 
-  // Public method to show a local notification manually (e.g. from other parts of app)
+  /// Show a local notification manually. Set [interactive] true to show Reply + Like actions.
   Future<void> showManualNotification({
     required String title,
     required String body,
     String? payload,
+    bool interactive = false,
   }) async {
     final id = 'manual_${DateTime.now().millisecondsSinceEpoch}';
     Map<String, dynamic> payloadMap = {};
@@ -349,6 +489,7 @@ class NotificationService {
       title: title,
       body: body,
       payload: payload,
+      interactive: interactive,
     );
   }
 }

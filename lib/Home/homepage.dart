@@ -62,6 +62,7 @@ import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
+import 'package:vero360_app/Home/story_section.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -168,7 +169,6 @@ class Vero360Homepage extends ConsumerStatefulWidget {
 
 class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   final _search = TextEditingController();
-  int _promoIndex = 0;
   bool _animateIn = false;
 
   String _firstNameFromEmail(String email) {
@@ -180,49 +180,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     if (first.isEmpty) return 'there';
     return '${first[0].toUpperCase()}${first.substring(1).toLowerCase()}';
   }
-
-  final List<_Promo> _promos = const [
-    _Promo(
-      title: 'Marketplace',
-      subtitle: 'order anything',
-      code: '',
-      image: 'assets/happy.jpg',
-      bg: Color(0xFFFDF2E9),
-      tint: AppColors.brandOrange,
-      cta: 'Buy now',
-      serviceKey: 'mainmarketplace',
-    ),
-    _Promo(
-      title: 'Free Delivery',
-      subtitle: 'all week long',
-      code: 'Use code FREEDEL',
-      image: 'assets/Queens-Tavern-Steak.jpg',
-      bg: Color(0xFFFFF4E6),
-      tint: AppColors.brandOrange,
-      cta: 'Order now',
-      serviceKey: 'food',
-    ),
-    _Promo(
-      title: 'Vero Ride',
-      subtitle: 'Ride • 15% off',
-      code: 'Use code GO15',
-      image: 'assets/uber-cabs-1024x576.webp',
-      bg: Color(0xFFFFF0E1),
-      tint: AppColors.brandOrange,
-      cta: 'Book a ride',
-      serviceKey: 'taxi',
-    ),
-    _Promo(
-      title: 'Vero AI',
-      subtitle: 'Ask VeroAI',
-      code: 'anything, anytime',
-      image: 'assets/veroai.png',
-      bg: Color(0xFFFFF4E6),
-      tint: AppColors.brandOrange,
-      cta: 'Chat now',
-      serviceKey: 'vero_ai',
-    ),
-  ];
 
   String? _resolvedGreetingName;
   bool _greetingResolved = false;
@@ -322,19 +279,12 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
                   ),
                 ),
 
-                // Promos
-                SliverToBoxAdapter(
+                // Merchant stories (24h) — replaced promo carousel
+                const SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                    child: _PromoCarousel(
-                      promos: _promos,
-                      onIndex: (i) => setState(() => _promoIndex = i),
-                      onTap: _onPromoTap,
-                    ),
+                    padding: EdgeInsets.fromLTRB(0, 12, 0, 0),
+                    child: StorySection(),
                   ),
-                ),
-                SliverToBoxAdapter(
-                  child: _Dots(count: _promos.length, index: _promoIndex),
                 ),
 
                 const SliverToBoxAdapter(child: SizedBox(height: 22)),
@@ -396,27 +346,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
       picked.keyId == 'taxi'
           ? _openService(picked.keyId)
           : _openServiceStatic(context, picked.keyId);
-    }
-  }
-
-  void _onPromoTap(_Promo p) {
-    if (p.serviceKey == 'vero_ai') {
-      ToastHelper.showCustomToast(
-        context,
-        'Vero AI coming soon',
-        isSuccess: true,
-        errorMessage: '',
-      );
-      return;
-    }
-    if (p.serviceKey != null && p.serviceKey!.isNotEmpty) {
-      p.serviceKey == 'taxi'
-          ? _openService(p.serviceKey!)
-          : _openServiceStatic(context, p.serviceKey!);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Coming soon')),
-      );
     }
   }
 
@@ -699,144 +628,6 @@ class _TopSection extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Promo model
-class _Promo {
-  final String title, subtitle, code, image;
-  final Color bg, tint;
-  final String cta;
-  final String? serviceKey;
-
-  const _Promo({
-    required this.title,
-    required this.subtitle,
-    required this.code,
-    required this.image,
-    required this.bg,
-    required this.tint,
-    this.cta = 'Order now',
-    this.serviceKey,
-  });
-}
-
-/// Promo carousel
-class _PromoCarousel extends StatelessWidget {
-  final List<_Promo> promos;
-  final ValueChanged<int> onIndex;
-  final void Function(_Promo) onTap;
-
-  const _PromoCarousel({
-    required this.promos,
-    required this.onIndex,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return CarouselSlider.builder(
-      itemCount: promos.length,
-      options: CarouselOptions(
-        height: 160,
-        autoPlay: true,
-        enlargeCenterPage: true,
-        viewportFraction: 0.92,
-        onPageChanged: (i, _) => onIndex(i),
-      ),
-      itemBuilder: (_, i, __) {
-        final p = promos[i];
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [p.bg, Colors.white],
-                begin: const Alignment(-0.6, -1),
-                end: const Alignment(1, 1),
-              ),
-              border: Border.all(color: AppColors.brandOrangeSoft),
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: ClipRRect(
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(18),
-                      bottomLeft: Radius.circular(18),
-                    ),
-                    child: Image.asset(
-                      p.image,
-                      width: 180,
-                      height: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        width: 180,
-                        color: const Color(0xFFEDEDED),
-                        child: const Center(
-                          child: Icon(Icons.image_not_supported_rounded),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 180, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        p.title,
-                        style: TextStyle(
-                          color: p.tint,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 18,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        p.subtitle,
-                        style: const TextStyle(
-                          color: AppColors.title,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        p.code,
-                        style: const TextStyle(
-                          color: AppColors.body,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const Spacer(),
-                      ElevatedButton(
-                        onPressed: () => onTap(p),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.brandOrange,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(
-                          p.cta,
-                          style: const TextStyle(fontWeight: FontWeight.w900),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 }

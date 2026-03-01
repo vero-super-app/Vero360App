@@ -10,7 +10,7 @@ class ApiConfig {
 
   /// Default root (ngrok tunnel - no /vero here)
   static const String _defaultProdRoot =
-      'https://4c7b-102-70-117-183.ngrok-free.app';
+      'https://8f71-102-70-116-69.ngrok-free.app ';
 
   // static const String _defaultProdRoot =
   //     'http://10.0.2.2:3000'; // Android emulator localhost

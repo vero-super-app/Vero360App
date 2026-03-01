@@ -93,6 +93,7 @@ Future<void> main() async {
 
     // Initialize push notification service
     await NotificationService.instance.initialize();
+    NotificationService.setNavigatorKey(navKey);
     debugPrint("NotificationService initialized ✅");
   } catch (e) {
     debugPrint("Firebase / Notification init error: $e");

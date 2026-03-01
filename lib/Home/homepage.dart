@@ -60,6 +60,8 @@ import 'package:vero360_app/utils/toasthelper.dart';
 
 // ✅ Providers
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
+import 'package:vero360_app/Home/notifications_page.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -555,11 +557,27 @@ class _BrandBar extends StatelessWidget {
           ),
         ),
         const Spacer(),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          onPressed: () {},
-          icon: const Icon(Icons.notifications_active_outlined,
-              color: AppColors.title),
+        ListenableBuilder(
+          listenable: NotificationStore.instance,
+          builder: (_, __) {
+            final count = NotificationStore.instance.unreadCount;
+            return Badge(
+              isLabelVisible: count > 0,
+              label: Text(count > 99 ? '99+' : '$count'),
+              child: IconButton(
+                visualDensity: VisualDensity.compact,
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const NotificationsPage(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.notifications_active_outlined,
+                    color: AppColors.title),
+              ),
+            );
+          },
         ),
         const SizedBox(width: 4),
       ],

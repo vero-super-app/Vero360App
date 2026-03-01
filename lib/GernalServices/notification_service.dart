@@ -6,16 +6,28 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart'
     show kDebugMode, kIsWeb, defaultTargetPlatform, TargetPlatform, debugPrint;
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
+import 'package:vero360_app/Home/myorders.dart';
+import 'package:vero360_app/Home/notifications_page.dart';
+import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
 /// Central service for handling Firebase Cloud Messaging (FCM) + local notifications
 class NotificationService {
   NotificationService._();
 
   static final NotificationService instance = NotificationService._();
+
+  static GlobalKey<NavigatorState>? _navKey;
+
+  /// Call from main.dart after app is built: NotificationService.instance.setNavigatorKey(navKey);
+  static void setNavigatorKey(GlobalKey<NavigatorState> key) {
+    _navKey = key;
+  }
 
   static final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
@@ -27,6 +39,7 @@ class NotificationService {
     description: 'Important alerts: ride updates, new messages, order status',
     importance: Importance.max,
     playSound: true,
+    enableVibration: true,
   );
 
   /// Initialize everything needed for notifications
@@ -58,7 +71,17 @@ class NotificationService {
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(_highPriorityChannel);
 
-    // 2. Request notification permissions
+    // Request Android 13+ notification permission (required to show notifications)
+    final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (androidPlugin != null) {
+      final granted = await androidPlugin.requestNotificationsPermission();
+      if (kDebugMode) {
+        debugPrint('Android notification permission granted: $granted');
+      }
+    }
+
+    // 2. Request FCM notification permissions (mainly for iOS)
     final messaging = FirebaseMessaging.instance;
     final permission = await messaging.requestPermission(
       alert: true,
@@ -158,28 +181,60 @@ class NotificationService {
   //  Handlers
   // ───────────────────────────────────────────────
 
-  void _handleForegroundMessage(RemoteMessage message) {
-    debugPrint("Foreground FCM: ${message.notification?.title ?? 'no title'}");
-
+  Future<void> _handleForegroundMessage(RemoteMessage message) async {
+    // Support both "notification" payload and "data-only" messages (e.g. from FCM console)
     final notification = message.notification;
-    if (notification == null) return;
+    final data = message.data;
+    final title = notification?.title ?? data['title'] as String? ?? 'Vero360';
+    final body = notification?.body ?? data['body'] as String? ?? 'New notification';
+    debugPrint("Foreground FCM: $title / $body");
 
-    _showLocalNotification(
-      id: notification.hashCode,
-      title: notification.title ?? 'Vero360',
-      body: notification.body ?? '',
-      payload: jsonEncode(message.data),
-    );
+    final id = message.messageId ?? 'fcm_${message.hashCode}_${DateTime.now().millisecondsSinceEpoch}';
+    try {
+      NotificationStore.instance.addNotification(
+        id: id,
+        title: title,
+        body: body,
+        payload: data,
+      );
+    } catch (e) {
+      debugPrint("NotificationStore add failed: $e");
+    }
+
+    final notificationId = message.hashCode.abs();
+    try {
+      await _showLocalNotification(
+        id: notificationId,
+        title: title,
+        body: body,
+        payload: jsonEncode(data),
+      );
+    } catch (e) {
+      debugPrint("Show local notification failed: $e");
+    }
   }
 
   void _handleMessageOpenedApp(RemoteMessage message) {
     debugPrint("Notification tap from background: ${message.messageId}");
+    _addToStoreIfNeeded(message);
     _navigateBasedOnPayload(message.data);
   }
 
   void _handleInitialMessage(RemoteMessage message) {
     debugPrint("Launched from terminated via notification: ${message.messageId}");
+    _addToStoreIfNeeded(message);
     _navigateBasedOnPayload(message.data);
+  }
+
+  void _addToStoreIfNeeded(RemoteMessage message) {
+    final n = message.notification;
+    final id = message.messageId ?? 'fcm_${message.hashCode}_${DateTime.now().millisecondsSinceEpoch}';
+    NotificationStore.instance.addNotification(
+      id: id,
+      title: n?.title ?? 'Notification',
+      body: n?.body ?? '',
+      payload: message.data,
+    );
   }
 
   static void _onDidReceiveNotificationResponse(NotificationResponse response) {
@@ -214,6 +269,8 @@ class NotificationService {
           importance: _highPriorityChannel.importance,
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
+          enableVibration: true,
+          visibility: NotificationVisibility.public,
         ),
         iOS: const DarwinNotificationDetails(
           presentAlert: true,
@@ -230,33 +287,41 @@ class NotificationService {
   // ───────────────────────────────────────────────
 
   void _navigateBasedOnPayload(Map<String, dynamic> data) {
-    final type = data['type'] as String?;
+    final navigator = _navKey?.currentState;
+    if (navigator == null) return;
+
+    final type = (data['type'] as String?)?.toLowerCase();
     final rideId = data['rideId'] as String?;
     final chatId = data['chatId'] as String?;
     final orderId = data['orderId'] as String?;
 
-    if (type == null) return;
-
-    switch (type.toLowerCase()) {
+    switch (type ?? '') {
       case 'new_ride':
       case 'ride_update':
-        // TODO: Navigate to ride details screen
         debugPrint("→ Open ride: $rideId");
-        // navKey.currentState?.push(...);
+        navigator.push(MaterialPageRoute(
+          builder: (_) => const NotificationsPage(),
+        ));
         break;
 
       case 'new_message':
-        // TODO: Open chat screen
         debugPrint("→ Open chat: $chatId");
+        navigator.push(MaterialPageRoute(
+          builder: (_) => const ChatListPage(),
+        ));
         break;
 
       case 'order_update':
-        // TODO: Open order details or My Orders
         debugPrint("→ Open order: $orderId");
+        navigator.push(MaterialPageRoute(
+          builder: (_) => const OrdersPage(),
+        ));
         break;
 
       default:
-        debugPrint("Unhandled notification type: $type");
+        navigator.push(MaterialPageRoute(
+          builder: (_) => const NotificationsPage(),
+        ));
     }
   }
 
@@ -266,6 +331,19 @@ class NotificationService {
     required String body,
     String? payload,
   }) async {
+    final id = 'manual_${DateTime.now().millisecondsSinceEpoch}';
+    Map<String, dynamic> payloadMap = {};
+    if (payload != null && payload.isNotEmpty) {
+      try {
+        payloadMap = jsonDecode(payload) as Map<String, dynamic>? ?? {};
+      } catch (_) {}
+    }
+    NotificationStore.instance.addNotification(
+      id: id,
+      title: title,
+      body: body,
+      payload: payloadMap,
+    );
     await _showLocalNotification(
       id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
       title: title,

@@ -513,7 +513,8 @@ class _MarketPageState extends State<MarketPage> {
   bool _photoMode = false;
 
   /// AI Search mode: when true, shows AI summary, product highlights, and smarter search
-  bool _aiSearchMode = true;
+bool _aiSearchMode=false;
+
 
   late Future<List<MarketplaceDetailModel>> _future;
 
@@ -1080,7 +1081,7 @@ class _MarketPageState extends State<MarketPage> {
           SnackBar(
             content: Text(
               isNetwork
-                  ? 'Cannot reach backend. Use same WiFi as your PC, or set API_BASE_URL to your PC IP (e.g. 192.168.1.x:3000).'
+                  ? 'Cannot reach the server, '
                   : 'Photo search failed: ${msg.length > 60 ? '${msg.substring(0, 60)}...' : msg}',
             ),
             backgroundColor: Colors.red,
@@ -1107,7 +1108,7 @@ class _MarketPageState extends State<MarketPage> {
         context,
         'Please log in to add items to cart.',
         isSuccess: false,
-        errorMessage: 'Not logged in',
+        errorMessage: '',
       );
     }
     return isLoggedIn;
@@ -1120,7 +1121,7 @@ class _MarketPageState extends State<MarketPage> {
         context,
         'Please log in to chat with merchant.',
         isSuccess: false,
-        errorMessage: 'Not logged in',
+        errorMessage: '',
       );
     }
     return isLoggedIn;

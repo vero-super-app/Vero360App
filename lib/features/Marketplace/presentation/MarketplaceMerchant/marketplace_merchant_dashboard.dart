@@ -1892,6 +1892,7 @@ class _MarketplaceMerchantDashboardState
                       ? _businessName
                       : (_auth.currentUser?.displayName ?? 'Merchant'),
                   merchantImageUrl: _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
+                  serviceType: 'marketplace',
                 ),
               ),
             );

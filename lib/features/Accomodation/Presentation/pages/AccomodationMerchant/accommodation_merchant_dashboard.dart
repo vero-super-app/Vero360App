@@ -1076,6 +1076,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                       ? _businessName
                       : (_auth.currentUser?.displayName ?? 'Accommodation'),
                   merchantImageUrl: _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
+                  serviceType: 'accommodation',
                 ),
               ),
             );

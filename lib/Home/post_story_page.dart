@@ -12,12 +12,15 @@ class PostStoryPage extends StatefulWidget {
   final String merchantId;
   final String merchantName;
   final String? merchantImageUrl;
+  /// marketplace | accommodation | food | courier | ride | taxi | ...
+  final String serviceType;
 
   const PostStoryPage({
     super.key,
     required this.merchantId,
     required this.merchantName,
     this.merchantImageUrl,
+    this.serviceType = 'marketplace',
   });
 
   @override
@@ -28,6 +31,10 @@ class _PostStoryPageState extends State<PostStoryPage> {
   final ImagePicker _picker = ImagePicker();
   final StoryService _storyService = StoryService();
   bool _posting = false;
+
+  final TextEditingController _titleCtrl = TextEditingController();
+  final TextEditingController _priceCtrl = TextEditingController();
+  final TextEditingController _descCtrl = TextEditingController();
 
   Future<void> _pickAndPost() async {
     if (_posting) return;
@@ -41,11 +48,23 @@ class _PostStoryPageState extends State<PostStoryPage> {
     if (bytes.isEmpty || !mounted) return;
     setState(() => _posting = true);
     try {
+      final title = _titleCtrl.text.trim();
+      final desc = _descCtrl.text.trim();
+      final priceText = _priceCtrl.text.trim();
+      num? price;
+      if (priceText.isNotEmpty) {
+        price = num.tryParse(priceText);
+      }
+
       await _storyService.postStory(
         merchantId: widget.merchantId,
         merchantName: widget.merchantName,
         imageBytes: Uint8List.fromList(bytes),
         merchantImageUrl: widget.merchantImageUrl,
+        serviceType: widget.serviceType,
+        title: title.isEmpty ? null : title,
+        description: desc.isEmpty ? null : desc,
+        price: price,
       );
       if (!mounted) return;
       ToastHelper.showCustomToast(
@@ -104,6 +123,33 @@ class _PostStoryPageState extends State<PostStoryPage> {
                 style: TextStyle(
                   fontSize: 14,
                   color: Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: _titleCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Item / service name',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _priceCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Price (optional)',
+                  prefixText: 'MWK ',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _descCtrl,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Short description (optional)',
+                  border: OutlineInputBorder(),
                 ),
               ),
               const Spacer(),

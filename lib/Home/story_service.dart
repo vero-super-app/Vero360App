@@ -72,6 +72,10 @@ class StoryService {
       merchantId: d['merchantId'] as String? ?? '',
       merchantName: d['merchantName'] as String? ?? 'Merchant',
       merchantImageUrl: d['merchantImageUrl'] as String?,
+      serviceType: d['serviceType'] as String?,
+      title: d['title'] as String?,
+      description: d['description'] as String?,
+      price: d['price'] is num ? d['price'] as num : num.tryParse('${d['price']}'),
       mediaUrl: d['mediaUrl'] as String? ?? '',
       imageBase64: d['imageBase64'] as String?,
       mediaType: d['mediaType'] as String? ?? 'image',
@@ -86,6 +90,10 @@ class StoryService {
     required String merchantName,
     required Uint8List imageBytes,
     String? merchantImageUrl,
+    String? serviceType,
+    String? title,
+    String? description,
+    num? price,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.uid != merchantId) {
@@ -115,6 +123,10 @@ class StoryService {
       'merchantId': merchantId,
       'merchantName': merchantName,
       'merchantImageUrl': merchantImageUrl,
+      'serviceType': (serviceType ?? 'marketplace').toLowerCase(),
+      if (title != null && title.isNotEmpty) 'title': title,
+      if (description != null && description.isNotEmpty) 'description': description,
+      if (price != null) 'price': price,
       'mediaUrl': mediaUrl ?? '',
       if (imageBase64 != null) 'imageBase64': imageBase64,
       'mediaType': 'image',

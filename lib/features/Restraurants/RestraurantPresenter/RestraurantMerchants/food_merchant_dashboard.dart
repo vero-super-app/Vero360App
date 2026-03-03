@@ -282,6 +282,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
                     merchantName: _businessName.isNotEmpty
                         ? _businessName
                         : (_auth.currentUser?.displayName ?? 'Food Merchant'),
+                    serviceType: 'food',
                   ),
                 ),
               );

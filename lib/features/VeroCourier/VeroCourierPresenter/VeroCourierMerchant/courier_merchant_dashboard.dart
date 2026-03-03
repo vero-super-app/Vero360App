@@ -16,6 +16,7 @@ import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchan
 import 'package:vero360_app/Home/homepage.dart';
 // Add login screen import
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class CourierMerchantDashboard extends StatefulWidget {
@@ -380,6 +381,33 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
       title: Text(_initialLoadComplete ? '$_businessName Dashboard' : 'Loading...'),
       backgroundColor: Colors.teal,
       actions: [
+        IconButton(
+          icon: const Icon(Icons.auto_stories_rounded),
+          tooltip: 'Post story (24h)',
+          onPressed: () {
+            final uid = _auth.currentUser?.uid;
+            if (uid == null) {
+              ToastHelper.showCustomToast(
+                context,
+                'Please sign in to post a story',
+                isSuccess: false,
+                errorMessage: '',
+              );
+              return;
+            }
+            Navigator.push(
+              context,
+              MaterialPageRoute<bool>(
+                builder: (_) => PostStoryPage(
+                  merchantId: uid,
+                  merchantName: _businessName.isNotEmpty
+                      ? _businessName
+                      : (_auth.currentUser?.displayName ?? 'Courier'),
+                ),
+              ),
+            );
+          },
+        ),
         IconButton(
           icon: const Icon(Icons.switch_account),
           tooltip: 'Switch to Customer View',

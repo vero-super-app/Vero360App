@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import 'package:vero360_app/Home/merchant_story_model.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
+import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 
 class StoryViewerScreen extends StatefulWidget {
   final MerchantStoryGroup group;
@@ -107,6 +109,31 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
                 ],
               ),
             ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 24,
+              child: SafeArea(
+                child: Center(
+                  child: InkWell(
+                    onTap: _showDetails,
+                    borderRadius: BorderRadius.circular(24),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.4),
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: const Icon(
+                        Icons.keyboard_arrow_up_rounded,
+                        color: Colors.white,
+                        size: 28,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -143,6 +170,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
                   widget.group.merchantName,
@@ -151,8 +179,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
                     fontWeight: FontWeight.bold,
                     fontSize: 16,
                   ),
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                const SizedBox(height: 2),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
@@ -190,6 +220,91 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
           );
         }),
       ),
+    );
+  }
+
+  void _showDetails() {
+    if (widget.group.items.isEmpty) return;
+    final item = widget.group.items[_currentIndex.clamp(0, widget.group.items.length - 1)];
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade400,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              Text(
+                widget.group.merchantName,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Want to buy this item? Open the marketplace to browse this merchant\'s products.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              if (item.mediaUrl.isNotEmpty)
+                Text(
+                  item.mediaUrl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        final cart = CartServiceProvider.getInstance();
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => MarketPage(cartService: cart),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF8A00),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Buy now',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

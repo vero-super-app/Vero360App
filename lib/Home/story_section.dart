@@ -40,10 +40,10 @@ class StorySection extends StatelessWidget {
           );
         }
         return SizedBox(
-          height: _ringSize + 36,
+          height: _ringSize + 44,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             itemCount: groups.length,
             itemBuilder: (context, index) {
               final g = groups[index];
@@ -83,6 +83,7 @@ class _StoryRing extends StatelessWidget {
         borderRadius: BorderRadius.circular(_StoryRing.ringSize / 2 + 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.start,
           children: [
             Container(
               width: _StoryRing.ringSize + 4,

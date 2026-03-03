@@ -10,6 +10,7 @@ import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchan
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 // Add login screen import
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class FoodMerchantDashboard extends StatefulWidget {
@@ -259,6 +260,33 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
         title: const Text('Food Merchant Dashboard'),
         backgroundColor: Colors.orange,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.auto_stories_rounded),
+            tooltip: 'Post story (24h)',
+            onPressed: () {
+              final uid = _auth.currentUser?.uid;
+              if (uid == null) {
+                ToastHelper.showCustomToast(
+                  context,
+                  'Please sign in to post a story',
+                  isSuccess: false,
+                  errorMessage: '',
+                );
+                return;
+              }
+              Navigator.push(
+                context,
+                MaterialPageRoute<bool>(
+                  builder: (_) => PostStoryPage(
+                    merchantId: uid,
+                    merchantName: _businessName.isNotEmpty
+                        ? _businessName
+                        : (_auth.currentUser?.displayName ?? 'Food Merchant'),
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.shopping_cart),
             onPressed: () {

@@ -5,9 +5,12 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
 import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 import 'driver_request_screen.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
@@ -153,6 +156,31 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         elevation: 0,
         centerTitle: false,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.auto_stories_rounded),
+            tooltip: 'Post story (24h)',
+            onPressed: () {
+              final user = FirebaseAuth.instance.currentUser;
+              final uid = user?.uid;
+              if (uid == null) {
+                ToastHelper.showCustomToast(
+                  context,
+                  'Please sign in to post a story',
+                  isSuccess: false,
+                  errorMessage: '',
+                );
+                return;
+              }
+              Navigator.of(context).push(
+                MaterialPageRoute<bool>(
+                  builder: (_) => PostStoryPage(
+                    merchantId: uid,
+                    merchantName: user?.displayName ?? 'Ride Driver',
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             tooltip: 'Settings',

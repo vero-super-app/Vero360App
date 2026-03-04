@@ -840,6 +840,21 @@ class AuthFlow {
         flags.values.any((v) => v == true);
   }
 
+  static bool _isDriver(Map<String, dynamic> u) {
+    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
+    final roles = (u['roles'] is List)
+        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
+        : <String>[];
+    final flags = {
+      'isDriver': u['isDriver'] == true,
+      'driver': u['driver'] == true,
+      'driverId': (u['driverId'] ?? '').toString().isNotEmpty,
+    };
+    return role == 'driver' ||
+        roles.contains('driver') ||
+        flags.values.any((v) => v == true);
+  }
+
   static String _fixLocalhostIfNeeded(String base) {
     if (kIsWeb) return base;
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -852,7 +867,7 @@ class AuthFlow {
   static Future<void> onLoginSuccess(BuildContext ctx, String token) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('jwt_token', token);
-
+  
     // ✅ Use ApiConfig for production-ready endpoint
     try {
       final resp = await http.get(
@@ -862,7 +877,7 @@ class AuthFlow {
           'Accept': 'application/json'
         },
       );
-
+  
       if (resp.statusCode == 200) {
         final decoded = json.decode(resp.body);
         final user = (decoded is Map && decoded['data'] is Map)
@@ -870,22 +885,46 @@ class AuthFlow {
             : (decoded is Map
                 ? Map<String, dynamic>.from(decoded)
                 : <String, dynamic>{});
-
-        final role = _isMerchant(user) ? 'merchant' : 'customer';
-        await prefs.setString('user_role', role);
+  
         final email = (user['email'] ?? '').toString();
         await prefs.setString('email', email);
 
-        // ✅ Check and cache driver status (background, fire and forget)
-        _checkAndCacheDriverStatus(prefs);
+        // ✅ Determine user type with proper priority: merchant > driver > customer
+        bool isMerchant = _isMerchant(user);
+        bool isDriver = false;
+        
+        debugPrint("🔍 User object: $user");
+        debugPrint("🔍 Is merchant (from flags): $isMerchant");
+        
+        if (!isMerchant) {
+          isDriver = _isDriver(user);
+          debugPrint("🔍 Is driver (from flags): $isDriver");
+          // Also try async driver check if user object doesn't indicate driver
+          if (!isDriver) {
+            isDriver = await _checkIfUserIsDriver(prefs, user);
+            debugPrint("🔍 Is driver (from async check): $isDriver");
+          }
+        }
 
-        if (role == 'merchant') {
+        // Store in preferences and route
+        if (isMerchant) {
+          await prefs.setString('user_role', 'merchant');
+          await prefs.setBool('user_is_driver', false);
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(
                 builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
             (route) => route.isFirst,
           );
+        } else if (isDriver) {
+          await prefs.setString('user_role', 'driver');
+          await prefs.setBool('user_is_driver', true);
+          navKey.currentState?.pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
+            (route) => route.isFirst,
+          );
         } else {
+          await prefs.setString('user_role', 'customer');
+          await prefs.setBool('user_is_driver', false);
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
             (route) => route.isFirst,
@@ -933,26 +972,25 @@ class AuthFlow {
     return (t != null && t.trim().isNotEmpty) || fb != null;
   }
 
-  static Future<void> _checkAndCacheDriverStatus(SharedPreferences prefs) async {
+  static Future<bool> _checkIfUserIsDriver(SharedPreferences prefs, Map<String, dynamic> user) async {
     try {
       final driverService = DriverService();
       final token = _readToken(prefs);
-      if (token == null) return;
+      if (token == null) return false;
 
-      // Extract userId from token if available
-      final userId = prefs.getInt('user_id');
-      if (userId == null) return;
+      // Try to get userId from user object or prefs
+      int? userId = user['id'] as int? ?? user['userId'] as int?;
+      userId ??= prefs.getInt('user_id');
+      if (userId == null) return false;
 
-      // Check if user is a driver (fire and forget)
       try {
         await driverService.getDriverByUserId(userId);
-        await prefs.setBool('user_is_driver', true);
+        return true;
       } catch (_) {
-        await prefs.setBool('user_is_driver', false);
+        return false;
       }
     } catch (_) {
-      // Silent fail - if we can't determine, assume not a driver
-      await prefs.setBool('user_is_driver', false);
+      return false;
     }
   }
 }

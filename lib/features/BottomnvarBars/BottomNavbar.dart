@@ -35,6 +35,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   bool _isLoading = true;
   bool _isMerchant = false;
+  bool _isDriver = false;
   bool _isLoggedIn = false;
 
   late List<Widget> _pages;
@@ -80,47 +81,55 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 
   Future<void> _checkUserRoleAndSetup() async {
-    final prefs = await SharedPreferences.getInstance();
-    final role =
-        _isLoggedIn ? (prefs.getString('role') ?? '').toLowerCase() : '';
+     final prefs = await SharedPreferences.getInstance();
+     final role =
+         _isLoggedIn ? (prefs.getString('user_role') ?? '').toLowerCase() : '';
+  
+     _isMerchant = role == 'merchant';
+     _isDriver = role == 'driver';
+     
+     debugPrint("ℹ️ BottomNavbar: user_role='$role', _isMerchant=$_isMerchant, _isDriver=$_isDriver");
 
-    _isMerchant = role == 'merchant';
+     // Home page: DriverDashboard for drivers, Homepage for others
+     final homePage = _isDriver 
+         ? DriverDashboard()
+         : Vero360Homepage(email: widget.email);
 
-    _pages = [
-      Vero360Homepage(email: widget.email),
-      MarketPage(cartService: cartService),
-      const AuthGuard(
-        featureName: 'Messages',
-        showChildBehindDialog: true,
-        child: ChatListPage(),
-      ),
-      AuthGuard(
-        featureName: 'Cart',
-        showChildBehindDialog: true,
-        child: CartPage(cartService: cartService),
-      ),
-      // Customers see Profile; merchants are redirected and never see this tab
-      AuthGuard(
-        featureName: _isMerchant ? 'Dashboard' : 'Profile',
-        showChildBehindDialog: true,
-        child: _isMerchant
-            ? MarketplaceMerchantDashboard(
-                email: widget.email,
-                onBackToHomeTab: () {
-                  setState(() => _selectedIndex = 0);
-                },
-                embeddedInMainNav: true,
-              )
-            : const ProfilePage(),
-      ),
-    ];
-
-    if (_isMerchant) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _redirectMerchant(prefs);
-      });
-    }
-  }
+     _pages = [
+       homePage,
+       MarketPage(cartService: cartService),
+       const AuthGuard(
+         featureName: 'Messages',
+         showChildBehindDialog: true,
+         child: ChatListPage(),
+       ),
+       AuthGuard(
+         featureName: 'Cart',
+         showChildBehindDialog: true,
+         child: CartPage(cartService: cartService),
+       ),
+       // Profile/Dashboard: merchants see dashboard, drivers see profile, customers see profile
+       AuthGuard(
+         featureName: _isMerchant ? 'Dashboard' : 'Profile',
+         showChildBehindDialog: true,
+         child: _isMerchant
+             ? MarketplaceMerchantDashboard(
+                 email: widget.email,
+                 onBackToHomeTab: () {
+                   setState(() => _selectedIndex = 0);
+                 },
+                 embeddedInMainNav: true,
+               )
+             : const ProfilePage(),
+       ),
+     ];
+  
+     if (_isMerchant) {
+       WidgetsBinding.instance.addPostFrameCallback((_) {
+         _redirectMerchant(prefs);
+       });
+     }
+   }
 
   void _redirectMerchant(SharedPreferences prefs) {
     final service =

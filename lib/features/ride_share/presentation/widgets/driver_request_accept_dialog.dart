@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/GernalServices/driver_messaging_service.dart';
-import 'package:vero360_app/features/ride_share/presentation/widgets/driver_pickup_route_screen.dart';
-import 'package:vero360_app/features/ride_share/presentation/widgets/driver_ride_active_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_ride_execution_screen.dart';
 
 class DriverRequestAcceptDialog extends StatefulWidget {
   final DriverRideRequest request;
@@ -92,37 +91,11 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
 
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (context) => DriverPickupRouteScreen(
-              rideId: widget.request.id,
-              passengerName: widget.request.passengerName,
-              passengerPhone: widget.driverPhone,
-              pickupAddress: widget.request.pickupAddress,
-              pickupLat: widget.request.pickupLat,
-              pickupLng: widget.request.pickupLng,
-              driverLat: 0.0,
-              driverLng: 0.0,
-              estimatedFare: widget.request.estimatedFare,
-              onArrived: () {
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(
-                    builder: (context) => DriverRideActiveScreen(
-                      rideId: widget.request.id,
-                      passengerName: widget.request.passengerName,
-                      pickupAddress: widget.request.pickupAddress,
-                      dropoffAddress: widget.request.dropoffAddress,
-                      pickupLat: widget.request.pickupLat,
-                      pickupLng: widget.request.pickupLng,
-                      dropoffLat: widget.request.dropoffLat,
-                      dropoffLng: widget.request.dropoffLng,
-                      estimatedFare: widget.request.estimatedFare,
-                      onRideCompleted: () {
-                        widget.onAccepted?.call();
-                        Navigator.of(context)
-                            .popUntil((route) => route.isFirst);
-                      },
-                    ),
-                  ),
-                );
+            builder: (context) => DriverRideExecutionScreen(
+              rideId: int.tryParse(widget.request.id) ?? 0,
+              onRideEnded: () {
+                widget.onAccepted?.call();
+                Navigator.of(context).popUntil((route) => route.isFirst);
               },
             ),
           ),

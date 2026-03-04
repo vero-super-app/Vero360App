@@ -625,6 +625,9 @@ class _MyAppState extends State<MyApp> {
 
     if (role == 'merchant') {
       _pushMerchant(email);
+    } else if (role == 'driver' || role == 'customer') {
+      // Both drivers and customers use Bottomnavbar shell
+      _pushCustomer(email);
     }
   }
 
@@ -666,9 +669,13 @@ class _MyAppState extends State<MyApp> {
         await _persistUserToPrefs(prefs, user);
 
         final merchant = _isMerchant(user);
+        final driver = _isDriver(user);
+        
         if (merchant && _currentShell != 'merchant') {
           _pushMerchant((user['email'] ?? '').toString());
-        } else if (!merchant && _currentShell != 'customer') {
+        } else if (!merchant && driver && _currentShell != 'customer') {
+          _pushCustomer((user['email'] ?? '').toString());
+        } else if (!merchant && !driver && _currentShell != 'customer') {
           _pushCustomer((user['email'] ?? '').toString());
         }
       } else if (resp.statusCode == 401 || resp.statusCode == 403) {
@@ -699,6 +706,21 @@ class _MyAppState extends State<MyApp> {
         flags.values.any((v) => v == true);
   }
 
+  bool _isDriver(Map<String, dynamic> u) {
+    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
+    final roles = (u['roles'] is List)
+        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
+        : <String>[];
+    final flags = {
+      'isDriver': u['isDriver'] == true,
+      'driver': u['driver'] == true,
+      'driverId': (u['driverId'] ?? '').toString().isNotEmpty,
+    };
+    return role == 'driver' ||
+        roles.contains('driver') ||
+        flags.values.any((v) => v == true);
+  }
+
   Future<void> _persistUserToPrefs(
       SharedPreferences prefs, Map<String, dynamic> u) async {
     String join(String? a, String? b) {
@@ -720,8 +742,20 @@ class _MyAppState extends State<MyApp> {
     await prefs.setString('phone', phone);
     await prefs.setString('profilepicture', pic);
 
-    final normalizedRole = _isMerchant(u) ? 'merchant' : 'customer';
-    await prefs.setString('user_role', normalizedRole);
+    // Determine role with proper priority: merchant > driver > customer
+    bool isMerchant = _isMerchant(u);
+    bool isDriver = !isMerchant && _isDriver(u);
+    
+    if (isMerchant) {
+      await prefs.setString('user_role', 'merchant');
+      await prefs.setBool('user_is_driver', false);
+    } else if (isDriver) {
+      await prefs.setString('user_role', 'driver');
+      await prefs.setBool('user_is_driver', true);
+    } else {
+      await prefs.setString('user_role', 'customer');
+      await prefs.setBool('user_is_driver', false);
+    }
   }
 
   Future<void> _clearAuth(SharedPreferences prefs) async {
@@ -730,6 +764,7 @@ class _MyAppState extends State<MyApp> {
     await prefs.remove('authToken');
     await prefs.remove('user_role');
     await prefs.remove('role');
+    await prefs.remove('user_is_driver');
   }
 
   void _pushMerchant(String email) {

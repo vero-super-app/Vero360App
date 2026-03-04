@@ -8,13 +8,9 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_wi
 import 'package:vero360_app/features/ride_share/presentation/widgets/place_search_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/bookmarked_places_modal.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/vehicle_type_modal.dart';
-import 'package:vero360_app/features/ride_share/presentation/widgets/ride_waiting_screen.dart';
-import 'package:vero360_app/features/ride_share/presentation/widgets/user_awaiting_driver_screen.dart';
-import 'package:vero360_app/features/ride_share/presentation/widgets/ride_in_progress_screen.dart';
-import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/destination_search_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/passenger_ride_tracking_screen.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
-import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
@@ -142,117 +138,15 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       });
     }
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      isDismissible: false,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.3),
-      builder: (_) => RideWaitingScreen(
-        rideId: rideId,
-        httpService: _rideHttpService,
-        onRideAccepted: (driver) {
-          setState(() => _isLoadingRide = false);
-          _showUserAwaitingDriverScreen(driver, rideId);
-        },
-        onCancelRide: () {
-          setState(() => _isLoadingRide = false);
-          Navigator.pop(context);
-        },
-      ),
-    );
-  }
-
-  void _showUserAwaitingDriverScreen(DriverInfo driver, String rideId) {
-    final selectedDropoffPlace = ref.read(selectedDropoffPlaceProvider);
-    final currentLoc = ref.read(currentLocationProvider);
-
-    currentLoc.whenData((position) {
-      if (mounted && position != null && selectedDropoffPlace != null) {
-        if (Navigator.canPop(context)) Navigator.pop(context);
-
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => UserAwaitingDriverScreen(
-              rideId: rideId,
-              driverName: driver.name,
-              vehicleType: driver.vehicleType ?? 'Standard',
-              vehiclePlate: driver.vehiclePlate ?? 'N/A',
-              driverRating: driver.rating,
-              completedRides: driver.completedRides,
-              pickupAddress: 'Your Location',
-              pickupLat: position.latitude,
-              pickupLng: position.longitude,
-              dropoffLat: selectedDropoffPlace.latitude,
-              dropoffLng: selectedDropoffPlace.longitude,
-              estimatedFare: _rideEstimatedFare,
-              driverLocation:
-                  LatLng(driver.latitude ?? 0.0, driver.longitude ?? 0.0),
-              httpService: _rideHttpService,
-              onStartRide: () {
-                _showRideInProgressScreen(
-                  rideId,
-                  driver.id.toString(),
-                  driver.name,
-                  'Your Location',
-                  selectedDropoffPlace.name,
-                  _rideEstimatedFare,
-                  _rideDurationMin > 0 ? _rideDurationMin : 10,
-                  driver.rating,
-                );
-              },
-            ),
-          ),
-        );
-      }
-    });
-  }
-
-  void _showRideInProgressScreen(
-    String rideId,
-    String driverId,
-    String driverName,
-    String pickupAddress,
-    String dropoffAddress,
-    double estimatedFare,
-    int estimatedTime,
-    double driverRating,
-  ) {
+    // Navigate to unified passenger tracking screen
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => RideInProgressScreen(
-          rideId: rideId,
-          driverId: driverId,
-          passengerName: driverName,
-          pickupAddress: pickupAddress,
-          dropoffAddress: dropoffAddress,
-          estimatedFare: estimatedFare,
-          estimatedTime: estimatedTime,
-          httpService: _rideHttpService,
-          onRideCompleted: () {
-            _showRideCompletionScreen(driverName, driverRating);
-          },
-        ),
-      ),
-    );
-  }
-
-  void _showRideCompletionScreen(String driverName, double driverRating) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => RideCompletionScreen(
-          baseFare: _rideEstimatedFare * 0.20, // 20% base portion
-          distanceFare: _rideEstimatedFare * 0.80, // 80% distance portion
-          totalFare: _rideEstimatedFare,
-          distance: _rideDistanceKm,
-          duration: _rideDurationMin > 0 ? _rideDurationMin : 10,
-          driverName: driverName,
-          driverRating: driverRating,
-          onPaymentCompleted: () {
-            Navigator.pushNamed(context, '/payment');
+        builder: (context) => _PassengerRideTrackingScreenWrapper(
+          rideId: rideIdInt,
+          onRideEnded: () {
+            setState(() => _isLoadingRide = false);
+            Navigator.pop(context);
           },
         ),
       ),
@@ -1108,6 +1002,25 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Wrapper to provide Riverpod context for the passenger tracking screen
+class _PassengerRideTrackingScreenWrapper extends ConsumerWidget {
+  final int rideId;
+  final VoidCallback? onRideEnded;
+
+  const _PassengerRideTrackingScreenWrapper({
+    required this.rideId,
+    this.onRideEnded,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return PassengerRideTrackingScreen(
+      rideId: rideId,
+      onRideEnded: onRideEnded,
     );
   }
 }

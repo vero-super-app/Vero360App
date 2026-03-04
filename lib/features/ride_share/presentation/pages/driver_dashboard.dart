@@ -12,6 +12,7 @@ import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'driver_request_screen.dart';
+import 'create_taxi_screen.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
   const DriverDashboard({super.key});
@@ -874,31 +875,17 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   }
 
   void _showCreateTaxiDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Create Taxi'),
-        content: const Text(
-          'A default taxi will be created with standard specifications. You can edit it later.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => const CreateTaxiScreen(),
           ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              _createDefaultTaxi();
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-            ),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
-    );
+        )
+        .then((result) {
+          if (result == true && mounted) {
+            ref.refresh(myDriverProfileProvider);
+          }
+        });
   }
 
   Future<void> _createDefaultTaxi() async {

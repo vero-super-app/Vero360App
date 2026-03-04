@@ -1,4 +1,4 @@
-                                         // lib/main.dart
+// lib/main.dart
 import 'dart:async';
 import 'dart:convert';
 
@@ -43,7 +43,7 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/messaging_initialization_service.dart';
 import 'package:vero360_app/GernalServices/websocket_messaging_service.dart';
 import 'package:vero360_app/GernalServices/websocket_manager.dart';
-import 'package:vero360_app/GernalServices/notification_service.dart';           // ← NEW
+import 'package:vero360_app/GernalServices/notification_service.dart'; // ← NEW
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -104,7 +104,7 @@ Future<void> main() async {
       designSize: const Size(390, 844),
       minTextAdapt: true,
       splitScreenMode: true,
-builder: (_, child) => child ?? const AppBootstrap(),
+      builder: (_, child) => child ?? const AppBootstrap(),
       child: const AppBootstrap(),
     ),
   );
@@ -237,8 +237,6 @@ class _BootState {
   final bool clearedOldCache;
   const _BootState({required this.firebaseOk, required this.clearedOldCache});
 }
-
-
 
 /// ----------------- ✅ BRANDED HEALING PAGE (motion + log) -----------------
 class SelfHealPage extends StatefulWidget {
@@ -560,13 +558,13 @@ class _RideSharePreloader extends ConsumerWidget {
     // Load driver status from SharedPreferences (local, no network call)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       loadDriverStatusFromPrefs();
-      
+
       // Optional: Sync with backend in background (fire and forget)
       Future.delayed(const Duration(seconds: 2), () {
         ref.read(syncDriverStatusProvider);
       });
     });
-    
+
     return child;
   }
 }
@@ -739,7 +737,10 @@ class _MyAppState extends State<MyApp> {
     _currentShell = 'merchant';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(
-          builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
+          builder: (_) => MarketplaceMerchantDashboard(
+                email: email,
+                onBackToHomeTab: () {},
+              )),
       (route) => route.isFirst,
     );
   }
@@ -867,7 +868,7 @@ class AuthFlow {
   static Future<void> onLoginSuccess(BuildContext ctx, String token) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('jwt_token', token);
-  
+
     // ✅ Use ApiConfig for production-ready endpoint
     try {
       final resp = await http.get(
@@ -877,7 +878,7 @@ class AuthFlow {
           'Accept': 'application/json'
         },
       );
-  
+
       if (resp.statusCode == 200) {
         final decoded = json.decode(resp.body);
         final user = (decoded is Map && decoded['data'] is Map)
@@ -885,17 +886,17 @@ class AuthFlow {
             : (decoded is Map
                 ? Map<String, dynamic>.from(decoded)
                 : <String, dynamic>{});
-  
+
         final email = (user['email'] ?? '').toString();
         await prefs.setString('email', email);
 
         // ✅ Determine user type with proper priority: merchant > driver > customer
         bool isMerchant = _isMerchant(user);
         bool isDriver = false;
-        
+
         debugPrint("🔍 User object: $user");
         debugPrint("🔍 Is merchant (from flags): $isMerchant");
-        
+
         if (!isMerchant) {
           isDriver = _isDriver(user);
           debugPrint("🔍 Is driver (from flags): $isDriver");
@@ -912,7 +913,10 @@ class AuthFlow {
           await prefs.setBool('user_is_driver', false);
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(
-                builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
+                builder: (_) => MarketplaceMerchantDashboard(
+                      email: email,
+                      onBackToHomeTab: () {},
+                    )),
             (route) => route.isFirst,
           );
         } else if (isDriver) {
@@ -972,7 +976,8 @@ class AuthFlow {
     return (t != null && t.trim().isNotEmpty) || fb != null;
   }
 
-  static Future<bool> _checkIfUserIsDriver(SharedPreferences prefs, Map<String, dynamic> user) async {
+  static Future<bool> _checkIfUserIsDriver(
+      SharedPreferences prefs, Map<String, dynamic> user) async {
     try {
       final driverService = DriverService();
       final token = _readToken(prefs);

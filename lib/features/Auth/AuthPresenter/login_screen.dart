@@ -125,6 +125,10 @@ class _LoginScreenState extends State<LoginScreen> {
     final role =
         (user['role'] ?? user['userRole'] ?? 'customer').toString().toLowerCase();
     await prefs.setString('role', role);
+    await prefs.setString('user_role', role);
+    
+    print('🔐 Login: user=$user');
+    print('🔐 Login: role=$role');
 
     final uid = user['uid']?.toString() ??
         user['id']?.toString() ??
@@ -174,36 +178,47 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!mounted) return;
 
-    if (role == 'merchant') {
-      final merchantService = prefs.getString('merchant_service');
+     if (role == 'merchant') {
+       final merchantService = prefs.getString('merchant_service');
 
-      if (merchantService != null && merchantService.isNotEmpty) {
-        final merchantDashboard =
-            _getMerchantDashboard(merchantService, displayId);
+       if (merchantService != null && merchantService.isNotEmpty) {
+         final merchantDashboard =
+             _getMerchantDashboard(merchantService, displayId);
 
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => merchantDashboard),
-          (route) => route.isFirst,
-        );
-      } else {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(
-            builder: (_) => MarketplaceMerchantDashboard(
-              email: displayId,
-              onBackToHomeTab: () {},
-            ),
-          ),
-          (route) => route.isFirst,
-        );
-      }
-    } else {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => Bottomnavbar(email: displayId),
-        ),
-        (route) => route.isFirst,
-      );
-    }
+         Navigator.of(context).pushAndRemoveUntil(
+           MaterialPageRoute(builder: (_) => merchantDashboard),
+           (route) => route.isFirst,
+         );
+       } else {
+         Navigator.of(context).pushAndRemoveUntil(
+           MaterialPageRoute(
+             builder: (_) => MarketplaceMerchantDashboard(
+               email: displayId,
+               onBackToHomeTab: () {},
+             ),
+           ),
+           (route) => route.isFirst,
+         );
+       }
+     } else if (role == 'driver') {
+       // Driver routes to Bottomnavbar with driver flag set
+       await prefs.setBool('user_is_driver', true);
+       Navigator.of(context).pushAndRemoveUntil(
+         MaterialPageRoute(
+           builder: (_) => Bottomnavbar(email: displayId),
+         ),
+         (route) => route.isFirst,
+       );
+     } else {
+       // Customer
+       await prefs.setBool('user_is_driver', false);
+       Navigator.of(context).pushAndRemoveUntil(
+         MaterialPageRoute(
+           builder: (_) => Bottomnavbar(email: displayId),
+         ),
+         (route) => route.isFirst,
+       );
+     }
   }
 
   // -------------------- Firebase profile helpers --------------------

@@ -1,4 +1,4 @@
-                                         // lib/main.dart
+// lib/main.dart
 import 'dart:async';
 import 'dart:convert';
 
@@ -43,7 +43,7 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/messaging_initialization_service.dart';
 import 'package:vero360_app/GernalServices/websocket_messaging_service.dart';
 import 'package:vero360_app/GernalServices/websocket_manager.dart';
-import 'package:vero360_app/GernalServices/notification_service.dart';           // ← NEW
+import 'package:vero360_app/GernalServices/notification_service.dart'; // ← NEW
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -104,7 +104,7 @@ Future<void> main() async {
       designSize: const Size(390, 844),
       minTextAdapt: true,
       splitScreenMode: true,
-builder: (_, child) => child ?? const AppBootstrap(),
+      builder: (_, child) => child ?? const AppBootstrap(),
       child: const AppBootstrap(),
     ),
   );
@@ -237,8 +237,6 @@ class _BootState {
   final bool clearedOldCache;
   const _BootState({required this.firebaseOk, required this.clearedOldCache});
 }
-
-
 
 /// ----------------- ✅ BRANDED HEALING PAGE (motion + log) -----------------
 class SelfHealPage extends StatefulWidget {
@@ -560,13 +558,13 @@ class _RideSharePreloader extends ConsumerWidget {
     // Load driver status from SharedPreferences (local, no network call)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       loadDriverStatusFromPrefs();
-      
+
       // Optional: Sync with backend in background (fire and forget)
       Future.delayed(const Duration(seconds: 2), () {
         ref.read(syncDriverStatusProvider);
       });
     });
-    
+
     return child;
   }
 }
@@ -627,6 +625,9 @@ class _MyAppState extends State<MyApp> {
 
     if (role == 'merchant') {
       _pushMerchant(email);
+    } else if (role == 'driver' || role == 'customer') {
+      // Both drivers and customers use Bottomnavbar shell
+      _pushCustomer(email);
     }
   }
 
@@ -668,9 +669,13 @@ class _MyAppState extends State<MyApp> {
         await _persistUserToPrefs(prefs, user);
 
         final merchant = _isMerchant(user);
+        final driver = _isDriver(user);
+        
         if (merchant && _currentShell != 'merchant') {
           _pushMerchant((user['email'] ?? '').toString());
-        } else if (!merchant && _currentShell != 'customer') {
+        } else if (!merchant && driver && _currentShell != 'customer') {
+          _pushCustomer((user['email'] ?? '').toString());
+        } else if (!merchant && !driver && _currentShell != 'customer') {
           _pushCustomer((user['email'] ?? '').toString());
         }
       } else if (resp.statusCode == 401 || resp.statusCode == 403) {
@@ -701,6 +706,21 @@ class _MyAppState extends State<MyApp> {
         flags.values.any((v) => v == true);
   }
 
+  bool _isDriver(Map<String, dynamic> u) {
+    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
+    final roles = (u['roles'] is List)
+        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
+        : <String>[];
+    final flags = {
+      'isDriver': u['isDriver'] == true,
+      'driver': u['driver'] == true,
+      'driverId': (u['driverId'] ?? '').toString().isNotEmpty,
+    };
+    return role == 'driver' ||
+        roles.contains('driver') ||
+        flags.values.any((v) => v == true);
+  }
+
   Future<void> _persistUserToPrefs(
       SharedPreferences prefs, Map<String, dynamic> u) async {
     String join(String? a, String? b) {
@@ -722,8 +742,20 @@ class _MyAppState extends State<MyApp> {
     await prefs.setString('phone', phone);
     await prefs.setString('profilepicture', pic);
 
-    final normalizedRole = _isMerchant(u) ? 'merchant' : 'customer';
-    await prefs.setString('user_role', normalizedRole);
+    // Determine role with proper priority: merchant > driver > customer
+    bool isMerchant = _isMerchant(u);
+    bool isDriver = !isMerchant && _isDriver(u);
+    
+    if (isMerchant) {
+      await prefs.setString('user_role', 'merchant');
+      await prefs.setBool('user_is_driver', false);
+    } else if (isDriver) {
+      await prefs.setString('user_role', 'driver');
+      await prefs.setBool('user_is_driver', true);
+    } else {
+      await prefs.setString('user_role', 'customer');
+      await prefs.setBool('user_is_driver', false);
+    }
   }
 
   Future<void> _clearAuth(SharedPreferences prefs) async {
@@ -732,6 +764,7 @@ class _MyAppState extends State<MyApp> {
     await prefs.remove('authToken');
     await prefs.remove('user_role');
     await prefs.remove('role');
+    await prefs.remove('user_is_driver');
   }
 
   void _pushMerchant(String email) {
@@ -739,7 +772,10 @@ class _MyAppState extends State<MyApp> {
     _currentShell = 'merchant';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(
-          builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
+          builder: (_) => MarketplaceMerchantDashboard(
+                email: email,
+                onBackToHomeTab: () {},
+              )),
       (route) => route.isFirst,
     );
   }
@@ -840,6 +876,21 @@ class AuthFlow {
         flags.values.any((v) => v == true);
   }
 
+  static bool _isDriver(Map<String, dynamic> u) {
+    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
+    final roles = (u['roles'] is List)
+        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
+        : <String>[];
+    final flags = {
+      'isDriver': u['isDriver'] == true,
+      'driver': u['driver'] == true,
+      'driverId': (u['driverId'] ?? '').toString().isNotEmpty,
+    };
+    return role == 'driver' ||
+        roles.contains('driver') ||
+        flags.values.any((v) => v == true);
+  }
+
   static String _fixLocalhostIfNeeded(String base) {
     if (kIsWeb) return base;
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -871,21 +922,48 @@ class AuthFlow {
                 ? Map<String, dynamic>.from(decoded)
                 : <String, dynamic>{});
 
-        final role = _isMerchant(user) ? 'merchant' : 'customer';
-        await prefs.setString('user_role', role);
         final email = (user['email'] ?? '').toString();
         await prefs.setString('email', email);
 
-        // ✅ Check and cache driver status (background, fire and forget)
-        _checkAndCacheDriverStatus(prefs);
+        // ✅ Determine user type with proper priority: merchant > driver > customer
+        bool isMerchant = _isMerchant(user);
+        bool isDriver = false;
 
-        if (role == 'merchant') {
+        debugPrint("🔍 User object: $user");
+        debugPrint("🔍 Is merchant (from flags): $isMerchant");
+
+        if (!isMerchant) {
+          isDriver = _isDriver(user);
+          debugPrint("🔍 Is driver (from flags): $isDriver");
+          // Also try async driver check if user object doesn't indicate driver
+          if (!isDriver) {
+            isDriver = await _checkIfUserIsDriver(prefs, user);
+            debugPrint("🔍 Is driver (from async check): $isDriver");
+          }
+        }
+
+        // Store in preferences and route
+        if (isMerchant) {
+          await prefs.setString('user_role', 'merchant');
+          await prefs.setBool('user_is_driver', false);
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(
-                builder: (_) => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },)),
+                builder: (_) => MarketplaceMerchantDashboard(
+                      email: email,
+                      onBackToHomeTab: () {},
+                    )),
+            (route) => route.isFirst,
+          );
+        } else if (isDriver) {
+          await prefs.setString('user_role', 'driver');
+          await prefs.setBool('user_is_driver', true);
+          navKey.currentState?.pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
             (route) => route.isFirst,
           );
         } else {
+          await prefs.setString('user_role', 'customer');
+          await prefs.setBool('user_is_driver', false);
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
             (route) => route.isFirst,
@@ -933,26 +1011,26 @@ class AuthFlow {
     return (t != null && t.trim().isNotEmpty) || fb != null;
   }
 
-  static Future<void> _checkAndCacheDriverStatus(SharedPreferences prefs) async {
+  static Future<bool> _checkIfUserIsDriver(
+      SharedPreferences prefs, Map<String, dynamic> user) async {
     try {
       final driverService = DriverService();
       final token = _readToken(prefs);
-      if (token == null) return;
+      if (token == null) return false;
 
-      // Extract userId from token if available
-      final userId = prefs.getInt('user_id');
-      if (userId == null) return;
+      // Try to get userId from user object or prefs
+      int? userId = user['id'] as int? ?? user['userId'] as int?;
+      userId ??= prefs.getInt('user_id');
+      if (userId == null) return false;
 
-      // Check if user is a driver (fire and forget)
       try {
         await driverService.getDriverByUserId(userId);
-        await prefs.setBool('user_is_driver', true);
+        return true;
       } catch (_) {
-        await prefs.setBool('user_is_driver', false);
+        return false;
       }
     } catch (_) {
-      // Silent fail - if we can't determine, assume not a driver
-      await prefs.setBool('user_is_driver', false);
+      return false;
     }
   }
 }

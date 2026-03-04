@@ -14,6 +14,7 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -442,6 +443,21 @@ class _CheckoutPageState extends State<CheckoutPage> {
         if (status == 'success') {
           final checkoutUrl = responseJson['data']['checkout_url'] as String;
           if (!mounted) return;
+          // Build a "virtual cart item" for this single marketplace product
+          final singleCartItem = CartModel(
+            userId: 'single-checkout',
+            item: widget.item.id,
+            quantity: _qty,
+            image: widget.item.image,
+            name: widget.item.name,
+            price: widget.item.price,
+            description: widget.item.description,
+            comment: null,
+            merchantId: widget.item.merchantId ?? 'unknown',
+            merchantName: widget.item.merchantName ?? 'Unknown Merchant',
+            serviceType: widget.item.serviceType ?? 'marketplace',
+          );
+
           await Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => InAppPaymentPage(
@@ -449,6 +465,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 txRef: txRef,
                 totalAmount: _total,
                 rootContext: context,
+                clearCartOnSuccess: false,
+                cartItemsForMerchantCredit: [singleCartItem],
+                shippingAddress:
+                    _deliveryType == DeliveryType.pickup ? null : _defaultAddr,
+                deliveryType: _deliveryType,
               ),
             ),
           );

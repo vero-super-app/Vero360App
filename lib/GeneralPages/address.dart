@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
-import 'package:vero360_app/GernalServices/google_places_service.dart';
+import 'package:vero360_app/GernalServices/location_service.dart';
+import 'package:vero360_app/GernalServices/place_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class AddressPage extends StatefulWidget {
@@ -51,6 +52,7 @@ class _AddressPageState extends State<AddressPage> {
       ),
     );
     if (created != null) {
+      // Optimistically update local list so the new address shows immediately
       setState(() {
         _cache = [created, ..._cache];
         if (created.isDefault) {
@@ -66,7 +68,7 @@ class _AddressPageState extends State<AddressPage> {
         isSuccess: true,
         errorMessage: '',
       );
-      await _reload();
+      // No immediate reload here to avoid dropping the new address if the backend is slow.
     }
   }
 
@@ -95,6 +97,7 @@ class _AddressPageState extends State<AddressPage> {
       ),
     );
     if (updated != null) {
+      // Optimistic local update
       setState(() {
         _cache = _cache.map((a) => a.id == updated.id ? updated : a).toList();
         _future = Future.value(_cache);
@@ -105,7 +108,6 @@ class _AddressPageState extends State<AddressPage> {
         isSuccess: true,
         errorMessage: '',
       );
-      await _reload();
     }
   }
 
@@ -140,7 +142,6 @@ class _AddressPageState extends State<AddressPage> {
         isSuccess: true,
         errorMessage: '',
       );
-      await _reload();
     }
   }
 
@@ -177,11 +178,6 @@ class _AddressPageState extends State<AddressPage> {
       isSuccess: true,
       errorMessage: '',
     );
-
-    // 4. Best-effort reload (don’t break UI if this fails)
-    try {
-      await _reload();
-    } catch (_) {}
   }
 
   @override
@@ -631,11 +627,10 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
   // Google flow
   bool _useGoogle = false;
   final _googleSearchCtrl = TextEditingController();
-  List<Map<String, dynamic>> _predictions = [];
   Map<String, dynamic>? _selectedPlace;
-  String? _sessionToken; // optional grouping token
 
   bool _saving = false;
+  bool _autoDetecting = false;
 
   @override
   void initState() {
@@ -648,7 +643,6 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
         (widget.initial?.placeId?.isNotEmpty ?? false) ||
         (widget.initial?.formattedAddress?.isNotEmpty ?? false)) {
       _useGoogle = true;
-      _sessionToken = _newSessionToken();
       _googleSearchCtrl.text =
           widget.initial?.formattedAddress ?? widget.initial?.city ?? '';
     }
@@ -660,193 +654,6 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
     _descCtrl.dispose();
     _googleSearchCtrl.dispose();
     super.dispose();
-  }
-
-  // ----------------- Google proxy -----------------
-  String _newSessionToken() {
-    return DateTime.now().microsecondsSinceEpoch.toString();
-  }
-
-  String _firstAddressComponent(
-    Map<String, dynamic> place,
-    List<String> wantedTypes,
-  ) {
-    final comps = place['address_components'];
-    if (comps is! List) return '';
-    for (final item in comps) {
-      if (item is! Map) continue;
-      final types = item['types'];
-      if (types is! List) continue;
-      final hasWanted = wantedTypes.any((t) => types.contains(t));
-      if (!hasWanted) continue;
-      final longName = item['long_name']?.toString() ?? '';
-      if (longName.isNotEmpty) return longName;
-    }
-    return '';
-  }
-
-  String _deriveCityLabel(Map<String, dynamic> place) {
-    final locality = _firstAddressComponent(place, const ['locality']);
-    if (locality.isNotEmpty) return locality;
-    final admin2 = _firstAddressComponent(
-      place,
-      const ['administrative_area_level_2'],
-    );
-    if (admin2.isNotEmpty) return admin2;
-    final admin1 = _firstAddressComponent(
-      place,
-      const ['administrative_area_level_1'],
-    );
-    if (admin1.isNotEmpty) return admin1;
-    final formatted = (place['formatted_address'] ?? '').toString();
-    if (formatted.isEmpty) return '';
-    return formatted.split(',').first.trim();
-  }
-
-  String _deriveDescription(Map<String, dynamic> place) {
-    final streetNumber = _firstAddressComponent(place, const ['street_number']);
-    final route = _firstAddressComponent(place, const ['route']);
-    final neighborhood =
-        _firstAddressComponent(place, const ['neighborhood']);
-    final sublocality = _firstAddressComponent(
-      place,
-      const ['sublocality', 'sublocality_level_1'],
-    );
-    final postalCode = _firstAddressComponent(place, const ['postal_code']);
-
-    final parts = <String>[
-      [streetNumber, route].where((e) => e.isNotEmpty).join(' '),
-      neighborhood,
-      sublocality,
-      postalCode.isNotEmpty ? 'Postal code: $postalCode' : '',
-    ].where((e) => e.isNotEmpty).toList();
-
-    return parts.join(', ');
-  }
-
-  bool _isRequestDeniedError(Object error) {
-    final msg = error.toString().toUpperCase();
-    return msg.contains('REQUEST_DENIED') ||
-        msg.contains('HTTP 403') ||
-        msg.contains('BILLING');
-  }
-
-  Future<List<Map<String, dynamic>>> _autocompleteViaClient(String q) async {
-    final svc = GooglePlacesService();
-    final predictions = await svc.autocompleteSearch(q);
-    return predictions
-        .map(
-          (p) => <String, dynamic>{
-            'description': p.fullText,
-            'place_id': p.placeId,
-            'structured_formatting': <String, dynamic>{
-              'main_text': p.mainText,
-              'secondary_text': p.secondaryText,
-            },
-          },
-        )
-        .toList();
-  }
-
-  Future<Map<String, dynamic>> _placeDetailsViaClient(String placeId) async {
-    final svc = GooglePlacesService();
-    return svc.getPlaceDetails(placeId);
-  }
-
-  Future<void> _onQueryChanged(String q) async {
-    _sessionToken ??= _newSessionToken();
-    if (q.trim().length < 2) {
-      setState(() => _predictions = []);
-      return;
-    }
-    try {
-      final svc = AddressService();
-      final preds =
-          await svc.placesAutocomplete(q, sessionToken: _sessionToken);
-      if (!mounted) return;
-      setState(() => _predictions = preds);
-    } catch (e) {
-      // If backend Google key is denied, fallback to the same client-side Google
-      // service used by ride-share so address search can still work.
-      if (_isRequestDeniedError(e)) {
-        try {
-          final fallbackPredictions = await _autocompleteViaClient(q);
-          if (!mounted) return;
-          setState(() => _predictions = fallbackPredictions);
-          return;
-        } catch (fallbackError) {
-          if (!mounted) return;
-          setState(() => _predictions = []);
-          ToastHelper.showCustomToast(
-            context,
-            'Google address search failed',
-            isSuccess: false,
-            errorMessage:
-                'Primary: ${e.toString()} | Fallback: ${fallbackError.toString()}',
-          );
-          return;
-        }
-      }
-
-      if (!mounted) return;
-      setState(() => _predictions = []);
-      ToastHelper.showCustomToast(
-        context,
-        'Google address search failed',
-        isSuccess: false,
-        errorMessage: e.toString(),
-      );
-    }
-  }
-
-  Future<void> _selectPrediction(Map<String, dynamic> p) async {
-    try {
-      final placeId = (p['place_id'] ?? p['placeId'] ?? '').toString();
-      if (placeId.isEmpty) return;
-      Map<String, dynamic>? det;
-      try {
-        final svc = AddressService();
-        det = await svc.placeDetails(placeId, sessionToken: _sessionToken);
-      } catch (e) {
-        if (_isRequestDeniedError(e)) {
-          det = await _placeDetailsViaClient(placeId);
-        } else {
-          rethrow;
-        }
-      }
-
-      if (!mounted) return;
-      final selected = det?['result'] ?? det ?? <String, dynamic>{};
-      final selectedMap = selected is Map<String, dynamic>
-          ? selected
-          : <String, dynamic>{};
-      final formatted = (selectedMap['formatted_address'] ?? '').toString();
-      final city = _deriveCityLabel(selectedMap);
-      final description = _deriveDescription(selectedMap);
-
-      setState(() {
-        _selectedPlace = selectedMap;
-        _predictions = [];
-        if (formatted.isNotEmpty) {
-          _googleSearchCtrl.text = formatted;
-        }
-        if (city.isNotEmpty) {
-          _cityCtrl.text = city;
-        }
-        if (description.isNotEmpty) {
-          _descCtrl.text = description;
-        }
-        _sessionToken = _newSessionToken();
-      });
-    } catch (e) {
-      if (!mounted) return;
-      ToastHelper.showCustomToast(
-        context,
-        'Failed to load place details',
-        isSuccess: false,
-        errorMessage: e.toString(),
-      );
-    }
   }
 
   // ----------------- Submissions -----------------
@@ -871,6 +678,60 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
       );
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _detectCurrentLocation() async {
+    setState(() {
+      _autoDetecting = true;
+    });
+    try {
+      final locService = LocationService();
+      final pos = await locService.getCurrentLocation();
+      if (pos == null) {
+        if (!mounted) return;
+        ToastHelper.showCustomToast(
+          context,
+          'Could not get your location. Please enable location services and try again.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+
+      final placeService = PlaceService();
+      final addr = await placeService.getAddressFromCoordinates(
+        pos.latitude,
+        pos.longitude,
+      );
+
+      if (!mounted) return;
+
+      final fakePlace = <String, dynamic>{
+        'formatted_address': addr ?? '',
+        'geometry': {
+          'location': {'lat': pos.latitude, 'lng': pos.longitude},
+        },
+      };
+
+      setState(() {
+        _selectedPlace = fakePlace;
+        _googleSearchCtrl.text = (addr != null && addr.isNotEmpty)
+            ? addr
+            : '${pos.latitude}, ${pos.longitude}';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not detect your location',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _autoDetecting = false);
+      }
     }
   }
 
@@ -981,7 +842,6 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
                     onSelected: (v) {
                       setState(() {
                         _useGoogle = v;
-                        if (v) _sessionToken = _newSessionToken();
                       });
                     },
                   ),
@@ -1081,6 +941,7 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
   }
 
   Widget _googleForm(Color brand) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1102,82 +963,34 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
               setState(() => _type = v ?? AddressType.home),
         ),
         const SizedBox(height: 12),
-
-        TextField(
-          controller: _cityCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Label (optional)',
-            hintText: 'e.g. Home, Office, Area 12',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _descCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Delivery notes (optional)',
-            hintText: 'Gate color, flat number, etc.',
-            border: OutlineInputBorder(),
-          ),
-          maxLines: 3,
-        ),
-        const SizedBox(height: 12),
-
-        TextField(
-          controller: _googleSearchCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Search address (Google)',
-            hintText: 'Start typing…',
-            border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.search),
-          ),
-          onChanged: _onQueryChanged,
+        Text(
+          'Vero360 App will detect your current GPS location and save it as a Google address,',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: const Color(0xFF6B778C)),
         ),
         const SizedBox(height: 8),
-
-        if (_predictions.isNotEmpty)
-          Container(
-            constraints: const BoxConstraints(maxHeight: 220),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.black12),
-            ),
-            child: ListView.separated(
-              itemCount: _predictions.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (_, i) {
-                final p = _predictions[i];
-                final main = p['structured_formatting']?['main_text'] ??
-                    p['description'] ??
-                    '';
-                final sec =
-                    p['structured_formatting']?['secondary_text'] ?? '';
-                return ListTile(
-                  leading: const Icon(Icons.place_outlined),
-                  title: Text(
-                    main.toString(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: sec.toString().isNotEmpty
-                      ? Text(
-                          sec.toString(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        )
-                      : null,
-                  onTap: () => _selectPrediction(p),
-                );
-              },
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _autoDetecting ? null : _detectCurrentLocation,
+            icon: _autoDetecting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.my_location_outlined),
+            label: Text(
+              _autoDetecting
+                  ? 'Detecting location…'
+                  : 'Use my current location',
             ),
           ),
-
+        ),
         if (_selectedPlace != null) ...[
           const SizedBox(height: 8),
           _placePreviewCard(_selectedPlace!, brand),
         ],
-
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,

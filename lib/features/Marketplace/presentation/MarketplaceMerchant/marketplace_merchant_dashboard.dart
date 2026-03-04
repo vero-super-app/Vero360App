@@ -1874,29 +1874,88 @@ class _MarketplaceMerchantDashboardState
       title: const Text('Merchant Dashboard'),
       backgroundColor: _brandOrange,
       actions: [
-        IconButton(
-          icon: const Icon(Icons.auto_stories_rounded),
-          tooltip: 'Post story (24h)',
-          onPressed: () {
-            final uid = _auth.currentUser?.uid;
-            if (uid == null) {
-              _toastErr('Please sign in to post a story');
-              return;
-            }
-            Navigator.push(
-              context,
-              MaterialPageRoute<bool>(
-                builder: (_) => PostStoryPage(
-                  merchantId: uid,
-                  merchantName: _businessName.isNotEmpty
-                      ? _businessName
-                      : (_auth.currentUser?.displayName ?? 'Merchant'),
-                  merchantImageUrl: _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
-                  serviceType: 'marketplace',
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: GestureDetector(
+            onTap: () {
+              final uid = _auth.currentUser?.uid;
+              if (uid == null) {
+                _toastErr('Please sign in to post a story');
+                return;
+              }
+              Navigator.push(
+                context,
+                MaterialPageRoute<bool>(
+                  builder: (_) => PostStoryPage(
+                    merchantId: uid,
+                    merchantName: _businessName.isNotEmpty
+                        ? _businessName
+                        : (_auth.currentUser?.displayName ?? 'Merchant'),
+                    merchantImageUrl:
+                        _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
+                    serviceType: 'marketplace',
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                      colors: [
+                        Color(0xFFF58529),
+                        Color(0xFFDD2A7B),
+                        Color(0xFF8134AF),
+                        Color(0xFF515BD4),
+                      ],
+                    ),
+                  ),
+                  child: CircleAvatar(
+                    radius: 16,
+                    backgroundColor: Colors.grey.shade200,
+                    backgroundImage: _merchantProfileUrl.isNotEmpty
+                        ? NetworkImage(_merchantProfileUrl)
+                        : null,
+                    child: _merchantProfileUrl.isNotEmpty
+                        ? null
+                        : const Icon(
+                            Icons.person,
+                            size: 18,
+                            color: Colors.grey,
+                          ),
+                  ),
+                ),
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: Container(
+                    width: 18,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Container(
+                      margin: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF25D366),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.add,
+                        size: 14,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
         IconButton(
           icon: const Icon(Icons.settings),

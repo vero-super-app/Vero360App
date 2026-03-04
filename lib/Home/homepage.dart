@@ -490,9 +490,12 @@ class _BrandBar extends StatelessWidget {
           listenable: NotificationStore.instance,
           builder: (_, __) {
             final count = NotificationStore.instance.unreadCount;
+            final labelText = count > 99 ? '99+' : '$count';
             return Badge(
-              isLabelVisible: count > 0,
-              label: Text(count > 99 ? '99+' : '$count'),
+              isLabelVisible: true,
+              backgroundColor: Colors.red,
+              textColor: Colors.white,
+              label: Text(labelText),
               child: IconButton(
                 visualDensity: VisualDensity.compact,
                 onPressed: () {
@@ -502,8 +505,10 @@ class _BrandBar extends StatelessWidget {
                     ),
                   );
                 },
-                icon: const Icon(Icons.notifications_active_outlined,
-                    color: AppColors.title),
+                icon: const Icon(
+                  Icons.notifications_active_outlined,
+                  color: AppColors.title,
+                ),
               ),
             );
           },

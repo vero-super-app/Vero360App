@@ -1,64 +1,100 @@
 // Full-screen story viewer — one merchant's stories, 24h, merchant name shown.
 
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
 import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 
 class StoryViewerScreen extends StatefulWidget {
-  final MerchantStoryGroup group;
+  final List<MerchantStoryGroup> groups;
+  final int initialGroupIndex;
 
-  const StoryViewerScreen({super.key, required this.group});
+  const StoryViewerScreen({
+    super.key,
+    required this.groups,
+    required this.initialGroupIndex,
+  });
 
   @override
   State<StoryViewerScreen> createState() => _StoryViewerScreenState();
 }
 
-class _StoryViewerScreenState extends State<StoryViewerScreen> {
+class _StoryViewerScreenState extends State<StoryViewerScreen>
+    with SingleTickerProviderStateMixin {
   late PageController _pageController;
   int _currentIndex = 0;
-  Timer? _timer;
+  late int _groupIndex;
   static const Duration _autoAdvance = Duration(seconds: 4);
+  late AnimationController _progressController;
+
+  MerchantStoryGroup get _currentGroup => widget.groups[_groupIndex];
+  List<MerchantStoryItem> get _items => _currentGroup.items;
 
   @override
   void initState() {
     super.initState();
+    _groupIndex = widget.initialGroupIndex;
     _pageController = PageController();
-    _startTimer();
+    _progressController = AnimationController(
+      vsync: this,
+      duration: _autoAdvance,
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          _onAutoAdvance();
+        }
+      });
+    _restartProgress();
   }
 
-  void _startTimer() {
-    _timer?.cancel();
-    _timer = Timer(_autoAdvance, () {
-      if (!mounted) return;
-      if (_currentIndex < widget.group.items.length - 1) {
-        _pageController.nextPage(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-        );
-      } else {
-        Navigator.of(context).pop();
-      }
-    });
+  void _restartProgress() {
+    _progressController
+      ..stop()
+      ..reset()
+      ..forward();
+  }
+
+  void _onAutoAdvance() {
+    if (!mounted) return;
+    if (_currentIndex < _items.length - 1) {
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    } else {
+      _goNextStoryGroupOrClose();
+    }
+  }
+
+  void _goNextStoryGroupOrClose() {
+    if (_groupIndex < widget.groups.length - 1) {
+      setState(() {
+        _groupIndex++;
+        _currentIndex = 0;
+      });
+      _pageController.jumpToPage(0);
+      _restartProgress();
+    } else {
+      Navigator.of(context).pop();
+    }
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _progressController.dispose();
     _pageController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final items = widget.group.items;
+    final items = _items;
     if (items.isEmpty) {
       return const Scaffold(
         backgroundColor: Colors.black,
@@ -68,6 +104,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
+        onLongPressStart: (_) => _progressController.stop(),
+        onLongPressEnd: (_) => _progressController.forward(),
         onTapDown: (details) {
           final w = MediaQuery.of(context).size.width;
           if (details.globalPosition.dx < w * 0.35) {
@@ -84,7 +122,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
                 curve: Curves.easeInOut,
               );
             } else {
-              Navigator.of(context).pop();
+              _goNextStoryGroupOrClose();
             }
           }
         },
@@ -96,7 +134,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
               itemCount: items.length,
               onPageChanged: (i) {
                 setState(() => _currentIndex = i);
-                _startTimer();
+                _restartProgress();
               },
               itemBuilder: (context, i) {
                 final item = items[i];
@@ -153,20 +191,33 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
             onPressed: () => Navigator.of(context).pop(),
           ),
           const SizedBox(width: 8),
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: Colors.white24,
-            child: widget.group.merchantImageUrl != null
-                ? ClipOval(
-                    child: Image.network(
-                      widget.group.merchantImageUrl!,
-                      width: 40,
-                      height: 40,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.store, color: Colors.white),
-                    ),
-                  )
-                : const Icon(Icons.store, color: Colors.white),
+          GestureDetector(
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => MerchantProductsPage(
+                    merchantId: _currentGroup.merchantId,
+                    merchantName: _currentGroup.merchantName,
+                  ),
+                ),
+              );
+            },
+            child: CircleAvatar(
+              radius: 20,
+              backgroundColor: Colors.white24,
+              child: _currentGroup.merchantImageUrl != null
+                  ? ClipOval(
+                      child: Image.network(
+                        _currentGroup.merchantImageUrl!,
+                        width: 40,
+                        height: 40,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            const Icon(Icons.store, color: Colors.white),
+                      ),
+                    )
+                  : const Icon(Icons.store, color: Colors.white),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -176,7 +227,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  widget.group.merchantName,
+                  _currentGroup.merchantName,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -186,17 +237,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Text(
-                    '24h',
-                    style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
-                  ),
-                ),
+                _timeAgoLabel(),
               ],
             ),
           ),
@@ -208,27 +249,86 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
   Widget _progressBars(int count) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: List.generate(count, (i) {
-          final past = i < _currentIndex;
-          return Expanded(
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 2),
-              height: 3,
-              decoration: BoxDecoration(
-                color: past ? Colors.white : Colors.white24,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
+      child: AnimatedBuilder(
+        animation: _progressController,
+        builder: (context, _) {
+          return Row(
+            children: List.generate(count, (i) {
+              final isPast = i < _currentIndex;
+              final isCurrent = i == _currentIndex;
+              final value = isPast
+                  ? 1.0
+                  : isCurrent
+                      ? _progressController.value
+                      : 0.0;
+              return Expanded(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                  height: 3,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: FractionallySizedBox(
+                      widthFactor: value.clamp(0.0, 1.0),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
           );
-        }),
+        },
+      ),
+    );
+  }
+
+  Widget _timeAgoLabel() {
+    if (_items.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final item =
+        _items[_currentIndex.clamp(0, _items.length - 1)];
+    final now = DateTime.now();
+    final diff = now.difference(item.createdAt);
+    String text;
+    if (diff.inMinutes < 60) {
+      final m = diff.inMinutes.clamp(1, 59);
+      text = '${m}m ago';
+    } else if (diff.inHours < 24) {
+      final h = diff.inHours;
+      text = '${h}h ago';
+    } else {
+      final d = diff.inDays;
+      text = '${d}d ago';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white24,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
 
   void _showDetails() {
-    if (widget.group.items.isEmpty) return;
-    final item = widget.group.items[_currentIndex.clamp(0, widget.group.items.length - 1)];
+    if (_items.isEmpty) return;
+    final item = _items[_currentIndex.clamp(0, _items.length - 1)];
 
     final type = (item.serviceType ?? 'marketplace').toLowerCase();
     String primaryLabel;
@@ -309,7 +409,11 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
                 ),
               ),
               Text(
+<<<<<<< HEAD
                 item.title?.isNotEmpty == true ? item.title! : widget.group.merchantName,
+=======
+                _currentGroup.merchantName,
+>>>>>>> 5ced7f32936cf862b98df534e87e8ebbf0ee34f0
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,

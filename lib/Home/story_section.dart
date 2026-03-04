@@ -51,7 +51,10 @@ class StorySection extends StatelessWidget {
                 group: g,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
-                    builder: (context) => StoryViewerScreen(group: g),
+                    builder: (context) => StoryViewerScreen(
+                      groups: groups,
+                      initialGroupIndex: index,
+                    ),
                   ),
                 ),
               );

@@ -18,7 +18,7 @@ const int _maxFallbackImageBytes = 350000;
 
 class StoryService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;                                        
 
   static const Duration storyLifetime = Duration(hours: 24);
 
@@ -82,6 +82,28 @@ class StoryService {
       createdAt: createdAt,
       expiresAt: expiresAt,
     );
+  }
+
+  /// Fetch active (non-expired) stories for a specific merchant, newest first.
+  Future<List<MerchantStoryItem>> getMerchantStories(String merchantId) async {
+    final snap = await _firestore
+        .collection(_collection)
+        .where('merchantId', isEqualTo: merchantId)
+        .get();
+
+    final now = DateTime.now();
+    final items = snap.docs
+        .map(_docToItem)
+        .where((e) => e.expiresAt.isAfter(now))
+        .toList();
+
+    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return items;
+  }
+
+  /// Delete a single story document by its id.
+  Future<void> deleteStory(String storyId) async {
+    await _firestore.collection(_collection).doc(storyId).delete();
   }
 
   /// Post a new story (image). Tries Firebase Storage (putFile); on failure saves image in Firestore as base64.

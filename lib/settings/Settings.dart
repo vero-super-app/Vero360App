@@ -26,8 +26,7 @@ import 'package:vero360_app/GeneralPages/changepassword.dart'; // ChangePassword
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 
-const Color kBrandOrange = Color(0xFFFF8A00);
-const Color kBrandNavy = Color(0xFF16284C);
+const Color kBrandOrange = Color(0xFFFF8A00); // Vero360 main color
 
 /// Filters out Firebase identifiers (e.g. +firebase_xxx) so we show real phone numbers only.
 String _sanitizePhone(String s) {
@@ -1071,7 +1070,7 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Scaffold(
         backgroundColor: const Color(0xFFF4F5F7),
         appBar: AppBar(
-          backgroundColor: kBrandNavy,
+          backgroundColor: kBrandOrange,
           foregroundColor: Colors.white,
           title: Text(_t('Settings', 'Zokonda')),
           leading: IconButton(
@@ -1236,7 +1235,7 @@ class _SettingsPageState extends State<SettingsPage> {
         child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [kBrandNavy, kBrandOrange.withValues(alpha: 0.95)],
+              colors: [kBrandOrange, kBrandOrange.withValues(alpha: 0.95)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -1438,7 +1437,7 @@ class AboutUsPage extends StatelessWidget {
     return Scaffold(
       backgroundColor: const Color(0xFFF4F5F7),
       appBar: AppBar(
-        backgroundColor: kBrandNavy,
+        backgroundColor: kBrandOrange,
         foregroundColor: Colors.white,
         title: const Text('About Us'),
       ),
@@ -1567,9 +1566,6 @@ class AboutUsPage extends StatelessWidget {
 
 
 
-// make sure this exists
-// const kBrandNavy = Color(0xFF0B1C2D);
-
 class PolicyPage extends StatelessWidget {
   const PolicyPage({super.key});
 
@@ -1578,7 +1574,7 @@ class PolicyPage extends StatelessWidget {
     return Scaffold(
       backgroundColor: const Color(0xFFF4F5F7),
       appBar: AppBar(
-        backgroundColor: kBrandNavy,
+        backgroundColor: kBrandOrange,
         foregroundColor: Colors.white,
         title: const Text('Privacy & Terms'),
       ),

@@ -12,6 +12,7 @@ import 'package:vero360_app/Home/merchant_story_model.dart';
 
 const String _collection = 'merchant_stories';
 const String _storagePathPrefix = 'merchant_stories';
+const String _viewersSubcollection = 'viewers';
 
 /// Max image size for Firestore fallback (doc limit 1MB; base64 ~1.33x).
 const int _maxFallbackImageBytes = 350000;
@@ -63,7 +64,7 @@ class StoryService {
       });
   }
 
-  MerchantStoryItem _docToItem(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+  MerchantStoryItem _docToItem(QueryDocumentSnapshot<Map<String, dynamic>> doc, {int viewerCount = 0}) {
     final d = doc.data();
     final createdAt = (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
     final expiresAt = (d['expiresAt'] as Timestamp?)?.toDate() ?? createdAt.add(storyLifetime);
@@ -75,8 +76,12 @@ class StoryService {
       mediaUrl: d['mediaUrl'] as String? ?? '',
       imageBase64: d['imageBase64'] as String?,
       mediaType: d['mediaType'] as String? ?? 'image',
+      caption: d['caption'] as String?,
+      musicTrackId: d['musicTrackId'] as String?,
+      musicTrackName: d['musicTrackName'] as String?,
       createdAt: createdAt,
       expiresAt: expiresAt,
+      viewerCount: viewerCount,
     );
   }
 
@@ -102,12 +107,16 @@ class StoryService {
     await _firestore.collection(_collection).doc(storyId).delete();
   }
 
-  /// Post a new story (image). Tries Firebase Storage (putFile); on failure saves image in Firestore as base64.
+  /// Post a new story (image or video). Tries Firebase Storage; on failure (image only) saves as base64.
   Future<void> postStory({
     required String merchantId,
     required String merchantName,
     required Uint8List imageBytes,
     String? merchantImageUrl,
+    String? caption,
+    String? musicTrackId,
+    String? musicTrackName,
+    String mediaType = 'image',
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.uid != merchantId) {
@@ -119,17 +128,19 @@ class StoryService {
     String? mediaUrl;
     String? imageBase64;
 
-    // 1) Try Firebase Storage. On failure (e.g. -13040 cancelled), use Firestore fallback.
-    try {
-      mediaUrl = await _uploadToStorage(merchantId, imageBytes);
-    } catch (e) {
-      // 2) Fallback: store image in Firestore so the story still posts (doc size limit ~1MB).
-      if (imageBytes.length <= _maxFallbackImageBytes) {
-        imageBase64 = base64Encode(imageBytes);
-      } else {
-        throw Exception(
-          'Upload failed. Try a smaller photo (e.g. from camera roll).\n$e',
-        );
+    if (mediaType == 'video') {
+      mediaUrl = await _uploadVideoToStorage(merchantId, imageBytes);
+    } else {
+      try {
+        mediaUrl = await _uploadToStorage(merchantId, imageBytes);
+      } catch (e) {
+        if (imageBytes.length <= _maxFallbackImageBytes) {
+          imageBase64 = base64Encode(imageBytes);
+        } else {
+          throw Exception(
+            'Upload failed. Try a smaller photo (e.g. from camera roll).\n$e',
+          );
+        }
       }
     }
 
@@ -139,10 +150,34 @@ class StoryService {
       'merchantImageUrl': merchantImageUrl,
       'mediaUrl': mediaUrl ?? '',
       if (imageBase64 != null) 'imageBase64': imageBase64,
-      'mediaType': 'image',
+      'mediaType': mediaType,
+      if (caption != null && caption.trim().isNotEmpty) 'caption': caption.trim(),
+      if (musicTrackId != null && musicTrackId.trim().isNotEmpty) 'musicTrackId': musicTrackId.trim(),
+      if (musicTrackName != null && musicTrackName.trim().isNotEmpty) 'musicTrackName': musicTrackName.trim(),
       'createdAt': Timestamp.fromDate(now),
       'expiresAt': Timestamp.fromDate(expiresAt),
     });
+  }
+
+  /// Post multiple stories in one batch (e.g. multiple slides with captions).
+  Future<void> postStoryBatch({
+    required String merchantId,
+    required String merchantName,
+    String? merchantImageUrl,
+    required List<StorySlideInput> slides,
+  }) async {
+    for (final slide in slides) {
+      await postStory(
+        merchantId: merchantId,
+        merchantName: merchantName,
+        imageBytes: slide.bytes,
+        merchantImageUrl: merchantImageUrl,
+        caption: slide.caption,
+        musicTrackId: slide.musicTrackId,
+        musicTrackName: slide.musicTrackName,
+        mediaType: slide.mediaType,
+      );
+    }
   }
 
   Future<String> _uploadToStorage(String merchantId, Uint8List imageBytes) async {
@@ -155,4 +190,94 @@ class StoryService {
     );
     return await ref.getDownloadURL();
   }
+
+  Future<String> _uploadVideoToStorage(String merchantId, Uint8List videoBytes) async {
+    final now = DateTime.now();
+    final path = '$_storagePathPrefix/$merchantId/${now.millisecondsSinceEpoch}.mp4';
+    final ref = _storage.ref().child(path);
+    await ref.putData(
+      videoBytes,
+      SettableMetadata(contentType: 'video/mp4'),
+    );
+    return await ref.getDownloadURL();
+  }
+
+  /// Record that a viewer saw this story (call when opening/viewing a story).
+  Future<void> recordView({
+    required String storyId,
+    required String viewerId,
+    required String viewerName,
+    String? viewerProfileImageUrl,
+  }) async {
+    await _firestore
+        .collection(_collection)
+        .doc(storyId)
+        .collection(_viewersSubcollection)
+        .doc(viewerId)
+        .set({
+      'viewerId': viewerId,
+      'viewerName': viewerName,
+      'viewedAt': FieldValue.serverTimestamp(),
+      if (viewerProfileImageUrl != null && viewerProfileImageUrl.isNotEmpty)
+        'viewerProfileImageUrl': viewerProfileImageUrl,
+    }, SetOptions(merge: true));
+  }
+
+  /// Get list of viewers who saw this story (for merchant insights).
+  Future<List<StoryViewerInfo>> getStoryViewers(String storyId) async {
+    final snap = await _firestore
+        .collection(_collection)
+        .doc(storyId)
+        .collection(_viewersSubcollection)
+        .orderBy('viewedAt', descending: true)
+        .get();
+    return snap.docs.map((d) {
+      final data = d.data();
+      final viewedAt = (data['viewedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+      final profileUrl = data['viewerProfileImageUrl'] as String?;
+      return StoryViewerInfo(
+        viewerId: data['viewerId'] as String? ?? '',
+        viewerName: data['viewerName'] as String? ?? 'Unknown',
+        viewedAt: viewedAt,
+        viewerProfileImageUrl: profileUrl != null && profileUrl.isNotEmpty ? profileUrl : null,
+      );
+    }).toList();
+  }
+
+  /// Get viewer count for a story.
+  Future<int> getStoryViewerCount(String storyId) async {
+    final snap = await _firestore
+        .collection(_collection)
+        .doc(storyId)
+        .collection(_viewersSubcollection)
+        .count()
+        .get();
+    return snap.count ?? 0;
+  }
+
+  /// Get viewer counts for multiple story IDs (batch).
+  Future<Map<String, int>> getStoryViewerCounts(List<String> storyIds) async {
+    final Map<String, int> out = {};
+    for (final id in storyIds) {
+      out[id] = await getStoryViewerCount(id);
+    }
+    return out;
+  }
+}
+
+/// Input for one slide when posting a story batch.
+class StorySlideInput {
+  final Uint8List bytes;
+  final String mediaType; // 'image' or 'video'
+  final String? caption;
+  final String? musicTrackId;
+  final String? musicTrackName;
+
+  const StorySlideInput({
+    required this.bytes,
+    this.mediaType = 'image',
+    this.caption,
+    this.musicTrackId,
+    this.musicTrackName,
+  });
 }

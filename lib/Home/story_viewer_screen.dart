@@ -1,10 +1,13 @@
-// Full-screen story viewer — one merchant's stories, 24h, merchant name shown.
+// Full-screen story viewer — one merchant's stories, 24h, caption, video, record viewers.
 
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:video_player/video_player.dart';
 
 import 'package:vero360_app/Home/merchant_story_model.dart';
+import 'package:vero360_app/Home/story_service.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
@@ -30,6 +33,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   late int _groupIndex;
   static const Duration _autoAdvance = Duration(seconds: 4);
   late AnimationController _progressController;
+  final StoryService _storyService = StoryService();
 
   MerchantStoryGroup get _currentGroup => widget.groups[_groupIndex];
   List<MerchantStoryItem> get _items => _currentGroup.items;
@@ -48,6 +52,21 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         }
       });
     _restartProgress();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _recordViewForCurrentSlide());
+  }
+
+  void _recordViewForCurrentSlide() {
+    final items = _items;
+    if (_currentIndex < 0 || _currentIndex >= items.length) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final viewerName = user.displayName ?? user.email ?? 'Someone';
+    _storyService.recordView(
+      storyId: items[_currentIndex].storyId,
+      viewerId: user.uid,
+      viewerName: viewerName,
+      viewerProfileImageUrl: user.photoURL,
+    );
   }
 
   void _restartProgress() {
@@ -132,6 +151,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               onPageChanged: (i) {
                 setState(() => _currentIndex = i);
                 _restartProgress();
+                _recordViewForCurrentSlide();
               },
               itemBuilder: (context, i) {
                 final item = items[i];
@@ -359,18 +379,17 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 ),
               ),
               const SizedBox(height: 8),
+              if (item.caption != null && item.caption!.trim().isNotEmpty) ...[
+                Text(
+                  item.caption!,
+                  style: const TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+              ],
               const Text(
                 'Want to buy this item? Open the marketplace to browse this merchant\'s products.',
                 style: TextStyle(fontSize: 13),
               ),
-              const SizedBox(height: 12),
-              if (item.mediaUrl.isNotEmpty)
-                Text(
-                  item.mediaUrl,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, color: Colors.grey),
-                ),
               const SizedBox(height: 16),
               Row(
                 children: [
@@ -409,16 +428,97 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 }
 
-class _StoryPage extends StatelessWidget {
+class _StoryPage extends StatefulWidget {
   final MerchantStoryItem item;
 
   const _StoryPage({required this.item});
 
   @override
+  State<_StoryPage> createState() => _StoryPageState();
+}
+
+class _StoryPageState extends State<_StoryPage> {
+  VideoPlayerController? _videoController;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.item.mediaType == 'video' && widget.item.mediaUrl.trim().isNotEmpty) {
+      _videoController = VideoPlayerController.networkUrl(Uri.parse(widget.item.mediaUrl))
+        ..initialize().then((_) {
+          if (mounted) {
+            _videoController!.setLooping(true);
+            _videoController!.play();
+            setState(() {});
+          }
+        }).catchError((_) {
+          if (mounted) setState(() {});
+        });
+    }
+  }
+
+  @override
+  void dispose() {
+    _videoController?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final item = widget.item;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _buildMedia(item),
+        if (item.caption != null && item.caption!.trim().isNotEmpty)
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 40,
+            child: SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Text(
+                  item.caption!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w500,
+                    height: 1.3,
+                  ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildMedia(MerchantStoryItem item) {
     if (item.mediaType == 'video') {
-      return const Center(
-        child: Text('Video stories coming soon', style: TextStyle(color: Colors.white)),
+      if (_videoController == null) {
+        return const Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        );
+      }
+      if (!_videoController!.value.isInitialized) {
+        return const Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        );
+      }
+      return Center(
+        child: AspectRatio(
+          aspectRatio: _videoController!.value.aspectRatio,
+          child: VideoPlayer(_videoController!),
+        ),
       );
     }
     if (item.hasInlineImage && item.imageBase64 != null) {
@@ -451,7 +551,7 @@ class _StoryPage extends StatelessWidget {
       );
     }
     return const Center(
-      child: Text('No image', style: TextStyle(color: Colors.white)),
+      child: Text('No media', style: TextStyle(color: Colors.white)),
     );
   }
 }

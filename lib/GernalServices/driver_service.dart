@@ -176,6 +176,15 @@ class DriverService {
     }
   }
 
+  Future<Map<String, dynamic>> verifyTaxiDetails(int taxiId) async {
+    try {
+      final response = await _dio.put('/vero/taxis/$taxiId/verify');
+      return response.data as Map<String, dynamic>;
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
   // ==================== DRIVER DISCOVERY ====================
   Future<List<Map<String, dynamic>>> getNearbyDrivers(
     double latitude,

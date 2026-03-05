@@ -12,6 +12,8 @@ import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'driver_request_screen.dart';
+import 'create_taxi_screen.dart';
+import 'edit_taxi_screen.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
   const DriverDashboard({super.key});
@@ -874,124 +876,33 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   }
 
   void _showCreateTaxiDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Create Taxi'),
-        content: const Text(
-          'A default taxi will be created with standard specifications. You can edit it later.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => const CreateTaxiScreen(),
           ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              _createDefaultTaxi();
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-            ),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
-    );
+        )
+        .then((result) {
+          if (result == true && mounted) {
+            ref.refresh(myDriverProfileProvider);
+          }
+        });
   }
 
-  Future<void> _createDefaultTaxi() async {
-    try {
-      final driverProfile = await ref.read(myDriverProfileProvider.future);
-      if (driverProfile['id'] == null) return;
 
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final taxiPayload = {
-        'make': 'Toyota',
-        'model': 'Corolla',
-        'year': DateTime.now().year,
-        'licensePlate': 'DRV${driverProfile['id']}-$timestamp',
-        'seats': 4,
-        'taxiClass': 'STANDARD',
-        'color': 'White',
-        'registrationNumber': 'REG${driverProfile['id']}-$timestamp',
-      };
-
-      await _driverService.createTaxi(taxiPayload);
-
-      if (mounted) {
-        ref.refresh(myDriverProfileProvider);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Taxi created successfully'),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-            margin: EdgeInsets.all(16),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error creating taxi: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
-          ),
-        );
-      }
-    }
-  }
 
   void _showTaxiDetailsDialog(BuildContext context, Map<String, dynamic> taxi) {
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Taxi Details'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _detailRow('Make', taxi['make']),
-            _detailRow('Model', taxi['model']),
-            _detailRow('Year', '${taxi['year']}'),
-            _detailRow('License Plate', taxi['licensePlate']),
-            _detailRow('Seats', '${taxi['seats']}'),
-            _detailRow('Class', taxi['taxiClass']),
-            _detailRow('Color', taxi['color'] ?? 'N/A'),
-            _detailRow('Status', taxi['status']),
-            _detailRow('Available', taxi['isAvailable'] ? 'Yes' : 'No'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Close'),
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => EditTaxiScreen(taxi: taxi),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _detailRow(String label, dynamic value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
-          ),
-          Text(
-            value.toString(),
-            style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-          ),
-        ],
-      ),
-    );
+        )
+        .then((result) {
+          if (result == true && mounted) {
+            ref.refresh(myDriverProfileProvider);
+          }
+        });
   }
 
   void _showVerifyDriverDialog(BuildContext context, int driverId) {

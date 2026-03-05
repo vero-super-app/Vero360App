@@ -34,6 +34,35 @@ class _PostStoryPageState extends State<PostStoryPage> {
   final StoryService _storyService = StoryService();
   bool _posting = false;
 
+  // Product / service details for the story
+  final TextEditingController _titleCtrl = TextEditingController();
+  final TextEditingController _priceCtrl = TextEditingController();
+  final TextEditingController _descCtrl = TextEditingController();
+
+  // Existing stories for this merchant
+  String? _deletingStoryId;
+  late Future<List<MerchantStoryItem>> _storiesFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _storiesFuture = _storyService.getMerchantStories(widget.merchantId);
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _priceCtrl.dispose();
+    _descCtrl.dispose();
+    super.dispose();
+  }
+
+  void _refreshStories() {
+    setState(() {
+      _storiesFuture = _storyService.getMerchantStories(widget.merchantId);
+    });
+  }
+
   Future<void> _pickAndPost(ImageSource source) async {
     if (_posting) return;
     final XFile? file = await _picker.pickImage(

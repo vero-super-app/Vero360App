@@ -10,7 +10,7 @@ class ApiConfig {
 
   /// Default root (ngrok tunnel - no /vero here)
   static const String _defaultProdRoot =
-  'https://ed44-102-70-90-74.ngrok-free.app ';
+  '   https://720d-102-70-95-217.ngrok-free.app ';
     //  'https://7f74-102-70-95-217.ngrok-free.app ';
 
   // static const String _defaultProdRoot =
@@ -78,6 +78,20 @@ class ApiConfig {
 
   /// Keep compatibility with existing code (ignored param).
   static Future<void> setBase(String ignored) => useProd();
+
+  // ---------------------------------------------------------------------------
+  // ADMIN (service fee) — optional; if set, Flutter reports 2.5% fee to admin app
+  // ---------------------------------------------------------------------------
+  static const String adminApiBase = String.fromEnvironment(
+    'ADMIN_API_BASE_URL',
+    defaultValue: '',
+  );
+  static const String adminServiceFeeSecret = String.fromEnvironment(
+    'ADMIN_SERVICE_FEE_SECRET',
+    defaultValue: '',
+  );
+  static bool get isAdminApiConfigured =>
+      adminApiBase.trim().isNotEmpty && adminServiceFeeSecret.trim().isNotEmpty;
 
   // ---------------------------------------------------------------------------
   // URL BUILDERS

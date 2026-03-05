@@ -409,11 +409,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 ),
               ),
               Text(
-<<<<<<< HEAD
-                item.title?.isNotEmpty == true ? item.title! : widget.group.merchantName,
-=======
-                _currentGroup.merchantName,
->>>>>>> 5ced7f32936cf862b98df534e87e8ebbf0ee34f0
+                item.title?.isNotEmpty == true ? item.title! : _currentGroup.merchantName,
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,

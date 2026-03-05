@@ -235,6 +235,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final role =
         (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
     await prefs.setString('role', role);
+    await prefs.setString('user_role', role);
 
     final uid = user['uid']?.toString() ?? user['firebaseUid']?.toString();
     if (uid != null && uid.isNotEmpty) {
@@ -387,7 +388,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   /// Syncs the chosen role (and merchant data) to the backend so the API user
   /// is created/updated as merchant. Uses PUT /users/me (backend uses Put, not Patch).
   /// When form fields are empty (e.g. after Google/Apple sign-in), uses [user] email/displayName.
-  Future<void> _syncProfileToBackend(User user) async {
+  /// Returns true if sync succeeded (2xx), false otherwise.
+  Future<bool> _syncProfileToBackend(User user) async {
     final role = _role == UserRole.merchant ? 'merchant' : 'customer';
     final name = _name.text.trim().isEmpty
         ? (user.displayName ?? user.email ?? '')
@@ -414,21 +416,52 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     try {
-      await ApiClient.put(
+      final res = await ApiClient.put(
         '/users/me',
         body: jsonEncode(body),
         timeout: const Duration(seconds: 10),
       );
+      final ok = res.statusCode >= 200 && res.statusCode < 300;
       if (kDebugMode) {
         // ignore: avoid_print
-        print('[Register] Backend profile synced via PUT /users/me (role: $role)');
+        print('[Register] PUT /users/me (role: $role) => ${res.statusCode}');
       }
+      if (!ok && mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Profile sync failed (${res.statusCode}). Role may show as customer.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return ok;
     } catch (e) {
       if (kDebugMode) {
         // ignore: avoid_print
-        print('[Register] PUT /users/me failed. Ensure UpdateUserDto allows role (and merchant fields). Error: $e');
+        print('[Register] PUT /users/me failed: $e');
       }
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Could not sync role to server. Check connection and try again from Profile.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
     }
+  }
+
+  /// Retry syncing role to backend after a short delay (handles guard creating user with default role on first request).
+  void _retrySyncRoleToBackend(User user) {
+    Future.delayed(const Duration(seconds: 2), () async {
+      if (!mounted) return;
+      final ok = await _syncProfileToBackend(user);
+      if (kDebugMode && ok) {
+        // ignore: avoid_print
+        print('[Register] Retry PUT /users/me succeeded');
+      }
+    });
   }
 
   // ---------- Firebase-only registration ----------
@@ -566,6 +599,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         await prefs.setString('name', nameVal);
       }
       await prefs.setString('role', role);
+      await prefs.setString('user_role', role);
       await prefs.setString('auth_provider', 'firebase_only');
 
       if (_role == UserRole.merchant) {
@@ -576,6 +610,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       // Sync role (and merchant data) to backend so API user is merchant when chosen.
       await _syncProfileToBackend(user);
+      if (_role == UserRole.merchant) {
+        _retrySyncRoleToBackend(user);
+      }
 
       final firebaseResponse = await _buildResultFromUser(user);
 
@@ -633,6 +670,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       final result = await _buildResultFromUser(user);
       await _syncProfileToBackend(user);
+      if (_role == UserRole.merchant) {
+        _retrySyncRoleToBackend(user);
+      }
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
@@ -669,6 +709,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       final result = await _buildResultFromUser(user);
       await _syncProfileToBackend(user);
+      if (_role == UserRole.merchant) {
+        _retrySyncRoleToBackend(user);
+      }
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,

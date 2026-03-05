@@ -600,7 +600,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               textInputAction: TextInputAction.next,
                               decoration: _fieldDecoration(
                                 label: 'Email or phone number',
-                                hint: 'you@example.com or +265...',
+                                hint: 'you@vero.com or +265...',
                                 icon: Icons.person_outline,
                               ),
                               validator: (v) {
@@ -808,7 +808,7 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
           autofocus: true,
           decoration: const InputDecoration(
             labelText: 'Email or phone number',
-            hintText: 'you@example.com or 09xxxxxxxx',
+            hintText: 'you@vero.com or 09xxxxxxxx',
           ),
           validator: (v) {
             final val = v?.trim() ?? '';

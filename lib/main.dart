@@ -743,17 +743,21 @@ class _MyAppState extends State<MyApp> {
     await prefs.setString('profilepicture', pic);
 
     // Determine role with proper priority: merchant > driver > customer
+    // Keep both 'role' and 'user_role' in sync so BottomNavbar and others stay correct after hot restart.
     bool isMerchant = _isMerchant(u);
     bool isDriver = !isMerchant && _isDriver(u);
     
     if (isMerchant) {
       await prefs.setString('user_role', 'merchant');
+      await prefs.setString('role', 'merchant');
       await prefs.setBool('user_is_driver', false);
     } else if (isDriver) {
       await prefs.setString('user_role', 'driver');
+      await prefs.setString('role', 'driver');
       await prefs.setBool('user_is_driver', true);
     } else {
       await prefs.setString('user_role', 'customer');
+      await prefs.setString('role', 'customer');
       await prefs.setBool('user_is_driver', false);
     }
   }
@@ -942,9 +946,10 @@ class AuthFlow {
           }
         }
 
-        // Store in preferences and route
+        // Store in preferences and route (keep role + user_role in sync)
         if (isMerchant) {
           await prefs.setString('user_role', 'merchant');
+          await prefs.setString('role', 'merchant');
           await prefs.setBool('user_is_driver', false);
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(
@@ -956,6 +961,7 @@ class AuthFlow {
           );
         } else if (isDriver) {
           await prefs.setString('user_role', 'driver');
+          await prefs.setString('role', 'driver');
           await prefs.setBool('user_is_driver', true);
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
@@ -963,6 +969,7 @@ class AuthFlow {
           );
         } else {
           await prefs.setString('user_role', 'customer');
+          await prefs.setString('role', 'customer');
           await prefs.setBool('user_is_driver', false);
           navKey.currentState?.pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),

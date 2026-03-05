@@ -9,19 +9,20 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralPages/address.dart';
+import 'package:vero360_app/GeneralPages/checkout_page.dart' show DeliveryType;
 import 'package:vero360_app/GeneralModels/address_model.dart';
+import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-
-enum DeliveryType { speed, cts, pickup }
 
 class CheckoutFromCartPage extends StatefulWidget {
   final List<CartModel> items;
@@ -328,6 +329,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               rootContext: context,
               clearCartOnSuccess: true,
               cartItemsForMerchantCredit: widget.items,
+              shippingAddress: _deliveryType == DeliveryType.pickup ? null : _defaultAddr,
+              deliveryType: _deliveryType,
             ),
           ));
         } else {
@@ -778,6 +781,10 @@ class InAppPaymentPage extends StatefulWidget {
   final bool clearCartOnSuccess;
   /// Cart items for marketplace: on success, credit each merchant's wallet with their portion.
   final List<CartModel>? cartItemsForMerchantCredit;
+  /// Shipping address used during checkout (null when pickup).
+  final Address? shippingAddress;
+  /// Delivery type chosen during checkout (needed for pending orders, etc.).
+  final DeliveryType deliveryType;
 
   const InAppPaymentPage({
     super.key,
@@ -788,6 +795,8 @@ class InAppPaymentPage extends StatefulWidget {
     this.digitalProductName,
     this.clearCartOnSuccess = false,
     this.cartItemsForMerchantCredit,
+    this.shippingAddress,
+    this.deliveryType = DeliveryType.cts,
   });
 
   @override
@@ -799,6 +808,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   Timer? _pollTimer;
   bool _isLoading = true;
   bool _resultHandled = false;
+  final order_svc.OrderService _orderService = order_svc.OrderService();
 
   @override
   void initState() {
@@ -990,6 +1000,36 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     } catch (_) {}
   }
 
+  Future<void> _createBackendOrders(OrderStatus status) async {
+    try {
+      final items = widget.cartItemsForMerchantCredit;
+      if (items == null || items.isEmpty) return;
+
+      // For pickup we don't send an addressId (backend receives 0).
+      final addressForOrder =
+          widget.deliveryType == DeliveryType.pickup ? null : widget.shippingAddress;
+
+      await _orderService.createOrdersFromCart(
+        cartItems: items,
+        address: addressForOrder,
+        status: status,
+      );
+    } catch (e) {
+      debugPrint('[InAppPaymentPage] Failed to create backend orders: $e');
+      final message = (e is order_svc.AuthRequiredException || e is order_svc.FriendlyApiException)
+              ? e.toString()
+              : 'We couldn’t create your order. Please try again.';
+      if (mounted && widget.rootContext.mounted) {
+        ToastHelper.showCustomToast(
+          widget.rootContext,
+          'Order creation failed',
+          isSuccess: false,
+          errorMessage: message,
+        );
+      }
+    }
+  }
+
   void _handlePaymentSuccess() {
     if (_resultHandled) return;
     _resultHandled = true;
@@ -1009,6 +1049,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     if (items != null && items.isNotEmpty) {
       unawaited(_creditMerchantWallets(items));
     }
+    // Create confirmed orders in backend for these cart items.
+    unawaited(_createBackendOrders(OrderStatus.confirmed));
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
     final productName = widget.digitalProductName ?? 'your order';
 
@@ -1060,6 +1102,10 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     _resultHandled = true;
     _pollTimer?.cancel();
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
+
+    // For cart checkout flows, record a pending order when payment was not completed.
+    // This lets the backend know about the intent even if the user abandons payment.
+    unawaited(_createBackendOrders(OrderStatus.pending));
 
     if (isDigital) {
       // Digital purchase: failure message (email not sent from app)

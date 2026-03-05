@@ -15,7 +15,6 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.mod
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
-import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';

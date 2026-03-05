@@ -1,5 +1,7 @@
 // lib/Pages/details_page.dart
 import 'dart:async';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
@@ -7,6 +9,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:intl/intl.dart';
+import 'package:http/http.dart' as http;
+import 'package:saver_gallery/saver_gallery.dart';
 
 import 'package:vero360_app/Home/Messages.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
@@ -89,9 +94,9 @@ class _DetailsPageState extends State<DetailsPage> {
     final images = it.gallery;
     final videos = it.videos;
     _media = [
-      if (it.image.toString().trim().isNotEmpty) _Media.image(it.image),
-      ...images.map(_Media.image),
-      ...videos.map(_Media.video),
+      if (it.image.toString().trim().isNotEmpty) _Media.image(it.image.toString().trim()),
+      ...images.map((u) => _Media.image(u.toString().trim())),
+      ...videos.map((u) => _Media.video(u.toString().trim())),
     ];
     if (_media.length > 1) _startAutoplay();
   }
@@ -99,9 +104,11 @@ class _DetailsPageState extends State<DetailsPage> {
   /// Share current product
   void _shareProduct() {
     final item = widget.item;
+    final merchantName = item.merchantName ?? item.sellerBusinessName ?? 'A merchant';
     final productUrl = 'https://vero360.app/marketplace/${item.id}';
+    final priceStr = NumberFormat('#,###', 'en').format(item.price.truncate());
     Share.share(
-      'Check out ${item.name} on Vero360 - MWK ${item.price.toStringAsFixed(0)}\n$productUrl',
+      '$merchantName is selling this on Vero360 - Check out ${item.name} - MWK $priceStr\n$productUrl',
     );
   }
 
@@ -120,24 +127,6 @@ class _DetailsPageState extends State<DetailsPage> {
     _commentController.dispose();
     super.dispose();
   }
-
-  // ── Inputs style helper (black before focus, orange on focus)
-  InputDecoration _inputDecoration({String? hint}) => InputDecoration(
-        hintText: hint,
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        border: const OutlineInputBorder(),
-        enabledBorder: OutlineInputBorder(
-          borderSide: const BorderSide(color: Colors.black, width: 1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        focusedBorder: const OutlineInputBorder(
-          borderSide: BorderSide(color: _brandOrange, width: 2),
-          borderRadius: BorderRadius.all(Radius.circular(12)),
-        ),
-      );
 
   // autoplay
   void _startAutoplay() {
@@ -209,7 +198,7 @@ class _DetailsPageState extends State<DetailsPage> {
           info.logoUrl ??= sp.logoUrl;
           final r = sp.rating;
           if (info.rating == null && r != null) {
-            info.rating = (r is num) ? r.toDouble() : double.tryParse('$r');
+            info.rating = (r as num).toDouble();
           }
         }
       } catch (_) {}
@@ -227,7 +216,7 @@ class _DetailsPageState extends State<DetailsPage> {
         context,
         'Please log in to chat with merchant.',
         isSuccess: false,
-        errorMessage: 'Not logged in',
+        errorMessage: '',
       );
     }
     return ok;
@@ -280,43 +269,36 @@ class _DetailsPageState extends State<DetailsPage> {
     return parts.length == 2 ? parts[1].trim() : null;
   }
 
-  String _fmtRating(double? r) {
-    if (r == null) return '—';
-    final whole = r.truncateToDouble();
-    return r == whole ? r.toStringAsFixed(0) : r.toStringAsFixed(1);
-  }
-
-  Widget _ratingStars(double? rating) {
-    final rr = ((rating ?? 0).clamp(0, 5)).toDouble();
-    final filled = rr.floor();
-    final hasHalf = (rr - filled) >= 0.5 && filled < 5;
-    final empty = 5 - filled - (hasHalf ? 1 : 0);
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      for (int i = 0; i < filled; i++)
-        const Icon(Icons.star, size: 16, color: Colors.amber),
-      if (hasHalf)
-        const Icon(Icons.star_half, size: 16, color: Colors.amber),
-      for (int i = 0; i < empty; i++)
-        const Icon(Icons.star_border, size: 16, color: Colors.amber),
-      const SizedBox(width: 6),
-      Text(_fmtRating(rr),
-          style: const TextStyle(fontWeight: FontWeight.w600)),
-    ]);
+  String _formatTimeAgo(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) {
+      final m = diff.inMinutes;
+      return m == 1 ? '1 min ago' : '$m mins ago';
+    }
+    if (diff.inHours < 24) {
+      final h = diff.inHours;
+      return h == 1 ? '1 hr ago' : '$h hrs ago';
+    }
+    if (diff.inDays < 7) {
+      final d = diff.inDays;
+      return d == 1 ? '1 day ago' : '$d days ago';
+    }
+    return '${time.day}/${time.month}/${time.year}';
   }
 
   Widget _infoRow(String label, String? value, {IconData? icon}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child:
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (icon != null) ...[
           Icon(icon, size: 16, color: Colors.black54),
           const SizedBox(width: 8),
         ],
         SizedBox(
           width: 120,
-          child: Text(label,
-              style: const TextStyle(color: Colors.black54)),
+          child: Text(label, style: const TextStyle(color: Colors.black54)),
         ),
         const SizedBox(width: 8),
         Expanded(
@@ -345,16 +327,52 @@ class _DetailsPageState extends State<DetailsPage> {
     return Chip(
       label: Text((status ?? '—').toUpperCase()),
       backgroundColor: bg,
-      labelStyle: TextStyle(
-          color: fg, fontWeight: FontWeight.w700),
+      labelStyle: TextStyle(color: fg, fontWeight: FontWeight.w700),
       visualDensity: VisualDensity.compact,
     );
+  }
+
+  String _fmtRating(double? r) {
+    if (r == null) return '—';
+    final whole = r.truncateToDouble();
+    return r == whole ? r.toStringAsFixed(0) : r.toStringAsFixed(1);
+  }
+
+  Widget _ratingStars(double? rating) {
+    final rr = ((rating ?? 0).clamp(0, 5)).toDouble();
+    final filled = rr.floor();
+    final hasHalf = (rr - filled) >= 0.5 && filled < 5;
+    final empty = 5 - filled - (hasHalf ? 1 : 0);
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      for (int i = 0; i < filled; i++)
+        const Icon(Icons.star, size: 16, color: Colors.amber),
+      if (hasHalf)
+        const Icon(Icons.star_half, size: 16, color: Colors.amber),
+      for (int i = 0; i < empty; i++)
+        const Icon(Icons.star_border, size: 16, color: Colors.amber),
+      const SizedBox(width: 6),
+      Text(_fmtRating(rr),
+          style: const TextStyle(fontWeight: FontWeight.w600)),
+    ]);
   }
 
   void _openVideo(String url) {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => VideoPlayerPage(url: url)),
+    );
+  }
+
+  /// Open fullscreen image viewer with watermark (merchant name + Vero360App) and download.
+  void _openImageViewer(String imageUrl, {String? merchantName}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _FullScreenImageViewer(
+          imageUrl: imageUrl,
+          merchantName: merchantName ?? widget.item.sellerBusinessName ?? widget.item.merchantName ?? 'Merchant',
+        ),
+      ),
     );
   }
 
@@ -477,13 +495,20 @@ class _DetailsPageState extends State<DetailsPage> {
                           itemBuilder: (_, i) {
                             final m = _media[i];
                             if (!m.isVideo) {
-                              return Image.network(
-                                m.url,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    Container(
-                                        color:
-                                            Colors.grey.shade200),
+                              return InkWell(
+                                onTap: () => _openImageViewer(
+                                  m.url,
+                                  merchantName: widget.item.merchantName ??
+                                      widget.item.sellerBusinessName,
+                                ),
+                                child: Image.network(
+                                  m.url,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) =>
+                                      Container(
+                                          color:
+                                              Colors.grey.shade200),
+                                ),
                               );
                             }
                             return InkWell(
@@ -590,18 +615,27 @@ class _DetailsPageState extends State<DetailsPage> {
                                   color: _brandOrange),
                             ),
                             child: Text(
-                              'MWK ${item.price.toStringAsFixed(0)}',
+                              'MWK ${NumberFormat('#,###', 'en').format(item.price.truncate())}',
                               style: const TextStyle(
                                   fontWeight: FontWeight.w700),
                             ),
                           ),
                           const SizedBox(height: 12),
-                          if ((item.description ?? '').isNotEmpty)
+                          if (item.description.isNotEmpty)
                             Text(
                               item.description,
                               style:
                                   const TextStyle(height: 1.3),
                             ),
+                          if (merchantDisplayName.isNotEmpty || item.createdAt != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              item.createdAt != null
+                                  ? 'Posted by $merchantDisplayName • ${_formatTimeAgo(item.createdAt!)}'
+                                  : 'Posted by $merchantDisplayName',
+                              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -627,7 +661,7 @@ class _DetailsPageState extends State<DetailsPage> {
 
                 const SizedBox(height: 20),
 
-                // ----- SELLER CARD -----
+                // ----- MERCHANT CARD (full details) -----
                 Card(
                   elevation: 6,
                   shadowColor: Colors.black12,
@@ -635,42 +669,37 @@ class _DetailsPageState extends State<DetailsPage> {
                       borderRadius: BorderRadius.circular(16)),
                   clipBehavior: Clip.antiAlias,
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                        16, 14, 16, 14),
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
                     child: Column(
-                      crossAxisAlignment:
-                          CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            if (logo != null &&
-                                logo.isNotEmpty)
+                            // Merchant photo (logo URL from seller info or item)
+                            if ((logo ?? item.sellerLogoUrl) != null &&
+                                (logo ?? item.sellerLogoUrl)!.trim().isNotEmpty)
                               CircleAvatar(
-                                  radius: 18,
-                                  backgroundImage:
-                                      NetworkImage(logo)),
-                            if (logo != null &&
-                                logo.isNotEmpty)
+                                radius: 18,
+                                backgroundImage: NetworkImage(
+                                    (logo ?? item.sellerLogoUrl)!.trim()),
+                                onBackgroundImageError: (_, __) {},
+                              ),
+                            if ((logo ?? item.sellerLogoUrl) != null &&
+                                (logo ?? item.sellerLogoUrl)!.trim().isNotEmpty)
                               const SizedBox(width: 10),
-                            const Icon(
-                              Icons.storefront_rounded,
-                              size: 20,
-                              color: Colors.black87,
-                            ),
+                            const Icon(Icons.storefront_rounded,
+                                size: 20, color: Colors.black87),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                businessName ??
-                                    'Posted by —',
+                                'Posted by ${(item.merchantName ?? businessName ?? '').trim().isEmpty ? '—' : merchantDisplayName}',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w700,
                                   fontSize: 16,
                                 ),
                                 maxLines: 1,
-                                overflow:
-                                    TextOverflow.ellipsis,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -680,38 +709,27 @@ class _DetailsPageState extends State<DetailsPage> {
                           ],
                         ),
                         const SizedBox(height: 10),
-                        _infoRow('Business name',
-                            businessName,
-                            icon:
-                                Icons.badge_rounded),
                         _infoRow(
-                          'Closing hours',
-                          closing,
-                          icon: Icons
-                              .access_time_rounded,
+                          'Business name',
+                          businessName ?? item.sellerBusinessName ?? item.merchantName,
+                          icon: Icons.badge_rounded,
                         ),
+                        _infoRow('Closing hours', closing,
+                            icon: Icons.access_time_rounded),
                         _infoRow(
                           'Status',
-                          (status ?? '').isEmpty
-                              ? '—'
-                              : status!.toUpperCase(),
-                          icon: Icons
-                              .info_outline_rounded,
+                          (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
+                          icon: Icons.info_outline_rounded,
                         ),
                         const SizedBox(height: 6),
                         const Text(
                           'Business description',
-                          style: TextStyle(
-                              color: Colors.black54),
+                          style: TextStyle(color: Colors.black54),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          (businessDesc ?? '').isNotEmpty
-                              ? businessDesc!
-                              : '—',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                          ),
+                          (businessDesc ?? '').isNotEmpty ? businessDesc! : '—',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ],
                     ),
@@ -809,6 +827,244 @@ class _NavBtn extends StatelessWidget {
             size: 26,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Fullscreen image viewer with watermark (merchant name + Vero360App) and download.
+class _FullScreenImageViewer extends StatefulWidget {
+  const _FullScreenImageViewer({
+    required this.imageUrl,
+    required this.merchantName,
+  });
+  final String imageUrl;
+  final String merchantName;
+
+  @override
+  State<_FullScreenImageViewer> createState() => _FullScreenImageViewerState();
+}
+
+class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  bool _saving = false;
+
+  Future<void> _downloadImage() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final uri = Uri.tryParse(widget.imageUrl);
+      if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            'Cannot download this image',
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+        return;
+      }
+      final res = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200 || res.bodyBytes.isEmpty) {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            'Failed to load image',
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+        return;
+      }
+      // Decode image, draw watermark on it, then save (watermark only on saved file)
+      Uint8List bytesToSave = res.bodyBytes;
+      try {
+        final codec = await ui.instantiateImageCodec(res.bodyBytes);
+        final frame = await codec.getNextFrame();
+        final image = frame.image;
+        final w = image.width.toDouble();
+        final h = image.height.toDouble();
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        final src = Rect.fromLTWH(0, 0, w, h);
+        canvas.drawImageRect(image, src, src, Paint());
+        image.dispose();
+        // Watermark: app logo + merchant name + Vero360App
+        const double fontSize = 32;
+        const double fontSize2 = 24;
+        const double logoHeight = 58;
+        const double leftPad = 24;
+        final maxW = w - 48;
+        final bottomY = h - 24 - fontSize - 6 - fontSize2;
+
+        // 1) App logo (assets/logo_mark.png), expanded a bit
+        try {
+          final logoBytes = await rootBundle.load('assets/logo_mark.png');
+          final logoCodec = await ui.instantiateImageCodec(
+            logoBytes.buffer.asUint8List(logoBytes.offsetInBytes, logoBytes.lengthInBytes),
+          );
+          final logoFrame = await logoCodec.getNextFrame();
+          final logoImage = logoFrame.image;
+          final lw = logoImage.width.toDouble();
+          final lh = logoImage.height.toDouble();
+          if (lw > 0 && lh > 0) {
+            final scale = logoHeight / lh;
+            final scaledW = lw * scale;
+            final logoRect = Rect.fromLTWH(leftPad, bottomY - logoHeight - 4, scaledW, logoHeight);
+            canvas.drawImageRect(
+              logoImage,
+              Rect.fromLTWH(0, 0, lw, lh),
+              logoRect,
+              Paint()..filterQuality = ui.FilterQuality.medium,
+            );
+            logoImage.dispose();
+          }
+        } catch (_) {}
+
+        // 2) Merchant name + Vero360App text
+        final tp1 = TextPainter(
+          text: TextSpan(
+            text: widget.merchantName,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w600,
+              shadows: [
+                Shadow(color: Colors.black87, blurRadius: 4, offset: const Offset(1, 1)),
+                Shadow(color: Colors.black54, blurRadius: 2, offset: const Offset(0, 0)),
+              ],
+            ),
+          ),
+          textDirection: ui.TextDirection.ltr,
+        )..layout(maxWidth: maxW);
+        final tp2 = TextPainter(
+          text: const TextSpan(
+            text: 'Vero360App',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: fontSize2,
+              fontWeight: FontWeight.w500,
+              shadows: [
+                Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1)),
+                Shadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 0)),
+              ],
+            ),
+          ),
+          textDirection: ui.TextDirection.ltr,
+        )..layout(maxWidth: maxW);
+        tp1.paint(canvas, Offset(leftPad, bottomY));
+        tp2.paint(canvas, Offset(leftPad, bottomY + fontSize + 6));
+
+        final picture = recorder.endRecording();
+        final outImage = await picture.toImage(w.round(), h.round());
+        final byteData = await outImage.toByteData(format: ui.ImageByteFormat.png);
+        outImage.dispose();
+        if (byteData != null) {
+          bytesToSave = byteData.buffer.asUint8List();
+        }
+      } catch (_) {
+        // If watermarking fails, save original bytes
+      }
+      final fileName = 'vero360_${DateTime.now().millisecondsSinceEpoch}.png';
+      final result = await SaverGallery.saveImage(
+        bytesToSave,
+        quality: 100,
+        extension: 'png',
+        fileName: fileName,
+        androidRelativePath: 'Pictures/Vero360',
+        skipIfExists: false,
+      );
+      if (mounted) {
+        if (result.isSuccess) {
+          ToastHelper.showCustomToast(
+            context,
+            'Image saved to gallery',
+            isSuccess: true,
+            errorMessage: '',
+          );
+        } else {
+          ToastHelper.showCustomToast(
+            context,
+            result.errorMessage ?? 'Save failed',
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Download failed',
+          isSuccess: false,
+          errorMessage: e.toString(),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          InteractiveViewer(
+            minScale: 0.5,
+            maxScale: 4,
+            child: Center(
+              child: Image.network(
+                widget.imageUrl,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Icon(Icons.broken_image_outlined, color: Colors.white54, size: 64),
+                ),
+              ),
+            ),
+          ),
+          // Top bar: close
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ),
+            ),
+          ),
+          // Download button
+          SafeArea(
+            child: Align(
+              alignment: Alignment.bottomRight,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  ),
+                  onPressed: _saving ? null : _downloadImage,
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.download_rounded),
+                  label: Text(_saving ? 'Saving…' : 'Download'),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -1,4 +1,5 @@
 // lib/Pages/PostMarketplace.dart
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -69,6 +70,11 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   final List<LocalMedia> _gallery = <LocalMedia>[];
   final List<LocalMedia> _videos = <LocalMedia>[];
 
+  // Photo carousel auto-slide (1 sec)
+  late final PageController _photoPc;
+  Timer? _photoTimer;
+  int _photoPage = 0;
+
   // manage tab
   List<Map<String, dynamic>> _items = [];
   bool _loadingItems = true;
@@ -93,7 +99,23 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
+    _photoPc = PageController();
     _initData();
+  }
+
+  void _startPhotoAutoSlide() {
+    _photoTimer?.cancel();
+    final count = (_cover != null ? 1 : 0) + _gallery.length;
+    if (count < 2) return;
+    _photoTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_photoPc.hasClients) return;
+      final next = (_photoPage + 1) % count;
+      _photoPc.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   Future<void> _initData() async {
@@ -103,6 +125,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
   @override
   void dispose() {
+    _photoTimer?.cancel();
+    _photoPc.dispose();
     _tabs.dispose();
     _name.dispose();
     _price.dispose();
@@ -302,6 +326,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         mime: lookupMimeType(x.name, headerBytes: bytes),
       );
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
   }
 
   Future<void> _pickGalleryMulti() async {
@@ -320,6 +345,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       );
     }
     setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
   }
 
   Future<void> _pickVideo() async {
@@ -343,6 +369,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   void _removeGalleryAt(int i) {
     _gallery.removeAt(i);
     setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
   }
 
   void _removeVideoAt(int i) {
@@ -353,6 +380,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   void _clearCover() {
     _cover = null;
     setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
   }
 
   // ---------------- BASE64 "COMPRESSION" (NO STORAGE) ----------------
@@ -505,6 +533,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       _category = 'other';
 
       setState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
 
       // Reload items and switch to manage tab
       await _loadItems();
@@ -880,11 +909,17 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 ),
                 const SizedBox(height: 12),
 
-                // Cover image preview
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: _cover == null
-                      ? Container(
+                // Cover image preview – carousel when 2+ photos, auto-slide 1/sec
+                Builder(
+                  builder: (context) {
+                    final photos = <Uint8List>[
+                      if (_cover != null) _cover!.bytes,
+                      ..._gallery.map((m) => m.bytes),
+                    ];
+                    if (photos.isEmpty) {
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
                           height: 220,
                           color: Colors.grey.shade100,
                           child: const Center(
@@ -894,13 +929,38 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                               color: Colors.black38,
                             ),
                           ),
-                        )
-                      : Image.memory(
-                          _cover!.bytes,
+                        ),
+                      );
+                    }
+                    if (photos.length == 1) {
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Image.memory(
+                          photos.first,
                           height: 220,
                           width: double.infinity,
                           fit: BoxFit.cover,
                         ),
+                      );
+                    }
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: SizedBox(
+                        height: 220,
+                        child: PageView.builder(
+                          controller: _photoPc,
+                          itemCount: photos.length,
+                          onPageChanged: (i) => setState(() => _photoPage = i),
+                          itemBuilder: (context, i) => Image.memory(
+                            photos[i],
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 10),
                 Row(

@@ -453,8 +453,8 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
           unselectedLabelColor: const Color(0xFF6B778C),
           indicatorColor: _brand,
           tabs: const [
+             Tab(text: 'Confirmed'),
             Tab(text: 'Pending'),
-            Tab(text: 'Confirmed'),
             Tab(text: 'Delivered'),
             Tab(text: 'Cancelled'),
           ],

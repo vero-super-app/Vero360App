@@ -29,6 +29,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovid
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 /// ✅ Removes scrollbars + glow everywhere inside bottom-sheet
@@ -986,6 +987,50 @@ bool _aiSearchMode=false;
     return sb.toString().trim().isEmpty ? _mwk(item.price) : sb.toString();
   }
 
+  /// Convert local (Firestore) model to core model for DetailsPage.
+  core.MarketplaceDetailModel _toCoreDetailModel(MarketplaceDetailModel item) {
+    final id = item.hasValidSqlItemId
+        ? item.sqlItemId!
+        : _stablePositiveIdFromString(item.id);
+    return core.MarketplaceDetailModel(
+      id: id,
+      name: item.name,
+      category: item.category,
+      price: item.price,
+      image: item.image,
+      description: item.description ?? '',
+      location: item.location ?? '',
+      comment: null,
+      gallery: item.gallery,
+      videos: const [],
+      sellerBusinessName: item.sellerBusinessName,
+      sellerOpeningHours: item.sellerOpeningHours,
+      sellerStatus: item.sellerStatus,
+      sellerBusinessDescription: item.sellerBusinessDescription,
+      sellerRating: item.sellerRating,
+      sellerLogoUrl: item.sellerLogoUrl,
+      serviceProviderId: item.serviceProviderId,
+      sellerUserId: item.sellerUserId,
+      merchantId: item.merchantId,
+      merchantName: item.merchantName,
+      serviceType: item.serviceType ?? 'marketplace',
+      createdAt: item.createdAt,
+    );
+  }
+
+  /// Open full details page (replaces bottom sheet so user sees gallery, image viewer, simplified merchant card).
+  void _openDetailsPage(MarketplaceDetailModel item) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DetailsPage(
+          item: _toCoreDetailModel(item),
+          cartService: widget.cartService,
+        ),
+      ),
+    );
+  }
+
   /// Convert API (core) model to local Firestore-compatible model.
   MarketplaceDetailModel _fromCoreMarketplace(core.MarketplaceDetailModel c) {
     return MarketplaceDetailModel(
@@ -1131,9 +1176,11 @@ bool _aiSearchMode=false;
     final id = item.hasValidSqlItemId
         ? item.sqlItemId!
         : _stablePositiveIdFromString(item.id);
+    final merchantName = item.merchantName ?? item.sellerBusinessName ?? 'A merchant';
     final productUrl = 'https://vero360.app/marketplace/$id';
+    final priceStr = NumberFormat('#,###', 'en').format(item.price.truncate());
     Share.share(
-      'Check out ${item.name} on Vero360 - MWK ${item.price.toStringAsFixed(0)}\n$productUrl',
+      '$merchantName is selling this on Vero360 - Check out ${item.name} - MWK $priceStr\n$productUrl',
     );
   }
 
@@ -2038,7 +2085,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                 const SizedBox(width: 10),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () => _showDetailsBottomSheet(item),
+                    onPressed: () => _openDetailsPage(item),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
@@ -2461,7 +2508,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                                 (context, i) {
                                   final item = items[i];
                                   return GestureDetector(
-                                    onTap: () => _showDetailsBottomSheet(item),
+                                    onTap: () => _openDetailsPage(item),
                                     child: _buildMarketItem(item),
                                   );
                                 },

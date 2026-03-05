@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
@@ -135,6 +136,59 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
+  /// Build image for a single source (URL or storage path). Used by carousel.
+  Widget buildImageForSource(String source) {
+    final raw = source.trim();
+    if (raw.isEmpty) {
+      return Container(
+        color: const Color(0xFFEDEDED),
+        child: const Center(
+          child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
+        ),
+      );
+    }
+    if (_isHttp(raw)) {
+      return Image.network(
+        raw,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (_, __, ___) => Container(
+          color: const Color(0xFFEDEDED),
+          child: const Center(
+            child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
+          ),
+        ),
+      );
+    }
+    return FutureBuilder<String?>(
+      future: _toFirebaseDownloadUrl(raw),
+      builder: (context, snap) {
+        final url = snap.data;
+        if (url == null || url.isEmpty) {
+          return Container(
+            color: const Color(0xFFEDEDED),
+            child: const Center(
+              child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
+            ),
+          );
+        }
+        return Image.network(
+          url,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+          errorBuilder: (_, __, ___) => Container(
+            color: const Color(0xFFEDEDED),
+            child: const Center(
+              child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -241,7 +295,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
               final it = items[index];
               return _MerchantProductCard(
                 item: it,
-                imageBuilder: (item) => buildItemImage(item),
+                imageBuilder: (item) => _ProductImageCarousel(
+                  item: item,
+                  buildImageForSource: buildImageForSource,
+                ),
                 onOpen: () {
                   // If the Firestore item has a valid backend/sql id, open the full details page.
                   if (!it.hasValidSqlItemId) return;
@@ -259,8 +316,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                           location: it.location ?? '',
                           comment: null,
                           category: it.category,
-                          gallery: const [],
-                          videos: const [],
+                          gallery: it.gallery,
+                          videos: it.videos,
                           sellerBusinessName: null,
                           sellerOpeningHours: null,
                           sellerStatus: null,
@@ -272,6 +329,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                           merchantId: widget.merchantId,
                           merchantName: widget.merchantName,
                           serviceType: 'marketplace',
+                          createdAt: it.createdAt,
                         ),
                         cartService: _cartService,
                       ),
@@ -293,7 +351,6 @@ class _MerchantProductCard extends StatelessWidget {
   final Widget Function(MarketplaceDetailModel) imageBuilder;
 
   const _MerchantProductCard({
-    super.key,
     required this.item,
     required this.onOpen,
     required this.imageBuilder,
@@ -352,33 +409,102 @@ class _MerchantProductCard extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _image() {
-    final raw = item.image.trim();
-    if (raw.isEmpty) {
+/// Photo carousel for a product (cover + gallery), auto-slides every 1 second like details/main.
+class _ProductImageCarousel extends StatefulWidget {
+  final MarketplaceDetailModel item;
+  final Widget Function(String source) buildImageForSource;
+
+  const _ProductImageCarousel({
+    required this.item,
+    required this.buildImageForSource,
+  });
+
+  @override
+  State<_ProductImageCarousel> createState() => _ProductImageCarouselState();
+}
+
+class _ProductImageCarouselState extends State<_ProductImageCarousel> {
+  late final PageController _pc;
+  Timer? _timer;
+  int _page = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pc = PageController();
+    final n = _mediaCount;
+    if (n > 1) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted || !_pc.hasClients) return;
+        final next = (_page + 1) % n;
+        _pc.animateToPage(
+          next,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOut,
+        );
+      });
+    }
+  }
+
+  int get _mediaCount {
+    int c = 0;
+    if (widget.item.image.trim().isNotEmpty) c++;
+    c += widget.item.gallery.where((u) => u.trim().isNotEmpty).length;
+    return c;
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _pc.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final images = <String>[
+      if (item.image.trim().isNotEmpty) item.image.trim(),
+      ...item.gallery.map((e) => e.toString().trim()).where((s) => s.isNotEmpty),
+    ];
+    if (images.isEmpty) {
       return Container(
         color: const Color(0xFFEDEDED),
         child: const Center(
-          child: Icon(
-                                             Icons.image_not_supported_rounded,
-            color: Colors.black38,
-          ),
+          child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
         ),
       );
     }
-
-    return Image.network(
-      raw,
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => Container(
-        color: const Color(0xFFEDEDED),
-        child: const Center(
-          child: Icon(
-            Icons.image_not_supported_rounded,
-            color: Colors.black38,
-          ),
-        ),
-      ),
+    if (images.length == 1) {
+      if (item.imageBytes != null && item.image.trim().isNotEmpty && item.image.trim() == images.first) {
+        return Image.memory(
+          item.imageBytes!,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+        );
+      }
+      return widget.buildImageForSource(images.first);
+    }
+    return PageView.builder(
+      controller: _pc,
+      itemCount: images.length,
+      onPageChanged: (i) => setState(() => _page = i),
+      itemBuilder: (context, i) {
+        final src = images[i];
+        final useBytes = i == 0 && item.imageBytes != null && item.image.trim() == src;
+        if (useBytes) {
+          return Image.memory(
+            item.imageBytes!,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+          );
+        }
+        return widget.buildImageForSource(src);
+      },
     );
   }
 }

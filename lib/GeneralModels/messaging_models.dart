@@ -24,8 +24,8 @@ extension MessageStatusExt on MessageStatus {
 class Message {
   final String id;
   final String chatId;
-  final String senderId;
-  final String recipientId;
+  final int senderId;
+  final int recipientId;
   final String content;
   final DateTime createdAt;
   final DateTime? editedAt;
@@ -33,6 +33,9 @@ class Message {
   final bool isEdited;
   final bool isDeleted;
   final List<String>? attachmentUrls;
+  final List<Map<String, dynamic>>? attachments;
+  final List<Map<String, dynamic>>? tags;
+  final Map<String, dynamic>? sender;
 
   Message({
     required this.id,
@@ -46,16 +49,19 @@ class Message {
     this.isEdited = false,
     this.isDeleted = false,
     this.attachmentUrls,
+    this.attachments,
+    this.tags,
+    this.sender,
   });
 
-  bool isMine(String myId) => senderId == myId;
+  bool isMine(int myId) => senderId == myId;
 
   factory Message.fromJson(Map<String, dynamic> json) {
     return Message(
       id: json['id'] ?? '',
       chatId: json['chatId'] ?? '',
-      senderId: json['senderId'] ?? '',
-      recipientId: json['recipientId'] ?? '',
+      senderId: (json['senderId'] is int) ? json['senderId'] : int.tryParse(json['senderId'].toString()) ?? 0,
+      recipientId: (json['recipientId'] is int) ? json['recipientId'] : int.tryParse(json['recipientId'].toString()) ?? 0,
       content: json['content'] ?? '',
       createdAt: json['createdAt'] is Timestamp
           ? (json['createdAt'] as Timestamp).toDate()
@@ -73,6 +79,13 @@ class Message {
       attachmentUrls: json['attachmentUrls'] != null
           ? List<String>.from(json['attachmentUrls'] as List)
           : null,
+      attachments: json['attachments'] != null
+          ? List<Map<String, dynamic>>.from(json['attachments'] as List)
+          : null,
+      tags: json['tags'] != null
+          ? List<Map<String, dynamic>>.from(json['tags'] as List)
+          : null,
+      sender: json['sender'] is Map ? Map<String, dynamic>.from(json['sender'] as Map) : null,
     );
   }
 
@@ -89,6 +102,9 @@ class Message {
       'isEdited': isEdited,
       'isDeleted': isDeleted,
       'attachmentUrls': attachmentUrls,
+      'attachments': attachments,
+      'tags': tags,
+      'sender': sender,
     };
   }
 }

@@ -399,7 +399,7 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
               itemCount: messages.length,
               itemBuilder: (_, i) {
                 final msg = messages[messages.length - 1 - i];
-                final isMine = msg.isMine(_me!);
+                  final isMine = msg.isMine(_stringToNumericId(_me!));
 
                 return _MessageBubble(
                   message: msg,
@@ -562,6 +562,12 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
     final minutes = (seconds / 60).floor();
     final secs = seconds % 60;
     return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+  }
+
+  /// Convert a string ID (Firebase UID) to a stable numeric ID
+  /// Uses hashCode to generate consistent numeric identifiers
+  static int _stringToNumericId(String id) {
+    return id.hashCode.abs();
   }
 }
 

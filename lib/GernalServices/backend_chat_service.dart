@@ -49,13 +49,15 @@ class BackendChatThread {
       description: json['description'],
       avatarUrl: json['avatarUrl'],
       isArchived: json['isArchived'] ?? false,
-      participantCount: json['participantCount'] ?? 0,
+      participantCount: (json['participantCount'] as int?) ?? (json['participants'] as List?)?.length ?? 0,
       lastMessageAt: json['lastMessageAt'] != null
-          ? DateTime.parse(json['lastMessageAt'])
-          : null,
-      unreadCount: json['unreadCount'] ?? 0,
-      createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
-      updatedAt: DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
+          ? DateTime.parse(json['lastMessageAt'].toString())
+          : (json['updatedAt'] != null 
+              ? DateTime.parse(json['updatedAt'].toString())
+              : null),
+      unreadCount: (json['unreadCount'] as int?) ?? 0,
+      createdAt: DateTime.parse(json['createdAt']?.toString() ?? DateTime.now().toIso8601String()),
+      updatedAt: DateTime.parse(json['updatedAt']?.toString() ?? DateTime.now().toIso8601String()),
       participants: (json['participants'] as List?)
               ?.map((p) => ChatParticipant.fromJson(p as Map<String, dynamic>))
               .toList() ??
@@ -73,6 +75,10 @@ class BackendChatMessage {
   final String status; // 'sent', 'delivered', 'read', 'failed'
   final DateTime createdAt;
   final DateTime? readAt;
+  final DateTime? deliveredAt;
+  final List<Map<String, dynamic>>? attachments;
+  final List<Map<String, dynamic>>? tags;
+  final Map<String, dynamic>? sender;
 
   BackendChatMessage({
     required this.id,
@@ -83,6 +89,10 @@ class BackendChatMessage {
     required this.status,
     required this.createdAt,
     this.readAt,
+    this.deliveredAt,
+    this.attachments,
+    this.tags,
+    this.sender,
   });
 
   bool isMine(int myUserId) => senderId == myUserId;
@@ -91,13 +101,21 @@ class BackendChatMessage {
     return BackendChatMessage(
       id: json['id'] ?? '',
       chatId: json['chatId'] ?? '',
-      senderId: json['senderId'] ?? 0,
+      senderId: (json['senderId'] is int) ? json['senderId'] : int.tryParse(json['senderId'].toString()) ?? 0,
       content: json['content'],
       type: json['type'] ?? 'text',
       status: json['status'] ?? 'sent',
       createdAt: DateTime.parse(
           json['createdAt'] ?? DateTime.now().toIso8601String()),
       readAt: json['readAt'] != null ? DateTime.parse(json['readAt']) : null,
+      deliveredAt: json['deliveredAt'] != null ? DateTime.parse(json['deliveredAt']) : null,
+      attachments: json['attachments'] != null
+          ? List<Map<String, dynamic>>.from(json['attachments'] as List)
+          : null,
+      tags: json['tags'] != null
+          ? List<Map<String, dynamic>>.from(json['tags'] as List)
+          : null,
+      sender: json['sender'] is Map ? Map<String, dynamic>.from(json['sender'] as Map) : null,
     );
   }
 }
@@ -426,7 +444,7 @@ class BackendChatService {
 
     try {
       await http.patch(
-        Uri.parse('$_baseUrl/chats/$chatId/messages/read'),
+        Uri.parse('$_baseUrl/chats/$chatId/messages/bulk/read'),
         headers: {
           'Authorization': _authHeader,
           'Content-Type': 'application/json',

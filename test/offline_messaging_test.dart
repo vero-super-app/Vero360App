@@ -86,8 +86,8 @@ void main() {
       final message = Message(
         id: 'msg1',
         chatId: 'chat1',
-        senderId: 'user1',
-        recipientId: 'user2',
+        senderId: 1,
+        recipientId: 2,
         content: 'Hello',
         createdAt: DateTime.now(),
         status: MessageStatus.sent,
@@ -98,7 +98,7 @@ void main() {
       final retrieved = database.getMessageById('msg1');
       expect(retrieved, isNotNull);
       expect(retrieved?.content, equals('Hello'));
-      expect(retrieved?.senderId, equals('user1'));
+      expect(retrieved?.senderId, equals(1));
     });
 
     test('Save and retrieve chat threads', () async {
@@ -130,8 +130,8 @@ void main() {
       final message = Message(
         id: 'msg1',
         chatId: 'chat1',
-        senderId: 'user1',
-        recipientId: 'user2',
+        senderId: 1,
+        recipientId: 2,
         content: 'Hello',
         createdAt: DateTime.now(),
         status: MessageStatus.sent,
@@ -196,8 +196,8 @@ void main() {
       final msg1 = Message(
         id: 'msg1',
         chatId: 'chat1',
-        senderId: 'user1',
-        recipientId: 'user2',
+        senderId: 1,
+        recipientId: 2,
         content: 'Message 1',
         createdAt: DateTime.now(),
         status: MessageStatus.sent,
@@ -206,8 +206,8 @@ void main() {
       final msg2 = Message(
         id: 'msg2',
         chatId: 'chat2',
-        senderId: 'user1',
-        recipientId: 'user3',
+        senderId: 1,
+        recipientId: 3,
         content: 'Message 2',
         createdAt: DateTime.now(),
         status: MessageStatus.sent,
@@ -232,8 +232,8 @@ void main() {
         message: Message(
           id: 'msg1',
           chatId: 'chat1',
-          senderId: 'user1',
-          recipientId: 'user2',
+          senderId: 1,
+          recipientId: 2,
           content: 'Hello',
           createdAt: DateTime.now(),
           status: MessageStatus.sent,
@@ -254,8 +254,8 @@ void main() {
         message: Message(
           id: 'msg1',
           chatId: 'chat1',
-          senderId: 'user1',
-          recipientId: 'user2',
+          senderId: 1,
+          recipientId: 2,
           content: 'Hello',
           createdAt: DateTime.now(),
           status: MessageStatus.sent,
@@ -276,8 +276,8 @@ void main() {
       final msg = Message(
         id: 'msg_stats_1',
         chatId: 'chat1',
-        senderId: 'user1',
-        recipientId: 'user2',
+        senderId: 1,
+        recipientId: 2,
         content: 'Hello',
         createdAt: DateTime.now(),
         status: MessageStatus.sent,
@@ -314,8 +314,8 @@ void main() {
           message: Message(
             id: 'msg$i',
             chatId: 'chat1',
-            senderId: 'user1',
-            recipientId: 'user2',
+            senderId: 1,
+            recipientId: 2,
             content: 'Message $i',
             createdAt: DateTime.now(),
             status: MessageStatus.sent,

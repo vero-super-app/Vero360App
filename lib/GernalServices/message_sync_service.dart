@@ -131,7 +131,7 @@ class MessageSyncService {
 
       await _webSocket!.sendMessage(
         chatId: message.chatId,
-        recipientId: message.recipientId,
+        recipientId: message.recipientId.toString(),
         content: message.content,
       );
 

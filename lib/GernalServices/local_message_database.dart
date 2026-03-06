@@ -61,8 +61,8 @@ class LocalMessage extends HiveObject {
     return LocalMessage(
       id: msg.id,
       chatId: msg.chatId,
-      senderId: msg.senderId,
-      recipientId: msg.recipientId,
+      senderId: msg.senderId.toString(),
+      recipientId: msg.recipientId.toString(),
       content: msg.content,
       createdAt: msg.createdAt,
       editedAt: msg.editedAt,
@@ -79,8 +79,8 @@ class LocalMessage extends HiveObject {
     return Message(
       id: id,
       chatId: chatId,
-      senderId: senderId,
-      recipientId: recipientId,
+      senderId: int.tryParse(senderId) ?? 0,
+      recipientId: int.tryParse(recipientId) ?? 0,
       content: content,
       createdAt: createdAt,
       editedAt: editedAt,

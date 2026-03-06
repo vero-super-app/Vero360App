@@ -89,8 +89,8 @@ Stream<List<messaging_models.Message>> _getMessagesFromFirebase(String threadId)
       return messaging_models.Message(
         id: cm.id,
         chatId: threadId,
-        senderId: cm.fromAppId,
-        recipientId: cm.toAppId,
+        senderId: _stringToNumericId(cm.fromAppId),
+        recipientId: _stringToNumericId(cm.toAppId),
         content: cm.text,
         createdAt: cm.ts,
         isEdited: cm.isEdited,
@@ -103,6 +103,12 @@ Stream<List<messaging_models.Message>> _getMessagesFromFirebase(String threadId)
       );
     }).toList();
   });
+}
+
+/// Convert a string ID (Firebase UID) to a stable numeric ID
+/// Uses hashCode to generate consistent numeric identifiers
+int _stringToNumericId(String id) {
+  return id.hashCode.abs();
 }
 
 // =============== CHAT THREADS PROVIDER ===============

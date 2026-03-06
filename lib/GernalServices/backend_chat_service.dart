@@ -49,15 +49,19 @@ class BackendChatThread {
       description: json['description'],
       avatarUrl: json['avatarUrl'],
       isArchived: json['isArchived'] ?? false,
-      participantCount: (json['participantCount'] as int?) ?? (json['participants'] as List?)?.length ?? 0,
+      participantCount: (json['participantCount'] as int?) ??
+          (json['participants'] as List?)?.length ??
+          0,
       lastMessageAt: json['lastMessageAt'] != null
           ? DateTime.parse(json['lastMessageAt'].toString())
-          : (json['updatedAt'] != null 
+          : (json['updatedAt'] != null
               ? DateTime.parse(json['updatedAt'].toString())
               : null),
       unreadCount: (json['unreadCount'] as int?) ?? 0,
-      createdAt: DateTime.parse(json['createdAt']?.toString() ?? DateTime.now().toIso8601String()),
-      updatedAt: DateTime.parse(json['updatedAt']?.toString() ?? DateTime.now().toIso8601String()),
+      createdAt: DateTime.parse(
+          json['createdAt']?.toString() ?? DateTime.now().toIso8601String()),
+      updatedAt: DateTime.parse(
+          json['updatedAt']?.toString() ?? DateTime.now().toIso8601String()),
       participants: (json['participants'] as List?)
               ?.map((p) => ChatParticipant.fromJson(p as Map<String, dynamic>))
               .toList() ??
@@ -101,21 +105,27 @@ class BackendChatMessage {
     return BackendChatMessage(
       id: json['id'] ?? '',
       chatId: json['chatId'] ?? '',
-      senderId: (json['senderId'] is int) ? json['senderId'] : int.tryParse(json['senderId'].toString()) ?? 0,
+      senderId: (json['senderId'] is int)
+          ? json['senderId']
+          : int.tryParse(json['senderId'].toString()) ?? 0,
       content: json['content'],
       type: json['type'] ?? 'text',
       status: json['status'] ?? 'sent',
-      createdAt: DateTime.parse(
-          json['createdAt'] ?? DateTime.now().toIso8601String()),
+      createdAt:
+          DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
       readAt: json['readAt'] != null ? DateTime.parse(json['readAt']) : null,
-      deliveredAt: json['deliveredAt'] != null ? DateTime.parse(json['deliveredAt']) : null,
+      deliveredAt: json['deliveredAt'] != null
+          ? DateTime.parse(json['deliveredAt'])
+          : null,
       attachments: json['attachments'] != null
           ? List<Map<String, dynamic>>.from(json['attachments'] as List)
           : null,
       tags: json['tags'] != null
           ? List<Map<String, dynamic>>.from(json['tags'] as List)
           : null,
-      sender: json['sender'] is Map ? Map<String, dynamic>.from(json['sender'] as Map) : null,
+      sender: json['sender'] is Map
+          ? Map<String, dynamic>.from(json['sender'] as Map)
+          : null,
     );
   }
 }
@@ -147,21 +157,21 @@ class BackendChatService {
   /// Uses ApiConfig for base URL (supports dart-define, ngrok, etc.)
   /// Builds: {ApiConfig.prod}/vero/api/v1
   static String get _baseUrl => '${ApiConfig.prod}/vero/api/v1';
-  
+
   static String? _authToken;
   static int? _userId;
 
   static Future<void> ensureAuth() async {
     // Ensure ApiConfig is initialized
     await ApiConfig.init();
-    
+
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       throw Exception('User not authenticated with Firebase');
     }
 
     _authToken = await user.getIdToken();
-    
+
     if (_authToken == null || _authToken!.isEmpty) {
       throw Exception('Failed to get Firebase ID token');
     }
@@ -205,13 +215,13 @@ class BackendChatService {
       }
     }
     if (userId == null) {
-      print('[BackendChatService] WARNING: userId not found in SharedPreferences');
-      print('[BackendChatService] Make sure to call: SharedPreferences.getInstance().setInt("userId", <numeric_id>)');
+      print(
+          '[BackendChatService] WARNING: userId not found in SharedPreferences');
+      print(
+          '[BackendChatService] Make sure to call: SharedPreferences.getInstance().setInt("userId", <numeric_id>)');
       print('[BackendChatService] after user login with your backend');
-      throw Exception(
-        'User ID not set in SharedPreferences. '
-        'Backend must provide numeric userId after authentication.'
-      );
+      throw Exception('User ID not set in SharedPreferences. '
+          'Backend must provide numeric userId after authentication.');
     }
 
     _userId = userId;
@@ -326,17 +336,19 @@ class BackendChatService {
     await ensureAuth();
 
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/chats/$chatId/messages'),
-        headers: {
-          'Authorization': _authHeader,
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'content': content,
-          'type': type,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/chats/$chatId/messages'),
+            headers: {
+              'Authorization': _authHeader,
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'content': content,
+              'type': type,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 201) {
         return BackendChatMessage.fromJson(
@@ -359,14 +371,16 @@ class BackendChatService {
     await ensureAuth();
 
     try {
-      final response = await http.put(
-        Uri.parse('$_baseUrl/chats/$chatId/messages/$messageId'),
-        headers: {
-          'Authorization': _authHeader,
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'content': newContent}),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .put(
+            Uri.parse('$_baseUrl/chats/$chatId/messages/$messageId'),
+            headers: {
+              'Authorization': _authHeader,
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'content': newContent}),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         return BackendChatMessage.fromJson(
@@ -411,23 +425,28 @@ class BackendChatService {
     await ensureAuth();
 
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/chats'),
-        headers: {
-          'Authorization': _authHeader,
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'type': 'direct',
-          'participantIds': [_userId, peerUserId],
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/chats'),
+            headers: {
+              'Authorization': _authHeader,
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'type': 'direct',
+              'participantIds': [_userId, peerUserId],
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
-      if (response.statusCode == 201) {
-        return BackendChatThread.fromJson(
-            jsonDecode(response.body) as Map<String, dynamic>);
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        final chatData = body is Map ? body : body['data'] ?? body;
+        return BackendChatThread.fromJson(chatData as Map<String, dynamic>);
       } else {
-        throw Exception('Failed to create chat: ${response.statusCode}');
+        print('[BackendChatService] Create chat error: ${response.statusCode}');
+        print('[BackendChatService] Response body: ${response.body}');
+        throw Exception('Failed to create chat: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
       print('[BackendChatService] Error ensuring chat: $e');
@@ -443,16 +462,72 @@ class BackendChatService {
     await ensureAuth();
 
     try {
-      await http.patch(
-        Uri.parse('$_baseUrl/chats/$chatId/messages/bulk/read'),
-        headers: {
-          'Authorization': _authHeader,
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'messageIds': messageIds}),
-      ).timeout(const Duration(seconds: 10));
+      await http
+          .patch(
+            Uri.parse('$_baseUrl/chats/$chatId/messages/bulk/read'),
+            headers: {
+              'Authorization': _authHeader,
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'messageIds': messageIds}),
+          )
+          .timeout(const Duration(seconds: 10));
     } catch (e) {
       print('[BackendChatService] Error marking as read: $e');
+      rethrow;
+    }
+  }
+
+  /// Send test message to all users (TEST ONLY)
+  static Future<List<String>> sendTestMessageToAllUsers({
+    required String testMessage,
+  }) async {
+    await ensureAuth();
+    final myId = _userId!;
+
+    try {
+      // Fetch all users from /vero/users (not /vero/api/v1/users)
+      final usersUrl = _baseUrl.replaceFirst('/api/v1', '') + '/users';
+      final usersResponse = await http.get(
+        Uri.parse(usersUrl),
+        headers: {'Authorization': _authHeader},
+      ).timeout(const Duration(seconds: 10));
+
+      if (usersResponse.statusCode != 200) {
+        throw Exception('Failed to fetch users: ${usersResponse.statusCode}');
+      }
+
+      final usersJson = jsonDecode(usersResponse.body);
+      final users = usersJson['data'] as List? ?? [];
+      final sentMessageIds = <String>[];
+
+      for (final userJson in users) {
+        final userId = userJson['id'] as int?;
+        if (userId == null || userId == myId) continue;
+
+        try {
+          // Create or get chat with user
+          final chat = await ensureChat(peerUserId: userId);
+
+          // Send message
+          final msg = await sendMessage(
+            chatId: chat.id,
+            content: testMessage,
+            type: 'text',
+          );
+
+          sentMessageIds.add(msg.id);
+          print('[BackendChatService] Sent test message to user $userId');
+        } catch (e) {
+          print('[BackendChatService] Failed to send to user $userId: $e');
+        }
+      }
+
+      print(
+          '[BackendChatService] Test messages sent to ${sentMessageIds.length} users');
+      return sentMessageIds;
+    } catch (e) {
+      print('[BackendChatService] Error sending test messages: $e');
       rethrow;
     }
   }

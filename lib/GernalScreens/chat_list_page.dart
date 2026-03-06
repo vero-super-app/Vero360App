@@ -51,6 +51,71 @@ class _ChatListPageState extends State<ChatListPage> {
     }
   }
 
+  void _showTestMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Test Actions',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: () => _sendTestMessage(context),
+                icon: const Icon(Icons.send),
+                label: const Text('Send Test Message to All Users'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: _brandOrange,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendTestMessage(BuildContext context) async {
+    Navigator.pop(context);
+
+    final scaffold = ScaffoldMessenger.of(context);
+    scaffold.showSnackBar(
+      const SnackBar(content: Text('Sending test messages...')),
+    );
+
+    try {
+      final count = await BackendChatService.sendTestMessageToAllUsers(
+        testMessage: '✅ Test message from ${DateTime.now()}',
+      );
+
+      if (!mounted) return;
+      scaffold.showSnackBar(
+        SnackBar(
+          content: Text('Test messages sent to $count users!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      scaffold.showSnackBar(
+        SnackBar(
+          content: Text('Error: ${_friendlyChatError(e).message}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // ✅ removes scrollbars + glow "bars"
@@ -141,40 +206,40 @@ class _ChatListPageState extends State<ChatListPage> {
               itemCount: items.length,
               separatorBuilder: (_, __) => const SizedBox(height: 8),
               itemBuilder: (_, i) {
-                 final t = items[i];
-                 final otherParticipant = t.participants.firstWhere(
-                   (p) => p.id != me,
-                   orElse: () => t.participants.isNotEmpty
-                       ? t.participants.first
-                       : ChatParticipant(id: 0, name: 'Contact', email: ''),
-                 );
+                final t = items[i];
+                final otherParticipant = t.participants.firstWhere(
+                  (p) => p.id != me,
+                  orElse: () => t.participants.isNotEmpty
+                      ? t.participants.first
+                      : ChatParticipant(id: 0, name: 'Contact', email: ''),
+                );
 
-                 final name = otherParticipant.name.trim();
-                 final avatarUrl = otherParticipant.profilePicture ?? '';
+                final name = otherParticipant.name.trim();
+                final avatarUrl = otherParticipant.profilePicture ?? '';
 
-                 final subtitle = t.type == 'direct'
-                     ? 'Tap to chat'
-                     : (t.name ?? 'Group chat');
+                final subtitle = t.type == 'direct'
+                    ? 'Tap to chat'
+                    : (t.name ?? 'Group chat');
 
-                 return _ChatRow(
-                   name: name.isEmpty ? 'Contact' : name,
-                   avatarUrls: avatarUrl.isNotEmpty ? [avatarUrl] : [],
-                   lastText: subtitle,
-                   updatedAt: t.updatedAt,
-                   unreadCount: t.unreadCount,
-                   onTap: () => Navigator.push(
-                     context,
-                     MaterialPageRoute(
-                       builder: (_) => MessagePage(
-                         peerAppId: otherParticipant.id.toString(),
-                         peerName: name.isEmpty ? 'Contact' : name,
-                         peerAvatarUrl: avatarUrl,
-                         peerId: t.id,
-                       ),
-                     ),
-                   ),
-                 );
-               },
+                return _ChatRow(
+                  name: name.isEmpty ? 'Contact' : name,
+                  avatarUrls: avatarUrl.isNotEmpty ? [avatarUrl] : [],
+                  lastText: subtitle,
+                  updatedAt: t.updatedAt,
+                  unreadCount: t.unreadCount,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => MessagePage(
+                        peerAppId: otherParticipant.id.toString(),
+                        peerName: name.isEmpty ? 'Contact' : name,
+                        peerAvatarUrl: avatarUrl,
+                        peerId: t.id,
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           );
         },
@@ -182,11 +247,7 @@ class _ChatListPageState extends State<ChatListPage> {
       floatingActionButton: FloatingActionButton(
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
-        onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Add "New chat" action here.')),
-          );
-        },
+        onPressed: () => _showTestMenu(context),
         child: const Icon(Icons.chat_rounded),
       ),
     );
@@ -225,14 +286,16 @@ class _ChatListPageState extends State<ChatListPage> {
                       borderRadius: BorderRadius.circular(999),
                       borderSide: BorderSide.none,
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
                   ),
                 ),
               )
             : const Text(
                 'Messages',
                 key: ValueKey('title'),
-                style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black),
+                style:
+                    TextStyle(fontWeight: FontWeight.w900, color: Colors.black),
               ),
       ),
       actions: [
@@ -244,7 +307,8 @@ class _ChatListPageState extends State<ChatListPage> {
               if (!_searching) _searchCtrl.clear();
             });
           },
-          icon: Icon(_searching ? Icons.close_rounded : Icons.search_rounded, color: Colors.black87),
+          icon: Icon(_searching ? Icons.close_rounded : Icons.search_rounded,
+              color: Colors.black87),
         ),
         const SizedBox(width: 6),
       ],
@@ -293,7 +357,8 @@ class _ChatListPageState extends State<ChatListPage> {
 String _fmtTime(DateTime dt) {
   if (dt.millisecondsSinceEpoch == 0) return '';
   final now = DateTime.now();
-  final sameDay = dt.year == now.year && dt.month == now.month && dt.day == now.day;
+  final sameDay =
+      dt.year == now.year && dt.month == now.month && dt.day == now.day;
   if (sameDay) {
     final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final m = dt.minute.toString().padLeft(2, '0');
@@ -410,15 +475,18 @@ class _AvatarCarouselState extends State<_AvatarCarousel> {
   Widget _fallback(String initials) => Center(
         child: Text(
           initials,
-          style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.black87),
+          style: const TextStyle(
+              fontWeight: FontWeight.w900, color: Colors.black87),
         ),
       );
 
   String _initials(String n) {
-    final parts = n.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final parts =
+        n.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
     if (parts.isEmpty) return 'C';
     if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
-    return (parts.first.substring(0, 1) + parts.last.substring(0, 1)).toUpperCase();
+    return (parts.first.substring(0, 1) + parts.last.substring(0, 1))
+        .toUpperCase();
   }
 }
 
@@ -439,7 +507,8 @@ class _UnreadPill extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12),
+        style: const TextStyle(
+            color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12),
       ),
     );
   }
@@ -504,12 +573,14 @@ class _NoBarsScrollBehavior extends MaterialScrollBehavior {
   const _NoBarsScrollBehavior();
 
   @override
-  Widget buildOverscrollIndicator(BuildContext context, Widget child, ScrollableDetails details) {
+  Widget buildOverscrollIndicator(
+      BuildContext context, Widget child, ScrollableDetails details) {
     return child;
   }
 
   @override
-  Widget buildScrollbar(BuildContext context, Widget child, ScrollableDetails details) {
+  Widget buildScrollbar(
+      BuildContext context, Widget child, ScrollableDetails details) {
     return child;
   }
 }
@@ -518,7 +589,8 @@ class _ChatUiError {
   final IconData icon;
   final String title;
   final String message;
-  const _ChatUiError({required this.icon, required this.title, required this.message});
+  const _ChatUiError(
+      {required this.icon, required this.title, required this.message});
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -569,7 +641,8 @@ class _ChatRow extends StatelessWidget {
                             name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15.5),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w900, fontSize: 15.5),
                           ),
                         ),
                         const SizedBox(width: 10),
@@ -578,7 +651,9 @@ class _ChatRow extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey.shade600,
-                            fontWeight: unreadCount > 0 ? FontWeight.w800 : FontWeight.w500,
+                            fontWeight: unreadCount > 0
+                                ? FontWeight.w800
+                                : FontWeight.w500,
                           ),
                         ),
                       ],
@@ -593,8 +668,12 @@ class _ChatRow extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 13,
-                              color: unreadCount > 0 ? Colors.black87 : Colors.grey.shade700,
-                              fontWeight: unreadCount > 0 ? FontWeight.w600 : FontWeight.w500,
+                              color: unreadCount > 0
+                                  ? Colors.black87
+                                  : Colors.grey.shade700,
+                              fontWeight: unreadCount > 0
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
                             ),
                           ),
                         ),

@@ -18,6 +18,8 @@ class MarketplaceDetailModel {
   final String? location;
   final bool isActive;
   final DateTime? createdAt;
+  final List<String> gallery;
+  final List<String> videos;
 
   MarketplaceDetailModel({
     required this.id,
@@ -31,6 +33,8 @@ class MarketplaceDetailModel {
     this.location,
     this.isActive = true,
     this.createdAt,
+    this.gallery = const [],
+    this.videos = const [],
   });
 
   /// ✅ True only if we have a real numeric backend id > 0
@@ -79,6 +83,17 @@ class MarketplaceDetailModel {
 
     final cat = (data['category'] ?? '').toString().toLowerCase();
 
+    List<String> gallery = const [];
+    final galleryRaw = data['gallery'];
+    if (galleryRaw is List) {
+      gallery = galleryRaw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
+    }
+    List<String> videos = const [];
+    final videosRaw = data['videos'];
+    if (videosRaw is List) {
+      videos = videosRaw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
+    }
+
     return MarketplaceDetailModel(
       id: doc.id,
       name: (data['name'] ?? '').toString(),
@@ -91,7 +106,9 @@ class MarketplaceDetailModel {
       location: data['location']?.toString(),
       isActive: data['isActive'] is bool ? data['isActive'] as bool : true,
       createdAt: created,
-      sqlItemId: sqlId, // 👈 set here
+      sqlItemId: sqlId,
+      gallery: gallery,
+      videos: videos,
     );
   }
 }

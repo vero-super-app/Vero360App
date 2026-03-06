@@ -403,6 +403,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
                   merchantName: _businessName.isNotEmpty
                       ? _businessName
                       : (_auth.currentUser?.displayName ?? 'Courier'),
+                  serviceType: 'courier',
                 ),
               ),
             );

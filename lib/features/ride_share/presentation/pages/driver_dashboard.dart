@@ -178,6 +178,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                   builder: (_) => PostStoryPage(
                     merchantId: uid,
                     merchantName: user?.displayName ?? 'Ride Driver',
+                    serviceType: 'ride',
                   ),
                 ),
               );

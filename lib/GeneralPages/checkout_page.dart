@@ -14,6 +14,7 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -442,6 +443,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
         if (status == 'success') {
           final checkoutUrl = responseJson['data']['checkout_url'] as String;
           if (!mounted) return;
+          // Pass merchant credit so wallet is credited on payment success (same as cart checkout)
+          final mid = widget.item.merchantId?.trim();
+          final mname = widget.item.merchantName?.trim();
+          final hasMerchant = mid != null && mid.isNotEmpty && mid != 'unknown' &&
+              mname != null && mname.isNotEmpty && mname != 'Unknown Merchant';
+          final listForCredit = hasMerchant
+              ? <CartModel>[
+                  CartModel(
+                    userId: '',
+                    item: widget.item.id,
+                    quantity: _qty,
+                    image: widget.item.image,
+                    name: widget.item.name,
+                    price: widget.item.price,
+                    description: widget.item.description ?? '',
+                    merchantId: mid!,
+                    merchantName: mname!,
+                    serviceType: 'marketplace',
+                  ),
+                ]
+              : null;
           await Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => InAppPaymentPage(
@@ -449,6 +471,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 txRef: txRef,
                 totalAmount: _total,
                 rootContext: context,
+                cartItemsForMerchantCredit: listForCredit,
               ),
             ),
           );

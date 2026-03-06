@@ -1591,7 +1591,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
         sheetCtx,
         'Please log in to add items from Latest Arrivals.',
         isSuccess: false,
-        errorMessage: 'Not logged in',
+        errorMessage: '',
       );
       return;
     }
@@ -1633,7 +1633,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
         sheetCtx,
         'Please log in to buy from Latest Arrivals.',
         isSuccess: false,
-        errorMessage: 'Not logged in',
+        errorMessage: '',
       );
       return;
     }

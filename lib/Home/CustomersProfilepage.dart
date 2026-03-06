@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 // ✅ add MIME + MediaType for correct multipart content-type
 import 'package:mime/mime.dart' as mime;
 import 'package:http_parser/http_parser.dart' as http_parser;
+import 'package:vero360_app/Home/notifications_page.dart';
 
 // ✅ use your existing API base resolver (unchanged)
 import 'package:vero360_app/config/api_config.dart';
@@ -44,9 +45,8 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  // --- Brand colors (adjust to your Vero palette) ---
-  final Color _brandNavy = const Color(0xFF16284C);
-  final Color _veroOrange = const Color(0xFFFF8A00);
+  // --- Brand colors (Vero360 main: orange) ---
+  static const Color _veroOrange = Color(0xFFFF8A00);
   final Color _cardBg = Colors.white;
   final Color _chipGrey = const Color(0xFFF4F5F7);
 
@@ -684,7 +684,7 @@ class _ProfilePageState extends State<ProfilePage> {
   // ---------- UI helpers ----------
   PreferredSizeWidget _appBar() {
     return AppBar(
-      backgroundColor: _brandNavy,
+      backgroundColor: _veroOrange,
       elevation: 0,
       titleSpacing: 0,
       title: const Text('Profile', style: TextStyle(color: Colors.white)),
@@ -701,11 +701,7 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
             ),
           ),
-        IconButton(
-          icon: const Icon(Icons.logout, color: Colors.white),
-          onPressed: _logout,
-          tooltip: 'Logout',
-        ),
+      
       ],
     );
   }
@@ -730,7 +726,7 @@ class _ProfilePageState extends State<ProfilePage> {
         Container(
           height: 140,
           decoration: BoxDecoration(
-            color: _brandNavy,
+            color: _veroOrange,
             borderRadius: const BorderRadius.vertical(
               bottom: Radius.circular(20),
             ),
@@ -847,7 +843,7 @@ class _ProfilePageState extends State<ProfilePage> {
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                   color: bg, borderRadius: BorderRadius.circular(12)),
-              child: Icon(icon, size: 20, color: _brandNavy),
+              child: Icon(icon, size: 20, color: _veroOrange),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -904,6 +900,9 @@ class _ProfilePageState extends State<ProfilePage> {
           _orderAction('Refund', Icons.replay_circle_filled_outlined, () {
             _openBottomSheet(const ToRefundPage());
           }),
+            _orderAction('My VeroRide', Icons.local_taxi_rounded, () {
+            //_openBottomSheet(const MyBookingsPage());
+          }),
         ],
       ),
     );
@@ -923,7 +922,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 color: _chipGrey,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(icon, size: 20, color: _brandNavy),
+              child: Icon(icon, size: 20, color: _veroOrange),
             ),
             const SizedBox(height: 6),
             Text(label, style: const TextStyle(fontSize: 12)),
@@ -968,7 +967,7 @@ class _ProfilePageState extends State<ProfilePage> {
         _loadUserData();
         _fetchCurrentUser();
       }),
-      _DetailItem('Notification', Icons.notifications_none, () {}),
+      _DetailItem('Notification', Icons.notifications_none, () async{await _openBottomSheet(const NotificationsPage());}),
       _DetailItem('Settings', Icons.settings, () {
         Navigator.push(
           context,
@@ -977,7 +976,7 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         );
       }),
-      _DetailItem('Logout', Icons.logout, _logout), // <-- async Future<void>
+      
     ];
 
     return Container(
@@ -1059,7 +1058,7 @@ class _ProfilePageState extends State<ProfilePage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(item.icon, color: _brandNavy, size: 24),
+            Icon(item.icon, color: _veroOrange, size: 24),
             const SizedBox(height: 8),
             Text(
               item.label,

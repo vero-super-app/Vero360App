@@ -6,6 +6,13 @@ class FirebaseWalletService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   static final FirebaseAuth _auth = FirebaseAuth.instance;
 
+  /// User ID and display name for the platform super-admin wallet (receives service fees).
+  static const String superAdminUserId = 'super_admin';
+  static const String superAdminDisplayName = 'Vero 360 Platform';
+
+  /// Service fee rate: 2.5% of each successful transaction is credited to super admin.
+  static const double serviceFeeRate = 0.025;
+
   // Get or create wallet for merchant
   static Future<WalletModel> getOrCreateWallet({
     required String merchantId,

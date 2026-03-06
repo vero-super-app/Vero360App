@@ -8,10 +8,14 @@ class ApiConfig {
   /// API prefix (your endpoints are /vero/...)
   static const String apiPrefix = '/vero';
 
-  /// Default root (ngrok tunnel - no /vero here)
+  /// Default API root (no /vero here).
+  /// - Ngrok URLs change every time you restart ngrok (free tier). Update this
+  ///   when you see "Failed host lookup" or use --dart-define=API_BASE_URL=...
+  /// - For Android emulator + backend on host: use http://10.0.2.2:3000
+  /// - For physical device: use your PC's LAN IP, e.g. http://192.168.1.x:3000
   static const String _defaultProdRoot =
-      'https://unbigamous-unappositely-kory.ngrok-free.dev';
-  //  'https://7f74-102-70-95-217.ngrok-free.app ';
+  '   https://720d-102-70-95-217.ngrok-free.app ';
+    //  'https://7f74-102-70-95-217.ngrok-free.app ';
 
   // static const String _defaultProdRoot =
   //     'http://10.0.2.2:3000'; // Android emulator localhost
@@ -45,7 +49,14 @@ class ApiConfig {
     if (_inited) return;
 
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString(_prefsKeyBase);
+    String? saved = prefs.getString(_prefsKeyBase);
+
+    // Drop saved base if it's the old ngrok host (no longer resolves)
+    if (saved != null &&
+        saved.contains('unbigamous-unappositely-kory.ngrok-free.dev')) {
+      await prefs.remove(_prefsKeyBase);
+      saved = null;
+    }
 
     // Only accept saved base if it is one of the allowed servers
     if (saved != null && saved.trim().isNotEmpty) {
@@ -78,6 +89,20 @@ class ApiConfig {
 
   /// Keep compatibility with existing code (ignored param).
   static Future<void> setBase(String ignored) => useProd();
+
+  // ---------------------------------------------------------------------------
+  // ADMIN (service fee) — optional; if set, Flutter reports 2.5% fee to admin app
+  // ---------------------------------------------------------------------------
+  static const String adminApiBase = String.fromEnvironment(
+    'ADMIN_API_BASE_URL',
+    defaultValue: '',
+  );
+  static const String adminServiceFeeSecret = String.fromEnvironment(
+    'ADMIN_SERVICE_FEE_SECRET',
+    defaultValue: '',
+  );
+  static bool get isAdminApiConfigured =>
+      adminApiBase.trim().isNotEmpty && adminServiceFeeSecret.trim().isNotEmpty;
 
   // ---------------------------------------------------------------------------
   // URL BUILDERS

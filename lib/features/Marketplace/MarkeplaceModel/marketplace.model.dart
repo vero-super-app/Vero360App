@@ -97,6 +97,7 @@ class MarketplaceDetailModel {
   final String? merchantId;
   final String? merchantName;
   final String? serviceType;
+  final DateTime? createdAt;
 
   MarketplaceDetailModel({
     required this.id,
@@ -120,6 +121,7 @@ class MarketplaceDetailModel {
     this.merchantId,
     this.merchantName,
     this.serviceType,
+    this.createdAt,
   });
 
   factory MarketplaceDetailModel.fromJson(Map<String, dynamic> j) {
@@ -154,6 +156,7 @@ class MarketplaceDetailModel {
       merchantId: j['merchantId']?.toString(),
       merchantName: j['merchantName']?.toString(),
       serviceType: j['serviceType']?.toString() ?? 'marketplace',
+      createdAt: j['createdAt'] != null ? DateTime.tryParse(j['createdAt'].toString()) : null,
     );
   }
 

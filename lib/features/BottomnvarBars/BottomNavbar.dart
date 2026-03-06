@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 
@@ -65,8 +68,10 @@ class _BottomnavbarState extends State<Bottomnavbar>
   bool _tabIsProtected(int index) => index >= 2;
 
   Future<void> _initialize() async {
-    await _refreshAuthState();
+    // Load role and build pages from SharedPreferences first so hot restart
+    // always shows correct navbar (merchant/customer) before auth is restored.
     await _checkUserRoleAndSetup();
+    await _refreshAuthState();
     if (mounted) setState(() => _isLoading = false);
   }
 
@@ -78,17 +83,96 @@ class _BottomnavbarState extends State<Bottomnavbar>
     if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
       setState(() => _selectedIndex = 0);
     }
+    // When logged in, fetch role from backend so navbar reflects merchant/driver correctly.
+    if (loggedIn) {
+      await _fetchAndUpdateRoleFromServer();
+    }
+  }
+
+  /// Fetch /users/me and persist role to SharedPreferences so role matches backend.
+  Future<void> _fetchAndUpdateRoleFromServer() async {
+    final token = await AuthHandler.getTokenForApi();
+    if (token == null || token.isEmpty) return;
+    try {
+      final resp = await http.get(
+        ApiConfig.endpoint('/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 8));
+      if (resp.statusCode != 200) return;
+      final decoded = json.decode(resp.body);
+      final user = (decoded is Map && decoded['data'] is Map)
+          ? Map<String, dynamic>.from(decoded['data'])
+          : (decoded is Map
+              ? Map<String, dynamic>.from(decoded)
+              : <String, dynamic>{});
+      final prefs = await SharedPreferences.getInstance();
+      final isMerchant = _userIsMerchant(user);
+      final isDriver = !isMerchant && _userIsDriver(user);
+      if (isMerchant) {
+        await prefs.setString('user_role', 'merchant');
+        await prefs.setString('role', 'merchant');
+      } else if (isDriver) {
+        await prefs.setString('user_role', 'driver');
+        await prefs.setString('role', 'driver');
+      } else {
+        await prefs.setString('user_role', 'customer');
+        await prefs.setString('role', 'customer');
+      }
+      final raw = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
+      debugPrint(
+          'ℹ️ BottomNavbar: role from /users/me: $raw (merchant=$isMerchant, driver=$isDriver)');
+      if (mounted && (_isMerchant != isMerchant || _isDriver != isDriver)) {
+        await _checkUserRoleAndSetup();
+        if (mounted) setState(() {});
+      }
+    } catch (_) {}
+  }
+
+  static bool _userIsMerchant(Map<String, dynamic> u) {
+    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
+    final roles = (u['roles'] is List)
+        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
+        : <String>[];
+    final flags = {
+      'isMerchant': u['isMerchant'] == true,
+      'merchant': u['merchant'] == true,
+      'merchantId': (u['merchantId'] ?? '').toString().isNotEmpty,
+    };
+    return role == 'merchant' ||
+        roles.contains('merchant') ||
+        flags.values.any((v) => v == true);
+  }
+
+  static bool _userIsDriver(Map<String, dynamic> u) {
+    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
+    final roles = (u['roles'] is List)
+        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
+        : <String>[];
+    final flags = {
+      'isDriver': u['isDriver'] == true,
+      'driver': u['driver'] == true,
+      'driverId': (u['driverId'] ?? '').toString().isNotEmpty,
+    };
+    return role == 'driver' ||
+        roles.contains('driver') ||
+        flags.values.any((v) => v == true);
   }
 
   Future<void> _checkUserRoleAndSetup() async {
      final prefs = await SharedPreferences.getInstance();
-     final role =
-         _isLoggedIn ? (prefs.getString('user_role') ?? '').toLowerCase() : '';
-  
-     _isMerchant = role == 'merchant';
-     _isDriver = role == 'driver';
+     // Read role from persisted prefs. Default to customer if missing/invalid.
+     final raw = (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
+         .toLowerCase()
+         .trim();
+     // Only treat as merchant/driver when explicitly set; otherwise default to customer.
+     _isMerchant = raw == 'merchant';
+     _isDriver = raw == 'driver';
+     // (anything else → customer: _isMerchant and _isDriver both false)
      
-     debugPrint("ℹ️ BottomNavbar: user_role='$role', _isMerchant=$_isMerchant, _isDriver=$_isDriver");
+     debugPrint("ℹ️ BottomNavbar: role='$raw', _isMerchant=$_isMerchant, _isDriver=$_isDriver (default=customer)");
 
      // Home page: DriverDashboard for drivers, Homepage for others
      final homePage = _isDriver 
@@ -124,9 +208,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
        ),
      ];
   
-     if (_isMerchant) {
+     if (_isMerchant && mounted) {
        WidgetsBinding.instance.addPostFrameCallback((_) {
-         _redirectMerchant(prefs);
+         if (mounted) _redirectMerchant(prefs);
        });
      }
    }

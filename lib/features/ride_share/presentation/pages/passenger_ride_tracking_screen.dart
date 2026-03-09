@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_state_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
+import 'package:vero360_app/config/google_maps_config.dart';
+import 'package:vero360_app/config/map_style_constants.dart';
 
 class PassengerRideTrackingScreen extends ConsumerStatefulWidget {
   final int rideId;
@@ -26,18 +30,39 @@ class _PassengerRideTrackingScreenState
   final Set<Marker> markers = {};
   final Set<Polyline> polylines = {};
   static const Color primaryColor = Color(0xFFFF8A00);
+  String? _mapStyleJson;
 
   @override
   void initState() {
     super.initState();
+    _loadMapStyle();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(activeRideProvider.notifier).subscribeToRide(widget.rideId);
     });
   }
 
+  Future<void> _loadMapStyle() async {
+    try {
+      final styleString = await MapStyleConstants.loadMapStyle();
+      if (styleString.isNotEmpty) {
+        setState(() {
+          _mapStyleJson = styleString;
+        });
+        if (kDebugMode) {
+          debugPrint('[PassengerRideTracking] Map style loaded successfully');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[PassengerRideTracking] Error loading map style: $e');
+      }
+    }
+  }
+
   @override
   void dispose() {
     ref.read(activeRideProvider.notifier).unsubscribeFromRide();
+    mapController?.dispose();
     super.dispose();
   }
 
@@ -48,14 +73,16 @@ class _PassengerRideTrackingScreenState
   void _updateMapMarkers(Ride ride) {
     setState(() {
       markers.clear();
-      polylines.clear();
 
       // Pickup marker
       markers.add(
         Marker(
           markerId: const MarkerId('pickup'),
           position: LatLng(ride.pickupLatitude, ride.pickupLongitude),
-          infoWindow: InfoWindow(title: 'Pickup: ${ride.pickupAddress}'),
+          infoWindow: InfoWindow(
+            title: 'Pickup',
+            snippet: ride.pickupAddress,
+          ),
           icon: BitmapDescriptor.defaultMarkerWithHue(
             BitmapDescriptor.hueGreen,
           ),
@@ -67,7 +94,10 @@ class _PassengerRideTrackingScreenState
         Marker(
           markerId: const MarkerId('dropoff'),
           position: LatLng(ride.dropoffLatitude, ride.dropoffLongitude),
-          infoWindow: InfoWindow(title: 'Dropoff: ${ride.dropoffAddress}'),
+          infoWindow: InfoWindow(
+            title: 'Dropoff',
+            snippet: ride.dropoffAddress,
+          ),
           icon: BitmapDescriptor.defaultMarkerWithHue(
             BitmapDescriptor.hueRed,
           ),
@@ -80,27 +110,141 @@ class _PassengerRideTrackingScreenState
           Marker(
             markerId: const MarkerId('driver'),
             position: LatLng(ride.driver!.latitude!, ride.driver!.longitude!),
-            infoWindow: const InfoWindow(title: 'Your Driver'),
+            infoWindow: InfoWindow(
+              title: ride.driver?.fullName ?? 'Your Driver',
+              snippet: '${ride.driver?.completedRides ?? 0} rides',
+            ),
             icon: BitmapDescriptor.defaultMarkerWithHue(
               BitmapDescriptor.hueBlue,
             ),
           ),
         );
       }
+    });
 
-      // Route polyline
-      polylines.add(
-        Polyline(
-          polylineId: const PolylineId('route'),
-          points: [
-            LatLng(ride.pickupLatitude, ride.pickupLongitude),
-            LatLng(ride.dropoffLatitude, ride.dropoffLongitude),
-          ],
-          color: primaryColor,
-          width: 5,
-          geodesic: true,
-        ),
+    // Update route polyline asynchronously
+    _updateRoutePolyline(ride);
+  }
+
+  Future<void> _updateRoutePolyline(Ride ride) async {
+    try {
+      if (GoogleMapsConfig.apiKey.isEmpty) {
+        if (kDebugMode) {
+          debugPrint('[PassengerRideTracking] ERROR: Google Maps API key is empty!');
+        }
+        return;
+      }
+
+      final polylinePoints = PolylinePoints(
+        apiKey: GoogleMapsConfig.apiKey,
       );
+
+      final request = RoutesApiRequest(
+        origin: PointLatLng(ride.pickupLatitude, ride.pickupLongitude),
+        destination: PointLatLng(ride.dropoffLatitude, ride.dropoffLongitude),
+        travelMode: TravelMode.driving,
+        routingPreference: RoutingPreference.trafficAware,
+      );
+
+      if (kDebugMode) {
+        debugPrint('[PassengerRideTracking] Requesting polyline route...');
+      }
+
+      final response = await polylinePoints.getRouteBetweenCoordinatesV2(
+        request: request,
+      );
+
+      // Check if widget is still mounted after async operation
+      if (!mounted) {
+        if (kDebugMode) {
+          debugPrint('[PassengerRideTracking] Widget unmounted, skipping polyline update');
+        }
+        return;
+      }
+
+      if (kDebugMode) {
+        debugPrint('[PassengerRideTracking] Response received: ${response.routes.length} routes');
+      }
+
+      if (response.routes.isNotEmpty) {
+        final route = response.routes.first;
+        final polylineCoordinates = (route.polylinePoints ?? [])
+            .map((point) => LatLng(point.latitude, point.longitude))
+            .toList();
+
+        if (kDebugMode) {
+          debugPrint('[PassengerRideTracking] Polyline has ${polylineCoordinates.length} points');
+        }
+
+        if (polylineCoordinates.isNotEmpty) {
+          setState(() {
+            polylines.clear();
+            polylines.add(
+              Polyline(
+                polylineId: const PolylineId('route'),
+                points: polylineCoordinates,
+                color: primaryColor,
+                width: 5,
+                geodesic: true,
+              ),
+            );
+          });
+
+          _fitCameraToBounds(polylineCoordinates);
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[PassengerRideTracking] Error loading route: $e');
+      }
+      // Fallback to simple polyline if API fails
+      if (mounted) {
+        setState(() {
+          polylines.clear();
+          polylines.add(
+            Polyline(
+              polylineId: const PolylineId('route'),
+              points: [
+                LatLng(ride.pickupLatitude, ride.pickupLongitude),
+                LatLng(ride.dropoffLatitude, ride.dropoffLongitude),
+              ],
+              color: primaryColor,
+              width: 5,
+              geodesic: true,
+            ),
+          );
+        });
+      }
+    }
+  }
+
+  void _fitCameraToBounds(List<LatLng> coordinates) {
+    if (coordinates.isEmpty || mapController == null) return;
+
+    double minLat = coordinates[0].latitude;
+    double maxLat = coordinates[0].latitude;
+    double minLng = coordinates[0].longitude;
+    double maxLng = coordinates[0].longitude;
+
+    for (final coord in coordinates) {
+      minLat = (coord.latitude < minLat) ? coord.latitude : minLat;
+      maxLat = (coord.latitude > maxLat) ? coord.latitude : maxLat;
+      minLng = (coord.longitude < minLng) ? coord.longitude : minLng;
+      maxLng = (coord.longitude > maxLng) ? coord.longitude : maxLng;
+    }
+
+    final bounds = LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
+
+    // Smooth animation with padding and delay
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted && mapController != null) {
+        mapController!.animateCamera(
+          CameraUpdate.newLatLngBounds(bounds, 150),
+        );
+      }
     });
   }
 
@@ -176,13 +320,20 @@ class _PassengerRideTrackingScreenState
               onMapCreated: _onMapCreated,
               initialCameraPosition: CameraPosition(
                 target: LatLng(
-                  rideState.ride?.pickupLatitude ?? 0,
-                  rideState.ride?.pickupLongitude ?? 0,
+                  rideState.ride?.pickupLatitude ?? -13.9626,
+                  rideState.ride?.pickupLongitude ?? 33.7707,
                 ),
                 zoom: 14,
               ),
               markers: markers,
               polylines: polylines,
+              style: _mapStyleJson,
+              mapType: MapType.normal,
+              myLocationEnabled: true,
+              myLocationButtonEnabled: true,
+              zoomControlsEnabled: true,
+              mapToolbarEnabled: false,
+              compassEnabled: true,
             ),
             // Bottom state-specific content
             Positioned(

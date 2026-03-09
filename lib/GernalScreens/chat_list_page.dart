@@ -3,7 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
-import 'package:vero360_app/Home/Messages.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({super.key});
@@ -99,10 +99,13 @@ class _ChatListPageState extends State<ChatListPage> {
       );
 
       if (!mounted) return;
+      final msg = count == 0 
+        ? 'No active users found' 
+        : 'Test messages sent to $count users!';
       scaffold.showSnackBar(
         SnackBar(
-          content: Text('Test messages sent to $count users!'),
-          backgroundColor: Colors.green,
+          content: Text(msg),
+          backgroundColor: count > 0 ? Colors.green : Colors.orange,
         ),
       );
     } catch (e) {
@@ -230,11 +233,10 @@ class _ChatListPageState extends State<ChatListPage> {
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => MessagePage(
-                        peerAppId: otherParticipant.id.toString(),
+                      builder: (_) => MessagePageBackendApi(
+                        peerId: t.id,
                         peerName: name.isEmpty ? 'Contact' : name,
                         peerAvatarUrl: avatarUrl,
-                        peerId: t.id,
                       ),
                     ),
                   ),

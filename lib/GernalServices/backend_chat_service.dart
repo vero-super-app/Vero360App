@@ -479,17 +479,17 @@ class BackendChatService {
   }
 
   /// Send test message to all users (TEST ONLY)
-  static Future<List<String>> sendTestMessageToAllUsers({
+  static Future<int> sendTestMessageToAllUsers({
     required String testMessage,
   }) async {
     await ensureAuth();
     final myId = _userId!;
 
     try {
-      // Fetch all users from /vero/users (not /vero/api/v1/users)
-      final usersUrl = _baseUrl.replaceFirst('/api/v1', '') + '/users';
+      // Fetch all users from /vero/users (users controller is at root, not /api/v1)
+      final usersUrl = ApiConfig.endpoint('/users');
       final usersResponse = await http.get(
-        Uri.parse(usersUrl),
+        usersUrl,
         headers: {'Authorization': _authHeader},
       ).timeout(const Duration(seconds: 10));
 
@@ -499,7 +499,7 @@ class BackendChatService {
 
       final usersJson = jsonDecode(usersResponse.body);
       final users = usersJson['data'] as List? ?? [];
-      final sentMessageIds = <String>[];
+      int successCount = 0;
 
       for (final userJson in users) {
         final userId = userJson['id'] as int?;
@@ -516,16 +516,17 @@ class BackendChatService {
             type: 'text',
           );
 
-          sentMessageIds.add(msg.id);
+          successCount++;
           print('[BackendChatService] Sent test message to user $userId');
         } catch (e) {
           print('[BackendChatService] Failed to send to user $userId: $e');
+          // Continue with next user on failure
         }
       }
 
       print(
-          '[BackendChatService] Test messages sent to ${sentMessageIds.length} users');
-      return sentMessageIds;
+          '[BackendChatService] Test messages sent to $successCount users');
+      return successCount;
     } catch (e) {
       print('[BackendChatService] Error sending test messages: $e');
       rethrow;

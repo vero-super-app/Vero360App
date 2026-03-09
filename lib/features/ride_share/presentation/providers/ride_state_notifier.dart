@@ -79,6 +79,9 @@ class RideStateNotifier extends Notifier<RideStateVM> {
     _rideId = rideId;
     _rideSubscription?.cancel();
 
+    // Initialize WebSocket subscription to receive real-time updates
+    _httpService.subscribeToRideTracking(rideId);
+
     _rideSubscription = _httpService.rideUpdateStream.listen(
       (ride) {
         if (ride.id == rideId) {

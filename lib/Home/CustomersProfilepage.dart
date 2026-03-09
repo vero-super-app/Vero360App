@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart' as mime;
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:vero360_app/Home/notifications_page.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
 
 // ✅ use your existing API base resolver (unchanged)
 import 'package:vero360_app/config/api_config.dart';
@@ -94,14 +95,18 @@ class _ProfilePageState extends State<ProfilePage> {
       }
       if ((loadedPhone.isEmpty || loadedPhone == 'No Phone') &&
           (firebaseUser.phoneNumber ?? '').trim().isNotEmpty) {
-        loadedPhone = firebaseUser.phoneNumber!.trim();
-        await prefs.setString('phone', loadedPhone);
+        final fn = firebaseUser.phoneNumber!.trim();
+        if (!_isFirebaseInternalPhone(fn)) {
+          loadedPhone = fn;
+          await prefs.setString('phone', loadedPhone);
+        }
       }
       if (loadedProfileUrl.isEmpty && (firebaseUser.photoURL ?? '').trim().isNotEmpty) {
         loadedProfileUrl = firebaseUser.photoURL!.trim();
         await prefs.setString('profilepicture', loadedProfileUrl);
       }
     }
+    if (_isFirebaseInternalPhone(loadedPhone)) loadedPhone = 'No Phone';
     if (mounted) {
       setState(() {
         name = loadedName;
@@ -112,6 +117,17 @@ class _ProfilePageState extends State<ProfilePage> {
       });
     }
   }
+
+  /// Firebase can expose internal provider IDs (e.g. +firebase_xxx). Don't show in UI.
+  bool _isFirebaseInternalPhone(String? s) {
+    if (s == null || s.trim().isEmpty) return true;
+    final t = s.trim().toLowerCase();
+    return t == 'no phone' || t.startsWith('+firebase_');
+  }
+
+  /// Safe phone text for UI: hide Firebase internal IDs; show "No phone number" when none.
+  String get _displayPhone =>
+      _isFirebaseInternalPhone(phone) ? 'No phone number' : phone;
 
   String _joinName(String? first, String? last, {required String fallback}) {
     final parts = [first, last].where((s) => s != null && s.trim().isNotEmpty);
@@ -138,7 +154,8 @@ class _ProfilePageState extends State<ProfilePage> {
             _joinName(user['firstName'], user['lastName'], fallback: ''))
         .toString();
     final emailVal = (user['email'] ?? user['userEmail'] ?? '').toString();
-    final phoneVal = (user['phone'] ?? user['phoneNumber'] ?? user['mobile'] ?? '').toString();
+    var phoneVal = (user['phone'] ?? user['phoneNumber'] ?? user['mobile'] ?? '').toString().trim();
+    if (_isFirebaseInternalPhone(phoneVal)) phoneVal = '';
     final picVal =
         (user['profilepicture'] ?? user['profilePicture'] ?? user['photoURL'] ?? user['photoUrl'] ?? '').toString();
 
@@ -408,6 +425,43 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   // ---- Profile picture flow ----
+  void _showProfilePictureViewer() {
+    if (profileUrl.isEmpty) return;
+    showDialog(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(24),
+        child: Stack(
+          alignment: Alignment.topRight,
+          children: [
+            InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  profileUrl,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (_, child, progress) =>
+                      progress == null ? child : const Center(child: CircularProgressIndicator()),
+                  errorBuilder: (_, __, ___) => const Center(
+                    child: Icon(Icons.broken_image_outlined, size: 64, color: Colors.white70),
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 28),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showPhotoSheet() {
     showModalBottomSheet(
       context: context,
@@ -417,6 +471,15 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
+            if (profileUrl.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.visibility_outlined),
+                title: const Text('View profile picture'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showProfilePictureViewer();
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.photo_camera_outlined),
               title: const Text('Take a photo'),
@@ -708,7 +771,14 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _topProfileCard() {
     final avatar = GestureDetector(
-      onTap: _showPhotoSheet,
+      onTap: () {
+        if (profileUrl.isNotEmpty) {
+          _showProfilePictureViewer();
+        } else {
+          _showPhotoSheet();
+        }
+      },
+      onLongPress: _showPhotoSheet,
       child: CircleAvatar(
         radius: 26,
         backgroundColor: Colors.black12,
@@ -771,7 +841,7 @@ class _ProfilePageState extends State<ProfilePage> {
                             style: const TextStyle(
                                 color: Colors.black54, fontSize: 13)),
                         const SizedBox(height: 2),
-                        Text(phone,
+                        Text(_displayPhone,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -1044,6 +1114,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _detailTile(_DetailItem item) {
+    final isNotification = item.label == 'Notification';
     return InkWell(
       onTap: () async {
         await item.onTap();
@@ -1058,7 +1129,27 @@ class _ProfilePageState extends State<ProfilePage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(item.icon, color: _veroOrange, size: 24),
+            if (isNotification)
+              ListenableBuilder(
+                listenable: NotificationStore.instance,
+                builder: (_, __) {
+                  final count = NotificationStore.instance.items.length;
+                  return Badge(
+                    isLabelVisible: count > 0,
+                    backgroundColor: Colors.red,
+                    textColor: Colors.white,
+                    alignment: const Alignment(1.2, -0.5),
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    label: Text(
+                      count > 99 ? '99+' : '$count',
+                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                    ),
+                    child: Icon(item.icon, color: _veroOrange, size: 24),
+                  );
+                },
+              )
+            else
+              Icon(item.icon, color: _veroOrange, size: 24),
             const SizedBox(height: 8),
             Text(
               item.label,

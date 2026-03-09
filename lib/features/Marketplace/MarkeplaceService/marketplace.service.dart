@@ -254,6 +254,12 @@ class MarketplaceService {
     }
   }
 
+  /// Mark an item as sold (sets isActive = false).
+  Future<void> markItemSold(int id) async {
+    // We deliberately ignore the returned object; callers only care that the flag was updated.
+    await updateItem(id, {'isActive': false});
+  }
+
   /// DELETE /marketplace/:id
   Future<void> deleteItem(int id) async {
     final token = await _token();

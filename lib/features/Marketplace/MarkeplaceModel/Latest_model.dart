@@ -3,12 +3,15 @@ class LatestArrivalModels {
   final String name;
   final String imageUrl;
   final int price; // store MWK as whole number
+  // When this latest arrival was created (server time), if provided.
+  final DateTime? createdAt;
 
   LatestArrivalModels({
     required this.id,
     required this.name,
     required this.imageUrl,
     required this.price,
+    this.createdAt,
   });
 
   factory LatestArrivalModels.fromJson(Map<String, dynamic> j) {
@@ -29,8 +32,12 @@ class LatestArrivalModels {
     return LatestArrivalModels(
       id: (j['id'] ?? j['_id'] ?? '').toString(),
       name: (j['name'] ?? j['title'] ?? 'Unnamed').toString(),
-      imageUrl: (j['image'] ?? j['imageUrl'] ?? j['thumbnail'] ?? '').toString(),
+      imageUrl:
+          (j['image'] ?? j['imageUrl'] ?? j['thumbnail'] ?? '').toString(),
       price: parsePrice(j['price']),
+      createdAt: j['createdAt'] != null
+          ? DateTime.tryParse(j['createdAt'].toString())
+          : null,
     );
   }
 }

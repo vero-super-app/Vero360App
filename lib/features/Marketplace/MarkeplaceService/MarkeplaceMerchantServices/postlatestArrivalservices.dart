@@ -131,7 +131,20 @@ class LatestArrivalsServicess {
 
     final list =
         body is List ? body : (body is Map ? (body['data'] ?? []) : []);
-    return (list as List).map((e) => LatestArrivalModel.fromJson(e)).toList();
+    final items =
+        (list as List).map((e) => LatestArrivalModel.fromJson(e)).toList();
+
+    // Only keep items created in the last 24 hours when timestamps are present.
+    final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+    final withDates =
+        items.where((it) => it.createdAt != null).toList();
+    if (withDates.isEmpty) return items;
+
+    withDates.retainWhere((it) => !it.createdAt!.isBefore(cutoff));
+    withDates.sort((a, b) =>
+        (b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+            .compareTo(a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0)));
+    return withDates;
   }
 
   // ---------------- list mine (auth required) ----------------
@@ -145,7 +158,19 @@ class LatestArrivalsServicess {
 
     final list =
         body is List ? body : (body is Map ? (body['data'] ?? []) : []);
-    return (list as List).map((e) => LatestArrivalModel.fromJson(e)).toList();
+    final items =
+        (list as List).map((e) => LatestArrivalModel.fromJson(e)).toList();
+
+    final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+    final withDates =
+        items.where((it) => it.createdAt != null).toList();
+    if (withDates.isEmpty) return items;
+
+    withDates.retainWhere((it) => !it.createdAt!.isBefore(cutoff));
+    withDates.sort((a, b) =>
+        (b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+            .compareTo(a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0)));
+    return withDates;
   }
 
   // ---------------- create/update/delete (auth required) ----------------

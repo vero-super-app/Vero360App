@@ -107,7 +107,15 @@ class OrderItem {
     final qty   = int.tryParse((_first(m, ['Quantity','quantity']) ?? 1).toString()) ?? 1;
     final desc  = _first<String>(m, ['Description','description']) ?? '';
     final stat  = orderStatusFrom(_first<String>(m, ['Status','status']));
-    final pay   = paymentStatusFrom(_first<String>(m, ['paymentStatus','PaymentStatus']));
+    // Be tolerant of different backend payment keys.
+    final pay   = paymentStatusFrom(_first<String>(m, [
+      'paymentStatus',
+      'PaymentStatus',
+      'payment_status',
+      'Payment_status',
+      'payment',
+      'Payment',
+    ]));
 
     // merchant block
     int merchId = int.tryParse((_first(m, ['merchantId','MerchantId']) ?? 0).toString()) ?? 0;

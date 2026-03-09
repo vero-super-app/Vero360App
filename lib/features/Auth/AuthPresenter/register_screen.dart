@@ -155,6 +155,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String get _identifierPhone =>
       _looksLikePhone(_identifierValue) ? _identifierValue : '';
 
+  /// Normalise a phone number to a compact numeric form for auth-only use.
+  /// Example: "0992 695 612" -> "0992695612".
+  String _normalizePhone(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    return digits;
+  }
+
   String? _validateIdentifier(String? v) {
     final s = v?.trim() ?? '';
     if (s.isEmpty) return 'Email or phone number is required';
@@ -213,8 +220,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       user = Map<String, dynamic>.from(rawUser);
     }
 
-    final displayId = user['email']?.toString() ??
-        user['phone']?.toString() ??
+    // Prefer phone for display when present (so phone-only signups show their number,
+    // not an internal email used only for Firebase auth).
+    final displayId = user['phone']?.toString() ??
+        user['email']?.toString() ??
         _identifierValue;
     if (displayId.isNotEmpty) {
       await prefs.setString('email', displayId);
@@ -310,8 +319,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (profile.isEmpty) {
       final newRole = _role == UserRole.merchant ? 'merchant' : 'customer';
+      // Avoid storing internal "phone-based" auth emails (e.g. xxx@phone.vero360.app)
+      // as the user's real email. Prefer explicit form email or leave blank.
+      final rawEmail = user.email ?? _identifierEmail;
+      final emailForProfile = !rawEmail.endsWith('@phone.vero360.app')
+          ? rawEmail
+          : _identifierEmail;
+
       profile = {
-        'email': user.email ?? _identifierEmail,
+        'email': emailForProfile,
         'name': user.displayName ?? _name.text.trim(),
         'phone': _identifierPhone,
         'role': newRole,
@@ -336,7 +352,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             _businessName.text.trim().isNotEmpty) {
           final merchantProfile = {
             'uid': user.uid,
-            'email': user.email ?? _identifierEmail,
+            'email': emailForProfile,
             'name': user.displayName ?? _name.text.trim(),
             'phone': _identifierPhone,
             'businessName': _businessName.text.trim(),
@@ -364,6 +380,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final role =
         (profile['role'] ?? 'customer').toString().toLowerCase();
     final token = await user.getIdToken();
+    final re = user.email ?? _identifierEmail;
+    final responseEmail = profile['email']?.toString() ??
+        (!re.endsWith('@phone.vero360.app') ? re : _identifierEmail);
 
     return <String, dynamic>{
       'authProvider': 'firebase_only',
@@ -371,7 +390,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       'user': <String, dynamic>{
         'uid': user.uid,
         'firebaseUid': user.uid,
-        'email': user.email ?? _identifierEmail,
+        'email': responseEmail,
         'name': profile['name']?.toString() ?? _name.text.trim(),
         'phone': profile['phone']?.toString() ?? _identifierPhone,
         'role': role,
@@ -394,9 +413,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final name = _name.text.trim().isEmpty
         ? (user.displayName ?? user.email ?? '')
         : _name.text.trim();
-    final email = _identifierEmail.isEmpty
+    // When user signed up with phone only, don't send synthetic auth email to backend.
+    final rawEmail = _identifierEmail.isEmpty
         ? (user.email ?? '')
         : _identifierEmail;
+    final email = rawEmail.endsWith('@phone.vero360.app') ? '' : rawEmail;
     final body = <String, dynamic>{
       'name': name,
       'email': email,
@@ -488,15 +509,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
       return;
     }
-    if (email.isEmpty) {
-      ToastHelper.showCustomToast(
-        context,
-        'Email is required to create an account (use email/password sign up).',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return;
-    }
+    // Firebase Auth requires an email for createUserWithEmailAndPassword.
+    // When user enters only a phone number, use a synthetic email so we can still create the account;
+    // we store and display the real phone everywhere else.
+    final authEmail = email.isNotEmpty
+        ? email
+        : '${_normalizePhone(phone)}@phone.vero360.app';
 
     if (_role == UserRole.merchant) {
       final serviceErr = _validateMerchantService(_selectedMerchantService);
@@ -527,7 +545,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _registering = true);
     try {
       final userCredential = await _auth.createUserWithEmailAndPassword(
-        email: email,
+        email: authEmail,
         password: _password.text,
       );
 
@@ -586,6 +604,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('uid', user.uid);
+      // Store the identifier the user actually entered (email or phone) for display/login.
       await prefs.setString(
         'email',
         _identifierEmail.isNotEmpty ? _identifierEmail : _identifierValue,

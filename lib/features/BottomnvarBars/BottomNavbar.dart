@@ -235,11 +235,14 @@ class _BottomnavbarState extends State<Bottomnavbar>
     );
   }
 
-  void _onItemTapped(int index) async {
-    await _refreshAuthState();
-
+  void _onItemTapped(int index) {
+    // Do not block tab changes on network/auth checks – this was causing
+    // noticeable lag. We only use the latest known `_isLoggedIn` value here
+    // and refresh auth state in the background.
     if (!_isLoggedIn && _tabIsProtected(index)) {
       _showAuthDialog();
+      // Fire-and-forget refresh so state stays reasonably up to date.
+      _refreshAuthState();
       return;
     }
 
@@ -247,6 +250,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
     setState(() {
       _selectedIndex = index;
     });
+
+    // Keep auth/role fresh without delaying navigation.
+    _refreshAuthState();
   }
 
   /// Body when a protected tab is selected but user is not logged in must not show;

@@ -10,6 +10,9 @@ import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/Home/story_service.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 
 class StoryViewerScreen extends StatefulWidget {
@@ -347,6 +350,60 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     if (_items.isEmpty) return;
     final item = _items[_currentIndex.clamp(0, _items.length - 1)];
 
+    final type = (item.serviceType ?? 'marketplace').toLowerCase();
+    String primaryLabel;
+    VoidCallback onPrimary;
+
+    switch (type) {
+      case 'accommodation':
+        primaryLabel = 'Book now';
+        onPrimary = () {
+          Navigator.of(context).pop();
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const AccommodationMainPage(),
+            ),
+          );
+        };
+        break;
+      case 'ride':
+      case 'taxi':
+      case 'ride_share':
+        primaryLabel = 'Book now';
+        onPrimary = () {
+          Navigator.of(context).pop();
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const RideShareMapScreen(),
+            ),
+          );
+        };
+        break;
+      case 'food':
+        primaryLabel = 'Order now';
+        onPrimary = () {
+          Navigator.of(context).pop();
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const FoodPage(),
+            ),
+          );
+        };
+        break;
+      default:
+        primaryLabel = 'Buy now ';
+        onPrimary = () {
+          Navigator.of(context).pop();
+          final cart = CartServiceProvider.getInstance();
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => MarketPage(cartService: cart),
+            ),
+          );
+        };
+        break;
+    }
+
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,
@@ -372,38 +429,46 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 ),
               ),
               Text(
-                _currentGroup.merchantName,
+                item.title?.isNotEmpty == true ? item.title! : _currentGroup.merchantName,
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: 8),
-              if (item.caption != null && item.caption!.trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              if (item.price != null)
+                Text(
+                  'MWK ${item.price!.toStringAsFixed(0)}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFFFF8A00),
+                  ),
+                ),
+              const SizedBox(height: 6),
+              if (item.description != null && item.description!.isNotEmpty)
+                Text(
+                  item.description!,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13),
+                )
+              else if (item.caption != null && item.caption!.trim().isNotEmpty)
                 Text(
                   item.caption!,
                   style: const TextStyle(fontSize: 14),
+                )
+              else
+                const Text(
+                  'Open the relevant service to book or purchase this item.',
+                  style: TextStyle(fontSize: 13),
                 ),
-                const SizedBox(height: 8),
-              ],
-              const Text(
-                'Want to buy this item? Open the marketplace to browse this merchant\'s products.',
-                style: TextStyle(fontSize: 13),
-              ),
               const SizedBox(height: 16),
               Row(
                 children: [
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        final cart = CartServiceProvider.getInstance();
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => MarketPage(cartService: cart),
-                          ),
-                        );
-                      },
+                      onPressed: onPrimary,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFFF8A00),
                         foregroundColor: Colors.white,
@@ -412,9 +477,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: const Text(
-                        'Buy now',
-                        style: TextStyle(fontWeight: FontWeight.w700),
+                      child: Text(
+                        primaryLabel,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
                   ),

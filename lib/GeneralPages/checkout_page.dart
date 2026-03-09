@@ -460,21 +460,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
         if (status == 'success') {
           final checkoutUrl = responseJson['data']['checkout_url'] as String;
           if (!mounted) return;
-          // Build a "virtual cart item" for this single marketplace product
-          final singleCartItem = CartModel(
-            userId: 'single-checkout',
-            item: widget.item.id,
-            quantity: _qty,
-            image: widget.item.image,
-            name: widget.item.name,
-            price: widget.item.price,
-            description: widget.item.description,
-            comment: null,
-            merchantId: widget.item.merchantId ?? 'unknown',
-            merchantName: widget.item.merchantName ?? 'Unknown Merchant',
-            serviceType: widget.item.serviceType ?? 'marketplace',
-          );
-
+          // Pass merchant credit so wallet is credited on payment success (same as cart checkout)
+          final mid = widget.item.merchantId?.trim();
+          final mname = widget.item.merchantName?.trim();
+          final hasMerchant = mid != null && mid.isNotEmpty && mid != 'unknown' &&
+              mname != null && mname.isNotEmpty && mname != 'Unknown Merchant';
+          final listForCredit = hasMerchant
+              ? <CartModel>[
+                  CartModel(
+                    userId: '',
+                    item: widget.item.id,
+                    quantity: _qty,
+                    image: widget.item.image,
+                    name: widget.item.name,
+                    price: widget.item.price,
+                    description: widget.item.description ?? '',
+                    merchantId: mid!,
+                    merchantName: mname!,
+                    serviceType: 'marketplace',
+                  ),
+                ]
+              : null;
           await Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => InAppPaymentPage(
@@ -482,11 +488,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 txRef: txRef,
                 totalAmount: _total,
                 rootContext: context,
-                clearCartOnSuccess: false,
-                cartItemsForMerchantCredit: [singleCartItem],
-                shippingAddress:
-                    _deliveryType == DeliveryType.pickup ? null : _defaultAddr,
-                deliveryType: _deliveryType,
+                cartItemsForMerchantCredit: listForCredit,
               ),
             ),
           );

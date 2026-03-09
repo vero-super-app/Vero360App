@@ -14,6 +14,7 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
@@ -892,8 +893,12 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   }
 
   /// Credits each merchant's Firestore wallet with their portion of the sale (marketplace).
+  /// Deducts 2.5% service fee; reports the fee to the admin app (super-admin wallet is managed there, not in Flutter).
   Future<void> _creditMerchantWallets(List<CartModel> items) async {
     try {
+      const feeRate = FirebaseWalletService.serviceFeeRate; // 2.5%
+      double totalServiceFee = 0.0;
+
       final byMerchant = <String, _MerchantTotal>{};
       for (final it in items) {
         if (!it.hasValidMerchant) continue;
@@ -905,22 +910,59 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         );
         byMerchant[id]!.amount += it.price * it.quantity;
       }
+
       for (final entry in byMerchant.values) {
         if (entry.amount <= 0) continue;
+        final merchantAmount = entry.amount * (1.0 - feeRate);
+        final feeAmount = entry.amount * feeRate;
+        totalServiceFee += feeAmount;
+
         await FirebaseWalletService.getOrCreateWallet(
           merchantId: entry.merchantId,
           merchantName: entry.merchantName,
         );
         await FirebaseWalletService.creditWallet(
           merchantId: entry.merchantId,
-          amount: entry.amount,
-          description: 'Marketplace sale',
+          amount: merchantAmount,
+          description: 'Marketplace sale (after 2.5% service fee)',
           reference: widget.txRef,
           type: 'sale',
         );
       }
+
+      if (totalServiceFee > 0) {
+        await _recordServiceFeeWithAdminApi(totalServiceFee);
+      }
     } catch (e) {
       debugPrint('[InAppPaymentPage] Failed to credit merchant wallets: $e');
+    }
+  }
+
+  /// Sends the service fee to the admin app; super-admin wallet is managed there.
+  Future<void> _recordServiceFeeWithAdminApi(double amount) async {
+    if (!ApiConfig.isAdminApiConfigured) {
+      debugPrint('[InAppPaymentPage] Admin API not configured; service fee not reported.');
+      return;
+    }
+    try {
+      final base = ApiConfig.adminApiBase.trim().replaceFirst(RegExp(r'/+$'), '');
+      final uri = Uri.parse('$base/api/admin/record-service-fee');
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: json.encode({
+          'amount': amount,
+          'txRef': widget.txRef,
+          'secret': ApiConfig.adminServiceFeeSecret,
+        }),
+      ).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        debugPrint('[InAppPaymentPage] Service fee reported to admin: $amount MWK');
+      } else {
+        debugPrint('[InAppPaymentPage] Admin API returned ${response.statusCode}: ${response.body}');
+      }
+    } catch (e) {
+      debugPrint('[InAppPaymentPage] Failed to report service fee to admin: $e');
     }
   }
 

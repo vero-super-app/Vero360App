@@ -27,12 +27,15 @@ class PostStoryPage extends StatefulWidget {
   final String merchantId;
   final String merchantName;
   final String? merchantImageUrl;
+  /// marketplace | accommodation | food | courier | ride | taxi | ...
+  final String serviceType;
 
   const PostStoryPage({
     super.key,
     required this.merchantId,
     required this.merchantName,
     this.merchantImageUrl,
+    this.serviceType = 'marketplace',
   });
 
   @override
@@ -43,6 +46,13 @@ class _PostStoryPageState extends State<PostStoryPage> {
   final ImagePicker _picker = ImagePicker();
   final StoryService _storyService = StoryService();
   bool _posting = false;
+
+  // Product / service details for the story
+  final TextEditingController _titleCtrl = TextEditingController();
+  final TextEditingController _priceCtrl = TextEditingController();
+  final TextEditingController _descCtrl = TextEditingController();
+
+  // Existing stories for this merchant
   String? _deletingStoryId;
   late Future<List<MerchantStoryItem>> _storiesFuture;
   /// Viewer counts by storyId (loaded with stories).
@@ -55,20 +65,23 @@ class _PostStoryPageState extends State<PostStoryPage> {
     _loadStoriesAndCounts();
   }
 
-  @override
-  void dispose() {
-    for (final s in _draftSlides) {
-      s.dispose();
-    }
-    super.dispose();
-  }
-
   void _loadStoriesAndCounts() {
     _storiesFuture = _storyService.getMerchantStories(widget.merchantId);
     _viewerCountsFuture = _storiesFuture.then((items) {
       if (items.isEmpty) return <String, int>{};
       return _storyService.getStoryViewerCounts(items.map((e) => e.storyId).toList());
     });
+  }
+
+  @override
+  void dispose() {
+    for (final s in _draftSlides) {
+      s.dispose();
+    }
+    _titleCtrl.dispose();
+    _priceCtrl.dispose();
+    _descCtrl.dispose();
+    super.dispose();
   }
 
   void _refreshStories() {
@@ -119,6 +132,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
         merchantId: widget.merchantId,
         merchantName: widget.merchantName,
         merchantImageUrl: widget.merchantImageUrl,
+        serviceType: widget.serviceType,
         slides: slides,
       );
       if (!mounted) return;

@@ -21,6 +21,12 @@ class MerchantStoryItem {
   final String merchantId;
   final String merchantName;
   final String? merchantImageUrl;
+  /// marketplace | accommodation | food | courier | ride | taxi | ...
+  final String? serviceType;
+  /// Optional product/service details shown in story details bottom sheet.
+  final String? title;
+  final String? description;
+  final num? price;
   final String mediaUrl;
   /// When Storage fails, image can be stored as base64 in Firestore. Use [displayImageBytes] to show.
   final String? imageBase64;
@@ -40,6 +46,10 @@ class MerchantStoryItem {
     required this.merchantId,
     required this.merchantName,
     this.merchantImageUrl,
+    this.serviceType,
+    this.title,
+    this.description,
+    this.price,
     required this.mediaUrl,
     this.imageBase64,
     this.mediaType = 'image',

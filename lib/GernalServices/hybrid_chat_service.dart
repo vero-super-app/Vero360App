@@ -185,8 +185,8 @@ class HybridChatService {
         return messaging_models.Message(
           id: cm.id,
           chatId: threadId,
-          senderId: cm.fromAppId,
-          recipientId: cm.toAppId,
+          senderId: _stringToNumericId(cm.fromAppId),
+          recipientId: _stringToNumericId(cm.toAppId),
           content: cm.text,
           createdAt: cm.ts,
           isEdited: cm.isEdited,
@@ -245,4 +245,10 @@ class HybridChatService {
 
   /// Check if WebSocket is available
   bool get isWebSocketAvailable => _wsConnected;
+
+  /// Convert a string ID (Firebase UID) to a stable numeric ID
+  /// Uses hashCode to generate consistent numeric identifiers
+  static int _stringToNumericId(String id) {
+    return id.hashCode.abs();
+  }
 }

@@ -26,9 +26,10 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   String _searchQuery = '';
 
   late TabController _tab;
+  // Must match the visual tab order (Confirmed, Pending, Delivered, Cancelled)
   final List<OrderStatus> _statuses = const [
-    OrderStatus.pending,
     OrderStatus.confirmed,
+    OrderStatus.pending,
     OrderStatus.delivered,
     OrderStatus.cancelled,
   ];
@@ -320,7 +321,11 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                 ),
 
                 const SizedBox(height: 10),
-                Row(
+                // Use Wrap so buttons flow to the next line on small screens,
+                // avoiding horizontal overflow while keeping spacing consistent.
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
                   children: [
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
@@ -332,7 +337,6 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                       icon: const Icon(Icons.refresh),
                       label: const Text('Refresh'),
                     ),
-                    const SizedBox(width: 10),
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.black87,
@@ -343,7 +347,6 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                       icon: const Icon(Icons.download_outlined),
                       label: const Text('Download'),
                     ),
-                    const SizedBox(width: 10),
                     if (o.status == OrderStatus.pending)
                       FilledButton.icon(
                         style: FilledButton.styleFrom(

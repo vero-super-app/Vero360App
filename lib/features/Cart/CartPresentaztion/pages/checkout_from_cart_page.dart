@@ -22,6 +22,7 @@ import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class CheckoutFromCartPage extends StatefulWidget {
@@ -809,6 +810,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   bool _isLoading = true;
   bool _resultHandled = false;
   final order_svc.OrderService _orderService = order_svc.OrderService();
+  final MarketplaceService _marketplaceService = MarketplaceService();
 
   @override
   void initState() {
@@ -1030,6 +1032,21 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
+  /// For marketplace items, mark the associated listing as sold (isActive = false)
+  /// once payment succeeds so it no longer appears as available.
+  Future<void> _markMarketplaceItemsSold(List<CartModel> items) async {
+    try {
+      for (final it in items) {
+        // Only apply to marketplace items that have a valid numeric backend id.
+        if (it.serviceType != 'marketplace') continue;
+        if (it.item <= 0) continue;
+        await _marketplaceService.markItemSold(it.item);
+      }
+    } catch (e) {
+      debugPrint('[InAppPaymentPage] Failed to mark items sold: $e');
+    }
+  }
+
   void _handlePaymentSuccess() {
     if (_resultHandled) return;
     _resultHandled = true;
@@ -1048,9 +1065,11 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     final items = widget.cartItemsForMerchantCredit;
     if (items != null && items.isNotEmpty) {
       unawaited(_creditMerchantWallets(items));
+      // Mark marketplace listings as sold so they are no longer purchasable.
+      unawaited(_markMarketplaceItemsSold(items));
+      // Create confirmed orders in backend for these cart items.
+      unawaited(_createBackendOrders(OrderStatus.confirmed));
     }
-    // Create confirmed orders in backend for these cart items.
-    unawaited(_createBackendOrders(OrderStatus.confirmed));
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
     final productName = widget.digitalProductName ?? 'your order';
 

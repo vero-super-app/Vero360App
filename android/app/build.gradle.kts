@@ -18,13 +18,13 @@ if (envFile.exists()) {
 }
 
 android {
-    namespace = "vero.a360_app"
+    namespace = "com.vero.vero360"
 
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     defaultConfig {
-        applicationId = "vero.a360_app"
+        applicationId = "com.vero.vero360"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = 10001

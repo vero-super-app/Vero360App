@@ -308,7 +308,7 @@ class OrderService {
       return all;
     } catch (e, st) {
       dev.log('[OrderService] JSON parse error', name: 'OrderService', error: e, stackTrace: st);
-      throw FriendlyApiException('We couldn’t load your orders. Please try again.');
+      throw FriendlyApiException('We couldn’t load your orders. Please check your internet connection and try again.');
     }
   }
 

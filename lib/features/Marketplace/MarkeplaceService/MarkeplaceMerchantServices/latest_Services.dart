@@ -21,10 +21,25 @@ class LatestArrivalServices {
               ? decoded['data'] as List
               : <dynamic>[];
 
-      return list
+      final items = list
           .whereType<Map<String, dynamic>>()
           .map<LatestArrivalModels>((m) => LatestArrivalModels.fromJson(m))
           .toList();
+
+      // Only show arrivals created in the last 24 hours when timestamps are present.
+      final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+      final withDates =
+          items.where((it) => it.createdAt != null).toList();
+      if (withDates.isEmpty) {
+        // If backend doesn't send createdAt yet, fall back to all.
+        return items;
+      }
+
+      withDates.retainWhere((it) => !it.createdAt!.isBefore(cutoff));
+      withDates.sort((a, b) =>
+          (b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+              .compareTo(a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0)));
+      return withDates;
     } on ApiException {
       // Re-throw so UI can handle a clean message
       rethrow;

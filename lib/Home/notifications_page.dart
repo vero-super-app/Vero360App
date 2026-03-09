@@ -1,6 +1,7 @@
 // lib/Home/notifications_page.dart
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 
 class NotificationsPage extends StatefulWidget {
@@ -13,28 +14,128 @@ class NotificationsPage extends StatefulWidget {
 class _NotificationsPageState extends State<NotificationsPage> {
   static const Color _brandOrange = Color(0xFFFF8A00);
 
+  String _profilePictureUrl = '';
+
   @override
   void initState() {
     super.initState();
     NotificationStore.instance.markAllAsRead();
+    _loadProfilePicture();
+  }
+
+  Future<void> _loadProfilePicture() async {
+    final prefs = await SharedPreferences.getInstance();
+    final url = prefs.getString('profilepicture') ?? '';
+    if (mounted) setState(() => _profilePictureUrl = url);
+  }
+
+  void _showProfilePictureViewer() {
+    if (_profilePictureUrl.isEmpty) return;
+    showDialog(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(24),
+        child: Stack(
+          alignment: Alignment.topRight,
+          children: [
+            InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  _profilePictureUrl,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (_, child, progress) =>
+                      progress == null ? child : const Center(child: CircularProgressIndicator()),
+                  errorBuilder: (_, __, ___) => const Center(
+                    child: Icon(Icons.broken_image_outlined, size: 64, color: Colors.white70),
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 28),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Notifications'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: ListenableBuilder(
+          listenable: NotificationStore.instance,
+          builder: (context, _) {
+            final count = NotificationStore.instance.items.length;
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  onTap: _showProfilePictureViewer,
+                  child: CircleAvatar(
+                    radius: 18,
+                    backgroundColor: Colors.white24,
+                    backgroundImage: _profilePictureUrl.isNotEmpty
+                        ? NetworkImage(_profilePictureUrl)
+                        : null,
+                    child: _profilePictureUrl.isEmpty
+                        ? const Icon(Icons.person, color: Colors.white70, size: 22)
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Notifications',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                    Text(
+                      '$count ${count == 1 ? 'notification' : 'notifications'}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withOpacity(0.9),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
         actions: [
-          if (NotificationStore.instance.items.isNotEmpty)
-            TextButton(
-              onPressed: () async {
-                await NotificationStore.instance.clearAll();
-                if (mounted) setState(() {});
-              },
-              child: const Text('Clear all', style: TextStyle(color: Colors.white70)),
-            ),
+          ListenableBuilder(
+            listenable: NotificationStore.instance,
+            builder: (context, _) {
+              if (NotificationStore.instance.items.isEmpty) return const SizedBox.shrink();
+              return TextButton(
+                onPressed: () async {
+                  await NotificationStore.instance.clearAll();
+                  if (mounted) setState(() {});
+                },
+                child: const Text('Clear all', style: TextStyle(color: Colors.white70)),
+              );
+            },
+          ),
         ],
       ),
       body: ListenableBuilder(

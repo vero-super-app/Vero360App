@@ -130,7 +130,7 @@ const List<DigitalProduct> kDigitalProducts = [
     name: 'Spotify Premium',
     subtitle: '1-month subscription',
     price: 'MWK 8,000',
-    logoAsset: 'assets/brands/Spotify.png', 
+    logoAsset: 'assets/brands/Spotify.jpg', 
     icon: Icons.music_note_rounded,
   ),
   DigitalProduct(
@@ -153,7 +153,7 @@ const List<DigitalProduct> kDigitalProducts = [
     key: 'chatgpt_plus',
     name: 'ChatGPT Plus',
     subtitle: '1-month subscription',
-    price: 'MWK 16,000',
+    price: 'MWK 25,000',
     logoAsset: 'assets/brands/chatgpt.png',
     icon: Icons.chat_bubble_outline_rounded,
   ),
@@ -489,13 +489,18 @@ class _BrandBar extends StatelessWidget {
         ListenableBuilder(
           listenable: NotificationStore.instance,
           builder: (_, __) {
-            final count = NotificationStore.instance.unreadCount;
+            final count = NotificationStore.instance.items.length;
             final labelText = count > 99 ? '99+' : '$count';
             return Badge(
-              isLabelVisible: true,
+              isLabelVisible: count > 0,
               backgroundColor: Colors.red,
               textColor: Colors.white,
-              label: Text(labelText),
+              alignment: Alignment(1.15, -0.6),
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              label: Text(
+                labelText,
+                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+              ),
               child: IconButton(
                 visualDensity: VisualDensity.compact,
                 onPressed: () {
@@ -506,7 +511,7 @@ class _BrandBar extends StatelessWidget {
                   );
                 },
                 icon: const Icon(
-                  Icons.notifications_active_outlined,
+                  Icons.notifications_outlined,
                   color: AppColors.title,
                 ),
               ),
@@ -1691,7 +1696,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            "Latest Arrivals",
+            "Today's Arrivals",
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 10),
@@ -1709,7 +1714,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                   padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Center(
                     child: Text(
-                      'Could not load arrivals.\n${snap.error}',
+                      'Could not today\'s Latest Arrivals.\n${snap.error}',
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.red),
                     ),
@@ -1723,7 +1728,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                   padding: EdgeInsets.symmetric(vertical: 24),
                   child: Center(
                     child: Text(
-                      'No items yet.',
+                      'No Latest Arrivals for today yet.',
                       style: TextStyle(color: Colors.red),
                     ),
                   ),
@@ -2465,7 +2470,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
               const SizedBox(height: 10),
               const Center(
                 child: Text(
-                  'Secure checkout • Contact support for your code or instructions',
+                  'Secure checkout • Check your notifications and email for your code or instructions',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: AppColors.body,

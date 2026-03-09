@@ -281,6 +281,10 @@ class _LoginScreenState extends State<LoginScreen> {
     final role =
         (profile['role'] ?? 'customer').toString().toLowerCase();
     final token = await user.getIdToken();
+    final rawEmail = user.email ?? _identifier.text.trim();
+    final isPhoneAccount = rawEmail.endsWith('@phone.vero360.app');
+    final displayEmail = isPhoneAccount ? '' : rawEmail;
+    final displayPhone = profile['phone']?.toString() ?? (isPhoneAccount ? _identifier.text.trim() : '');
 
     return <String, dynamic>{
       'authProvider': 'firebase',
@@ -288,8 +292,8 @@ class _LoginScreenState extends State<LoginScreen> {
       'user': <String, dynamic>{
         'uid': user.uid,
         'firebaseUid': user.uid,
-        'email': user.email ?? _identifier.text.trim(),
-        'phone': profile['phone']?.toString() ?? '',
+        'email': displayEmail,
+        'phone': displayPhone,
         'name': profile['name']?.toString() ?? (user.displayName ?? ''),
         'role': role,
         'merchantService': profile['merchantService'],
@@ -304,6 +308,18 @@ class _LoginScreenState extends State<LoginScreen> {
   static bool _looksLikeEmail(String v) =>
       RegExp(r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(v);
 
+  static bool _looksLikePhone(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return false;
+    final digits = t.replaceAll(RegExp(r'\D'), '');
+    return RegExp(r'^(08|09)\d{8}$').hasMatch(digits) ||
+        RegExp(r'^\+265[89]\d{8}$').hasMatch(t);
+  }
+
+  static String _normalizePhoneForAuth(String raw) {
+    return raw.replaceAll(RegExp(r'\D'), '');
+  }
+
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
@@ -315,12 +331,39 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       // Phone or backend-first: use AuthService (backend + Firebase fallback for email)
       if (!_looksLikeEmail(identifier)) {
-        final result = await _authService.loginWithIdentifier(
+        var result = await _authService.loginWithIdentifier(
           identifier,
           password,
           context,
         );
-        if (result != null && mounted) await _handleAuthResult(result);
+        if (result != null && mounted) {
+          await _handleAuthResult(result);
+          return;
+        }
+        // Phone-only accounts created on register use Firebase with synthetic email.
+        // Try signing in with that when backend doesn't know the phone.
+        if (_looksLikePhone(identifier) && mounted) {
+          final authEmail =
+              '${_normalizePhoneForAuth(identifier)}@phone.vero360.app';
+          try {
+            final cred = await _auth.signInWithEmailAndPassword(
+              email: authEmail,
+              password: password,
+            );
+            final user = cred.user;
+            if (user != null && mounted) {
+              result = await _buildResultFromUser(user);
+              ToastHelper.showCustomToast(
+                context,
+                'Logged in successfully',
+                isSuccess: true,
+                errorMessage: '',
+              );
+              await _handleAuthResult(result);
+              return;
+            }
+          } on FirebaseAuthException catch (_) {}
+        }
         return;
       }
 
@@ -397,14 +440,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // -------------------- Forgot password (email or phone) --------------------
-
-  static bool _looksLikePhone(String s) {
-    final t = s.trim();
-    if (t.isEmpty) return false;
-    final digits = t.replaceAll(RegExp(r'\D'), '');
-    return RegExp(r'^(08|09)\d{8}$').hasMatch(digits) ||
-        RegExp(r'^\+265[89]\d{8}$').hasMatch(t);
-  }
 
   Future<void> _showForgotPasswordDialog() async {
     if (!mounted) return;

@@ -112,6 +112,7 @@ flutter:
     - assets/google.png
     - assets/apple.webp
     - assets/brands/apple_music.png
+    - assets/brands/spotify.jpg
     - assets/brands/netflix.png
     - assets/brands/chatgpt.png
     - assets/icons/playstore.png

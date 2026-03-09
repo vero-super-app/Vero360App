@@ -74,7 +74,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   void initState() {
     super.initState();
-    _initAuthAndAddress();
+    // Defer so auth and context are ready (avoids "address not loaded until re-navigate")
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadAuthAndAddressWithRetry();
+    });
   }
 
   @override
@@ -269,7 +273,19 @@ class _CheckoutPageState extends State<CheckoutPage> {
   // ── Auth + Default address bootstrap (single source: Firebase then SP) ───
   Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
 
-  Future<void> _initAuthAndAddress() async {
+  /// Initial load: run after first frame, then retry once if auth wasn't ready.
+  Future<void> _loadAuthAndAddressWithRetry() async {
+    await _initAuthAndAddress();
+    if (!mounted) return;
+    // If we still have no address and not logged in, auth may have been initializing — retry once.
+    if (!_loggedIn && _defaultAddr == null && !_loadingAddr) {
+      await Future.delayed(const Duration(milliseconds: 1200));
+      if (!mounted) return;
+      await _initAuthAndAddress();
+    }
+  }
+
+  Future<void> _initAuthAndAddress({bool forceRefresh = false}) async {
     // When pickup is selected we will show merchant address instead of user address.
     _pickupLocation = widget.item.location.trim().isEmpty
         ? widget.item.sellerBusinessName
@@ -293,7 +309,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
 
     try {
-      final list = await _addrSvc.getMyAddresses();
+      final list = await _addrSvc.getMyAddresses(forceRefresh: forceRefresh);
 
       Address? def;
       for (final a in list) {
@@ -303,6 +319,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         }
       }
 
+      if (!mounted) return;
       setState(() {
         _loggedIn = true;
         _defaultAddr = def;
@@ -347,7 +364,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
     if (go == true) {
       await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
-      await _initAuthAndAddress();
+      await _initAuthAndAddress(forceRefresh: true);
       return _defaultAddr != null;
     }
     return false;
@@ -827,7 +844,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 pickupLocation: _pickupLocation,
                 onManage: () async {
                   await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
-                  await _initAuthAndAddress();
+                  await _initAuthAndAddress(forceRefresh: true);
                 },
               ),
 

@@ -507,13 +507,36 @@ class _CustomPlaceSearchWidgetState
                   ),
                 ),
               ),
-              error: (error, stackTrace) => Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  'Error loading results',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
+              error: (error, stackTrace) {
+                debugPrint('Search error: $error');
+                return Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        color: Colors.grey[400],
+                        size: 40,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Couldn\'t search locations',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Colors.grey[600],
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Check your connection and try again',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Colors.grey[400],
+                            ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
       ],

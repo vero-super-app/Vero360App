@@ -108,12 +108,13 @@ class _SettingsPageState extends State<SettingsPage> {
         _loadCachedProfile(),
         _hydrateFromFirebaseAuth(),
       ]);
-      await _loadProfileFromFirestore();
     } catch (_) {}
 
     if (mounted) setState(() => _loading = false);
 
-    // load app info + address count in background (do not block page open)
+    // Load Firestore profile, app info, and address count in background
+    // so the Settings screen appears quickly, then hydrates with fresher data.
+    unawaited(_loadProfileFromFirestore());
     unawaited(_loadAppInfo().then((_) {
       if (mounted) setState(() {});
     }));

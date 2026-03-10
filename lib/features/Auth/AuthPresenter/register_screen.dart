@@ -189,6 +189,48 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return null;
   }
 
+  /// Minimal validation rules before allowing Google/Apple sign-up.
+  /// We do *not* require password fields here, but we do enforce:
+  /// - Terms & Privacy must be accepted
+  /// - For merchants: a service and business name must be provided
+  bool _canProceedWithSocialSignIn() {
+    if (!_agree) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please agree to the Terms & Privacy before continuing.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return false;
+    }
+
+    if (_role == UserRole.merchant) {
+      final serviceErr = _validateMerchantService(_selectedMerchantService);
+      if (serviceErr != null) {
+        ToastHelper.showCustomToast(
+          context,
+          serviceErr,
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return false;
+      }
+
+      final businessNameErr = _validateBusinessName(_businessName.text);
+      if (businessNameErr != null) {
+        ToastHelper.showCustomToast(
+          context,
+          businessNameErr,
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   // ---------- Shared handler for auth result ----------
 
   Future<void> _handleAuthResult(Map<String, dynamic>? resp) async {
@@ -393,6 +435,35 @@ class _RegisterScreenState extends State<RegisterScreen> {
         'email': responseEmail,
         'name': profile['name']?.toString() ?? _name.text.trim(),
         'phone': profile['phone']?.toString() ?? _identifierPhone,
+        'role': role,
+        'merchantService':
+            _role == UserRole.merchant ? _selectedMerchantService?.key : null,
+        'businessName':
+            _role == UserRole.merchant ? _businessName.text.trim() : null,
+        'businessAddress':
+            _role == UserRole.merchant ? _businessAddress.text.trim() : null,
+      },
+    };
+  }
+
+  /// Fast auth result for social signup so we can navigate quickly without
+  /// waiting for Firestore reads/writes. Uses current form state for fields.
+  Future<Map<String, dynamic>> _buildQuickResultFromUser(User user) async {
+    final role = _role == UserRole.merchant ? 'merchant' : 'customer';
+    final token = await user.getIdToken();
+    // Prefer explicit email from form, fall back to Firebase email.
+    final rawEmail = user.email ?? _identifierEmail;
+    final emailForUser = _identifierEmail.isNotEmpty ? _identifierEmail : rawEmail;
+
+    return <String, dynamic>{
+      'authProvider': 'firebase_only',
+      'token': token,
+      'user': <String, dynamic>{
+        'uid': user.uid,
+        'firebaseUid': user.uid,
+        'email': emailForUser,
+        'phone': _identifierPhone,
+        'name': user.displayName ?? _name.text.trim(),
         'role': role,
         'merchantService':
             _role == UserRole.merchant ? _selectedMerchantService?.key : null,
@@ -674,6 +745,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ---------- Social signup/login via Firebase (no platform lock) ----------
 
   Future<void> _google() async {
+    if (!_canProceedWithSocialSignIn()) return;
     setState(() => _socialLoading = true);
     try {
       final user = await _firebaseAuthService.signInWithGoogle();
@@ -687,11 +759,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return;
       }
 
-      final result = await _buildResultFromUser(user);
-      await _syncProfileToBackend(user);
-      if (_role == UserRole.merchant) {
-        _retrySyncRoleToBackend(user);
-      }
+      // Build a lightweight result so we can navigate immediately.
+      final result = await _buildQuickResultFromUser(user);
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
@@ -700,6 +769,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
         errorMessage: '',
       );
       await _handleAuthResult(result);
+
+      // Run heavy Firebase + backend sync in the background so navigation is not blocked.
+      _buildResultFromUser(user).then((_) {
+        _syncProfileToBackend(user).then((_) {
+          if (_role == UserRole.merchant) {
+            _retrySyncRoleToBackend(user);
+          }
+        });
+      });
     } catch (e) {
       ToastHelper.showCustomToast(
         context,
@@ -713,6 +791,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _apple() async {
+    if (!_canProceedWithSocialSignIn()) return;
     setState(() => _socialLoading = true);
     try {
       final user = await _firebaseAuthService.signInWithApple();
@@ -726,11 +805,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return;
       }
 
-      final result = await _buildResultFromUser(user);
-      await _syncProfileToBackend(user);
-      if (_role == UserRole.merchant) {
-        _retrySyncRoleToBackend(user);
-      }
+      // Build a lightweight result so we can navigate immediately.
+      final result = await _buildQuickResultFromUser(user);
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
@@ -739,6 +815,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
         errorMessage: '',
       );
       await _handleAuthResult(result);
+
+      // Run heavy Firebase + backend sync in the background so navigation is not blocked.
+      _buildResultFromUser(user).then((_) {
+        _syncProfileToBackend(user).then((_) {
+          if (_role == UserRole.merchant) {
+            _retrySyncRoleToBackend(user);
+          }
+        });
+      });
     } catch (e) {
       ToastHelper.showCustomToast(
         context,

@@ -303,6 +303,29 @@ class _LoginScreenState extends State<LoginScreen> {
     };
   }
 
+  /// Fast auth result used for Google/Apple login so we can navigate quickly
+  /// without waiting for Firestore profile reads. Assumes customer role by
+  /// default; merchant routes are handled via other flows.
+  Future<Map<String, dynamic>> _buildQuickResultFromUser(User user) async {
+    final token = await user.getIdToken();
+    final email = user.email ?? _identifier.text.trim();
+    return <String, dynamic>{
+      'authProvider': 'firebase',
+      'token': token,
+      'user': <String, dynamic>{
+        'uid': user.uid,
+        'firebaseUid': user.uid,
+        'email': email,
+        'phone': user.phoneNumber ?? '',
+        'name': user.displayName ?? '',
+        'role': 'customer',
+        'merchantService': null,
+        'businessName': null,
+        'businessAddress': null,
+      },
+    };
+  }
+
   // -------------------- Email/phone + password submit --------------------
 
   static bool _looksLikeEmail(String v) =>
@@ -466,6 +489,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _google() async {
     setState(() => _socialLoading = true);
+    // Show progress feedback right when user taps Google.
+    ToastHelper.showCustomToast(
+      context,
+      'Signing in with Google…',
+      isSuccess: true,
+      errorMessage: '',
+    );
     try {
       final user = await _firebaseAuthService.signInWithGoogle();
       if (user == null) {
@@ -478,7 +508,8 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      final result = await _buildResultFromUser(user);
+      // Build a lightweight result so we can navigate immediately.
+      final result = await _buildQuickResultFromUser(user);
       ToastHelper.showCustomToast(
         context,
         'Signed in with Google',
@@ -486,6 +517,9 @@ class _LoginScreenState extends State<LoginScreen> {
         errorMessage: '',
       );
       await _handleAuthResult(result);
+
+      // Warm up Firestore profile in the background (non-blocking).
+      _buildResultFromUser(user);
     } catch (e) {
       ToastHelper.showCustomToast(
         context,
@@ -500,6 +534,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _apple() async {
     setState(() => _socialLoading = true);
+    // Show progress feedback right when user taps Apple.
+    ToastHelper.showCustomToast(
+      context,
+      'Signing in with Apple…',
+      isSuccess: true,
+      errorMessage: '',
+    );
     try {
       final user = await _firebaseAuthService.signInWithApple();
       if (user == null) {
@@ -512,7 +553,8 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      final result = await _buildResultFromUser(user);
+      // Build a lightweight result so we can navigate immediately.
+      final result = await _buildQuickResultFromUser(user);
       ToastHelper.showCustomToast(
         context,
         'Signed in with Apple',
@@ -520,6 +562,9 @@ class _LoginScreenState extends State<LoginScreen> {
         errorMessage: '',
       );
       await _handleAuthResult(result);
+
+      // Warm up Firestore profile in the background (non-blocking).
+      _buildResultFromUser(user);
     } catch (e) {
       ToastHelper.showCustomToast(
         context,

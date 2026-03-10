@@ -794,7 +794,7 @@ class _ProfilePageState extends State<ProfilePage> {
       children: [
         // Rounded navy header background
         Container(
-          height: 140,
+          height: 160, // a bit taller to avoid bottom overflow on small screens
           decoration: BoxDecoration(
             color: _veroOrange,
             borderRadius: const BorderRadius.vertical(
@@ -937,9 +937,12 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _ordersQuickActions() {
-    // Four actions that open bottom sheets on the SAME page
+    // Quick actions; use Wrap so "My VeroRide" can move to the next row
+    // on smaller phones (e.g. S10) while still appearing in one row on
+    // larger screens.
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      // No horizontal margin so the card touches screen edges.
+      margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
         color: _cardBg,
@@ -952,8 +955,9 @@ class _ProfilePageState extends State<ProfilePage> {
           )
         ],
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
         children: [
           _orderAction('My Orders', Icons.book, () {
             _openBottomSheet(const OrdersPage());
@@ -964,17 +968,13 @@ class _ProfilePageState extends State<ProfilePage> {
           _orderAction('Received', Icons.move_to_inbox_outlined, () {
             _openBottomSheet(const DeliveredOrdersPage());
           }),
-          // _orderAction('Accomodation', Icons.house, () {
-          //   _openBottomSheet(const MyBookingsPage());
-          // }),
           _orderAction('Refund', Icons.replay_circle_filled_outlined, () {
             _openBottomSheet(const ToRefundPage());
           }),
-            _orderAction('My VeroRide', Icons.local_taxi_rounded, () {
+          _orderAction('VeroRide', Icons.local_taxi_rounded, () {
             //_openBottomSheet(const MyBookingsPage());
           }),
-        ],
-      ),
+      ]),
     );
   }
 
@@ -982,22 +982,32 @@ class _ProfilePageState extends State<ProfilePage> {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: _chipGrey,
-                borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: _chipGrey,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, size: 20, color: _veroOrange),
               ),
-              child: Icon(icon, size: 20, color: _veroOrange),
-            ),
-            const SizedBox(height: 6),
-            Text(label, style: const TextStyle(fontSize: 12)),
-          ],
-        ),
+              const SizedBox(height: 4),
+              SizedBox(
+                width: 72,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+            ],
+          ),
       ),
     );
   }
@@ -1050,7 +1060,8 @@ class _ProfilePageState extends State<ProfilePage> {
     ];
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      // No horizontal margin so this section also touches the edges.
+      margin: const EdgeInsets.fromLTRB(0, 8, 0, 24),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       decoration: BoxDecoration(
         color: _cardBg,
@@ -1073,18 +1084,16 @@ class _ProfilePageState extends State<ProfilePage> {
               style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
             ),
           ),
-          GridView.builder(
-            itemCount: items.length,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              mainAxisExtent: 100,
-              mainAxisSpacing: 10,
-              crossAxisSpacing: 10,
-            ),
-            itemBuilder: (_, i) => _detailTile(items[i]),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final item in items)
+                SizedBox(
+                  width: 110,
+                  child: _detailTile(item),
+                ),
+            ],
           ),
         ],
       ),

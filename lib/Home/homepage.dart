@@ -1261,7 +1261,7 @@ class DigitalServicesSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _Section(
-      title: 'Digital & Virtual Services',
+      title: 'Digital Services ',
       action: TextButton(
         onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('more digital services coming soon')),
@@ -2094,15 +2094,18 @@ class _Section extends StatelessWidget {
             padding: EdgeInsets.fromLTRB(16, tight ? 0 : 10, 16, 0),
             child: Row(
               children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: AppColors.title,
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.title,
+                    ),
                   ),
                 ),
-                const Spacer(),
                 if (action != null) action!,
               ],
             ),

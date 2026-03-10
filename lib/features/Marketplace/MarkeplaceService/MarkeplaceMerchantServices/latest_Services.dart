@@ -46,7 +46,7 @@ class LatestArrivalServices {
     } catch (_) {
       // Any weird decode errors, etc.
       throw const ApiException(
-        message: 'Failed to load latest arrivals. Please try again.',
+        message: 'Failed to load today\'s latest arrivals. Please check your internet and try again.',
       );
     }
   }

@@ -170,6 +170,7 @@ class Vero360Homepage extends ConsumerStatefulWidget {
 class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   final _search = TextEditingController();
   bool _animateIn = false;
+  bool _showLatestArrivals = false;
 
   String _firstNameFromEmail(String email) {
     final user = email.split('@').first;
@@ -191,6 +192,14 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
       if (mounted) setState(() => _animateIn = true);
     });
     _resolveGreetingName();
+
+    // Defer heavy latest-arrivals grid slightly so the first frame
+    // (brand bar, search, quick services) renders faster.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future.delayed(const Duration(milliseconds: 350));
+      if (!mounted) return;
+      setState(() => _showLatestArrivals = true);
+    });
   }
 
   Future<void> _resolveGreetingName() async {
@@ -321,12 +330,17 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
 
                 const SliverToBoxAdapter(child: SizedBox(height: 10)),
 
-                // ✅ Latest arrivals section
-                const SliverToBoxAdapter(
+                // ✅ Latest arrivals section (deferred slightly to reduce first-frame work)
+                SliverToBoxAdapter(
                   child: Padding(
                     // Symmetric horizontal padding so cards sit closer to the edges
-                    padding: EdgeInsets.fromLTRB(6, 12, 6, 16),
-                    child: LatestArrivalsSection(),
+                    padding: const EdgeInsets.fromLTRB(6, 12, 6, 16),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      child: _showLatestArrivals
+                          ? const LatestArrivalsSection()
+                          : const SizedBox.shrink(),
+                    ),
                   ),
                 ),
               ],
@@ -1714,7 +1728,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                   padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Center(
                     child: Text(
-                      'Could not today\'s Latest Arrivals.\n${snap.error}',
+                      'Could not load today\'s Latest Arrivals.\n${snap.error}',
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.red),
                     ),

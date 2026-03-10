@@ -71,11 +71,8 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Google Maps configuration from .env
-  await GoogleMapsConfig.initialize();
-
   try {
-    // Initialize Firebase
+    // Keep only absolutely critical init work here so the first frame appears fast.
     await Firebase.initializeApp(
       options: const FirebaseOptions(
         apiKey: "AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk",
@@ -90,13 +87,8 @@ Future<void> main() async {
 
     // Register background handler FIRST (important for FCM)
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-
-    // Initialize push notification service
-    await NotificationService.instance.initialize();
-    NotificationService.setNavigatorKey(navKey);
-    debugPrint("NotificationService initialized ✅");
   } catch (e) {
-    debugPrint("Firebase / Notification init error: $e");
+    debugPrint("Firebase init error: $e");
   }
 
   runApp(
@@ -138,6 +130,21 @@ class _AppBootstrapState extends State<AppBootstrap> {
   void initState() {
     super.initState();
     _bootFuture = _boot();
+
+    // Defer heavier, non-blocking services until after the first frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Google Maps config (reads .env, sets up API keys)
+      unawaited(GoogleMapsConfig.initialize());
+
+      // Push notifications (channels, permissions, listeners)
+      try {
+        await NotificationService.instance.initialize();
+        NotificationService.setNavigatorKey(navKey);
+        debugPrint("NotificationService initialized ✅");
+      } catch (e) {
+        debugPrint("NotificationService init error: $e");
+      }
+    });
   }
 
   Future<_BootState> _boot() async {
@@ -149,17 +156,22 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
     firebaseOk = true; // since we did it in main()
 
+    // Keep boot work as light as possible so we hit the home UI quickly.
     _log("Configuring API…");
     await ApiConfig.useProd();
     _log("API config OK ✅");
 
-    _log("Initializing other messaging services…");
-    try {
-      await MessagingInitializationService.initialize();
-      _log("Messaging services initialized ✅");
-    } catch (e) {
-      _log("Messaging init warning: $e");
-    }
+    // Run heavier messaging initialization in the background so it
+    // does not block the user from seeing the home screen.
+    _log("Scheduling messaging services init in background…");
+    unawaited(Future(() async {
+      try {
+        await MessagingInitializationService.initialize();
+        _log("Messaging services initialized ✅");
+      } catch (e) {
+        _log("Messaging init warning: $e");
+      }
+    }));
 
     _log("Launch ready 🚀");
 

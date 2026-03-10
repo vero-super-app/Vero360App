@@ -1,17 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 
-class CreateTaxiScreen extends ConsumerStatefulWidget {
+class CreateTaxiScreen extends StatefulWidget {
   const CreateTaxiScreen({super.key});
 
   @override
-  ConsumerState<CreateTaxiScreen> createState() => _CreateTaxiScreenState();
+  State<CreateTaxiScreen> createState() => _CreateTaxiScreenState();
 }
 
-class _CreateTaxiScreenState extends ConsumerState<CreateTaxiScreen> {
+class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
   final _formKey = GlobalKey<FormState>();
   final _driverService = DriverService();
   bool _isLoading = false;

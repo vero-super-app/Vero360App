@@ -33,6 +33,7 @@ import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 
@@ -43,9 +44,10 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/messaging_initialization_service.dart';
 import 'package:vero360_app/GernalServices/websocket_messaging_service.dart';
 import 'package:vero360_app/GernalServices/websocket_manager.dart';
-import 'package:vero360_app/GernalServices/notification_service.dart'; // ← NEW
+import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
@@ -865,34 +867,28 @@ class AuthFlow {
       p.getString('token') ??
       p.getString('authToken');
 
-  static bool _isMerchant(Map<String, dynamic> u) {
-    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
-    final roles = (u['roles'] is List)
-        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
-        : <String>[];
-    final flags = {
-      'isMerchant': u['isMerchant'] == true,
-      'merchant': u['merchant'] == true,
-      'merchantId': (u['merchantId'] ?? '').toString().isNotEmpty,
-    };
-    return role == 'merchant' ||
-        roles.contains('merchant') ||
-        flags.values.any((v) => v == true);
-  }
-
-  static bool _isDriver(Map<String, dynamic> u) {
-    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
-    final roles = (u['roles'] is List)
-        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
-        : <String>[];
-    final flags = {
-      'isDriver': u['isDriver'] == true,
-      'driver': u['driver'] == true,
-      'driverId': (u['driverId'] ?? '').toString().isNotEmpty,
-    };
-    return role == 'driver' ||
-        roles.contains('driver') ||
-        flags.values.any((v) => v == true);
+  // Extract common nav logic
+  static Future<void> _navigateByRole(String email, bool isMerchant, bool isDriver) async {
+    if (isMerchant) {
+      navKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(
+            builder: (_) => MarketplaceMerchantDashboard(
+                  email: email,
+                  onBackToHomeTab: () {},
+                )),
+        (route) => route.isFirst,
+      );
+    } else if (isDriver) {
+      navKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const DriverDashboard()),
+        (route) => route.isFirst,
+      );
+    } else {
+      navKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
+        (route) => route.isFirst,
+      );
+    }
   }
 
   static String _fixLocalhostIfNeeded(String base) {
@@ -908,7 +904,6 @@ class AuthFlow {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('jwt_token', token);
 
-    // ✅ Use ApiConfig for production-ready endpoint
     try {
       final resp = await http.get(
         ApiConfig.endpoint('/users/me'),
@@ -929,53 +924,26 @@ class AuthFlow {
         final email = (user['email'] ?? '').toString();
         await prefs.setString('email', email);
 
-        // ✅ Determine user type with proper priority: merchant > driver > customer
-        bool isMerchant = _isMerchant(user);
-        bool isDriver = false;
+        // Determine role (priority: merchant > driver > customer)
+        final isMerchant = RoleHelper.isMerchant(user);
+        final isDriver = !isMerchant && RoleHelper.isDriver(user);
 
-        debugPrint("🔍 User object: $user");
-        debugPrint("🔍 Is merchant (from flags): $isMerchant");
-
-        if (!isMerchant) {
-          isDriver = _isDriver(user);
-          debugPrint("🔍 Is driver (from flags): $isDriver");
-          // Also try async driver check if user object doesn't indicate driver
-          if (!isDriver) {
-            isDriver = await _checkIfUserIsDriver(prefs, user);
-            debugPrint("🔍 Is driver (from async check): $isDriver");
-          }
-        }
-
-        // Store in preferences and route (keep role + user_role in sync)
+        // Persist role to preferences
         if (isMerchant) {
           await prefs.setString('user_role', 'merchant');
           await prefs.setString('role', 'merchant');
-          await prefs.setBool('user_is_driver', false);
-          navKey.currentState?.pushAndRemoveUntil(
-            MaterialPageRoute(
-                builder: (_) => MarketplaceMerchantDashboard(
-                      email: email,
-                      onBackToHomeTab: () {},
-                    )),
-            (route) => route.isFirst,
-          );
         } else if (isDriver) {
           await prefs.setString('user_role', 'driver');
           await prefs.setString('role', 'driver');
-          await prefs.setBool('user_is_driver', true);
-          navKey.currentState?.pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
-            (route) => route.isFirst,
-          );
         } else {
           await prefs.setString('user_role', 'customer');
           await prefs.setString('role', 'customer');
-          await prefs.setBool('user_is_driver', false);
-          navKey.currentState?.pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
-            (route) => route.isFirst,
-          );
         }
+
+        debugPrint("✅ Login: email=$email, role=${isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer')}");
+
+        // Navigate based on role
+        await _navigateByRole(email, isMerchant, isDriver);
       } else {
         navKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
@@ -983,7 +951,7 @@ class AuthFlow {
         );
       }
     } catch (e) {
-      debugPrint("onLoginSuccess error: $e");
+      debugPrint("❌ onLoginSuccess error: $e");
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
         (route) => route.isFirst,
@@ -1018,26 +986,4 @@ class AuthFlow {
     return (t != null && t.trim().isNotEmpty) || fb != null;
   }
 
-  static Future<bool> _checkIfUserIsDriver(
-      SharedPreferences prefs, Map<String, dynamic> user) async {
-    try {
-      final driverService = DriverService();
-      final token = _readToken(prefs);
-      if (token == null) return false;
-
-      // Try to get userId from user object or prefs
-      int? userId = user['id'] as int? ?? user['userId'] as int?;
-      userId ??= prefs.getInt('user_id');
-      if (userId == null) return false;
-
-      try {
-        await driverService.getDriverByUserId(userId);
-        return true;
-      } catch (_) {
-        return false;
-      }
-    } catch (_) {
-      return false;
-    }
-  }
 }

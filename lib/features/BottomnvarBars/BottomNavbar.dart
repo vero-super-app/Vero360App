@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 
@@ -109,8 +110,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
               ? Map<String, dynamic>.from(decoded)
               : <String, dynamic>{});
       final prefs = await SharedPreferences.getInstance();
-      final isMerchant = _userIsMerchant(user);
-      final isDriver = !isMerchant && _userIsDriver(user);
+      final isMerchant = RoleHelper.isMerchant(user);
+      final isDriver = !isMerchant && RoleHelper.isDriver(user);
       if (isMerchant) {
         await prefs.setString('user_role', 'merchant');
         await prefs.setString('role', 'merchant');
@@ -129,36 +130,6 @@ class _BottomnavbarState extends State<Bottomnavbar>
         if (mounted) setState(() {});
       }
     } catch (_) {}
-  }
-
-  static bool _userIsMerchant(Map<String, dynamic> u) {
-    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
-    final roles = (u['roles'] is List)
-        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
-        : <String>[];
-    final flags = {
-      'isMerchant': u['isMerchant'] == true,
-      'merchant': u['merchant'] == true,
-      'merchantId': (u['merchantId'] ?? '').toString().isNotEmpty,
-    };
-    return role == 'merchant' ||
-        roles.contains('merchant') ||
-        flags.values.any((v) => v == true);
-  }
-
-  static bool _userIsDriver(Map<String, dynamic> u) {
-    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
-    final roles = (u['roles'] is List)
-        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
-        : <String>[];
-    final flags = {
-      'isDriver': u['isDriver'] == true,
-      'driver': u['driver'] == true,
-      'driverId': (u['driverId'] ?? '').toString().isNotEmpty,
-    };
-    return role == 'driver' ||
-        roles.contains('driver') ||
-        flags.values.any((v) => v == true);
   }
 
   Future<void> _checkUserRoleAndSetup() async {

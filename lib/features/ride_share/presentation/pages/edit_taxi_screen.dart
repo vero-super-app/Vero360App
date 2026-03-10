@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 
-class EditTaxiScreen extends ConsumerStatefulWidget {
+class EditTaxiScreen extends StatefulWidget {
   final Map<String, dynamic> taxi;
 
   const EditTaxiScreen({
@@ -13,10 +12,10 @@ class EditTaxiScreen extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<EditTaxiScreen> createState() => _EditTaxiScreenState();
+  State<EditTaxiScreen> createState() => _EditTaxiScreenState();
 }
 
-class _EditTaxiScreenState extends ConsumerState<EditTaxiScreen> {
+class _EditTaxiScreenState extends State<EditTaxiScreen> {
   final _formKey = GlobalKey<FormState>();
   final _driverService = DriverService();
   bool _isLoading = false;
@@ -25,19 +24,19 @@ class _EditTaxiScreenState extends ConsumerState<EditTaxiScreen> {
 
   // Form fields
   late String _selectedTaxiClass;
-  late final _makeController = TextEditingController(text: widget.taxi['make']);
+  late final _makeController = TextEditingController(text: (widget.taxi['make'] ?? '').toString());
   late final _modelController =
-      TextEditingController(text: widget.taxi['model']);
+      TextEditingController(text: (widget.taxi['model'] ?? '').toString());
   late final _yearController =
-      TextEditingController(text: '${widget.taxi['year']}');
+      TextEditingController(text: '${widget.taxi['year'] ?? ''}');
   late final _licensePlateController =
-      TextEditingController(text: widget.taxi['licensePlate']);
+      TextEditingController(text: (widget.taxi['licensePlate'] ?? '').toString());
   late final _colorController =
-      TextEditingController(text: widget.taxi['color'] ?? '');
+      TextEditingController(text: (widget.taxi['color'] ?? '').toString());
   late final _seatsController =
-      TextEditingController(text: '${widget.taxi['seats']}');
+      TextEditingController(text: '${widget.taxi['seats'] ?? ''}');
   late final _registrationNumberController =
-      TextEditingController(text: widget.taxi['registrationNumber'] ?? '');
+      TextEditingController(text: (widget.taxi['registrationNumber'] ?? '').toString());
   late final _registrationExpiryController = TextEditingController(
       text: widget.taxi['registrationExpiry'] != null
           ? (widget.taxi['registrationExpiry'] as String).split('T')[0]
@@ -73,7 +72,10 @@ class _EditTaxiScreenState extends ConsumerState<EditTaxiScreen> {
       _selectedFeatures = [];
     }
 
-    _validateAndAutoVerify();
+    // Call validation after first frame when form is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _validateAndAutoVerify();
+    });
   }
 
   @override
@@ -90,6 +92,11 @@ class _EditTaxiScreenState extends ConsumerState<EditTaxiScreen> {
   }
 
   void _validateAndAutoVerify() {
+    // Skip validation if form is not yet built
+    if (_formKey.currentState == null) {
+      return;
+    }
+    
     if (!_formKey.currentState!.validate()) {
       setState(() => _isVerified = false);
       return;
@@ -140,7 +147,7 @@ class _EditTaxiScreenState extends ConsumerState<EditTaxiScreen> {
   }
 
   Future<void> _submitTaxi() async {
-    if (!_formKey.currentState!.validate()) {
+    if (_formKey.currentState == null || !_formKey.currentState!.validate()) {
       return;
     }
 

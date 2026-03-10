@@ -592,7 +592,11 @@ class _MyAppState extends State<MyApp> {
 
     SchedulerBinding.instance.addPostFrameCallback((_) async {
       await _fastRedirectFromCache();
-      unawaited(_verifyRoleFromServerInBg());
+      // Only verify role in background if we're NOT showing BottomNavbar
+      // (BottomNavbar handles role verification on its own to avoid double navigation)
+      if (_currentShell != 'customer') {
+        unawaited(_verifyRoleFromServerInBg());
+      }
     });
   }
 
@@ -627,10 +631,20 @@ class _MyAppState extends State<MyApp> {
 
     if (role == 'merchant') {
       _pushMerchant(email);
-    } else if (role == 'driver' || role == 'customer') {
-      // Both drivers and customers use Bottomnavbar shell
+    } else if (role == 'driver') {
+      _pushDriver();
+    } else if (role == 'customer') {
       _pushCustomer(email);
     }
+  }
+
+  void _pushDriver() {
+    if (!mounted) return;
+    _currentShell = 'driver';
+    navKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const DriverDashboard()),
+      (route) => route.isFirst,
+    );
   }
 
   /// Fix emulator localhost:
@@ -675,8 +689,8 @@ class _MyAppState extends State<MyApp> {
         
         if (merchant && _currentShell != 'merchant') {
           _pushMerchant((user['email'] ?? '').toString());
-        } else if (!merchant && driver && _currentShell != 'customer') {
-          _pushCustomer((user['email'] ?? '').toString());
+        } else if (!merchant && driver && _currentShell != 'driver') {
+          _pushDriver();
         } else if (!merchant && !driver && _currentShell != 'customer') {
           _pushCustomer((user['email'] ?? '').toString());
         }
@@ -693,35 +707,9 @@ class _MyAppState extends State<MyApp> {
       p.getString('token') ??
       p.getString('authToken');
 
-  bool _isMerchant(Map<String, dynamic> u) {
-    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
-    final roles = (u['roles'] is List)
-        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
-        : <String>[];
-    final flags = {
-      'isMerchant': u['isMerchant'] == true,
-      'merchant': u['merchant'] == true,
-      'merchantId': (u['merchantId'] ?? '').toString().isNotEmpty,
-    };
-    return role == 'merchant' ||
-        roles.contains('merchant') ||
-        flags.values.any((v) => v == true);
-  }
+  bool _isMerchant(Map<String, dynamic> u) => RoleHelper.isMerchant(u);
 
-  bool _isDriver(Map<String, dynamic> u) {
-    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
-    final roles = (u['roles'] is List)
-        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
-        : <String>[];
-    final flags = {
-      'isDriver': u['isDriver'] == true,
-      'driver': u['driver'] == true,
-      'driverId': (u['driverId'] ?? '').toString().isNotEmpty,
-    };
-    return role == 'driver' ||
-        roles.contains('driver') ||
-        flags.values.any((v) => v == true);
-  }
+  bool _isDriver(Map<String, dynamic> u) => RoleHelper.isDriver(u);
 
   Future<void> _persistUserToPrefs(
       SharedPreferences prefs, Map<String, dynamic> u) async {

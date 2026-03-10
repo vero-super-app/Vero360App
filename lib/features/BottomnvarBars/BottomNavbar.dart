@@ -91,6 +91,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 
   /// Fetch /users/me and persist role to SharedPreferences so role matches backend.
+  /// Only updates local state; does NOT trigger redirects (MyApp handles routing).
   Future<void> _fetchAndUpdateRoleFromServer() async {
     final token = await AuthHandler.getTokenForApi();
     if (token == null || token.isEmpty) return;
@@ -112,19 +113,29 @@ class _BottomnavbarState extends State<Bottomnavbar>
       final prefs = await SharedPreferences.getInstance();
       final isMerchant = RoleHelper.isMerchant(user);
       final isDriver = !isMerchant && RoleHelper.isDriver(user);
-      if (isMerchant) {
-        await prefs.setString('user_role', 'merchant');
-        await prefs.setString('role', 'merchant');
-      } else if (isDriver) {
-        await prefs.setString('user_role', 'driver');
-        await prefs.setString('role', 'driver');
-      } else {
-        await prefs.setString('user_role', 'customer');
-        await prefs.setString('role', 'customer');
+      
+      // Only update prefs if role changed
+      final currentRole = (prefs.getString('user_role') ?? '').toLowerCase();
+      final newRole = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
+      
+      if (currentRole != newRole) {
+        if (isMerchant) {
+          await prefs.setString('user_role', 'merchant');
+          await prefs.setString('role', 'merchant');
+        } else if (isDriver) {
+          await prefs.setString('user_role', 'driver');
+          await prefs.setString('role', 'driver');
+        } else {
+          await prefs.setString('user_role', 'customer');
+          await prefs.setString('role', 'customer');
+        }
       }
-      final raw = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
+      
       debugPrint(
-          'ℹ️ BottomNavbar: role from /users/me: $raw (merchant=$isMerchant, driver=$isDriver)');
+          'ℹ️ BottomNavbar: role from /users/me: $newRole (merchant=$isMerchant, driver=$isDriver)');
+      
+      // Update local navbar state to reflect role change
+      // This rebuilds pages but does NOT trigger MyApp redirects
       if (mounted && (_isMerchant != isMerchant || _isDriver != isDriver)) {
         await _checkUserRoleAndSetup();
         if (mounted) setState(() {});

@@ -20,13 +20,26 @@ class RoleHelper {
     final roles = (u['roles'] is List)
         ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
         : <String>[];
-    final flags = {
-      'isDriver': u['isDriver'] == true,
-      'driver': u['driver'] == true,
-      'driverId': (u['driverId'] ?? '').toString().isNotEmpty,
-    };
-    return role == 'driver' ||
-        roles.contains('driver') ||
-        flags.values.any((v) => v == true);
+    
+    // Check if role field explicitly says driver
+    final roleIsDriver = role == 'driver' || role == 'taxi';
+    
+    // Check if roles array contains driver
+    final rolesContainsDriver = roles.contains('driver') || roles.contains('taxi');
+    
+    // Only trust isDriver flag if role field also indicates driver (avoid false positives)
+    final isDriverFlag = (u['isDriver'] == true) && roleIsDriver;
+    
+    // Only consider driverId if it's a non-null, non-empty string/number
+    final driverId = u['driverId'];
+    final hasDriverId = (driverId != null && 
+        driverId.toString().trim().isNotEmpty && 
+        driverId.toString() != '0') && roleIsDriver;
+    
+    return roleIsDriver ||
+        rolesContainsDriver ||
+        isDriverFlag ||
+        hasDriverId ||
+        (u['driver'] == true && roleIsDriver);
   }
 }

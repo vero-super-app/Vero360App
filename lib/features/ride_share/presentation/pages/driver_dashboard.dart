@@ -11,6 +11,7 @@ import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/notification_badge.dart';
 import 'driver_request_screen.dart';
 import 'create_taxi_screen.dart';
 import 'edit_taxi_screen.dart';
@@ -896,25 +897,27 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               ),
             ),
             const SizedBox(height: 12),
-            // View Ride Requests Button
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton.icon(
-                onPressed: isVerified && hasTaxis
-                    ? () => _navigateToRideRequests(context)
-                    : null,
-                icon: const Icon(Icons.local_taxi_outlined),
-                label: const Text('View Ride Requests'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: (isVerified && hasTaxis)
-                      ? primaryColor
-                      : Colors.grey[400],
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+            // View Ride Requests Button with Notification Badge
+            NotificationBadge(
+              child: SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: isVerified && hasTaxis
+                      ? () => _navigateToRideRequests(context)
+                      : null,
+                  icon: const Icon(Icons.local_taxi_outlined),
+                  label: const Text('View Ride Requests'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: (isVerified && hasTaxis)
+                        ? primaryColor
+                        : Colors.grey[400],
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
                   ),
-                  elevation: 0,
                 ),
               ),
             ),

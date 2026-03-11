@@ -55,6 +55,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     if (_isOnline) return; // Already broadcasting
 
     setState(() => _isOnline = true);
+    
+    // Set taxi availability when going online
+    _setTaxiAvailability(true);
 
     // Broadcast location every 5 seconds
     _locationBroadcastTimer =
@@ -121,6 +124,34 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     _locationBroadcastTimer?.cancel();
     _locationBroadcastTimer = null;
     setState(() => _isOnline = false);
+    
+    // Set taxi unavailable when going offline
+    _setTaxiAvailability(false);
+  }
+  
+  /// Helper to sync online/offline status with taxi availability
+  Future<void> _setTaxiAvailability(bool isAvailable) async {
+    try {
+      final driverProfile = await ref.read(myDriverProfileProvider.future);
+      final taxiId = driverProfile['taxis']?.isNotEmpty == true
+          ? driverProfile['taxis'][0]['id']
+          : null;
+
+      if (taxiId != null) {
+        await _driverService.setTaxiAvailability(
+          int.parse(taxiId.toString()),
+          isAvailable,
+        );
+        if (kDebugMode) {
+          print(
+              '[DriverDashboard] ✓ Taxi availability set to $isAvailable for taxi $taxiId');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[DriverDashboard] ✗ Error setting taxi availability: $e');
+      }
+    }
   }
 
   /// Start auto-centering map on driver location
@@ -846,6 +877,25 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               ),
             ),
             const SizedBox(height: 12),
+            // Dev: Quick Availability Toggle (for testing/development)
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: () => _showQuickAvailabilityToggle(context),
+                icon: const Icon(Icons.tune),
+                label: const Text('Dev: Toggle Availability'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
             // View Ride Requests Button
             SizedBox(
               width: double.infinity,
@@ -953,6 +1003,86 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error verifying profile: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+    }
+  }
+
+  void _showQuickAvailabilityToggle(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Dev: Quick Availability Toggle'),
+        content: const Text(
+          'Set your taxi availability status for testing purposes.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _toggleTaxiAvailability(false, 'Dev: Manually unavailable');
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('Set Unavailable'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _toggleTaxiAvailability(true, 'Dev: Manually available');
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+            ),
+            child: const Text('Set Available'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleTaxiAvailability(
+    bool isAvailable,
+    String reason,
+  ) async {
+    try {
+      final driverProfile = await ref.read(myDriverProfileProvider.future);
+      final taxiId = driverProfile['taxis']?.isNotEmpty == true
+          ? driverProfile['taxis'][0]['id']
+          : null;
+
+      if (taxiId != null) {
+        // Call dev endpoint for manual toggle
+        await _driverService.setTaxiAvailability(
+          int.parse(taxiId.toString()),
+          isAvailable,
+        );
+        if (mounted) {
+          ref.refresh(myDriverProfileProvider);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Taxi set to ${isAvailable ? 'available' : 'unavailable'}\nReason: $reason'),
+              backgroundColor: isAvailable ? Colors.green : Colors.red,
+              behavior: SnackBarBehavior.floating,
+              margin: const EdgeInsets.all(16),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error toggling availability: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),

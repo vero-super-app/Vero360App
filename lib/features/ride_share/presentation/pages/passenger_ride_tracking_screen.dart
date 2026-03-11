@@ -130,7 +130,8 @@ class _PassengerRideTrackingScreenState
     try {
       if (GoogleMapsConfig.apiKey.isEmpty) {
         if (kDebugMode) {
-          debugPrint('[PassengerRideTracking] ERROR: Google Maps API key is empty!');
+          debugPrint(
+              '[PassengerRideTracking] ERROR: Google Maps API key is empty!');
         }
         return;
       }
@@ -157,13 +158,15 @@ class _PassengerRideTrackingScreenState
       // Check if widget is still mounted after async operation
       if (!mounted) {
         if (kDebugMode) {
-          debugPrint('[PassengerRideTracking] Widget unmounted, skipping polyline update');
+          debugPrint(
+              '[PassengerRideTracking] Widget unmounted, skipping polyline update');
         }
         return;
       }
 
       if (kDebugMode) {
-        debugPrint('[PassengerRideTracking] Response received: ${response.routes.length} routes');
+        debugPrint(
+            '[PassengerRideTracking] Response received: ${response.routes.length} routes');
       }
 
       if (response.routes.isNotEmpty) {
@@ -173,7 +176,8 @@ class _PassengerRideTrackingScreenState
             .toList();
 
         if (kDebugMode) {
-          debugPrint('[PassengerRideTracking] Polyline has ${polylineCoordinates.length} points');
+          debugPrint(
+              '[PassengerRideTracking] Polyline has ${polylineCoordinates.length} points');
         }
 
         if (polylineCoordinates.isNotEmpty) {
@@ -398,8 +402,7 @@ class _PassengerRideTrackingScreenState
               if (state.ride?.driver != null && state.isAccepted)
                 _buildDriverCard(state),
               // ETA and distance
-              if (state.ride != null)
-                _buildRideDetails(state.ride!),
+              if (state.ride != null) _buildRideDetails(state.ride!),
               const SizedBox(height: 20),
               // Action buttons based on state
               if (state.isRequested)
@@ -569,7 +572,9 @@ class _PassengerRideTrackingScreenState
               padding: const EdgeInsets.symmetric(vertical: 14),
             ),
             onPressed: () {
-              ref.read(activeRideProvider.notifier).cancelRide('Passenger cancelled');
+              ref
+                  .read(activeRideProvider.notifier)
+                  .cancelRide('Passenger cancelled');
               Navigator.pop(context);
             },
             icon: const Icon(Icons.close),
@@ -597,7 +602,9 @@ class _PassengerRideTrackingScreenState
               padding: const EdgeInsets.symmetric(vertical: 14),
             ),
             onPressed: () {
-              ref.read(activeRideProvider.notifier).cancelRide('Passenger cancelled');
+              ref
+                  .read(activeRideProvider.notifier)
+                  .cancelRide('Passenger cancelled');
               Navigator.pop(context);
             },
             icon: const Icon(Icons.close),
@@ -627,7 +634,9 @@ class _PassengerRideTrackingScreenState
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
               onPressed: () {
-                ref.read(activeRideProvider.notifier).cancelRide('Passenger requested stop');
+                ref
+                    .read(activeRideProvider.notifier)
+                    .cancelRide('Passenger requested stop');
                 Navigator.pop(context);
               },
               icon: const Icon(Icons.close),

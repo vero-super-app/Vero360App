@@ -284,7 +284,7 @@ class RideShareHttpService {
       final response = await http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/accept'),
         headers: headers,
-        body: jsonEncode({'vehicleId': vehicleId}),
+        body: jsonEncode({'taxiId': vehicleId}),
       );
 
       if (response.statusCode == 200) {

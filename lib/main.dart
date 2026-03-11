@@ -803,61 +803,66 @@ class _MyAppState extends State<MyApp> {
     final cartSvc = CartServiceProvider.getInstance();
 
     return ProviderScope(
-      child: RideRequestOverlay(
-        child: MaterialApp(
-          navigatorKey: navKey,
-          debugShowCheckedModeBanner: false,
-          title: 'Vero360',
-          theme: ThemeData(
-            useMaterial3: true,
-            colorSchemeSeed: const Color(0xFFFF8A00),
-          ),
-
-          // ✅ keep public home
-          home: const Bottomnavbar(email: ''),
-
-          // ✅ restrict named routes too
-          onGenerateRoute: (settings) {
-            switch (settings.name) {
-              case '/login':
-                return MaterialPageRoute(builder: (_) => const LoginScreen());
-
-              case '/signup':
-                return MaterialPageRoute(builder: (_) => const RegisterScreen());
-
-              case '/marketplace':
-                return MaterialPageRoute(
-                    builder: (_) => const Bottomnavbar(email: ''));
-
-              case '/cartpage':
-                return MaterialPageRoute(
-                  builder: (_) => AuthGuard(
-                    featureName: 'Cart',
-                    child: CartPage(cartService: cartSvc),
-                  ),
-                );
-
-              case '/messages':
-                return MaterialPageRoute(
-                  builder: (_) => const AuthGuard(
-                    featureName: 'Messages',
-                    child: ChatListPage(),
-                  ),
-                );
-
-              case '/dashboard':
-                return MaterialPageRoute(
-                  builder: (_) => const AuthGuard(
-                    featureName: 'Dashboard',
-                    child: ProfilePage(),
-                  ),
-                );
-
-              default:
-                return null;
-            }
-          },
+      child: MaterialApp(
+        navigatorKey: navKey,
+        debugShowCheckedModeBanner: false,
+        title: 'Vero360',
+        theme: ThemeData(
+          useMaterial3: true,
+          colorSchemeSeed: const Color(0xFFFF8A00),
         ),
+
+        // ✅ Wrap app shell with RideRequestOverlay
+        builder: (context, child) {
+          return RideRequestOverlay(
+            child: child ?? const SizedBox.shrink(),
+          );
+        },
+
+        // ✅ keep public home
+        home: const Bottomnavbar(email: ''),
+
+        // ✅ restrict named routes too
+        onGenerateRoute: (settings) {
+          switch (settings.name) {
+            case '/login':
+              return MaterialPageRoute(builder: (_) => const LoginScreen());
+
+            case '/signup':
+              return MaterialPageRoute(builder: (_) => const RegisterScreen());
+
+            case '/marketplace':
+              return MaterialPageRoute(
+                  builder: (_) => const Bottomnavbar(email: ''));
+
+            case '/cartpage':
+              return MaterialPageRoute(
+                builder: (_) => AuthGuard(
+                  featureName: 'Cart',
+                  child: CartPage(cartService: cartSvc),
+                ),
+              );
+
+            case '/messages':
+              return MaterialPageRoute(
+                builder: (_) => const AuthGuard(
+                  featureName: 'Messages',
+                  child: ChatListPage(),
+                ),
+              );
+
+            case '/dashboard':
+              return MaterialPageRoute(
+                builder: (_) => const AuthGuard(
+                  featureName: 'Dashboard',
+                  child: ProfilePage(),
+                ),
+              );
+
+            default:
+              return null;
+          }
+        },
       ),
     );
   }

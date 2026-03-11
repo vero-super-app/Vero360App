@@ -90,7 +90,12 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         estimatedFare: 0.0,
       );
 
-      _showNotification(driverRequest);
+      // Use post-frame callback to ensure context is available
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _showNotification(driverRequest);
+        }
+      });
     } catch (e) {
       debugPrint('[RideRequestOverlay] Error processing WebSocket request: $e');
     }

@@ -17,46 +17,60 @@ void showRideRequestNotification(
   // Remove previous notification if exists
   _currentNotificationOverlay?.remove();
 
-  _currentNotificationOverlay = OverlayEntry(
-    builder: (overlayContext) => RideNotificationPopup(
-      rideRequest: request,
-      ref: ref,
-      onDismiss: () {
-        _currentNotificationOverlay?.remove();
-        _currentNotificationOverlay = null;
-      },
-      onAccept: () {
-        _currentNotificationOverlay?.remove();
-        _currentNotificationOverlay = null;
-        
-        // Get driver info from provider
-        final driverProfile = ref.read(myDriverProfileProvider);
-        driverProfile.whenData((driver) {
-          if (context.mounted) {
-            showDialog(
-              context: context,
-              builder: (_) => DriverRequestAcceptDialog(
-                request: request,
-                driverId: (driver['id'] ?? '').toString(),
-                driverName: driver['name'] ?? 'Driver',
-                driverPhone: driver['phone'] ?? '',
-                driverAvatar: driver['profilepicture'],
-                taxiId: int.tryParse((driver['taxiId'] ?? '').toString()),
-                onAccepted: () {
-                  ref
-                      .read(rideNotificationServiceProvider)
-                      .removeNotification(request.id);
-                  Navigator.pop(context);
-                },
-              ),
-            );
-          }
-        });
-      },
-    ),
-  );
+  try {
+    _currentNotificationOverlay = OverlayEntry(
+      builder: (overlayContext) => RideNotificationPopup(
+        rideRequest: request,
+        ref: ref,
+        onDismiss: () {
+          _currentNotificationOverlay?.remove();
+          _currentNotificationOverlay = null;
+        },
+        onAccept: () {
+          _currentNotificationOverlay?.remove();
+          _currentNotificationOverlay = null;
+          
+          // Get driver info from provider
+          final driverProfile = ref.read(myDriverProfileProvider);
+          driverProfile.whenData((driver) {
+            if (context.mounted) {
+              showDialog(
+                context: context,
+                builder: (_) => DriverRequestAcceptDialog(
+                  request: request,
+                  driverId: (driver['id'] ?? '').toString(),
+                  driverName: driver['name'] ?? 'Driver',
+                  driverPhone: driver['phone'] ?? '',
+                  driverAvatar: driver['profilepicture'],
+                  taxiId: int.tryParse((driver['taxiId'] ?? '').toString()),
+                  onAccepted: () {
+                    ref
+                        .read(rideNotificationServiceProvider)
+                        .removeNotification(request.id);
+                    Navigator.pop(context);
+                  },
+                ),
+              );
+            }
+          });
+        },
+      ),
+    );
 
-  Overlay.of(context).insert(_currentNotificationOverlay!);
+    // Insert into overlay
+    final overlay = Overlay.of(context);
+    overlay.insert(_currentNotificationOverlay!);
+  } catch (e) {
+    debugPrint('[showRideRequestNotification] Error inserting notification: $e');
+    // Try using Navigator context as fallback
+    try {
+      Navigator.of(context);
+      final overlay = Overlay.of(context);
+      overlay.insert(_currentNotificationOverlay!);
+    } catch (e2) {
+      debugPrint('[showRideRequestNotification] Fallback also failed: $e2');
+    }
+  }
 }
 
 /// Ride request notification popup widget
@@ -95,7 +109,8 @@ class _RideNotificationPopupState extends State<RideNotificationPopup>
     _slideAnimation = Tween<Offset>(
       begin: const Offset(1, 0),
       end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _animationController, curve: Curves.easeOut));
+    ).animate(
+        CurvedAnimation(parent: _animationController, curve: Curves.easeOut));
 
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
@@ -236,7 +251,8 @@ class _RideNotificationPopupState extends State<RideNotificationPopup>
                     children: [
                       CircleAvatar(
                         radius: 20,
-                        backgroundColor: const Color(0xFFFF8A00).withValues(alpha: 0.1),
+                        backgroundColor:
+                            const Color(0xFFFF8A00).withValues(alpha: 0.1),
                         child: const Icon(
                           Icons.person,
                           color: Color(0xFFFF8A00),
@@ -278,7 +294,8 @@ class _RideNotificationPopupState extends State<RideNotificationPopup>
                         child: _buildInfoBox(
                           icon: Icons.attach_money,
                           label: 'Estimated Fare',
-                          value: '\$${widget.rideRequest.estimatedFare.toStringAsFixed(2)}',
+                          value:
+                              '\$${widget.rideRequest.estimatedFare.toStringAsFixed(2)}',
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -286,7 +303,8 @@ class _RideNotificationPopupState extends State<RideNotificationPopup>
                         child: _buildInfoBox(
                           icon: Icons.place,
                           label: 'Distance',
-                          value: '${widget.rideRequest.estimatedDistance.toStringAsFixed(1)} km',
+                          value:
+                              '${widget.rideRequest.estimatedDistance.toStringAsFixed(1)} km',
                         ),
                       ),
                     ],

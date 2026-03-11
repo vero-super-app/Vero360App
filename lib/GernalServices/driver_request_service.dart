@@ -106,7 +106,8 @@ class DriverRideRequest {
     return DriverRideRequest(
       id: parseId(map['id'] ?? idParam),
       passengerId: parseId(map['passengerId']),
-      passengerName: getPassengerName(map['passenger']) ?? (map['passengerName'] ?? 'Unknown'),
+      passengerName: getPassengerName(map['passenger']) ??
+          (map['passengerName'] ?? 'Unknown'),
       pickupLat: parseDouble(map['pickupLatitude'] ?? map['pickupLat']),
       pickupLng: parseDouble(map['pickupLongitude'] ?? map['pickupLng']),
       dropoffLat: parseDouble(map['dropoffLatitude'] ?? map['dropoffLat']),
@@ -168,8 +169,7 @@ class DriverRequestService {
     try {
       // Get auth token
       final token = await _getAuthToken();
-      print('[DriverRequest] Token: ${token?.substring(0, 20)}...');
-      
+
       final headers = <String, String>{
         'Content-Type': 'application/json',
       };
@@ -178,22 +178,16 @@ class DriverRequestService {
       }
 
       final url = ApiConfig.endpoint('$_baseUrl/pending-rides');
-      print('[DriverRequest] GET $url');
-      
+
       final response = await http.get(url, headers: headers);
-      print('[DriverRequest] Response status: ${response.statusCode}');
-      print('[DriverRequest] Response body: ${response.body}');
 
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
         final requests = decoded is List
             ? decoded.cast<Map<String, dynamic>>()
             : (decoded['requests'] is List
-                ? (decoded['requests'] as List)
-                    .cast<Map<String, dynamic>>()
+                ? (decoded['requests'] as List).cast<Map<String, dynamic>>()
                 : <Map<String, dynamic>>[]);
-
-        print('[DriverRequest] Found ${requests.length} requests');
 
         // Sort by most recent first
         requests.sort(
@@ -208,18 +202,14 @@ class DriverRequestService {
         );
 
         final result = requests
-            .map((r) =>
-                DriverRideRequest.fromMap(Map<String, dynamic>.from(r), r['id']))
+            .map((r) => DriverRideRequest.fromMap(
+                Map<String, dynamic>.from(r), r['id']))
             .toList();
-        
-        print('[DriverRequest] Returning ${result.length} ride requests');
+
         return result;
-      } else {
-        print('[DriverRequest] ❌ Request failed with status ${response.statusCode}');
-      }
+      } else {}
       return [];
     } catch (e) {
-      print('[DriverRequest] ❌ Error getting incoming requests: $e');
       return [];
     }
   }
@@ -259,7 +249,7 @@ class DriverRequestService {
       final body = <String, dynamic>{
         'taxiId': taxiId,
       };
-      
+
       final response = await http.patch(
         ApiConfig.endpoint('$_baseUrl/rides/$rideId/accept'),
         headers: {
@@ -356,8 +346,8 @@ class DriverRequestService {
         );
 
         return rides
-            .map((r) =>
-                DriverRideRequest.fromMap(Map<String, dynamic>.from(r), r['id'] ?? ''))
+            .map((r) => DriverRideRequest.fromMap(
+                Map<String, dynamic>.from(r), r['id'] ?? ''))
             .toList();
       }
       return [];
@@ -430,12 +420,9 @@ class DriverRequestService {
         try {
           final freshToken = await firebaseUser.getIdToken();
           if (freshToken != null && freshToken.isNotEmpty) {
-            print('[DriverRequest] Using fresh Firebase ID token');
             return freshToken;
           }
-        } catch (e) {
-          print('[DriverRequest] Error getting fresh Firebase token: $e');
-        }
+        } catch (e) {}
       }
 
       // Fallback to SharedPreferences if Firebase token not available
@@ -443,13 +430,11 @@ class DriverRequestService {
       final storedToken = prefs.getString('jwt_token') ??
           prefs.getString('token') ??
           prefs.getString('jwt');
-      
+
       if (storedToken != null) {
-        print('[DriverRequest] Using stored token from SharedPreferences');
         return storedToken;
       }
 
-      print('[DriverRequest] No authentication token available');
       return null;
     } catch (e) {
       print('Error reading auth token: $e');

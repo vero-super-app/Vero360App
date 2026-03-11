@@ -265,6 +265,22 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
 
       if (kDebugMode) {
         debugPrint('[VehicleTypeModal] ✅ Ride created: ${ride['id']}');
+        debugPrint('[VehicleTypeModal] Ride status: ${ride['status']}');
+      }
+
+      // Check if ride was auto-cancelled due to no drivers
+      final rideStatus = ride['status'] as String?;
+      if (rideStatus == RideStatus.cancelled) {
+        if (mounted) {
+          Navigator.pop(context);
+          ToastHelper.showCustomToast(
+            context,
+            'No drivers available',
+            isSuccess: false,
+            errorMessage: ride['cancellationReason'] as String? ?? 'No drivers found in your area',
+          );
+        }
+        return;
       }
 
       if (mounted) {

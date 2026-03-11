@@ -61,8 +61,16 @@ class _PassengerRideTrackingScreenState
 
   @override
   void dispose() {
-    ref.read(activeRideProvider.notifier).unsubscribeFromRide();
-    mapController?.dispose();
+    try {
+      ref.read(activeRideProvider.notifier).unsubscribeFromRide();
+    } catch (e) {
+      print('[PassengerRideTrackingScreen] Error unsubscribing from ride: $e');
+    }
+    try {
+      mapController?.dispose();
+    } catch (e) {
+      print('[PassengerRideTrackingScreen] Error disposing map controller: $e');
+    }
     super.dispose();
   }
 
@@ -287,22 +295,39 @@ class _PassengerRideTrackingScreenState
     // Handle ride cancellation
     if (rideState.isCancelled) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          Navigator.of(context).pop();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Ride cancelled: ${rideState.ride?.cancellationReason}',
+        if (mounted && context.mounted) {
+          try {
+            final reason = rideState.ride?.cancellationReason ?? 'Unknown reason';
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Ride cancelled: $reason'),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 2),
               ),
-              backgroundColor: Colors.red,
-            ),
-          );
+            );
+            // Delay pop to allow snackbar to show
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (mounted && context.mounted) {
+                Navigator.of(context).pop();
+              }
+            });
+          } catch (e) {
+            print('[PassengerRideTrackingScreen] Error handling cancellation: $e');
+            if (mounted && context.mounted) {
+              Navigator.of(context).pop();
+            }
+          }
         }
       });
     }
 
-    if (rideState.ride != null) {
-      _updateMapMarkers(rideState.ride!);
+    // Only update markers if ride is still active
+    if (rideState.ride != null && !rideState.isCancelled && !rideState.isCompleted) {
+      try {
+        _updateMapMarkers(rideState.ride!);
+      } catch (e) {
+        print('[PassengerRideTrackingScreen] Error updating markers: $e');
+      }
     }
 
     return WillPopScope(
@@ -571,13 +596,17 @@ class _PassengerRideTrackingScreenState
               backgroundColor: Colors.red,
               padding: const EdgeInsets.symmetric(vertical: 14),
             ),
-            onPressed: () {
-              ref
-                  .read(activeRideProvider.notifier)
-                  .cancelRide('Passenger cancelled');
-              Navigator.pop(context);
-            },
-            icon: const Icon(Icons.close),
+            onPressed: state.isLoading ? null : () => _handleCancelRide(context),
+            icon: state.isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.close),
             label: const Text('Cancel Ride'),
           ),
         ),
@@ -601,13 +630,17 @@ class _PassengerRideTrackingScreenState
               backgroundColor: Colors.red,
               padding: const EdgeInsets.symmetric(vertical: 14),
             ),
-            onPressed: () {
-              ref
-                  .read(activeRideProvider.notifier)
-                  .cancelRide('Passenger cancelled');
-              Navigator.pop(context);
-            },
-            icon: const Icon(Icons.close),
+            onPressed: state.isLoading ? null : () => _handleCancelRide(context),
+            icon: state.isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.close),
             label: const Text('Cancel Ride'),
           ),
         ),
@@ -623,27 +656,50 @@ class _PassengerRideTrackingScreenState
           style: TextStyle(color: Colors.grey[600]),
         ),
         const SizedBox(height: 16),
-        if (state.isLoading)
-          const CircularProgressIndicator()
-        else
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
-              onPressed: () {
-                ref
-                    .read(activeRideProvider.notifier)
-                    .cancelRide('Passenger requested stop');
-                Navigator.pop(context);
-              },
-              icon: const Icon(Icons.close),
-              label: const Text('End Ride'),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              padding: const EdgeInsets.symmetric(vertical: 14),
             ),
+            onPressed: state.isLoading ? null : () => _handleCancelRide(context, reason: 'Passenger requested stop'),
+            icon: state.isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.close),
+            label: const Text('End Ride'),
           ),
+        ),
       ],
     );
+  }
+
+  Future<void> _handleCancelRide(BuildContext context, {String reason = 'Passenger cancelled'}) async {
+    try {
+      await ref
+          .read(activeRideProvider.notifier)
+          .cancelRide(reason);
+      
+      if (mounted && context.mounted) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to cancel ride: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 }

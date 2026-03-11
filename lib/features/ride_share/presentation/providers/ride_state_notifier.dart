@@ -80,7 +80,13 @@ class RideStateNotifier extends Notifier<RideStateVM> {
     _rideSubscription?.cancel();
 
     // Initialize WebSocket subscription to receive real-time updates
-    _httpService.subscribeToRideTracking(rideId);
+    _httpService.subscribeToRideTracking(rideId).onError((error, stackTrace) {
+      print('[RideStateNotifier] Error subscribing to ride tracking: $error');
+      state = state.copyWith(
+        error: 'Failed to connect to ride updates: $error',
+        isLoading: false,
+      );
+    });
 
     _rideSubscription = _httpService.rideUpdateStream.listen(
       (ride) {
@@ -93,6 +99,7 @@ class RideStateNotifier extends Notifier<RideStateVM> {
         }
       },
       onError: (error) {
+        print('[RideStateNotifier] Error in ride update stream: $error');
         state = state.copyWith(
           error: error.toString(),
           lastUpdate: DateTime.now(),
@@ -103,7 +110,11 @@ class RideStateNotifier extends Notifier<RideStateVM> {
 
   /// Unsubscribe from ride updates
   void unsubscribeFromRide() {
-    _rideSubscription?.cancel();
+    try {
+      _rideSubscription?.cancel();
+    } catch (e) {
+      print('[RideStateNotifier] Error cancelling subscription: $e');
+    }
     _rideSubscription = null;
     _rideId = null;
   }
@@ -153,11 +164,20 @@ class RideStateNotifier extends Notifier<RideStateVM> {
     if (_rideId == null) return;
     state = state.copyWith(isLoading: true, error: null);
     try {
-      await _httpService.cancelRide(_rideId!, reason: reason);
+      final cancelledRide = await _httpService.cancelRide(_rideId!, reason: reason);
+      // Update local state immediately with cancelled status
+      state = state.copyWith(
+        ride: cancelledRide,
+        error: null,
+        isLoading: false,
+        lastUpdate: DateTime.now(),
+      );
     } catch (e) {
-      state = state.copyWith(error: e.toString());
-    } finally {
-      state = state.copyWith(isLoading: false);
+      state = state.copyWith(
+        error: e.toString(),
+        isLoading: false,
+      );
+      rethrow;
     }
   }
 }

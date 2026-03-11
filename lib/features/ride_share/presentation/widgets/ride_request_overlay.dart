@@ -23,47 +23,71 @@ class RideRequestOverlay extends ConsumerStatefulWidget {
 
 class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
   @override
+  void initState() {
+    super.initState();
+    // Initialize WebSocket on init, not on every build
+    Future.microtask(() {
+      if (mounted) {
+        try {
+          ref.read(driverRideRequestsInitProvider);
+        } catch (e) {
+          debugPrint('[RideRequestOverlay] Error initializing driver requests: $e');
+        }
+      }
+    });
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Initialize WebSocket on first build
-    Future.microtask(() {
-      if (mounted) {
-        ref.read(driverRideRequestsInitProvider);
-      }
-    });
-
-    // Listen to WebSocket ride requests
+    // Listen to WebSocket ride requests only once via effect
     ref.listen(
       driverRideRequestsStreamProvider,
-      (_, AsyncValue rideRequest) {
-        rideRequest.whenData((request) {
-          if (request != null) {
+      (prev, next) {
+        if (!mounted) return;
+        
+        try {
+          next.whenData((request) {
+            if (!mounted || request == null) return;
+            
             final requestId = request.rideId.toString();
             if (!_shownRequestIds.contains(requestId)) {
               _shownRequestIds.add(requestId);
               _handleNewWebSocketRequest(request);
             }
-          }
-        });
+          });
+        } catch (e) {
+          debugPrint('[RideRequestOverlay] Error handling WebSocket request: $e');
+        }
       },
     );
 
     // Listen to HTTP polling ride requests as fallback
     ref.listen(
       combinedDriverRideRequestsProvider,
-      (_, AsyncValue<List<DriverRideRequest>> rides) {
-        rides.whenData((rideList) {
-          for (final ride in rideList) {
-            if (ride.status == 'pending' && !_shownRequestIds.contains(ride.id)) {
-              _shownRequestIds.add(ride.id);
-              _handleNewRideRequest(ride);
+      (prev, next) {
+        if (!mounted) return;
+        
+        try {
+          next.whenData((rideList) {
+            if (!mounted) return;
+            
+            for (final ride in rideList) {
+              if (ride.status == 'pending' && !_shownRequestIds.contains(ride.id)) {
+                _shownRequestIds.add(ride.id);
+                if (mounted) {
+                  _handleNewRideRequest(ride);
+                }
+              }
             }
-          }
-        });
+          });
+        } catch (e) {
+          debugPrint('[RideRequestOverlay] Error handling ride request: $e');
+        }
       },
     );
 
@@ -106,12 +130,18 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
   }
 
   void _showNotification(DriverRideRequest request) {
-    if (!mounted) return;
+    if (!mounted || !context.mounted) return;
     
-    // Add to notification service
-    ref.read(rideNotificationServiceProvider).addNotification(request);
-    
-    // Show popup
-    showRideRequestNotification(context, request, ref);
+    try {
+      // Add to notification service
+      ref.read(rideNotificationServiceProvider).addNotification(request);
+      
+      // Show popup only if still mounted
+      if (mounted && context.mounted) {
+        showRideRequestNotification(context, request, ref);
+      }
+    } catch (e) {
+      debugPrint('[RideRequestOverlay] Error showing notification: $e');
+    }
   }
 }

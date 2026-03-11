@@ -14,8 +14,16 @@ void showRideRequestNotification(
   DriverRideRequest request,
   WidgetRef ref,
 ) {
+  // Don't show if context is no longer valid
+  if (!context.mounted) return;
+  
   // Remove previous notification if exists
-  _currentNotificationOverlay?.remove();
+  try {
+    _currentNotificationOverlay?.remove();
+  } catch (e) {
+    debugPrint('[showRideRequestNotification] Error removing previous overlay: $e');
+  }
+  _currentNotificationOverlay = null;
 
   try {
     _currentNotificationOverlay = OverlayEntry(
@@ -23,53 +31,62 @@ void showRideRequestNotification(
         rideRequest: request,
         ref: ref,
         onDismiss: () {
-          _currentNotificationOverlay?.remove();
+          try {
+            _currentNotificationOverlay?.remove();
+          } catch (e) {
+            debugPrint('[RideNotificationPopup] Error removing on dismiss: $e');
+          }
           _currentNotificationOverlay = null;
         },
         onAccept: () {
-          _currentNotificationOverlay?.remove();
+          try {
+            _currentNotificationOverlay?.remove();
+          } catch (e) {
+            debugPrint('[RideNotificationPopup] Error removing on accept: $e');
+          }
           _currentNotificationOverlay = null;
           
           // Get driver info from provider
           final driverProfile = ref.read(myDriverProfileProvider);
           driverProfile.whenData((driver) {
             if (context.mounted) {
-              showDialog(
-                context: context,
-                builder: (_) => DriverRequestAcceptDialog(
-                  request: request,
-                  driverId: (driver['id'] ?? '').toString(),
-                  driverName: driver['name'] ?? 'Driver',
-                  driverPhone: driver['phone'] ?? '',
-                  driverAvatar: driver['profilepicture'],
-                  taxiId: int.tryParse((driver['taxiId'] ?? '').toString()),
-                  onAccepted: () {
-                    ref
-                        .read(rideNotificationServiceProvider)
-                        .removeNotification(request.id);
-                    Navigator.pop(context);
-                  },
-                ),
-              );
+              try {
+                showDialog(
+                  context: context,
+                  builder: (_) => DriverRequestAcceptDialog(
+                    request: request,
+                    driverId: (driver['id'] ?? '').toString(),
+                    driverName: driver['name'] ?? 'Driver',
+                    driverPhone: driver['phone'] ?? '',
+                    driverAvatar: driver['profilepicture'],
+                    taxiId: int.tryParse((driver['taxiId'] ?? '').toString()),
+                    onAccepted: () {
+                      ref
+                          .read(rideNotificationServiceProvider)
+                          .removeNotification(request.id);
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                      }
+                    },
+                  ),
+                );
+              } catch (e) {
+                debugPrint('[RideNotificationPopup] Error showing dialog: $e');
+              }
             }
           });
         },
       ),
     );
 
-    // Insert into overlay
-    final overlay = Overlay.of(context);
-    overlay.insert(_currentNotificationOverlay!);
-  } catch (e) {
-    debugPrint('[showRideRequestNotification] Error inserting notification: $e');
-    // Try using Navigator context as fallback
-    try {
-      Navigator.of(context);
+    // Insert into overlay only if context is still mounted
+    if (context.mounted) {
       final overlay = Overlay.of(context);
       overlay.insert(_currentNotificationOverlay!);
-    } catch (e2) {
-      debugPrint('[showRideRequestNotification] Fallback also failed: $e2');
     }
+  } catch (e) {
+    debugPrint('[showRideRequestNotification] Error inserting notification: $e');
+    _currentNotificationOverlay = null;
   }
 }
 
@@ -127,14 +144,24 @@ class _RideNotificationPopupState extends State<RideNotificationPopup>
   }
 
   void _dismissNotification() {
-    _animationController.reverse().then((_) {
-      widget.onDismiss();
-    });
+    try {
+      _animationController.reverse().then((_) {
+        if (mounted) {
+          widget.onDismiss();
+        }
+      });
+    } catch (e) {
+      debugPrint('[RideNotificationPopup] Error dismissing: $e');
+    }
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
+    try {
+      _animationController.dispose();
+    } catch (e) {
+      debugPrint('[RideNotificationPopup] Error disposing animation controller: $e');
+    }
     super.dispose();
   }
 

@@ -75,7 +75,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   Future<void> _loadMapStyle() async {
     try {
       final styleString = await MapStyleConstants.loadMapStyle();
-      if (styleString.isNotEmpty) {
+      if (styleString.isNotEmpty && mounted) {
         setState(() {
           _mapStyleJson = styleString;
         });
@@ -224,25 +224,29 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     required String title,
     String? snippet,
   }) {
-    setState(() {
-      _markers.add(
-        Marker(
-          markerId: MarkerId(markerId),
-          position: LatLng(latitude, longitude),
-          infoWindow: InfoWindow(
-            title: title,
-            snippet: snippet,
+    if (mounted) {
+      setState(() {
+        _markers.add(
+          Marker(
+            markerId: MarkerId(markerId),
+            position: LatLng(latitude, longitude),
+            infoWindow: InfoWindow(
+              title: title,
+              snippet: snippet,
+            ),
           ),
-        ),
-      );
-    });
+        );
+      });
+    }
   }
 
   void clearMarkers() {
-    setState(() {
-      _markers.clear();
-      _addUserMarker();
-    });
+    if (mounted) {
+      setState(() {
+        _markers.clear();
+        _addUserMarker();
+      });
+    }
   }
 
   Future<void> _updateRoutePolyline() async {
@@ -329,21 +333,24 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
             debugPrint('[MapViewWidget] Polyline added to map');
           }
 
-          setState(() {
-            _polylines.clear();
-            _polylines.add(
-              Polyline(
-                polylineId: const PolylineId('route'),
-                points: polylineCoordinates,
-                color: const Color(0xFFFF8A00),
-                width: 5,
-                geodesic: true,
-              ),
-            );
-            _updatePlaceMarkers();
-          });
+          // Double check mounted before setState
+          if (mounted) {
+            setState(() {
+              _polylines.clear();
+              _polylines.add(
+                Polyline(
+                  polylineId: const PolylineId('route'),
+                  points: polylineCoordinates,
+                  color: const Color(0xFFFF8A00),
+                  width: 5,
+                  geodesic: true,
+                ),
+              );
+              _updatePlaceMarkers();
+            });
 
-          _fitCameraToBounds(polylineCoordinates);
+            _fitCameraToBounds(polylineCoordinates);
+          }
         }
       } else {
         if (kDebugMode) {
@@ -356,7 +363,13 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
       }
       // Only clear polylines if widget is still mounted
       if (mounted) {
-        setState(() => _polylines.clear());
+        try {
+          setState(() => _polylines.clear());
+        } catch (stateError) {
+          if (kDebugMode) {
+            debugPrint('[MapViewWidget] Error clearing polylines in catch: $stateError');
+          }
+        }
       }
     }
   }

@@ -1889,10 +1889,10 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
         });
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFF1E88E5) : Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1902,7 +1902,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
               style: TextStyle(
                 color: selected ? Colors.white : Colors.black87,
                 fontWeight: FontWeight.w600,
-                fontSize: 13,
+                fontSize: 12,
               ),
             ),
           ],
@@ -1923,12 +1923,15 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
         label: Text(
           title,
           style: TextStyle(
-            color: isSelected ? Colors.white : Colors.black,
-            fontWeight: FontWeight.bold,
+            color: isSelected ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.w600,
+            fontSize: 12,
           ),
         ),
         backgroundColor: isSelected ? Colors.orange : Colors.grey[300],
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
       ),
     );
   }
@@ -1994,105 +1997,117 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
             ),
           ),
 
-          // Texts
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+          // Product info area (light orange/peach)
+          Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF4E6),
+              borderRadius: const BorderRadius.vertical(
+                bottom: Radius.circular(15),
+              ),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  item.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      if (_aiSearchMode && _lastQuery.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(Icons.auto_awesome, size: 12, color: Colors.orange.shade700),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                _getAiHighlight(item),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.orange.shade800,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 4),
+                      Text(
+                        _mwk(item.price),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFFF8A00),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      if (item.location != null && item.location!.trim().isNotEmpty)
+                        Row(
+                          children: [
+                            Icon(Icons.location_on, size: 12, color: Colors.grey.shade600),
+                      const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                item.location!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                              ),
+                            ),
+                          ],
+                        ),
+                      if (item.createdAt != null)
+                        Text(
+                          _formatTimeAgo(item.createdAt!),
+                          style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                        ),
+                    ],
                   ),
                 ),
-                if (_aiSearchMode && _lastQuery.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Row(
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                  child: Row(
                     children: [
-                      Icon(Icons.auto_awesome, size: 12, color: Colors.blue.shade600),
-                      const SizedBox(width: 4),
                       Expanded(
-                        child: Text(
-                          _getAiHighlight(item),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.blue.shade700,
-                            fontWeight: FontWeight.w500,
+                        child: OutlinedButton(
+                          onPressed: () => _addToCart(item),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFFF8A00),
+                            side: const BorderSide(color: Color(0xFFFF8A00)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           ),
+                          child: const Text("Add to Cart"),
                         ),
                       ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 4),
-                Text(
-                  _mwk(item.price),
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.green,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                if (item.location != null && item.location!.trim().isNotEmpty)
-                  Row(
-                    children: [
-                      const Icon(Icons.location_on, size: 12, color: Colors.redAccent),
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 10),
                       Expanded(
-                        child: Text(
-                          item.location!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                        child: ElevatedButton(
+                          onPressed: () => _openDetailsPage(item),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFF8A00),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: const Text("Buy Now"),
                         ),
                       ),
                     ],
-                  ),
-                if (item.createdAt != null)
-                  Text(
-                    _formatTimeAgo(item.createdAt!),
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                  ),
-              ],
-            ),
-          ),
-
-          // Buttons
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _addToCart(item),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: const Text("AddCart"),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _openDetailsPage(item),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: const Text("BuyNow"),
                   ),
                 ),
               ],
@@ -2317,7 +2332,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
             child: TextField(
               controller: _searchCtrl,
               textInputAction: TextInputAction.search,
@@ -2359,25 +2374,25 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                   borderRadius: BorderRadius.circular(16),
                   borderSide: const BorderSide(color: Color(0xFFFF8A00), width: 2),
                 ),
-                contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+                contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
               ),
             ),
           ),
           SizedBox(
-            height: 40,
+            height: 34,
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               scrollDirection: Axis.horizontal,
               children: [
                 _buildSearchModeChip('All', false),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 _buildSearchModeChip('◆ VeroAI Search', true),
               ],
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           SizedBox(
-            height: 44,
+            height: 36,
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               scrollDirection: Axis.horizontal,
@@ -2387,14 +2402,14 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                   isSelected: _selectedCategory == null && !_photoMode,
                   onTap: () => _setCategory(null),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 for (final c in _kCategories) ...[
                   _buildCategoryChip(
                     _titleCase(c),
                     isSelected: _selectedCategory == c,
                     onTap: () => _setCategory(c),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 4),
                 ],
               ],
             ),

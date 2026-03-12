@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart'
     show Provider, FutureProvider, StreamProvider;
 import 'package:flutter_riverpod/legacy.dart' show StateProvider;
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/place_prediction_model.dart';
 import 'package:vero360_app/GernalServices/ride_share_service.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/GernalServices/location_service.dart';
 import 'package:vero360_app/GernalServices/place_service.dart';
 import 'package:vero360_app/GernalServices/google_places_service.dart';
@@ -16,8 +18,15 @@ import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 // ==================== SERVICES ====================
+final rideShareHttpServiceProvider = Provider<RideShareHttpService>((ref) {
+  final service = RideShareHttpService();
+  ref.onDispose(service.dispose);
+  return service;
+});
+
 final rideShareServiceProvider = Provider<RideShareService>((ref) {
-  return RideShareService();
+  final httpService = ref.watch(rideShareHttpServiceProvider);
+  return RideShareService(httpService);
 });
 
 final locationServiceProvider = Provider<LocationService>((ref) {
@@ -427,3 +436,8 @@ final durationMinutesProvider =
     return 0;
   }
 });
+
+// ==================== CACHED ROUTE POLYLINE ====================
+/// Stores the last computed polyline coordinates so the tracking screen can
+/// reuse them without making another Google API call.
+final cachedRoutePolylineProvider = StateProvider<List<LatLng>>((ref) => []);

@@ -8,7 +8,8 @@ import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/config/map_style_constants.dart';
 import 'package:vero360_app/providers/ride_share/nearby_vehicles_provider.dart';
-import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart'; // Note: Service class renamed to NearbyTaxisService internally
+import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 
 class MapViewWidget extends ConsumerStatefulWidget {
   final Function(GoogleMapController) onMapCreated;
@@ -16,11 +17,23 @@ class MapViewWidget extends ConsumerStatefulWidget {
   final Place? pickupPlace;
   final Place? dropoffPlace;
 
+  /// When non-null, a driver marker is drawn at this position.
+  final LatLng? driverLocation;
+
+  /// Label shown on the driver marker info window.
+  final String? driverLabel;
+
+  /// When true, nearby-vehicle fetching is skipped (used on tracking screens).
+  final bool trackingMode;
+
   const MapViewWidget({
     required this.onMapCreated,
     this.initialPosition,
     this.pickupPlace,
     this.dropoffPlace,
+    this.driverLocation,
+    this.driverLabel,
+    this.trackingMode = false,
     super.key,
   });
 
@@ -44,32 +57,31 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     _polylines = {};
     _initializeCameraPosition();
 
-    // Load map style from assets
     _loadMapStyle();
 
-    // Load custom taxi marker icon
-    _loadTaxiMarkerIcon();
+    if (!widget.trackingMode) {
+      _loadTaxiMarkerIcon();
+    }
 
-    // Initial route draw if both places are provided
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted &&
-          widget.pickupPlace != null &&
-          widget.dropoffPlace != null) {
+      if (!mounted) return;
+
+      if (widget.pickupPlace != null && widget.dropoffPlace != null) {
         _updateRoutePolyline();
       }
-    });
 
-    if (widget.initialPosition != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
-                latitude: widget.initialPosition!.latitude,
-                longitude: widget.initialPosition!.longitude,
-                radiusKm: 5.0,
-              );
-        }
-      });
-    }
+      if (widget.driverLocation != null) {
+        _updateDriverMarker();
+      }
+
+      if (!widget.trackingMode && widget.initialPosition != null) {
+        ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
+              latitude: widget.initialPosition!.latitude,
+              longitude: widget.initialPosition!.longitude,
+              radiusKm: 5.0,
+            );
+      }
+    });
   }
 
   Future<void> _loadMapStyle() async {
@@ -113,32 +125,15 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   void didUpdateWidget(MapViewWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    if (kDebugMode) {
-      debugPrint(
-          '[MapViewWidget] ========== didUpdateWidget called ==========');
-      debugPrint(
-          '[MapViewWidget] oldPickup: ${oldWidget.pickupPlace?.name} (${oldWidget.pickupPlace?.id})');
-      debugPrint(
-          '[MapViewWidget] newPickup: ${widget.pickupPlace?.name} (${widget.pickupPlace?.id})');
-      debugPrint(
-          '[MapViewWidget] pickupChanged: ${oldWidget.pickupPlace != widget.pickupPlace}');
-      debugPrint(
-          '[MapViewWidget] oldDropoff: ${oldWidget.dropoffPlace?.name} (${oldWidget.dropoffPlace?.id})');
-      debugPrint(
-          '[MapViewWidget] newDropoff: ${widget.dropoffPlace?.name} (${widget.dropoffPlace?.id})');
-      debugPrint(
-          '[MapViewWidget] dropoffChanged: ${oldWidget.dropoffPlace != widget.dropoffPlace}');
-    }
-
     final pickupChanged = oldWidget.pickupPlace != widget.pickupPlace;
     final dropoffChanged = oldWidget.dropoffPlace != widget.dropoffPlace;
 
     if (pickupChanged || dropoffChanged) {
-      if (kDebugMode) {
-        debugPrint(
-            '[MapViewWidget] ✅ Places changed! Updating route polyline...');
-      }
       _updateRoutePolyline();
+    }
+
+    if (oldWidget.driverLocation != widget.driverLocation) {
+      _updateDriverMarker();
     }
 
     final oldPos = oldWidget.initialPosition;
@@ -151,11 +146,13 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         if (!mounted) return;
         animateToPosition(newPos.latitude, newPos.longitude);
         _updateUserMarker(newPos);
-        ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
-              latitude: newPos.latitude,
-              longitude: newPos.longitude,
-              radiusKm: 5.0,
-            );
+        if (!widget.trackingMode) {
+          ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
+                latitude: newPos.latitude,
+                longitude: newPos.longitude,
+                radiusKm: 5.0,
+              );
+        }
       });
     }
   }
@@ -170,6 +167,21 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
       ),
     );
+    if (mounted) setState(() {});
+  }
+
+  void _updateDriverMarker() {
+    _markers.removeWhere((m) => m.markerId == const MarkerId('driver'));
+    if (widget.driverLocation != null) {
+      _markers.add(
+        Marker(
+          markerId: const MarkerId('driver'),
+          position: widget.driverLocation!,
+          infoWindow: InfoWindow(title: widget.driverLabel ?? 'Your Driver'),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+        ),
+      );
+    }
     if (mounted) setState(() {});
   }
 
@@ -251,37 +263,21 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
   Future<void> _updateRoutePolyline() async {
     if (widget.pickupPlace == null || widget.dropoffPlace == null) {
-      if (kDebugMode) {
-        debugPrint(
-            '[MapViewWidget] Pickup or dropoff is null, clearing polylines');
-      }
-      if (mounted) {
-        setState(() => _polylines.clear());
-      }
+      if (mounted) setState(() => _polylines.clear());
+      return;
+    }
+
+    // Try cached polyline first to avoid an extra API call
+    final cached = ref.read(cachedRoutePolylineProvider);
+    if (cached.isNotEmpty) {
+      _applyPolyline(cached);
       return;
     }
 
     try {
-      if (GoogleMapsConfig.apiKey.isEmpty) {
-        if (kDebugMode) {
-          debugPrint('[MapViewWidget] ERROR: Google Maps API key is empty!');
-        }
-        return;
-      }
+      if (GoogleMapsConfig.apiKey.isEmpty) return;
 
-      if (kDebugMode) {
-        debugPrint('[MapViewWidget] Starting route calculation');
-        debugPrint(
-            '[MapViewWidget] Pickup: ${widget.pickupPlace!.latitude}, ${widget.pickupPlace!.longitude}');
-        debugPrint(
-            '[MapViewWidget] Dropoff: ${widget.dropoffPlace!.latitude}, ${widget.dropoffPlace!.longitude}');
-        debugPrint(
-            '[MapViewWidget] API Key: ${GoogleMapsConfig.apiKey.substring(0, 10)}...');
-      }
-
-      final polylinePoints = PolylinePoints(
-        apiKey: GoogleMapsConfig.apiKey,
-      );
+      final polylinePoints = PolylinePoints(apiKey: GoogleMapsConfig.apiKey);
 
       final request = RoutesApiRequest(
         origin: PointLatLng(
@@ -296,82 +292,49 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         routingPreference: RoutingPreference.trafficAware,
       );
 
-      if (kDebugMode) {
-        debugPrint('[MapViewWidget] Making polyline request...');
-      }
-
       final response = await polylinePoints.getRouteBetweenCoordinatesV2(
         request: request,
       );
 
-      // Check if widget is still mounted after async operation
-      if (!mounted) {
-        if (kDebugMode) {
-          debugPrint('[MapViewWidget] Widget unmounted, skipping polyline update');
-        }
-        return;
-      }
-
-      if (kDebugMode) {
-        debugPrint(
-            '[MapViewWidget] Response received: ${response.routes.length} routes');
-      }
+      if (!mounted) return;
 
       if (response.routes.isNotEmpty) {
         final route = response.routes.first;
-        final polylineCoordinates = (route.polylinePoints ?? [])
-            .map((point) => LatLng(point.latitude, point.longitude))
+        final coords = (route.polylinePoints ?? [])
+            .map((p) => LatLng(p.latitude, p.longitude))
             .toList();
 
-        if (kDebugMode) {
-          debugPrint(
-              '[MapViewWidget] Polyline has ${polylineCoordinates.length} points');
-        }
-
-        if (polylineCoordinates.isNotEmpty) {
-          if (kDebugMode) {
-            debugPrint('[MapViewWidget] Polyline added to map');
-          }
-
-          // Double check mounted before setState
-          if (mounted) {
-            setState(() {
-              _polylines.clear();
-              _polylines.add(
-                Polyline(
-                  polylineId: const PolylineId('route'),
-                  points: polylineCoordinates,
-                  color: const Color(0xFFFF8A00),
-                  width: 5,
-                  geodesic: true,
-                ),
-              );
-              _updatePlaceMarkers();
-            });
-
-            _fitCameraToBounds(polylineCoordinates);
-          }
-        }
-      } else {
-        if (kDebugMode) {
-          debugPrint('[MapViewWidget] No routes returned from API');
+        if (coords.isNotEmpty) {
+          ref.read(cachedRoutePolylineProvider.notifier).state = coords;
+          _applyPolyline(coords);
         }
       }
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[MapViewWidget] Error loading route: $e');
-      }
-      // Only clear polylines if widget is still mounted
+      if (kDebugMode) debugPrint('[MapViewWidget] Error loading route: $e');
       if (mounted) {
         try {
           setState(() => _polylines.clear());
-        } catch (stateError) {
-          if (kDebugMode) {
-            debugPrint('[MapViewWidget] Error clearing polylines in catch: $stateError');
-          }
-        }
+        } catch (_) {}
       }
     }
+  }
+
+  void _applyPolyline(List<LatLng> coords) {
+    if (!mounted) return;
+    setState(() {
+      _polylines.clear();
+      _polylines.add(
+        Polyline(
+          polylineId: const PolylineId('route'),
+          points: coords,
+          color: const Color(0xFFFF8A00),
+          width: 5,
+          geodesic: true,
+        ),
+      );
+      _updatePlaceMarkers();
+    });
+    _fitCameraToBounds(coords);
   }
 
   void _updatePlaceMarkers() {
@@ -505,70 +468,75 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final nearbyTaxisState = ref.watch(nearbyVehiclesProvider);
+    if (!widget.trackingMode) {
+      final nearbyTaxisState = ref.watch(nearbyVehiclesProvider);
 
-    ref.listen(nearbyVehiclesProvider, (prev, next) {
-      if (next.vehicles.isNotEmpty) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _updateTaxiMarkers(next.vehicles);
-        });
-      }
-    });
+      ref.listen(nearbyVehiclesProvider, (prev, next) {
+        if (next.vehicles.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _updateTaxiMarkers(next.vehicles);
+          });
+        }
+      });
 
-    return Stack(
-      children: [
-        GoogleMap(
-          onMapCreated: _onMapCreated,
-          initialCameraPosition: _initialCameraPosition,
-          markers: _markers,
-          polylines: _polylines,
-          mapType: _mapType,
-          style: _mapStyleJson,
-          myLocationEnabled: true,
-          myLocationButtonEnabled: true,
-          zoomControlsEnabled: true,
-          mapToolbarEnabled: false,
-          compassEnabled: true,
-        ),
-        // Nearby taxis indicator
-        if (nearbyTaxisState.vehicles.isNotEmpty)
-          Positioned(
-            top: 16,
-            right: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 8,
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.directions_car,
-                    color: Color(0xFFFF8A00),
-                    size: 18,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${nearbyTaxisState.vehicles.length} nearby',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black87,
+      return Stack(
+        children: [
+          _buildGoogleMap(),
+          if (nearbyTaxisState.vehicles.isNotEmpty)
+            Positioned(
+              top: 16,
+              right: 16,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
                     ),
-                  ),
-                ],
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.directions_car,
+                        color: Color(0xFFFF8A00), size: 18),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${nearbyTaxisState.vehicles.length} nearby',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-      ],
+        ],
+      );
+    }
+
+    return _buildGoogleMap();
+  }
+
+  Widget _buildGoogleMap() {
+    return GoogleMap(
+      onMapCreated: _onMapCreated,
+      initialCameraPosition: _initialCameraPosition,
+      markers: _markers,
+      polylines: _polylines,
+      mapType: _mapType,
+      style: _mapStyleJson,
+      myLocationEnabled: true,
+      myLocationButtonEnabled: true,
+      zoomControlsEnabled: true,
+      mapToolbarEnabled: false,
+      compassEnabled: true,
     );
   }
 

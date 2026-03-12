@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 
-/// Facade service that uses RideShareHttpService for all operations
-/// This maintains backward compatibility with existing code
+/// Facade service that uses RideShareHttpService for all operations.
+/// Accepts a shared [RideShareHttpService] so the entire app uses one socket.
 class RideShareService {
-  final RideShareHttpService _httpService = RideShareHttpService();
+  final RideShareHttpService _httpService;
+
+  RideShareService(this._httpService);
 
   /// Estimate fare for a trip
   Future<Map<String, dynamic>> estimateFare({

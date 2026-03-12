@@ -196,7 +196,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
       );
       _addUserMarker();
     } else {
-      // Default to Lilongwe, Malawi
+      // Last resort: first-ever launch with no cached GPS — default to Lilongwe, Malawi
       _initialCameraPosition = const CameraPosition(
         target: LatLng(-13.9626, 33.7707),
         zoom: 12,

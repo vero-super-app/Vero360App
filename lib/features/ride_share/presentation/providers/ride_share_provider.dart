@@ -61,9 +61,41 @@ final googleDirectionsServiceProvider =
 });
 
 // ==================== CURRENT LOCATION ====================
+const _lastKnownLatKey = 'last_known_lat';
+const _lastKnownLngKey = 'last_known_lng';
+
+/// Reads the last GPS position persisted to SharedPreferences.
+/// Returns instantly (no GPS call), so the map can start here while
+/// the real GPS fix is being acquired.
+final lastKnownLocationProvider = FutureProvider<Position?>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  final lat = prefs.getDouble(_lastKnownLatKey);
+  final lng = prefs.getDouble(_lastKnownLngKey);
+  if (lat == null || lng == null) return null;
+  return Position(
+    latitude: lat,
+    longitude: lng,
+    timestamp: DateTime.now(),
+    accuracy: 0,
+    altitude: 0,
+    altitudeAccuracy: 0,
+    heading: 0,
+    headingAccuracy: 0,
+    speed: 0,
+    speedAccuracy: 0,
+  );
+});
+
 final currentLocationProvider = FutureProvider<Position?>((ref) async {
   final locationService = ref.watch(locationServiceProvider);
-  return await locationService.getCurrentLocation();
+  final position = await locationService.getCurrentLocation();
+  if (position != null) {
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setDouble(_lastKnownLatKey, position.latitude);
+      prefs.setDouble(_lastKnownLngKey, position.longitude);
+    });
+  }
+  return position;
 });
 
 final locationStreamProvider = StreamProvider<Position>((ref) {

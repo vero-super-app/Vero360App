@@ -341,14 +341,18 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     return Consumer(
       builder: (context, ref, _) {
         final currentLocation = ref.watch(currentLocationProvider);
+        final lastKnown = ref.watch(lastKnownLocationProvider);
         final dropoffPlace = ref.watch(selectedDropoffPlaceProvider);
 
+        // Use live GPS if available, otherwise fall back to last persisted location
         final position = currentLocation.maybeWhen(
+          data: (p) => p,
+          orElse: () => null,
+        ) ?? lastKnown.maybeWhen(
           data: (p) => p,
           orElse: () => null,
         );
 
-        // Update cached pickup place when GPS resolves
         if (position != null &&
             (_cachedPickupPlace == null ||
                 _cachedPickupPlace!.latitude != position.latitude ||

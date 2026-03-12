@@ -61,8 +61,6 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       case 'food':
         return FoodMerchantDashboard(email: email);
-      case 'taxi':
-        return DriverDashboard();
       case 'accommodation':
         return AccommodationMerchantDashboard(email: email);
       case 'courier':
@@ -187,7 +185,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
          Navigator.of(context).pushAndRemoveUntil(
            MaterialPageRoute(builder: (_) => merchantDashboard),
-           (route) => route.isFirst,
+           (route) => false,
          );
        } else {
          Navigator.of(context).pushAndRemoveUntil(
@@ -197,26 +195,22 @@ class _LoginScreenState extends State<LoginScreen> {
                onBackToHomeTab: () {},
              ),
            ),
-           (route) => route.isFirst,
+           (route) => false,
          );
        }
      } else if (role == 'driver') {
-       // Driver routes to Bottomnavbar with driver flag set
-       await prefs.setBool('user_is_driver', true);
        Navigator.of(context).pushAndRemoveUntil(
          MaterialPageRoute(
-           builder: (_) => Bottomnavbar(email: displayId),
+           builder: (_) => const DriverDashboard(),
          ),
-         (route) => route.isFirst,
+         (route) => false,
        );
      } else {
-       // Customer
-       await prefs.setBool('user_is_driver', false);
        Navigator.of(context).pushAndRemoveUntil(
          MaterialPageRoute(
            builder: (_) => Bottomnavbar(email: displayId),
          ),
-         (route) => route.isFirst,
+         (route) => false,
        );
      }
   }
@@ -263,11 +257,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
     // Ensure at least a basic profile exists
     if (profile.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedRole = (prefs.getString('user_role') ?? 'customer').toLowerCase();
       profile = {
         'email': user.email,
         'name': user.displayName,
         'phone': '',
-        'role': 'customer',
+        'role': cachedRole,
       };
       try {
         await _firestore.collection('users').doc(user.uid).set({
@@ -303,12 +299,25 @@ class _LoginScreenState extends State<LoginScreen> {
     };
   }
 
-  /// Fast auth result used for Google/Apple login so we can navigate quickly
-  /// without waiting for Firestore profile reads. Assumes customer role by
-  /// default; merchant routes are handled via other flows.
+  /// Fast auth result for Google/Apple login. Reads role from Firestore
+  /// (or SharedPreferences as fallback) so drivers/merchants route correctly.
   Future<Map<String, dynamic>> _buildQuickResultFromUser(User user) async {
     final token = await user.getIdToken();
     final email = user.email ?? _identifier.text.trim();
+
+    // Read role from Firestore profile, fall back to SharedPreferences
+    String role = 'customer';
+    try {
+      final snap = await _firestore.collection('users').doc(user.uid).get();
+      if (snap.exists && snap.data() != null) {
+        role = (snap.data()!['role'] ?? '').toString().toLowerCase();
+      }
+    } catch (_) {}
+    if (role.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      role = (prefs.getString('user_role') ?? 'customer').toLowerCase();
+    }
+
     return <String, dynamic>{
       'authProvider': 'firebase',
       'token': token,
@@ -318,7 +327,7 @@ class _LoginScreenState extends State<LoginScreen> {
         'email': email,
         'phone': user.phoneNumber ?? '',
         'name': user.displayName ?? '',
-        'role': 'customer',
+        'role': role,
         'merchantService': null,
         'businessName': null,
         'businessAddress': null,

@@ -285,48 +285,59 @@ class Ride {
       return fallback ?? DateTime.now();
     }
 
-    return Ride(
-      id: parseInt(json['id']) ?? 0,
-      passengerId: parseInt(json['passengerId']) ?? 0,
-      driverId: parseInt(json['driverId']),
-      taxiId: parseInt(json['taxiId']) ?? parseInt(json['vehicleId']),
-      pickupLatitude: parseDouble(json['pickupLatitude']),
-      pickupLongitude: parseDouble(json['pickupLongitude']),
-      pickupAddress: json['pickupAddress'] as String?,
-      dropoffLatitude: parseDouble(json['dropoffLatitude']),
-      dropoffLongitude: parseDouble(json['dropoffLongitude']),
-      dropoffAddress: json['dropoffAddress'] as String?,
-      estimatedDistance: parseDouble(json['estimatedDistance']),
-      actualDistance: json['actualDistance'] != null
-          ? parseDouble(json['actualDistance'])
-          : null,
-      estimatedFare: parseDouble(json['estimatedFare']),
-      actualFare: json['actualFare'] != null
-          ? parseDouble(json['actualFare'])
-          : null,
-      status: json['status'] as String? ?? 'REQUESTED',
-      startTime: json['startTime'] != null
-          ? parseDateTime(json['startTime'])
-          : null,
-      endTime: json['endTime'] != null
-          ? parseDateTime(json['endTime'])
-          : null,
-      cancellationReason: json['cancellationReason'] as String?,
-      passengerNotes: json['passengerNotes'] as String?,
-      createdAt: parseDateTime(json['createdAt']),
-      updatedAt: parseDateTime(json['updatedAt']),
-      taxi: json['taxi'] != null
-          ? Vehicle.fromJson(json['taxi'] as Map<String, dynamic>)
-          : (json['vehicle'] != null
-              ? Vehicle.fromJson(json['vehicle'] as Map<String, dynamic>)
-              : null),
-      driver: () {
-        if (json['driver'] != null && json['driver'] is Map) {
-          return DriverInfo.fromJson(json['driver'] as Map<String, dynamic>);
-        }
-        return null;
-      }(),
-    );
+    try {
+      return Ride(
+        id: parseInt(json['id']) ?? 0,
+        passengerId: parseInt(json['passengerId']) ?? 0,
+        driverId: parseInt(json['driverId']),
+        taxiId: parseInt(json['taxiId']) ?? parseInt(json['vehicleId']),
+        pickupLatitude: parseDouble(json['pickupLatitude']),
+        pickupLongitude: parseDouble(json['pickupLongitude']),
+        pickupAddress: json['pickupAddress'] as String?,
+        dropoffLatitude: parseDouble(json['dropoffLatitude']),
+        dropoffLongitude: parseDouble(json['dropoffLongitude']),
+        dropoffAddress: json['dropoffAddress'] as String?,
+        estimatedDistance: parseDouble(json['estimatedDistance']),
+        actualDistance: json['actualDistance'] != null
+            ? parseDouble(json['actualDistance'])
+            : null,
+        estimatedFare: parseDouble(json['estimatedFare']),
+        actualFare: json['actualFare'] != null
+            ? parseDouble(json['actualFare'])
+            : null,
+        status: json['status'] as String? ?? 'REQUESTED',
+        startTime: json['startTime'] != null
+            ? parseDateTime(json['startTime'])
+            : null,
+        endTime: json['endTime'] != null
+            ? parseDateTime(json['endTime'])
+            : null,
+        cancellationReason: json['cancellationReason'] as String?,
+        passengerNotes: json['passengerNotes'] as String?,
+        createdAt: parseDateTime(json['createdAt']),
+        updatedAt: parseDateTime(json['updatedAt']),
+        taxi: json['taxi'] != null && json['taxi'] is Map
+            ? Vehicle.fromJson(json['taxi'] as Map<String, dynamic>)
+            : (json['vehicle'] != null && json['vehicle'] is Map
+                ? Vehicle.fromJson(json['vehicle'] as Map<String, dynamic>)
+                : null),
+        driver: () {
+          if (json['driver'] != null && json['driver'] is Map) {
+            try {
+              return DriverInfo.fromJson(json['driver'] as Map<String, dynamic>);
+            } catch (e) {
+              print('[Ride.fromJson] Error parsing driver: $e');
+              return null;
+            }
+          }
+          return null;
+        }(),
+      );
+    } catch (e) {
+      print('[Ride.fromJson] Error parsing ride from JSON: $e');
+      print('[Ride.fromJson] JSON data: $json');
+      rethrow;
+    }
   }
 
   bool get isActive => [

@@ -200,11 +200,35 @@ class RideShareHttpService {
       );
 
       if (response.statusCode == 201) {
-        return Ride.fromJson(jsonDecode(response.body));
+        try {
+          final rideData = jsonDecode(response.body);
+          final ride = Ride.fromJson(rideData);
+          
+          // Check if ride was auto-cancelled due to no drivers
+          if (ride.status == RideStatus.cancelled && ride.cancellationReason == 'No drivers available in your area') {
+            print('[RideShareHttpService] Ride auto-cancelled: ${ride.cancellationReason}');
+          } else if (ride.isCancelled) {
+            print('[RideShareHttpService] Ride returned as cancelled: ${ride.cancellationReason}');
+          }
+          
+          return ride;
+        } catch (parseError) {
+          print('[RideShareHttpService] Error parsing ride response: $parseError');
+          rethrow;
+        }
+      } else if (response.statusCode == 400) {
+        print('[RideShareHttpService] Bad request (400): ${response.body}');
+        try {
+          final errorData = jsonDecode(response.body);
+          final message = errorData['message'] ?? 'Invalid request parameters';
+          throw Exception(message);
+        } catch (e) {
+          throw Exception('Failed to request ride: Invalid parameters - ${response.body}');
+        }
       } else {
         print('[RideShareHttpService] Ride creation failed: ${response.statusCode}');
         print('[RideShareHttpService] Response: ${response.body}');
-        throw Exception('Failed to request ride: ${response.statusCode} - ${response.body}');
+        throw Exception('Failed to request ride: ${response.statusCode}');
       }
     } catch (e) {
       print('[RideShareHttpService] Error requesting ride: $e');
@@ -284,7 +308,7 @@ class RideShareHttpService {
       final response = await http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/accept'),
         headers: headers,
-        body: jsonEncode({'vehicleId': vehicleId}),
+        body: jsonEncode({'taxiId': vehicleId}),
       );
 
       if (response.statusCode == 200) {
@@ -414,9 +438,16 @@ class RideShareHttpService {
       );
 
       if (response.statusCode == 200) {
-        return Ride.fromJson(jsonDecode(response.body));
+        try {
+          final rideData = jsonDecode(response.body);
+          print('[RideShareHttpService] Cancel response: $rideData');
+          return Ride.fromJson(rideData);
+        } catch (parseError) {
+          print('[RideShareHttpService] Error parsing cancel ride response: $parseError');
+          rethrow;
+        }
       } else {
-        throw Exception('Failed to cancel ride: ${response.statusCode}');
+        throw Exception('Failed to cancel ride: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
       print('Error cancelling ride: $e');
@@ -474,12 +505,29 @@ class RideShareHttpService {
       print('[RideShareHttpService] 🎉 Ride status updated received: $data');
       _rideStatusController.add(Map<String, dynamic>.from(data));
       try {
-        final ride = Ride.fromJson(Map<String, dynamic>.from(data));
+        final rideMap = Map<String, dynamic>.from(data);
+        // Ensure all required fields have defaults for cancelled rides
+        final rideData = {
+          'id': rideMap['id'] ?? 0,
+          'passengerId': rideMap['passengerId'] ?? 0,
+          'pickupLatitude': rideMap['pickupLatitude'] ?? 0.0,
+          'pickupLongitude': rideMap['pickupLongitude'] ?? 0.0,
+          'dropoffLatitude': rideMap['dropoffLatitude'] ?? 0.0,
+          'dropoffLongitude': rideMap['dropoffLongitude'] ?? 0.0,
+          'estimatedDistance': rideMap['estimatedDistance'] ?? 0.0,
+          'estimatedFare': rideMap['estimatedFare'] ?? 0.0,
+          'status': rideMap['status'] ?? 'REQUESTED',
+          'createdAt': rideMap['createdAt'] ?? DateTime.now().toIso8601String(),
+          'updatedAt': rideMap['updatedAt'] ?? DateTime.now().toIso8601String(),
+          ...rideMap,
+        };
+        final ride = Ride.fromJson(rideData);
         print('[RideShareHttpService] Parsed ride: ${ride.id}, status: ${ride.status}, driverId: ${ride.driverId}');
         _rideUpdateController.add(ride);
       } catch (e) {
         print('[RideShareHttpService] ❌ Error parsing ride update: $e');
         print('[RideShareHttpService] Data was: $data');
+        // Don't crash - log and continue
       }
     });
     
@@ -488,8 +536,15 @@ class RideShareHttpService {
 
   /// Unsubscribe from ride tracking
   Future<void> unsubscribeFromRideTracking() async {
-    await _ensureSocketInitialized();
-    socket.emit('passenger:unsubscribe');
+    try {
+      await _ensureSocketInitialized();
+      if (socket.connected) {
+        socket.emit('passenger:unsubscribe');
+      }
+    } catch (e) {
+      print('[RideShareHttpService] Error unsubscribing from ride: $e');
+      // Don't rethrow - unsubscribe is cleanup, not critical
+    }
   }
 
   /// Subscribe driver to send location updates
@@ -516,21 +571,30 @@ class RideShareHttpService {
 
   /// Listen to driver location updates
   void onDriverLocationUpdated(Function(Map<String, dynamic>) callback) {
-    socket.on('driver:location:updated', (data) {
-      callback(Map<String, dynamic>.from(data));
-    });
+    try {
+      socket.on('driver:location:updated', (data) {
+        callback(Map<String, dynamic>.from(data));
+      });
+    } catch (e) {
+      print('[RideShareHttpService] Error registering driver location listener: $e');
+    }
   }
 
   /// Listen to ride status changes
   void onRideStatusUpdated(Function(Map<String, dynamic>) callback) {
-    socket.on('ride:status:updated', (data) {
-      callback(Map<String, dynamic>.from(data));
-    });
+    try {
+      socket.on('ride:status:updated', (data) {
+        callback(Map<String, dynamic>.from(data));
+      });
+    } catch (e) {
+      print('[RideShareHttpService] Error registering ride status listener: $e');
+    }
   }
 
   /// Reconnect websocket with retry logic
   Future<void> reconnectWebSocket() async {
     try {
+      await _ensureSocketInitialized();
       if (!socket.connected) {
         socket.connect();
         print('WebSocket reconnected');
@@ -545,15 +609,39 @@ class RideShareHttpService {
 
   /// Disconnect socket
   void disconnect() {
-    socket.disconnect();
+    try {
+      socket.disconnect();
+    } catch (e) {
+      print('[RideShareHttpService] Error disconnecting socket: $e');
+    }
   }
 
   /// Dispose resources
   void dispose() {
-    _connectionStatusController.close();
-    _driverLocationController.close();
-    _rideStatusController.close();
-    _rideUpdateController.close();
-    disconnect();
+    try {
+      _connectionStatusController.close();
+    } catch (e) {
+      print('[RideShareHttpService] Error closing connection status controller: $e');
+    }
+    try {
+      _driverLocationController.close();
+    } catch (e) {
+      print('[RideShareHttpService] Error closing driver location controller: $e');
+    }
+    try {
+      _rideStatusController.close();
+    } catch (e) {
+      print('[RideShareHttpService] Error closing ride status controller: $e');
+    }
+    try {
+      _rideUpdateController.close();
+    } catch (e) {
+      print('[RideShareHttpService] Error closing ride update controller: $e');
+    }
+    try {
+      disconnect();
+    } catch (e) {
+      print('[RideShareHttpService] Error in disconnect during dispose: $e');
+    }
   }
 }

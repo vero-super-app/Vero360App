@@ -27,7 +27,7 @@ class AppColors {
   static const fieldFill = Color(0xFFF7F7F9);
 }
 
-enum UserRole { customer, merchant }
+enum UserRole { customer, merchant, driver }
 
 // Merchant service types
 class MerchantService {
@@ -48,11 +48,6 @@ const List<MerchantService> kMerchantServices = [
     key: 'marketplace',
     name: 'Marketplace',
     icon: Icons.store_rounded,
-  ),
-  MerchantService(
-    key: 'taxi',
-    name: 'Vero Ride/Taxi',
-    icon: Icons.local_taxi_rounded,
   ),
   MerchantService(
     key: 'food',
@@ -134,6 +129,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return 'Business name is required';
     }
     return null;
+  }
+
+  String get _roleString {
+    switch (_role) {
+      case UserRole.merchant:
+        return 'merchant';
+      case UserRole.driver:
+        return 'driver';
+      case UserRole.customer:
+        return 'customer';
+    }
   }
 
   static bool _looksLikeEmail(String s) =>
@@ -303,7 +309,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             _getMerchantDashboard(serviceKey, displayId);
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => merchantDashboard),
-          (route) => route.isFirst,
+          (route) => false,
         );
       } else {
         Navigator.of(context).pushAndRemoveUntil(
@@ -313,15 +319,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
               onBackToHomeTab: () {},
             ),
           ),
-          (route) => route.isFirst,
+          (route) => false,
         );
       }
+    } else if (role == 'driver') {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const DriverDashboard()),
+        (route) => false,
+      );
     } else {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => Bottomnavbar(email: displayId),
         ),
-        (route) => route.isFirst,
+        (route) => false,
       );
     }
   }
@@ -335,12 +346,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         );
       case 'food':
         return FoodMerchantDashboard(email: email);
-      case 'taxi':
-        return DriverDashboard();
       case 'accommodation':
         return AccommodationMerchantDashboard(email: email);
-      // case 'courier':
-      //   return CourierMerchantDashboard(email: email);
     }
     return MarketplaceMerchantDashboard(
       email: email,
@@ -360,9 +367,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     if (profile.isEmpty) {
-      final newRole = _role == UserRole.merchant ? 'merchant' : 'customer';
-      // Avoid storing internal "phone-based" auth emails (e.g. xxx@phone.vero360.app)
-      // as the user's real email. Prefer explicit form email or leave blank.
+      final newRole = _roleString;
       final rawEmail = user.email ?? _identifierEmail;
       final emailForProfile = !rawEmail.endsWith('@phone.vero360.app')
           ? rawEmail
@@ -449,7 +454,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   /// Fast auth result for social signup so we can navigate quickly without
   /// waiting for Firestore reads/writes. Uses current form state for fields.
   Future<Map<String, dynamic>> _buildQuickResultFromUser(User user) async {
-    final role = _role == UserRole.merchant ? 'merchant' : 'customer';
+    final role = _roleString;
     final token = await user.getIdToken();
     // Prefer explicit email from form, fall back to Firebase email.
     final rawEmail = user.email ?? _identifierEmail;
@@ -480,7 +485,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   /// When form fields are empty (e.g. after Google/Apple sign-in), uses [user] email/displayName.
   /// Returns true if sync succeeded (2xx), false otherwise.
   Future<bool> _syncProfileToBackend(User user) async {
-    final role = _role == UserRole.merchant ? 'merchant' : 'customer';
+    final role = _roleString;
     final name = _name.text.trim().isEmpty
         ? (user.displayName ?? user.email ?? '')
         : _name.text.trim();
@@ -623,7 +628,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final user = userCredential.user;
       if (user == null) throw Exception('Firebase user creation failed');
 
-      final role = _role == UserRole.merchant ? 'merchant' : 'customer';
+      final role = _roleString;
 
       final userData = <String, dynamic>{
         'uid': user.uid,
@@ -698,9 +703,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         await prefs.setString('business_address', _businessAddress.text.trim());
       }
 
-      // Sync role (and merchant data) to backend so API user is merchant when chosen.
+      // Sync role to backend so the API user record matches the chosen role.
+      // Both merchants and drivers need the retry to ensure the backend profile is created.
       await _syncProfileToBackend(user);
-      if (_role == UserRole.merchant) {
+      if (_role == UserRole.merchant || _role == UserRole.driver) {
         _retrySyncRoleToBackend(user);
       }
 
@@ -773,7 +779,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // Run heavy Firebase + backend sync in the background so navigation is not blocked.
       _buildResultFromUser(user).then((_) {
         _syncProfileToBackend(user).then((_) {
-          if (_role == UserRole.merchant) {
+          if (_role == UserRole.merchant || _role == UserRole.driver) {
             _retrySyncRoleToBackend(user);
           }
         });
@@ -819,7 +825,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // Run heavy Firebase + backend sync in the background so navigation is not blocked.
       _buildResultFromUser(user).then((_) {
         _syncProfileToBackend(user).then((_) {
-          if (_role == UserRole.merchant) {
+          if (_role == UserRole.merchant || _role == UserRole.driver) {
             _retrySyncRoleToBackend(user);
           }
         });
@@ -990,7 +996,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         onChanged: () => setState(() {}),
                         child: Column(
                           children: [
-                            Row(
+                            Wrap(
+                              spacing: 8,
                               children: [
                                 ChoiceChip(
                                   label: const Text('Customer'),
@@ -1002,7 +1009,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     _selectedMerchantService = null;
                                   }),
                                 ),
-                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  label: const Text('Driver'),
+                                  selected: _role == UserRole.driver,
+                                  onSelected: (_) => setState(() {
+                                    _role = UserRole.driver;
+                                    _businessName.clear();
+                                    _businessAddress.clear();
+                                    _selectedMerchantService = null;
+                                  }),
+                                ),
                                 ChoiceChip(
                                   label: const Text('Merchant'),
                                   selected: _role == UserRole.merchant,

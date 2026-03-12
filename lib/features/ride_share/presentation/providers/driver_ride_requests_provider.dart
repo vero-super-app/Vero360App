@@ -127,9 +127,11 @@ class DriverRideRequestsWebSocketService {
 
       socket.onConnect((_) {
         print('[DriverRideRequests] ✅ WebSocket connected successfully');
+        print('[DriverRideRequests] Socket ID: ${socket.id}');
         _isConnected = true;
         _connectionStatusController.add(true);
         _listenForRideRequests();
+        print('[DriverRideRequests] ✅ Ride request listeners registered');
       });
 
       socket.onDisconnect((_) {
@@ -162,12 +164,20 @@ class DriverRideRequestsWebSocketService {
   void _listenForRideRequests() {
     // Listen for ride requests globally
     socket.on('ride:ride-request', (data) {
-      print('[DriverRideRequests] Received ride request: $data');
+      print('[DriverRideRequests] ✅ Received ride request event: $data');
       try {
         final request = IncomingRideRequest.fromJson(data as Map<String, dynamic>);
+        print('[DriverRideRequests] ✅ Parsed ride request - rideId: ${request.rideId}');
         _rideRequestsController.add(request);
       } catch (e) {
-        print('[DriverRideRequests] Error parsing ride request: $e');
+        print('[DriverRideRequests] ❌ Error parsing ride request: $e');
+      }
+    });
+
+    // Debug: Log all incoming events
+    socket.onAny((event, data) {
+      if (event.contains('ride') || event.contains('notification')) {
+        print('[DriverRideRequests] 📡 Received event: $event - $data');
       }
     });
   }

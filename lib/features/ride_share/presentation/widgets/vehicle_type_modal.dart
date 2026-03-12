@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class VehicleTypeOption {
@@ -193,105 +195,73 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       _errorMessage = null;
     });
 
-    try {
-      // Verify user is authenticated with Firebase
-      final firebaseUser = FirebaseAuth.instance.currentUser;
-      if (firebaseUser == null) {
-        if (mounted) {
-          ToastHelper.showCustomToast(
-            context,
-            'Please log in to request a ride',
-            isSuccess: false,
-            errorMessage: 'User not authenticated',
-          );
-        }
-        if (mounted) {
-          setState(() {
-            _isSearching = false;
-            _errorMessage = 'User not authenticated. Please log in first.';
-          });
-        }
-        return;
-      }
-
-      if (kDebugMode) {
-        debugPrint('[VehicleTypeModal] Authenticated user: ${firebaseUser.email}');
-      }
-
-      final fareEstimate = _estimatedFares[vehicleClass];
-      double estimatedFare = 0.0;
-
-      if (fareEstimate != null) {
-        final fareValue = fareEstimate['estimatedFare'];
-        if (fareValue is num) {
-          estimatedFare = fareValue.toDouble();
-        } else if (fareValue is String) {
-          estimatedFare = double.tryParse(fareValue) ?? 0.0;
-        }
-      }
-
-      // Use accurate distance from Google Directions API
-      final distance = widget.userLat == widget.dropoffPlace.latitude &&
-              widget.userLng == widget.dropoffPlace.longitude
-          ? 0.0
-          : _distance;
-
-      // Use accurate duration from Google Directions API
-      final duration = widget.userLat == widget.dropoffPlace.latitude &&
-              widget.userLng == widget.dropoffPlace.longitude
-          ? 0
-          : _duration;
-
-      if (kDebugMode) {
-        debugPrint('[VehicleTypeModal] Creating ride:');
-        debugPrint('  Distance: ${distance.toStringAsFixed(2)}km');
-        debugPrint('  Duration: ${duration}min');
-        debugPrint('  Estimated Fare: MWK $estimatedFare');
-        debugPrint('  Vehicle Class: $vehicleClass');
-      }
-
-      // Use RideShareService from Riverpod provider
-      final rideShareService = ref.read(rideShareServiceProvider);
-      final ride = await rideShareService.requestRide(
-        pickupLatitude: widget.userLat,
-        pickupLongitude: widget.userLng,
-        dropoffLatitude: widget.dropoffPlace.latitude,
-        dropoffLongitude: widget.dropoffPlace.longitude,
-        vehicleClass: _selectedVehicleClass ?? VehicleClass.bike,
-        pickupAddress: widget.pickupPlace.address,
-        dropoffAddress: widget.dropoffPlace.address,
-        notes: null,
-      );
-
-      if (kDebugMode) {
-        debugPrint('[VehicleTypeModal] ✅ Ride created: ${ride['id']}');
-      }
-
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null) {
       if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Please log in to request a ride',
+          isSuccess: false,
+          errorMessage: 'User not authenticated',
+        );
+        setState(() {
+          _isSearching = false;
+          _errorMessage = 'User not authenticated. Please log in first.';
+        });
+      }
+      return;
+    }
+
+    final lifecycle = ref.read(rideLifecycleProvider.notifier);
+
+    await lifecycle.requestRide(
+      pickupLat: widget.userLat,
+      pickupLng: widget.userLng,
+      dropoffLat: widget.dropoffPlace.latitude,
+      dropoffLng: widget.dropoffPlace.longitude,
+      vehicleClass: vehicleClass,
+      pickupAddress: widget.pickupPlace.address,
+      dropoffAddress: widget.dropoffPlace.address,
+    );
+
+    if (!mounted) return;
+
+    final result = ref.read(rideLifecycleProvider);
+
+    switch (result) {
+      case RideCancelled(:final ride):
+        Navigator.pop(context);
+        ToastHelper.showCustomToast(
+          context,
+          'No drivers available',
+          isSuccess: false,
+          errorMessage: ride.cancellationReason ?? 'No drivers found in your area',
+        );
+
+      case RideActive(:final ride):
         Navigator.pop(context);
         widget.onRideRequested(
-          ride['id'].toString(),
-          (ride['estimatedFare'] as num?)?.toDouble() ?? estimatedFare,
-          distance,
-          duration,
+          ride.id.toString(),
+          ride.estimatedFare,
+          _distance,
+          _duration,
         );
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[VehicleTypeModal] ❌ Error creating ride: $e');
-      }
-      if (mounted) {
+
+      case RideError(:final message):
+        if (kDebugMode) debugPrint('[VehicleTypeModal] Error: $message');
         ToastHelper.showCustomToast(
           context,
           'Failed to request ride',
           isSuccess: false,
-          errorMessage: e.toString(),
+          errorMessage: message,
         );
         setState(() {
           _isSearching = false;
-          _errorMessage = e.toString();
+          _errorMessage = message;
         });
-      }
+
+      default:
+        setState(() => _isSearching = false);
     }
   }
 
@@ -301,101 +271,100 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       return _buildSearchingState();
     }
 
+    final screenHeight = MediaQuery.of(context).size.height;
+    final bottomPadding = MediaQuery.of(context).viewPadding.bottom;
+
     return FadeTransition(
       opacity: _animationController,
       child: SlideTransition(
         position: Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero)
             .animate(_animationController),
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(24),
-              topRight: Radius.circular(24),
-            ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: screenHeight * 0.55,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Handle bar
-              Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(top: 8, bottom: 8),
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(24),
+                topRight: Radius.circular(24),
               ),
-
-              // Content
-              SingleChildScrollView(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Header and trip summary
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 6),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Choose Your Ride',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            _buildTripSummary(),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      // Vehicle types grid
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: _buildVehicleList(),
-                      ),
-
-                      // Error message
-                      if (_errorMessage != null)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 10),
-                          child: Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: Colors.red[50],
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: Colors.red[200]!),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.error_outline,
-                                    color: Colors.red[600], size: 18),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _errorMessage ?? '',
-                                    style: TextStyle(
-                                        color: Colors.red[700], fontSize: 12),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                    ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(top: 8, bottom: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-              ),
-            ],
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.only(bottom: 16 + bottomPadding),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 6),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Choose Your Ride',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              _buildTripSummary(),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: _buildVehicleList(),
+                        ),
+                        if (_errorMessage != null)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 10),
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.red[50],
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.red[200]!),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.error_outline,
+                                      color: Colors.red[600], size: 18),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      _errorMessage ?? '',
+                                      style: TextStyle(
+                                          color: Colors.red[700], fontSize: 12),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -505,19 +474,14 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       );
     }
 
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 0.85,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-      ),
-      itemCount: vehicles.length,
-      itemBuilder: (context, index) {
-        return _buildVehicleCard(vehicles[index]);
-      },
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (int i = 0; i < vehicles.length; i++) ...[
+          _buildVehicleCard(vehicles[i]),
+          if (i < vehicles.length - 1) const SizedBox(height: 8),
+        ],
+      ],
     );
   }
 
@@ -545,7 +509,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       onTap: () => _handleVehicleSelected(vehicleType.class_),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 300),
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           border: Border.all(
             color: isSelected ? vehicleType.color : Colors.grey[200]!,
@@ -570,88 +534,95 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                   ),
                 ],
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        child: Row(
           children: [
-            // Icon background
             Stack(
-              alignment: Alignment.center,
+              clipBehavior: Clip.none,
               children: [
                 Container(
-                  width: 50,
-                  height: 50,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
                     color: vehicleType.color.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
+                  child: Icon(
+                    vehicleType.icon,
+                    color: vehicleType.color,
+                    size: 24,
+                  ),
                 ),
-                Icon(
-                  vehicleType.icon,
-                  color: vehicleType.color,
-                  size: 26,
-                ),
-                // Selection indicator
                 if (isSelected)
                   Positioned(
-                    right: -2,
-                    top: -2,
+                    right: -4,
+                    top: -4,
                     child: Container(
-                      width: 20,
-                      height: 20,
+                      width: 18,
+                      height: 18,
                       decoration: BoxDecoration(
                         color: vehicleType.color,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: Colors.white,
-                          width: 2,
-                        ),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
                       ),
                       child: const Icon(
                         Icons.check,
-                        size: 12,
+                        size: 10,
                         color: Colors.white,
                       ),
                     ),
                   ),
               ],
             ),
-            const SizedBox(height: 8),
-            // Name and description
-            Column(
-              children: [
-                Text(
-                  vehicleType.name,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          vehicleType.name,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '· ${vehicleType.capacity} seat${vehicleType.capacity > 1 ? 's' : ''}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey[500],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  vehicleType.description,
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Colors.grey[500],
-                    fontWeight: FontWeight.w400,
+                  const SizedBox(height: 2),
+                  Text(
+                    vehicleType.description,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[500],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                ),
-              ],
+                ],
+              ),
             ),
-            const SizedBox(height: 6),
-            // Price
+            const SizedBox(width: 12),
             Text(
               displayPrice,
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: FontWeight.w700,
                 color: vehicleType.color,
               ),
-              textAlign: TextAlign.center,
             ),
           ],
         ),

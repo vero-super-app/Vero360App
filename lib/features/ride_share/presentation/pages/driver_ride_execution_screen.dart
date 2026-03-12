@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
-import 'package:vero360_app/features/ride_share/presentation/providers/ride_state_notifier.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 
 class DriverRideExecutionScreen extends ConsumerStatefulWidget {
   final int rideId;
@@ -30,13 +31,13 @@ class _DriverRideExecutionScreenState
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(activeRideProvider.notifier).subscribeToRide(widget.rideId);
+      ref.read(rideLifecycleProvider.notifier).subscribeToRide(widget.rideId);
     });
   }
 
   @override
   void dispose() {
-    ref.read(activeRideProvider.notifier).unsubscribeFromRide();
+    mapController?.dispose();
     super.dispose();
   }
 
@@ -91,10 +92,16 @@ class _DriverRideExecutionScreenState
 
   @override
   Widget build(BuildContext context) {
-    final rideState = ref.watch(activeRideProvider);
+    final lifecycleState = ref.watch(rideLifecycleProvider);
 
-    // Handle ride completion
-    if (rideState.isCompleted) {
+    final Ride? ride = switch (lifecycleState) {
+      RideActive(:final ride) => ride,
+      RideCompleted(:final ride) => ride,
+      RideCancelled(:final ride) => ride,
+      _ => null,
+    };
+
+    if (lifecycleState is RideCompleted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           Navigator.of(context).pop();
@@ -109,16 +116,13 @@ class _DriverRideExecutionScreenState
       });
     }
 
-    // Handle ride cancellation
-    if (rideState.isCancelled) {
+    if (lifecycleState is RideCancelled) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           Navigator.of(context).pop();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                'Ride cancelled: ${rideState.ride?.cancellationReason}',
-              ),
+              content: Text('Ride cancelled: ${lifecycleState.reason}'),
               backgroundColor: Colors.red,
             ),
           );
@@ -126,9 +130,16 @@ class _DriverRideExecutionScreenState
       });
     }
 
-    if (rideState.ride != null) {
-      _updateMapMarkers(rideState.ride!);
+    if (ride != null && lifecycleState is RideActive) {
+      _updateMapMarkers(ride);
     }
+
+    final String title = switch (lifecycleState) {
+      RideActive(:final ride) => _getStateTitle(ride.status),
+      RideCompleted() => 'Ride Completed',
+      RideCancelled() => 'Ride Cancelled',
+      _ => 'Ride Status',
+    };
 
     return WillPopScope(
       onWillPop: () async => false,
@@ -136,34 +147,30 @@ class _DriverRideExecutionScreenState
         appBar: AppBar(
           automaticallyImplyLeading: false,
           centerTitle: true,
-          title: Text(
-            _getStateTitle(rideState.status),
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
+          title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
           backgroundColor: primaryColor,
         ),
         body: Stack(
           children: [
-            // Map
             GoogleMap(
               onMapCreated: _onMapCreated,
               initialCameraPosition: CameraPosition(
                 target: LatLng(
-                  rideState.ride?.pickupLatitude ?? 0,
-                  rideState.ride?.pickupLongitude ?? 0,
+                  ride?.pickupLatitude ?? 0,
+                  ride?.pickupLongitude ?? 0,
                 ),
                 zoom: 14,
               ),
               markers: markers,
               polylines: polylines,
             ),
-            // Bottom action panel
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: _buildActionPanel(context, rideState),
-            ),
+            if (lifecycleState is RideActive)
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: _buildActionPanel(context, lifecycleState),
+              ),
           ],
         ),
       ),
@@ -185,7 +192,7 @@ class _DriverRideExecutionScreenState
     }
   }
 
-  Widget _buildActionPanel(BuildContext context, RideStateVM state) {
+  Widget _buildActionPanel(BuildContext context, RideActive state) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -204,7 +211,6 @@ class _DriverRideExecutionScreenState
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Drag handle
               Container(
                 height: 4,
                 width: 40,
@@ -214,11 +220,8 @@ class _DriverRideExecutionScreenState
                 ),
               ),
               const SizedBox(height: 20),
-              // Passenger info card
-              if (state.ride != null)
-                _buildPassengerCard(state.ride!),
+              _buildPassengerCard(state.ride),
               const SizedBox(height: 20),
-              // State-specific content
               if (state.isAccepted)
                 _buildAcceptedStateActions(context, state)
               else if (state.isDriverArrived)
@@ -287,7 +290,7 @@ class _DriverRideExecutionScreenState
     );
   }
 
-  Widget _buildAcceptedStateActions(BuildContext context, RideStateVM state) {
+  Widget _buildAcceptedStateActions(BuildContext context, RideActive state) {
     return Column(
       children: [
         Container(
@@ -321,7 +324,7 @@ class _DriverRideExecutionScreenState
             onPressed: state.isLoading
                 ? null
                 : () async {
-                    await ref.read(activeRideProvider.notifier).markArrived();
+                    await ref.read(rideLifecycleProvider.notifier).markArrived();
                   },
             icon: state.isLoading
                 ? const SizedBox(
@@ -340,7 +343,7 @@ class _DriverRideExecutionScreenState
     );
   }
 
-  Widget _buildArrivedStateActions(BuildContext context, RideStateVM state) {
+  Widget _buildArrivedStateActions(BuildContext context, RideActive state) {
     return Column(
       children: [
         Container(
@@ -374,7 +377,7 @@ class _DriverRideExecutionScreenState
             onPressed: state.isLoading
                 ? null
                 : () async {
-                    await ref.read(activeRideProvider.notifier).startRide();
+                    await ref.read(rideLifecycleProvider.notifier).startRide();
                   },
             icon: state.isLoading
                 ? const SizedBox(
@@ -393,7 +396,7 @@ class _DriverRideExecutionScreenState
     );
   }
 
-  Widget _buildInProgressStateActions(BuildContext context, RideStateVM state) {
+  Widget _buildInProgressStateActions(BuildContext context, RideActive state) {
     return Column(
       children: [
         Container(
@@ -427,7 +430,7 @@ class _DriverRideExecutionScreenState
             onPressed: state.isLoading
                 ? null
                 : () async {
-                    await ref.read(activeRideProvider.notifier).completeRide();
+                    await ref.read(rideLifecycleProvider.notifier).completeRide();
                   },
             icon: state.isLoading
                 ? const SizedBox(

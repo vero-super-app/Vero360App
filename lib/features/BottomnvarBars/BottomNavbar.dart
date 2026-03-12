@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
@@ -91,6 +92,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 
   /// Fetch /users/me and persist role to SharedPreferences so role matches backend.
+  /// If backend has wrong role (e.g. 'customer' when should be 'driver'),
+  /// re-syncs the correct role via PUT /users/me.
   Future<void> _fetchAndUpdateRoleFromServer() async {
     final token = await AuthHandler.getTokenForApi();
     if (token == null || token.isEmpty) return;
@@ -110,26 +113,89 @@ class _BottomnavbarState extends State<Bottomnavbar>
               ? Map<String, dynamic>.from(decoded)
               : <String, dynamic>{});
       final prefs = await SharedPreferences.getInstance();
+      
+      final backendRole = (user['role'] ?? '').toString().toLowerCase();
+      final cachedRole = (prefs.getString('user_role') ?? '').toLowerCase();
+
+      // Detect role mismatch: cached says driver/merchant but backend says customer
+      if (cachedRole.isNotEmpty &&
+          cachedRole != 'customer' &&
+          backendRole == 'customer') {
+        debugPrint(
+            '⚠️ BottomNavbar: role mismatch! cached=$cachedRole, backend=$backendRole. Re-syncing…');
+        await _putRoleToBackend(token, cachedRole);
+        return;
+      }
+
+      // Both say customer -- cross-check Firestore (registration source of truth)
+      if (backendRole == 'customer') {
+        final firestoreRole = await _getRoleFromFirestore();
+        if (firestoreRole != null &&
+            firestoreRole != 'customer' &&
+            firestoreRole != backendRole) {
+          debugPrint(
+              '⚠️ BottomNavbar: Firestore says "$firestoreRole", backend says "$backendRole". Re-syncing…');
+          await prefs.setString('user_role', firestoreRole);
+          await prefs.setString('role', firestoreRole);
+          await _putRoleToBackend(token, firestoreRole);
+          if (mounted) {
+            await _checkUserRoleAndSetup();
+            setState(() {});
+          }
+          return;
+        }
+      }
+
       final isMerchant = RoleHelper.isMerchant(user);
       final isDriver = !isMerchant && RoleHelper.isDriver(user);
-      if (isMerchant) {
-        await prefs.setString('user_role', 'merchant');
-        await prefs.setString('role', 'merchant');
-      } else if (isDriver) {
-        await prefs.setString('user_role', 'driver');
-        await prefs.setString('role', 'driver');
-      } else {
-        await prefs.setString('user_role', 'customer');
-        await prefs.setString('role', 'customer');
+      
+      final newRole = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
+      
+      if (cachedRole != newRole) {
+        await prefs.setString('user_role', newRole);
+        await prefs.setString('role', newRole);
       }
-      final raw = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
+      
       debugPrint(
-          'ℹ️ BottomNavbar: role from /users/me: $raw (merchant=$isMerchant, driver=$isDriver)');
+          'ℹ️ BottomNavbar: role from /users/me: $newRole (merchant=$isMerchant, driver=$isDriver)');
+      
       if (mounted && (_isMerchant != isMerchant || _isDriver != isDriver)) {
         await _checkUserRoleAndSetup();
         if (mounted) setState(() {});
       }
     } catch (_) {}
+  }
+
+  Future<void> _putRoleToBackend(String token, String role) async {
+    try {
+      await http.put(
+        ApiConfig.endpoint('/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: json.encode({'role': role}),
+      ).timeout(const Duration(seconds: 6));
+      debugPrint('✅ BottomNavbar: role re-synced to backend: $role');
+    } catch (e) {
+      debugPrint('⚠️ BottomNavbar: role re-sync failed: $e');
+    }
+  }
+
+  Future<String?> _getRoleFromFirestore() async {
+    try {
+      final fbUser = FirebaseAuth.instance.currentUser;
+      if (fbUser == null) return null;
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(fbUser.uid)
+          .get();
+      if (doc.exists && doc.data() != null) {
+        return (doc.data()!['role'] ?? '').toString().toLowerCase();
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<void> _checkUserRoleAndSetup() async {
@@ -193,7 +259,6 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
     Widget page = switch (service) {
       'food' => FoodMerchantDashboard(email: email),
-      'taxi' => DriverDashboard(),
       'accommodation' => AccommodationMerchantDashboard(email: email),
       'courier' => CourierMerchantDashboard(email: email),
       _ => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },),
@@ -202,7 +267,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (_) => page),
-      (route) => route.isFirst,
+      (route) => false,
     );
   }
 

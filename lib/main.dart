@@ -19,6 +19,7 @@ import 'package:app_links/app_links.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // HTTP + prefs
 import 'package:http/http.dart' as http;
@@ -34,6 +35,7 @@ import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_request_overlay.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 
@@ -648,10 +650,20 @@ class _MyAppState extends State<MyApp> {
 
     if (role == 'merchant') {
       _pushMerchant(email);
-    } else if (role == 'driver' || role == 'customer') {
-      // Both drivers and customers use Bottomnavbar shell
+    } else if (role == 'driver') {
+      _pushDriver();
+    } else if (role == 'customer') {
       _pushCustomer(email);
     }
+  }
+
+  void _pushDriver() {
+    if (!mounted) return;
+    _currentShell = 'driver';
+    navKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const DriverDashboard()),
+      (route) => false,
+    );
   }
 
   /// Fix emulator localhost:
@@ -671,7 +683,6 @@ class _MyAppState extends State<MyApp> {
 
     if (token == null || token.trim().isEmpty) return;
 
-    // ✅ Use ApiConfig for production-ready endpoint
     try {
       final resp = await http.get(
         ApiConfig.endpoint('/users/me'),
@@ -689,6 +700,36 @@ class _MyAppState extends State<MyApp> {
                 ? Map<String, dynamic>.from(decoded)
                 : <String, dynamic>{});
 
+        final backendRole = (user['role'] ?? '').toString().toLowerCase();
+        final cachedRole = (prefs.getString('user_role') ?? '').toLowerCase();
+
+        // Case 1: cached role says driver/merchant but backend says customer
+        // -> re-sync cached role to backend
+        if (cachedRole.isNotEmpty &&
+            cachedRole != 'customer' &&
+            backendRole == 'customer') {
+          await _resyncRoleToBackend(prefs, token, cachedRole);
+          return;
+        }
+
+        // Case 2: both cached and backend say customer, but Firestore
+        // (the registration source of truth) says driver/merchant.
+        // This happens when SharedPreferences was overwritten by a previous
+        // backend fetch before the re-sync could fix it.
+        if (backendRole == 'customer') {
+          final firestoreRole = await _getRoleFromFirestore();
+          if (firestoreRole != null &&
+              firestoreRole != 'customer' &&
+              firestoreRole != backendRole) {
+            debugPrint(
+                '⚠️ Firestore says "$firestoreRole" but backend says "$backendRole". Re-syncing…');
+            await prefs.setString('user_role', firestoreRole);
+            await prefs.setString('role', firestoreRole);
+            await _resyncRoleToBackend(prefs, token, firestoreRole);
+            return;
+          }
+        }
+
         await _persistUserToPrefs(prefs, user);
 
         final merchant = _isMerchant(user);
@@ -696,8 +737,8 @@ class _MyAppState extends State<MyApp> {
         
         if (merchant && _currentShell != 'merchant') {
           _pushMerchant((user['email'] ?? '').toString());
-        } else if (!merchant && driver && _currentShell != 'customer') {
-          _pushCustomer((user['email'] ?? '').toString());
+        } else if (!merchant && driver && _currentShell != 'driver') {
+          _pushDriver();
         } else if (!merchant && !driver && _currentShell != 'customer') {
           _pushCustomer((user['email'] ?? '').toString());
         }
@@ -709,40 +750,81 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
+  /// Read the user's role from Firestore (registration source of truth).
+  Future<String?> _getRoleFromFirestore() async {
+    try {
+      final fbUser = FirebaseAuth.instance.currentUser;
+      if (fbUser == null) return null;
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(fbUser.uid)
+          .get();
+      if (doc.exists && doc.data() != null) {
+        return (doc.data()!['role'] ?? '').toString().toLowerCase();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Backend has the wrong role (e.g. 'customer' when it should be 'driver').
+  /// Send PUT /users/me to correct it, then re-verify.
+  Future<void> _resyncRoleToBackend(
+      SharedPreferences prefs, String token, String correctRole) async {
+    try {
+      final body = json.encode({'role': correctRole});
+      final putResp = await http.put(
+        ApiConfig.endpoint('/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: body,
+      ).timeout(const Duration(seconds: 6));
+
+      if (putResp.statusCode >= 200 && putResp.statusCode < 300) {
+        debugPrint('✅ Re-synced role to backend: $correctRole');
+        // Re-read the updated user from backend
+        final getResp = await http.get(
+          ApiConfig.endpoint('/users/me'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Accept': 'application/json',
+          },
+        ).timeout(const Duration(seconds: 6));
+        if (getResp.statusCode == 200) {
+          final decoded = json.decode(getResp.body);
+          final user = (decoded is Map && decoded['data'] is Map)
+              ? Map<String, dynamic>.from(decoded['data'])
+              : (decoded is Map
+                  ? Map<String, dynamic>.from(decoded)
+                  : <String, dynamic>{});
+          await _persistUserToPrefs(prefs, user);
+
+          final merchant = _isMerchant(user);
+          final driver = _isDriver(user);
+          if (merchant && _currentShell != 'merchant') {
+            _pushMerchant((user['email'] ?? '').toString());
+          } else if (!merchant && driver && _currentShell != 'driver') {
+            _pushDriver();
+          } else if (!merchant && !driver && _currentShell != 'customer') {
+            _pushCustomer((user['email'] ?? '').toString());
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Role re-sync failed: $e');
+    }
+  }
+
   String? _readToken(SharedPreferences p) =>
       p.getString('jwt_token') ??
       p.getString('token') ??
       p.getString('authToken');
 
-  bool _isMerchant(Map<String, dynamic> u) {
-    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
-    final roles = (u['roles'] is List)
-        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
-        : <String>[];
-    final flags = {
-      'isMerchant': u['isMerchant'] == true,
-      'merchant': u['merchant'] == true,
-      'merchantId': (u['merchantId'] ?? '').toString().isNotEmpty,
-    };
-    return role == 'merchant' ||
-        roles.contains('merchant') ||
-        flags.values.any((v) => v == true);
-  }
+  bool _isMerchant(Map<String, dynamic> u) => RoleHelper.isMerchant(u);
 
-  bool _isDriver(Map<String, dynamic> u) {
-    final role = (u['role'] ?? u['accountType'] ?? '').toString().toLowerCase();
-    final roles = (u['roles'] is List)
-        ? (u['roles'] as List).map((e) => e.toString().toLowerCase()).toList()
-        : <String>[];
-    final flags = {
-      'isDriver': u['isDriver'] == true,
-      'driver': u['driver'] == true,
-      'driverId': (u['driverId'] ?? '').toString().isNotEmpty,
-    };
-    return role == 'driver' ||
-        roles.contains('driver') ||
-        flags.values.any((v) => v == true);
-  }
+  bool _isDriver(Map<String, dynamic> u) => RoleHelper.isDriver(u);
 
   Future<void> _persistUserToPrefs(
       SharedPreferences prefs, Map<String, dynamic> u) async {
@@ -773,15 +855,12 @@ class _MyAppState extends State<MyApp> {
     if (isMerchant) {
       await prefs.setString('user_role', 'merchant');
       await prefs.setString('role', 'merchant');
-      await prefs.setBool('user_is_driver', false);
     } else if (isDriver) {
       await prefs.setString('user_role', 'driver');
       await prefs.setString('role', 'driver');
-      await prefs.setBool('user_is_driver', true);
     } else {
       await prefs.setString('user_role', 'customer');
       await prefs.setString('role', 'customer');
-      await prefs.setBool('user_is_driver', false);
     }
   }
 
@@ -791,7 +870,6 @@ class _MyAppState extends State<MyApp> {
     await prefs.remove('authToken');
     await prefs.remove('user_role');
     await prefs.remove('role');
-    await prefs.remove('user_is_driver');
   }
 
   void _pushMerchant(String email) {
@@ -803,7 +881,7 @@ class _MyAppState extends State<MyApp> {
                 email: email,
                 onBackToHomeTab: () {},
               )),
-      (route) => route.isFirst,
+      (route) => false,
     );
   }
 
@@ -812,7 +890,7 @@ class _MyAppState extends State<MyApp> {
     _currentShell = 'customer';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
-      (route) => route.isFirst,
+      (route) => false,
     );
   }
 
@@ -831,6 +909,13 @@ class _MyAppState extends State<MyApp> {
           useMaterial3: true,
           colorSchemeSeed: const Color(0xFFFF8A00),
         ),
+
+        // ✅ Wrap app shell with RideRequestOverlay
+        builder: (context, child) {
+          return RideRequestOverlay(
+            child: child ?? const SizedBox.shrink(),
+          );
+        },
 
         // ✅ keep public home
         home: const Bottomnavbar(email: ''),
@@ -897,17 +982,17 @@ class AuthFlow {
                   email: email,
                   onBackToHomeTab: () {},
                 )),
-        (route) => route.isFirst,
+        (route) => false,
       );
     } else if (isDriver) {
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const DriverDashboard()),
-        (route) => route.isFirst,
+        (route) => false,
       );
     } else {
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
-        (route) => route.isFirst,
+        (route) => false,
       );
     }
   }
@@ -968,14 +1053,14 @@ class AuthFlow {
       } else {
         navKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-          (route) => route.isFirst,
+          (route) => false,
         );
       }
     } catch (e) {
       debugPrint("❌ onLoginSuccess error: $e");
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-        (route) => route.isFirst,
+        (route) => false,
       );
     }
   }
@@ -988,7 +1073,6 @@ class AuthFlow {
     await p.remove('authToken');
     await p.remove('user_role');
     await p.remove('role');
-    await p.remove('user_is_driver');
 
     try {
       await FirebaseAuth.instance.signOut();
@@ -996,7 +1080,7 @@ class AuthFlow {
 
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-      (route) => route.isFirst,
+      (route) => false,
     );
   }
 

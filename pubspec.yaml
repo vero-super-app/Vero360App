@@ -118,4 +118,5 @@ flutter:
     - assets/icons/playstore.png
     - assets/icons/car-location-marker.png
     - assets/playstore.png
+    - assets/style/map_style.txt
  

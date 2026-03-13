@@ -137,8 +137,12 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
     // Defer heavier, non-blocking services until after the first frame.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      // Google Maps config (reads .env, sets up API keys)
-      unawaited(GoogleMapsConfig.initialize());
+      // Google Maps config (reads .env, sets up API keys). Safe to skip if offline.
+      try {
+        await GoogleMapsConfig.initialize();
+      } catch (e) {
+        debugPrint("GoogleMapsConfig init warning (offline?): $e");
+      }
 
       // Push notifications (channels, permissions, listeners)
       try {
@@ -162,8 +166,13 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
     // Keep boot work as light as possible so we hit the home UI quickly.
     _log("Configuring API…");
-    await ApiConfig.useProd();
-    _log("API config OK ✅");
+    try {
+      await ApiConfig.useProd();
+      _log("API config OK ✅");
+    } catch (e) {
+      // If this fails (e.g., no internet), continue in a degraded/offline mode.
+      _log("API config warning (using offline/defaults): $e");
+    }
 
     // Run heavier messaging initialization in the background so it
     // does not block the user from seeing the home screen.

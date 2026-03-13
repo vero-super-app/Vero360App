@@ -1,7 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_detail_model.dart';
@@ -9,6 +14,9 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.mod
     as marketplaceModel;
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
+import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
+import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 
 class MerchantProductsPage extends StatefulWidget {
   final String merchantId;
@@ -26,43 +34,155 @@ class MerchantProductsPage extends StatefulWidget {
 
 class _MerchantProductsPageState extends State<MerchantProductsPage> {
   final _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   late Future<List<MarketplaceDetailModel>> _future;
   final CartService _cartService =
       CartService('unused', apiPrefix: ApiConfig.apiPrefix);
+
+  double? _merchantRating;
+  String? _merchantStatus;
+  String? _merchantProfileUrl;
+  String? _merchantEmail;
+  String? _merchantPhone;
+  bool _loadingHeader = true;
+  bool _following = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   // Brand color to match main marketplace UI
   static const Color _brandOrange = Color(0xFFFF8A00);
 
   // Small cache for Firebase download URLs (gs:// or storage paths)
-  final Map<String, Future<String>> _dlUrlCache = {};
+  final Map<String, Future<String?>> _dlUrlCache = {};
 
   bool _isHttp(String s) => s.startsWith('http://') || s.startsWith('https://');
   bool _isGs(String s) => s.startsWith('gs://');
 
-  Future<String?> _toFirebaseDownloadUrl(String raw) async {
+  bool _looksLikeBase64(String s) {
+    final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
+    if (x.isEmpty) return false;
+    return x.length >= 40 && RegExp(r'^[A-Za-z0-9+/=\s]+$').hasMatch(x);
+  }
+
+  bool _isRelativePath(String s) =>
+      s.isNotEmpty && !s.contains('://') && !_looksLikeBase64(s);
+
+  Future<String> _backendUrlForPath(String path) async {
+    final base = await ApiConfig.readBase();
+    final baseNorm = base.endsWith('/') ? base : '$base/';
+    final p = path.startsWith('/') ? path.substring(1) : path;
+    return '$baseNorm$p';
+  }
+
+  /// Same logic as main_marketPlace.dart: gs://, storage path, backend-relative fallback
+  Future<String?> _toDownloadUrl(String raw) async {
     final s = raw.trim();
     if (s.isEmpty) return null;
 
     if (_isHttp(s)) return s;
 
-    if (_dlUrlCache.containsKey(s)) return _dlUrlCache[s]!.then((v) => v);
+    if (s.startsWith('/')) {
+      try {
+        final url = await _backendUrlForPath(s);
+        if (url.isNotEmpty) return url;
+      } catch (_) {}
+      return null;
+    }
 
-    Future<String> fut() async {
-      if (_isGs(s)) {
-        return FirebaseStorage.instance.refFromURL(s).getDownloadURL();
+    if (_dlUrlCache.containsKey(s)) {
+      try {
+        return await _dlUrlCache[s]!;
+      } catch (_) {
+        _dlUrlCache.remove(s);
       }
-      return FirebaseStorage.instance.ref(s).getDownloadURL();
+    }
+
+    Future<String?> fut() async {
+      try {
+        if (_isGs(s)) {
+          return await FirebaseStorage.instance.refFromURL(s).getDownloadURL();
+        }
+        return await FirebaseStorage.instance.ref(s).getDownloadURL();
+      } catch (_) {
+        if (_isRelativePath(s)) {
+          try {
+            return await _backendUrlForPath(s);
+          } catch (_) {}
+        }
+        return null;
+      }
     }
 
     _dlUrlCache[s] = fut();
-    try {
-      return await _dlUrlCache[s]!;
-    } catch (_) {
-      return null;
-    }
+    return _dlUrlCache[s]!;
   }
 
-  /// Match main marketplace image handling: base64 bytes, http(s), gs://, and storage paths.
+  /// Same as main_marketPlace: base64, http(s), gs://, storage path, backend-relative
+  Widget _imageFromAnySource(
+    String raw, {
+    BoxFit fit = BoxFit.cover,
+    double? width,
+    double? height,
+    BorderRadius? radius,
+  }) {
+    final s = raw.trim();
+
+    Widget wrap(Widget child) {
+      if (radius == null) return child;
+      return ClipRRect(borderRadius: radius, child: child);
+    }
+
+    if (s.isEmpty) {
+      return wrap(Container(
+        width: width,
+        height: height,
+        color: Colors.grey.shade200,
+        alignment: Alignment.center,
+        child: const Icon(Icons.image_not_supported_rounded),
+      ));
+    }
+
+    if (_looksLikeBase64(s)) {
+      try {
+        final base64Part = s.contains(',') ? s.split(',').last : s;
+        final bytes = base64Decode(base64Part);
+        return wrap(Image.memory(bytes, fit: fit, width: width, height: height));
+      } catch (_) {}
+    }
+
+    if (_isHttp(s)) {
+      return wrap(_ResilientNetworkImage(
+        url: s,
+        fit: fit,
+        width: width,
+        height: height,
+      ));
+    }
+
+    return FutureBuilder<String?>(
+      future: _toDownloadUrl(s),
+      builder: (context, snap) {
+        final url = snap.data;
+        if (url == null || url.isEmpty) {
+          return wrap(Container(
+            width: width,
+            height: height,
+            color: Colors.grey.shade200,
+            alignment: Alignment.center,
+            child: const Icon(Icons.image_not_supported_rounded),
+          ));
+        }
+        return wrap(_ResilientNetworkImage(
+          url: url,
+          fit: fit,
+          width: width,
+          height: height,
+        ));
+      },
+    );
+  }
+
+  /// Match main marketplace: imageBytes, main image, gallery fallback
   Widget buildItemImage(MarketplaceDetailModel item) {
     if (item.imageBytes != null) {
       return Image.memory(
@@ -72,120 +192,25 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         height: double.infinity,
       );
     }
-
-    final raw = item.image.trim();
-    if (raw.isEmpty) {
-      return Container(
-        color: const Color(0xFFEDEDED),
-        child: const Center(
-          child: Icon(
-            Icons.image_not_supported_rounded,
-            color: Colors.black38,
-          ),
-        ),
-      );
-    }
-
-    // Direct http(s) URL
-    if (_isHttp(raw)) {
-      return Image.network(
-        raw,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(
-          color: const Color(0xFFEDEDED),
-          child: const Center(
-            child: Icon(
-              Icons.image_not_supported_rounded,
-              color: Colors.black38,
-            ),
-          ),
-        ),
-      );
-    }
-
-    // Firebase gs:// or storage path
-    return FutureBuilder<String?>(
-      future: _toFirebaseDownloadUrl(raw),
-      builder: (context, snap) {
-        final url = snap.data;
-        if (url == null || url.isEmpty) {
-          return Container(
-            color: const Color(0xFFEDEDED),
-            child: const Center(
-              child: Icon(
-                Icons.image_not_supported_rounded,
-                color: Colors.black38,
-              ),
-            ),
-          );
-        }
-        return Image.network(
-          url,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Container(
-            color: const Color(0xFFEDEDED),
-            child: const Center(
-              child: Icon(
-                Icons.image_not_supported_rounded,
-                color: Colors.black38,
-              ),
-            ),
-          ),
-        );
-      },
+    final mainImage = item.image.trim();
+    final fallbackUrl = mainImage.isEmpty && item.gallery.isNotEmpty
+        ? item.gallery.first.toString().trim()
+        : null;
+    return _imageFromAnySource(
+      mainImage.isNotEmpty ? mainImage : (fallbackUrl ?? ''),
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
     );
   }
 
-  /// Build image for a single source (URL or storage path). Used by carousel.
+  /// Build image for a single source. Used by carousel.
   Widget buildImageForSource(String source) {
-    final raw = source.trim();
-    if (raw.isEmpty) {
-      return Container(
-        color: const Color(0xFFEDEDED),
-        child: const Center(
-          child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
-        ),
-      );
-    }
-    if (_isHttp(raw)) {
-      return Image.network(
-        raw,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (_, __, ___) => Container(
-          color: const Color(0xFFEDEDED),
-          child: const Center(
-            child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
-          ),
-        ),
-      );
-    }
-    return FutureBuilder<String?>(
-      future: _toFirebaseDownloadUrl(raw),
-      builder: (context, snap) {
-        final url = snap.data;
-        if (url == null || url.isEmpty) {
-          return Container(
-            color: const Color(0xFFEDEDED),
-            child: const Center(
-              child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
-            ),
-          );
-        }
-        return Image.network(
-          url,
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: double.infinity,
-          errorBuilder: (_, __, ___) => Container(
-            color: const Color(0xFFEDEDED),
-            child: const Center(
-              child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
-            ),
-          ),
-        );
-      },
+    return _imageFromAnySource(
+      source.trim(),
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
     );
   }
 
@@ -193,6 +218,16 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   void initState() {
     super.initState();
     _future = _loadMerchantItems();
+    _loadMerchantHeader();
+    _searchController.addListener(() {
+      setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<List<MarketplaceDetailModel>> _loadMerchantItems() async {
@@ -240,6 +275,223 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     }
   }
 
+  int _fnv1a32(String input) {
+    const int fnvOffset = 0x811C9DC5;
+    const int fnvPrime = 0x01000193;
+    int hash = fnvOffset;
+    for (final codeUnit in input.codeUnits) {
+      hash ^= codeUnit;
+      hash = (hash * fnvPrime) & 0xFFFFFFFF;
+    }
+    return hash & 0x7FFFFFFF;
+  }
+
+  Future<String?> _resolveImageUrl(MarketplaceDetailModel item) async {
+    final raw = item.image.trim();
+    if (raw.isEmpty) return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    try {
+      if (raw.startsWith('gs://')) {
+        return FirebaseStorage.instance.refFromURL(raw).getDownloadURL();
+      }
+      return FirebaseStorage.instance.ref(raw).getDownloadURL();
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  CartModel _toCartModel(MarketplaceDetailModel item, String imageUrl) {
+    final parsed = item.sqlItemId;
+    final itemId = parsed ?? _fnv1a32('mp:${item.id}:${item.name}');
+    final uid = _auth.currentUser?.uid ?? '';
+    return CartModel(
+      userId: uid,
+      item: itemId,
+      quantity: 1,
+      name: item.name,
+      image: imageUrl,
+      price: item.price,
+      description: item.description ?? '',
+      comment: null,
+      merchantId: widget.merchantId,
+      merchantName: widget.merchantName,
+      serviceType: 'marketplace',
+    );
+  }
+
+  Future<void> _addToCart(MarketplaceDetailModel item) async {
+    if (_auth.currentUser == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please log in to add items to cart.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    try {
+      final url = await _resolveImageUrl(item);
+      final cartItem = _toCartModel(item, url ?? item.image);
+      await _cartService.addToCart(cartItem);
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        '${item.name} added to cart',
+        isSuccess: true,
+        errorMessage: '',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not add to cart. Please try again.',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
+  Future<void> _buyNow(MarketplaceDetailModel item) async {
+    if (_auth.currentUser == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please log in to buy.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    try {
+      final url = await _resolveImageUrl(item);
+      final cartItem = _toCartModel(item, url ?? item.image);
+      await _cartService.addToCart(cartItem);
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => CheckoutFromCartPage(items: [cartItem]),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not proceed. Please try again.',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
+  Future<void> _toggleFollow() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      // Not logged in – you can later hook this to open login.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to follow this seller.')),
+      );
+      return;
+    }
+
+    final merchantId = widget.merchantId.trim();
+    final followerRef = _firestore
+        .collection('merchant_followers')
+        .doc(merchantId)
+        .collection('followers')
+        .doc(user.uid);
+
+    try {
+      if (_following) {
+        await followerRef.delete();
+        setState(() => _following = false);
+      } else {
+        await followerRef.set({
+          'uid': user.uid,
+          'email': user.email,
+          'followedAt': FieldValue.serverTimestamp(),
+        });
+        setState(() => _following = true);
+      }
+    } catch (e) {
+      debugPrint('Toggle follow error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not update follow status.')),
+      );
+    }
+  }
+
+  String get _merchantShopUrl =>
+      'https://vero360.app/merchant/${widget.merchantId.trim()}';
+
+  String get _shareMessage =>
+      'Check out this merchant on Vero360 - ${widget.merchantName}\n$_merchantShopUrl';
+
+  void _copyMerchantLink() {
+    Clipboard.setData(ClipboardData(text: _merchantShopUrl));
+    ToastHelper.showCustomToast(
+      context,
+      'Merchant link copied to clipboard',
+      isSuccess: true,
+      errorMessage: '',
+    );
+  }
+
+  void _shareMerchantShop() {
+    Share.share(_shareMessage);
+  }
+
+  Future<void> _loadMerchantHeader() async {
+    setState(() => _loadingHeader = true);
+    try {
+      final user = _auth.currentUser;
+
+      final doc = await _firestore
+          .collection('marketplace_merchants')
+          .doc(widget.merchantId.trim())
+          .get();
+      if (doc.exists) {
+        final data = doc.data() ?? <String, dynamic>{};
+        final rating = data['rating'];
+        final status = (data['status'] ?? data['verificationStatus'] ?? '')
+            .toString()
+            .trim();
+        final profileUrl =
+            (data['profilePicture'] ?? data['profilepicture'] ?? '')
+                .toString()
+                .trim();
+        final email =
+            (data['email'] ?? data['userEmail'] ?? '').toString().trim();
+        final phone = (data['phone'] ?? data['phoneNumber'] ?? '')
+            .toString()
+            .trim();
+        bool following = _following;
+        if (user != null) {
+          final followSnap = await _firestore
+              .collection('merchant_followers')
+              .doc(widget.merchantId.trim())
+              .collection('followers')
+              .doc(user.uid)
+              .get();
+          following = followSnap.exists;
+        }
+        setState(() {
+          if (rating is num) _merchantRating = rating.toDouble();
+          if (status.isNotEmpty) _merchantStatus = status;
+          if (profileUrl.isNotEmpty) _merchantProfileUrl = profileUrl;
+          if (email.isNotEmpty) _merchantEmail = email;
+          if (phone.isNotEmpty) _merchantPhone = phone;
+          _following = following;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading merchant header: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _loadingHeader = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -247,8 +499,51 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
         title: Text('${widget.merchantName} Store'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.link),
+            onPressed: _copyMerchantLink,
+            tooltip: 'Copy merchant link',
+          ),
+          IconButton(
+            icon: const Icon(Icons.share),
+            onPressed: _shareMerchantShop,
+            tooltip: 'Share merchant shop',
+          ),
+        ],
       ),
-      body: FutureBuilder<List<MarketplaceDetailModel>>(
+      body: Column(
+        children: [
+          _MerchantProfileCard(
+            name: widget.merchantName,
+            email: _merchantEmail,
+            phone: _merchantPhone,
+            rating: _merchantRating,
+            status: _merchantStatus,
+            profileUrl: _merchantProfileUrl,
+            loading: _loadingHeader,
+            following: _following,
+            onToggleFollow: _toggleFollow,
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search products from ${widget.merchantName}...',
+                prefixIcon: const Icon(Icons.search_rounded),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: FutureBuilder<List<MarketplaceDetailModel>>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -263,10 +558,22 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             );
           }
 
-          final items = snapshot.data ?? const <MarketplaceDetailModel>[];
+              final allItems =
+                  snapshot.data ?? const <MarketplaceDetailModel>[];
+          final items = _searchQuery.isEmpty
+              ? allItems
+              : allItems
+                  .where((i) =>
+                      i.name.toLowerCase().contains(_searchQuery))
+                  .toList();
           if (items.isEmpty) {
-            return const Center(
-              child: Text('No products from this merchant yet.'),
+            return Center(
+              child: Text(
+                _searchQuery.isEmpty
+                    ? 'No products from this merchant yet.'
+                    : 'No products match "$_searchQuery".',
+                textAlign: TextAlign.center,
+              ),
             );
           }
 
@@ -282,7 +589,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                   ? 0.85
                   : 0.72;
 
-          return GridView.builder(
+              return GridView.builder(
             padding: const EdgeInsets.all(12),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: cols,
@@ -299,6 +606,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                   item: item,
                   buildImageForSource: buildImageForSource,
                 ),
+                onAddToCart: () => _addToCart(it),
+                onBuyNow: () => _buyNow(it),
                 onOpen: () {
                   // If the Firestore item has a valid backend/sql id, open the full details page.
                   if (!it.hasValidSqlItemId) return;
@@ -338,23 +647,122 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                 },
               );
             },
-          );
-        },
+              );
+            },
+          )),
+        ],
       ),
     );
+  }
+}
+
+/// Network image that on load error retries with the other scheme (http <-> https).
+class _ResilientNetworkImage extends StatefulWidget {
+  const _ResilientNetworkImage({
+    required this.url,
+    this.fit = BoxFit.cover,
+    this.width,
+    this.height,
+  });
+
+  final String url;
+  final BoxFit fit;
+  final double? width;
+  final double? height;
+
+  @override
+  State<_ResilientNetworkImage> createState() => _ResilientNetworkImageState();
+}
+
+class _ResilientNetworkImageState extends State<_ResilientNetworkImage> {
+  String get _currentUrl => _tryAlternate ? _alternateUrl : widget.url;
+  late String _alternateUrl;
+  bool _tryAlternate = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _alternateUrl = _flipScheme(widget.url);
+  }
+
+  static String _flipScheme(String url) {
+    final u = url.trim().toLowerCase();
+    if (u.startsWith('https://')) return 'http://${url.substring(8)}';
+    if (u.startsWith('http://')) return 'https://${url.substring(7)}';
+    return url;
+  }
+
+  Widget _buildImage(String url) {
+    return Image.network(
+      url,
+      fit: widget.fit,
+      width: widget.width,
+      height: widget.height,
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) {
+        if (!_tryAlternate && _flipScheme(url) != url) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _tryAlternate = true);
+          });
+          return Container(
+            width: widget.width,
+            height: widget.height,
+            color: Colors.grey.shade100,
+            alignment: Alignment.center,
+            child: const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          );
+        }
+        return Container(
+          width: widget.width,
+          height: widget.height,
+          color: Colors.grey.shade200,
+          alignment: Alignment.center,
+          child: const Icon(Icons.image_not_supported_rounded),
+        );
+      },
+      loadingBuilder: (c, child, progress) {
+        if (progress == null) return child;
+        return Container(
+          width: widget.width,
+          height: widget.height,
+          color: Colors.grey.shade100,
+          alignment: Alignment.center,
+          child: const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _buildImage(_currentUrl);
   }
 }
 
 class _MerchantProductCard extends StatelessWidget {
   final MarketplaceDetailModel item;
   final VoidCallback onOpen;
+  final VoidCallback onAddToCart;
+  final VoidCallback onBuyNow;
   final Widget Function(MarketplaceDetailModel) imageBuilder;
 
   const _MerchantProductCard({
     required this.item,
     required this.onOpen,
+    required this.onAddToCart,
+    required this.onBuyNow,
     required this.imageBuilder,
   });
+
+  static const Color _brandOrange = Color(0xFFFF8A00);
 
   @override
   Widget build(BuildContext context) {
@@ -377,22 +785,26 @@ class _MerchantProductCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    item.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
+                  GestureDetector(
+                    onTap: onOpen,
+                    child: Text(
+                      item.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'MWK ${item.price.toStringAsFixed(0)}',
+                    'MWK ${NumberFormat('#,###', 'en').format(item.price.truncate())}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -401,11 +813,266 @@ class _MerchantProductCard extends StatelessWidget {
                       color: Colors.green,
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: onAddToCart,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _brandOrange,
+                            side: const BorderSide(color: _brandOrange),
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('Add to Cart',
+                              style: TextStyle(fontSize: 11)),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: onBuyNow,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _brandOrange,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('Buy Now',
+                              style: TextStyle(fontSize: 11)),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MerchantProfileCard extends StatelessWidget {
+  final String name;
+  final String? email;
+  final String? phone;
+  final double? rating;
+  final String? status;
+  final String? profileUrl;
+  final bool loading;
+  final bool following;
+  final VoidCallback onToggleFollow;
+
+  const _MerchantProfileCard({
+    required this.name,
+    required this.email,
+    required this.phone,
+    required this.rating,
+    required this.status,
+    required this.profileUrl,
+    required this.loading,
+    required this.following,
+    required this.onToggleFollow,
+  });
+
+  static const Color _brandOrange = Color(0xFFFF8A00);
+
+  Color _statusColor(String s) {
+    switch (s.toLowerCase()) {
+      case 'verified':
+      case 'approved':
+        return Colors.green;
+      case 'pending':
+      case 'under_review':
+        return Colors.orange;
+      case 'suspended':
+      case 'rejected':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveStatus = status?.isNotEmpty == true ? status! : 'pending';
+    final hasPhoto = profileUrl != null && profileUrl!.trim().isNotEmpty;
+    final emailStr = email?.trim().isNotEmpty == true ? email! : null;
+    final phoneStr = phone?.trim().isNotEmpty == true ? phone! : null;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 32,
+                backgroundColor: Colors.grey.shade200,
+                backgroundImage: hasPhoto ? NetworkImage(profileUrl!) : null,
+                child: hasPhoto
+                    ? null
+                    : const Icon(Icons.storefront_rounded,
+                        color: Colors.grey, size: 32),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    if (emailStr != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        emailStr,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 2),
+                    Text(
+                      phoneStr ?? 'No phone number',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                   
+                 
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade100,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.star,
+                                  size: 14, color: Colors.amber),
+                              Text(
+                                ' ${rating?.toStringAsFixed(1) ?? '0.0'}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: _statusColor(effectiveStatus)
+                                .withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                effectiveStatus.toLowerCase() == 'verified'
+                                    ? Icons.verified_rounded
+                                    : Icons.shield_outlined,
+                                size: 14,
+                                color: _statusColor(effectiveStatus),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                effectiveStatus,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: _statusColor(effectiveStatus),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert),
+                padding: EdgeInsets.zero,
+                onSelected: (_) {},
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'share',
+                    child: Text('Share'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'report',
+                    child: Text('Report'),
+                  ),
+                ],
+              ),
+              if (!loading)
+                IconButton(
+                  onPressed: onToggleFollow,
+                  icon: Icon(
+                    following
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    color: following ? Colors.red : Colors.grey.shade700,
+                  ),
+                  tooltip: following ? 'Unfollow seller' : 'Follow seller',
+                )
+              else
+                const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }

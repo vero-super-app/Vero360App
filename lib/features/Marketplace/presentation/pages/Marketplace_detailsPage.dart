@@ -91,14 +91,19 @@ class _DetailsPageState extends State<DetailsPage> {
     _fToast.init(context);
 
     final it = widget.item;
-    final images = it.gallery;
-    final videos = it.videos;
+    final images = it.gallery.where((u) => u.toString().trim().isNotEmpty).toList();
+    final videos = it.videos.where((u) => u.toString().trim().isNotEmpty).toList();
+    final mainImg = it.image.toString().trim();
     _media = [
-      if (it.image.toString().trim().isNotEmpty) _Media.image(it.image.toString().trim()),
+      if (mainImg.isNotEmpty) _Media.image(mainImg),
       ...images.map((u) => _Media.image(u.toString().trim())),
       ...videos.map((u) => _Media.video(u.toString().trim())),
     ];
-    if (_media.length > 1) _startAutoplay();
+    if (_media.length > 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _startAutoplay();
+      });
+    }
   }
 
   /// Share current product
@@ -152,7 +157,9 @@ class _DetailsPageState extends State<DetailsPage> {
     _pc.animateToPage(n,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut);
-    Future.delayed(const Duration(seconds: 5), _startAutoplay);
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && _media.length > 1) _startAutoplay();
+    });
   }
 
   void _prev() {
@@ -162,7 +169,9 @@ class _DetailsPageState extends State<DetailsPage> {
     _pc.animateToPage(p,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut);
-    Future.delayed(const Duration(seconds: 5), _startAutoplay);
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && _media.length > 1) _startAutoplay();
+    });
   }
 
   // seller/data
@@ -285,7 +294,7 @@ class _DetailsPageState extends State<DetailsPage> {
       final d = diff.inDays;
       return d == 1 ? '1 day ago' : '$d days ago';
     }
-    return '${time.day}/${time.month}/${time.year}';
+    return DateFormat('d MMMM yyyy').format(time);
   }
 
   Widget _infoRow(String label, String? value, {IconData? icon}) {
@@ -490,8 +499,10 @@ class _DetailsPageState extends State<DetailsPage> {
                               ? const BouncingScrollPhysics()
                               : const NeverScrollableScrollPhysics(),
                           itemCount: _media.length,
-                          onPageChanged: (i) =>
-                              setState(() => _page = i),
+                          onPageChanged: (i) {
+                              setState(() => _page = i);
+                              if (_media.length > 1) _startAutoplay();
+                            },
                           itemBuilder: (_, i) {
                             final m = _media[i];
                             if (!m.isVideo) {

@@ -510,7 +510,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (user == null) {
         ToastHelper.showCustomToast(
           context,
-          'Google sign-in cancelled or failed.',
+          'login failed check your internet connection.',
           isSuccess: false,
           errorMessage: '',
         );

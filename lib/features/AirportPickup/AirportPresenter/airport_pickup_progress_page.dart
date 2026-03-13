@@ -1,9 +1,18 @@
 // lib/features/AirportPickup/AirportPresenter/airport_pickup_progress_page.dart
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/AirportPickup/AirportModels/Airport_pickup.models.dart';
 import 'package:vero360_app/features/AirportPickup/AirportService/airport_pickup_service.dart';
+import 'package:vero360_app/GeneralPages/checkout_page.dart' show DeliveryType;
+import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart'
+    show InAppPaymentPage;
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
@@ -27,6 +36,8 @@ class _AirportPickupProgressPageState extends State<AirportPickupProgressPage> {
   final _airportService = const AirportPickupService();
   late AirportPickupBooking _booking;
   bool _loading = false;
+  bool _paying = false;
+  bool _downloading = false;
   String? _authToken;
   Timer? _pollTimer;
 
@@ -194,6 +205,181 @@ class _AirportPickupProgressPageState extends State<AirportPickupProgressPage> {
     if (leave != true || !mounted) return;
     final didCancel = await _cancelRequest();
     if (mounted && didCancel) Navigator.of(context).pop(_booking);
+  }
+
+  /// Start PayChangu payment for the booking. After payment, backend can move to accepted.
+  Future<void> _startPayment() async {
+    if (_paying || _loading) return;
+    final token = _authToken;
+    if (token == null || token.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Sign in to pay for this pickup.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    setState(() => _paying = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final email = prefs.getString('email') ?? 'customer@vero360.com';
+      final name = prefs.getString('name') ?? _booking.customerName ?? 'Customer';
+      final phone = prefs.getString('phone') ??
+          _normalizePhone(_booking.customerPhone ?? '+265888000000');
+
+      final parts = name.split(' ');
+      final firstName = parts.isNotEmpty ? parts.first : 'Customer';
+      final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+
+      final amount = _booking.estimatedFare.toDouble();
+      if (amount <= 0) {
+        ToastHelper.showCustomToast(
+          context,
+          'Invalid fare amount.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+
+      try {
+        await InternetAddress.lookup('api.paychangu.com');
+      } on SocketException {
+        throw Exception(
+            'Cannot connect to payment service. Please check your internet connection.');
+      }
+
+      final txRef = 'airport-${_booking.id}-${DateTime.now().millisecondsSinceEpoch}';
+      final response = await http
+          .post(
+            PayChanguConfig.paymentUri,
+            headers: PayChanguConfig.authHeaders,
+            body: json.encode({
+              'tx_ref': txRef,
+              'first_name': firstName,
+              'last_name': lastName,
+              'email': email,
+              'phone_number': phone,
+              'currency': 'MWK',
+              'amount': amount.round().toString(),
+              'payment_methods': ['card', 'mobile_money', 'bank'],
+              'callback_url': PayChanguConfig.callbackUrl,
+              'return_url': PayChanguConfig.returnUrl,
+              'customization': {
+                'title': 'Vero 360 Airport Pickup',
+                'description':
+                    'Airport Pickup #${_booking.id} • ${_booking.airportName} → ${_booking.serviceCity}',
+              },
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final status = (data['status'] ?? '').toString().toLowerCase();
+        if (status == 'success') {
+          final checkoutUrl = data['data']['checkout_url'] as String;
+          if (!mounted) return;
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => InAppPaymentPage(
+                checkoutUrl: checkoutUrl,
+                txRef: txRef,
+                totalAmount: amount,
+                rootContext: context,
+                popOnlyOnSuccess: true,
+                deliveryType: DeliveryType.pickup,
+              ),
+            ),
+          );
+          if (mounted) await _fetchLatest();
+        } else {
+          throw Exception(data['message'] ?? 'Payment failed');
+        }
+      } else {
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      }
+    } on TimeoutException {
+      ToastHelper.showCustomToast(
+        context,
+        'Connection timeout. Please try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    } catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Payment failed: ${e.toString().replaceAll(RegExp(r'^Exception: '), '')}',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    } finally {
+      if (mounted) setState(() => _paying = false);
+    }
+  }
+
+  static String _normalizePhone(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.length >= 9 &&
+        (digits.startsWith('0') || digits.startsWith('265'))) {
+      final rest = digits.startsWith('265')
+          ? digits.substring(3)
+          : digits.substring(1);
+      return '+265$rest';
+    }
+    return raw.trim().isEmpty ? '+265888000000' : (raw.startsWith('+') ? raw : '+$raw');
+  }
+
+  Future<void> _downloadTripDetails() async {
+    if (_downloading) return;
+    setState(() => _downloading = true);
+    try {
+      final sb = StringBuffer();
+      sb.writeln('Vero 360 – Airport Pickup Trip Details');
+      sb.writeln('══════════════════════════════════════');
+      sb.writeln();
+      sb.writeln('Booking ID: ${_booking.id}');
+      sb.writeln('Status: ${_statusLabel(_booking.status)}');
+      sb.writeln();
+      sb.writeln('Airport: ${_booking.airportName} (${_booking.airportCode})');
+      sb.writeln('City: ${_booking.serviceCity}');
+      sb.writeln('Vehicle: ${_booking.vehicleLabel}');
+      sb.writeln('Distance: ${_booking.distanceKm.toStringAsFixed(1)} km');
+      sb.writeln('Fare: MWK ${_booking.estimatedFare}');
+      if (_booking.dropoffAddressText != null &&
+          _booking.dropoffAddressText!.trim().isNotEmpty) {
+        sb.writeln('Drop-off: ${_booking.dropoffAddressText}');
+      }
+      sb.writeln();
+      sb.writeln('Contact');
+      sb.writeln('Name: ${_booking.customerName ?? '—'}');
+      sb.writeln('Phone: ${_booking.customerPhone ?? '—'}');
+      if (_booking.journeyMessage != null &&
+          _booking.journeyMessage!.trim().isNotEmpty) {
+        sb.writeln();
+        sb.writeln('Driver message: ${_booking.journeyMessage}');
+      }
+      sb.writeln();
+      sb.writeln('Generated: ${DateTime.now().toIso8601String()}');
+
+      await Share.share(
+        sb.toString(),
+        subject: 'Airport Pickup #${_booking.id} – Trip Details',
+      );
+    } catch (e) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Could not share trip details.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
   }
 
   @override
@@ -458,6 +644,34 @@ class _AirportPickupProgressPageState extends State<AirportPickupProgressPage> {
                 ),
               );
             }),
+            if (status == 'pending') ...[
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _paying ? null : _startPayment,
+                  icon: _paying
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.payment, size: 20),
+                  label: Text(_paying ? 'Processing…' : 'Pay MWK ${_booking.estimatedFare}'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ],
             if (_booking.journeyMessage != null &&
                 _booking.journeyMessage!.trim().isNotEmpty) ...[
               const SizedBox(height: 12),
@@ -555,12 +769,34 @@ class _AirportPickupProgressPageState extends State<AirportPickupProgressPage> {
             children: [
               Icon(Icons.flight_takeoff_rounded, color: _brandOrange, size: 22),
               const SizedBox(width: 8),
-              const Text(
-                'Trip details',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF222222),
+              const Expanded(
+                child: Text(
+                  'Trip details',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF222222),
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _downloading ? null : _downloadTripDetails,
+                icon: _downloading
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _brandOrange,
+                        ),
+                      )
+                    : Icon(Icons.download_rounded, size: 20, color: _brandOrange),
+                label: Text(
+                  _downloading ? 'Sharing…' : 'Download',
+                  style: TextStyle(
+                    color: _brandOrange,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],

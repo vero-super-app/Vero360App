@@ -786,6 +786,9 @@ class InAppPaymentPage extends StatefulWidget {
   final Address? shippingAddress;
   /// Delivery type chosen during checkout (needed for pending orders, etc.).
   final DeliveryType deliveryType;
+  /// When true, on payment success only pop the webview (don't navigate to Orders).
+  /// Use for airport pickup and other flows where caller handles post-payment UI.
+  final bool popOnlyOnSuccess;
 
   const InAppPaymentPage({
     super.key,
@@ -798,6 +801,7 @@ class InAppPaymentPage extends StatefulWidget {
     this.cartItemsForMerchantCredit,
     this.shippingAddress,
     this.deliveryType = DeliveryType.cts,
+    this.popOnlyOnSuccess = false,
   });
 
   @override
@@ -1104,6 +1108,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           ),
         );
       }
+    } else if (widget.popOnlyOnSuccess) {
+      if (mounted) Navigator.of(context).pop();
     } else {
       if (mounted) {
         Navigator.of(context).pop(); // close webview

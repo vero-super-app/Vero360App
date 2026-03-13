@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_ride_requests_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_notification_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_notification_popup.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/driver_request_accept_dialog.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 
-/// Global key for tracking which requests have been shown
 final _shownRequestIds = <String>{};
 
-/// Overlay widget that listens to ride requests and shows notifications
 class RideRequestOverlay extends ConsumerStatefulWidget {
   final Widget child;
 
@@ -22,10 +22,11 @@ class RideRequestOverlay extends ConsumerStatefulWidget {
 }
 
 class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
+  DriverRideRequest? _activeRequest;
+
   @override
   void initState() {
     super.initState();
-    // Initialize WebSocket on init, not on every build
     Future.microtask(() {
       if (mounted) {
         try {
@@ -38,22 +39,14 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    // Listen to WebSocket ride requests only once via effect
     ref.listen(
       driverRideRequestsStreamProvider,
       (prev, next) {
         if (!mounted) return;
-        
         try {
           next.whenData((request) {
-            if (!mounted || request == null) return;
-            
+            if (!mounted) return;
             final requestId = request.rideId.toString();
             if (!_shownRequestIds.contains(requestId)) {
               _shownRequestIds.add(requestId);
@@ -66,22 +59,19 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       },
     );
 
-    // Listen to HTTP polling ride requests as fallback
     ref.listen(
       combinedDriverRideRequestsProvider,
       (prev, next) {
         if (!mounted) return;
-        
         try {
           next.whenData((rideList) {
             if (!mounted) return;
-            
             for (final ride in rideList) {
-              if (ride.status == 'pending' && !_shownRequestIds.contains(ride.id)) {
+              final status = ride.status.toLowerCase();
+              if ((status == 'pending' || status == 'requested') &&
+                  !_shownRequestIds.contains(ride.id)) {
                 _shownRequestIds.add(ride.id);
-                if (mounted) {
-                  _handleNewRideRequest(ride);
-                }
+                if (mounted) _showNotification(ride);
               }
             }
           });
@@ -91,12 +81,32 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       },
     );
 
-    return widget.child;
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: Stack(
+        children: [
+          widget.child,
+          if (_activeRequest != null)
+            RideNotificationPopup(
+              key: ValueKey(_activeRequest!.id),
+              rideRequest: _activeRequest!,
+              ref: ref,
+              onDismiss: () {
+                if (mounted) setState(() => _activeRequest = null);
+              },
+              onAccept: () {
+                final request = _activeRequest;
+                if (mounted) setState(() => _activeRequest = null);
+                if (request != null) _openAcceptDialog(request);
+              },
+            ),
+        ],
+      ),
+    );
   }
 
   void _handleNewWebSocketRequest(dynamic request) {
     try {
-      // Create a DriverRideRequest from WebSocket IncomingRideRequest
       final driverRequest = DriverRideRequest(
         id: request.rideId?.toString() ?? DateTime.now().toString(),
         passengerId: '',
@@ -110,38 +120,84 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         status: 'pending',
         createdAt: request.timestamp ?? DateTime.now(),
         estimatedTime: 0,
-        estimatedDistance: (request.searchRadiusKm as num?)?.toDouble() ?? 0.0,
-        estimatedFare: 0.0,
+        estimatedDistance: (request.estimatedDistance as num?)?.toDouble() ?? 0.0,
+        estimatedFare: (request.estimatedFare as num?)?.toDouble() ?? 0.0,
       );
 
-      // Use post-frame callback to ensure context is available
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _showNotification(driverRequest);
-        }
+        if (mounted) _showNotification(driverRequest);
       });
     } catch (e) {
       debugPrint('[RideRequestOverlay] Error processing WebSocket request: $e');
     }
   }
 
-  void _handleNewRideRequest(DriverRideRequest request) {
-    _showNotification(request);
-  }
-
   void _showNotification(DriverRideRequest request) {
-    if (!mounted || !context.mounted) return;
-    
+    if (!mounted) return;
     try {
-      // Add to notification service
       ref.read(rideNotificationServiceProvider).addNotification(request);
-      
-      // Show popup only if still mounted
-      if (mounted && context.mounted) {
-        showRideRequestNotification(context, request, ref);
-      }
+      setState(() => _activeRequest = request);
     } catch (e) {
       debugPrint('[RideRequestOverlay] Error showing notification: $e');
     }
+  }
+
+  void _openAcceptDialog(DriverRideRequest request) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      final navigatorContext = _findNavigatorContext();
+      if (navigatorContext == null) return;
+
+      final driverProfile = ref.read(myDriverProfileProvider);
+      driverProfile.whenData((driver) {
+        if (!mounted) return;
+
+        // Resolve taxiId from the driver's taxis array
+        int? taxiId;
+        final taxis = driver['taxis'];
+        if (taxis is List && taxis.isNotEmpty) {
+          taxiId = (taxis[0]['id'] as num?)?.toInt();
+        }
+
+        try {
+          showDialog(
+            context: navigatorContext,
+            builder: (_) => DriverRequestAcceptDialog(
+              request: request,
+              driverId: (driver['id'] ?? '').toString(),
+              driverName: driver['user']?['name'] ?? driver['name'] ?? 'Driver',
+              driverPhone: driver['user']?['phone'] ?? driver['phone'] ?? '',
+              driverAvatar: driver['user']?['profilepicture'] ?? driver['profilepicture'],
+              taxiId: taxiId,
+              onAccepted: () {
+                ref.read(rideNotificationServiceProvider).removeNotification(request.id);
+                if (navigatorContext.mounted) {
+                  Navigator.pop(navigatorContext);
+                }
+              },
+            ),
+          );
+        } catch (e) {
+          debugPrint('[RideRequestOverlay] Error showing accept dialog: $e');
+        }
+      });
+    });
+  }
+
+  BuildContext? _findNavigatorContext() {
+    BuildContext? navContext;
+    try {
+      void visitor(Element element) {
+        if (navContext != null) return;
+        if (element.widget is Navigator) {
+          navContext = element;
+          return;
+        }
+        element.visitChildren(visitor);
+      }
+      (context as Element).visitChildren(visitor);
+    } catch (_) {}
+    return navContext;
   }
 }

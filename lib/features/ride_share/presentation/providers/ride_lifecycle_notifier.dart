@@ -68,9 +68,28 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
 
   // --------------- Join an existing ride (driver or resume) ---------------
 
-  void subscribeToRide(int rideId) {
+  Future<void> subscribeToRide(int rideId) async {
     if (_activeRideId == rideId && _rideSub != null) return;
     _subscribeToUpdates(rideId);
+
+    // Immediately fetch current ride data so UI doesn't stay empty
+    // while waiting for the first WebSocket event.
+    try {
+      final ride = await _httpService.getRideDetails(rideId);
+      if (state is RideIdle || state is RideRequesting) {
+        if (ride.isCompleted) {
+          state = RideCompleted(ride: ride);
+        } else if (ride.isCancelled) {
+          state = RideCancelled(ride: ride);
+        } else {
+          state = RideActive(ride: ride);
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[RideLifecycle] initial fetch error: $e');
+      }
+    }
   }
 
   // --------------- Driver actions ---------------

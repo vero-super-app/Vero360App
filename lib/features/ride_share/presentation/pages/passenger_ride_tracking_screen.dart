@@ -28,6 +28,7 @@ class _PassengerRideTrackingScreenState
     extends ConsumerState<PassengerRideTrackingScreen> {
   GoogleMapController? _mapController;
   static const Color primaryColor = Color(0xFFFF8A00);
+  bool _hasNavigatedAway = false;
 
   @override
   void initState() {
@@ -75,21 +76,16 @@ class _PassengerRideTrackingScreenState
       _ => null,
     };
 
-    if (lifecycleState is RideCompleted) {
+    if (lifecycleState is RideCompleted && !_hasNavigatedAway) {
+      _hasNavigatedAway = true;
       final r = lifecycleState.ride;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
-              builder: (context) => RideCompletionScreen(
-                baseFare: r.estimatedFare * 0.2,
-                distanceFare: r.estimatedFare * 0.8,
-                totalFare: r.actualFare ?? r.estimatedFare,
-                distance: r.actualDistance ?? r.estimatedDistance,
-                duration: 15,
-                driverName: r.driver?.fullName ?? 'Driver',
-                driverRating: r.driver?.rating ?? 0.0,
-                onPaymentCompleted: () => Navigator.of(context).pop(),
+              builder: (_) => RideCompletionScreen(
+                ride: r,
+                onDone: () => widget.onRideEnded?.call(),
               ),
             ),
           );
@@ -97,7 +93,8 @@ class _PassengerRideTrackingScreenState
       });
     }
 
-    if (lifecycleState is RideCancelled) {
+    if (lifecycleState is RideCancelled && !_hasNavigatedAway) {
+      _hasNavigatedAway = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

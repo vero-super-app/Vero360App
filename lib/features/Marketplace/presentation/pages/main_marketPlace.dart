@@ -851,7 +851,6 @@ bool _aiSearchMode=false;
         if (snapshot.docs.isNotEmpty) {
           final all = snapshot.docs
               .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
-              .where((item) => item.isActive)
               .toList();
 
           if (category == null || category.isEmpty) return all;
@@ -870,7 +869,6 @@ bool _aiSearchMode=false;
 
         final all = snapshot.docs
             .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
-            .where((item) => item.isActive)
             .toList();
 
         if (category == null || category.isEmpty) return all;
@@ -1941,6 +1939,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     final merchant = (item.merchantName ?? '').trim();
     final showCat = cat.isNotEmpty;
     final showMerchant = merchant.isNotEmpty;
+    final isSold = !item.isActive;
 
     return Container(
       clipBehavior: Clip.antiAlias,
@@ -1965,10 +1964,15 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                 Positioned.fill(
                   child: ClipRRect(
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-                    child: _buildItemImageWidget(item),
+                    child: ColorFiltered(
+                      colorFilter: isSold
+                          ? const ColorFilter.mode(Colors.black45, BlendMode.darken)
+                          : const ColorFilter.mode(Colors.transparent, BlendMode.srcOver),
+                      child: _buildItemImageWidget(item),
+                    ),
                   ),
                 ),
-                if (showCat || showMerchant)
+                if (showCat || showMerchant || isSold)
                   Positioned(
                     left: 8,
                     right: 8,
@@ -1982,7 +1986,8 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                               child: _smallBadge(_titleCase(cat)),
                             ),
                           ),
-                        if (showCat && showMerchant) const SizedBox(width: 8),
+                        if ((showCat && showMerchant) || (showCat && isSold) || (showMerchant && isSold))
+                          const SizedBox(width: 8),
                         if (showMerchant)
                           Flexible(
                             child: Align(
@@ -1991,6 +1996,41 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                             ),
                           ),
                       ],
+                    ),
+                  ),
+                if (isSold)
+                  Positioned(
+                    right: -30,
+                    top: 12,
+                    child: Transform.rotate(
+                      angle: -0.7, // diagonal ribbon
+                      child: Container(
+                        width: 120,
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Colors.redAccent, Colors.deepOrange],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'SOLD',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
               ],
@@ -2083,7 +2123,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                     children: [
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: () => _addToCart(item),
+                          onPressed: isSold ? null : () => _addToCart(item),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFFFF8A00),
                             side: const BorderSide(color: Color(0xFFFF8A00)),
@@ -2096,7 +2136,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                       const SizedBox(width: 10),
                       Expanded(
                         child: ElevatedButton(
-                          onPressed: () => _openDetailsPage(item),
+                          onPressed: isSold ? null : () => _openDetailsPage(item),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFFF8A00),
                             foregroundColor: Colors.white,
@@ -2104,7 +2144,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                             padding: const EdgeInsets.symmetric(vertical: 10),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           ),
-                          child: const Text("Buy Now"),
+                          child: Text(isSold ? 'Sold Out' : 'Buy Now'),
                         ),
                       ),
                     ],
@@ -2523,7 +2563,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                                 (context, i) {
                                   final item = items[i];
                                   return GestureDetector(
-                                    onTap: () => _openDetailsPage(item),
+                                    onTap: (!item.isActive) ? null : () => _openDetailsPage(item),
                                     child: _buildMarketItem(item),
                                   );
                                 },

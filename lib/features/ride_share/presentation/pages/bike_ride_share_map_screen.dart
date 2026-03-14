@@ -116,7 +116,6 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
                       rideId: rideIdInt,
                       onRideEnded: () {
                         setState(() => _isLoadingRide = false);
-                        Navigator.pop(context);
                       },
                     ),
                   ),

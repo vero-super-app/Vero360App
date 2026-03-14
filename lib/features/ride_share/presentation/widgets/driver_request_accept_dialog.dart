@@ -95,7 +95,6 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
               rideId: int.tryParse(widget.request.id) ?? 0,
               onRideEnded: () {
                 widget.onAccepted?.call();
-                Navigator.of(context).popUntil((route) => route.isFirst);
               },
             ),
           ),

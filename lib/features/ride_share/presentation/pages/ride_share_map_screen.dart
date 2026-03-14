@@ -126,7 +126,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
           onRideEnded: () {
             ref.read(rideLifecycleProvider.notifier).reset();
             ref.read(cachedRoutePolylineProvider.notifier).state = [];
-            Navigator.pop(context);
           },
         ),
       ),

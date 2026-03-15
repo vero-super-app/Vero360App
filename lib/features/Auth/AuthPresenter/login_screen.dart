@@ -172,6 +172,11 @@ class _LoginScreenState extends State<LoginScreen> {
       if (businessAddress != null && businessAddress.isNotEmpty) {
         await prefs.setString('business_address', businessAddress);
       }
+
+      // Show merchant dashboard guide once when they next open the dashboard.
+      if (prefs.getBool('marketplace_merchant_guide_v1_done') != true) {
+        await prefs.setBool('marketplace_merchant_guide_show_on_next_open', true);
+      }
     }
 
     if (!mounted) return;
@@ -363,10 +368,13 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       // Phone or backend-first: use AuthService (backend + Firebase fallback for email)
       if (!_looksLikeEmail(identifier)) {
+        // For phone: don't show backend error toast yet; try Firebase fallback first, then show one error if both fail.
+        final isPhone = _looksLikePhone(identifier);
         var result = await _authService.loginWithIdentifier(
           identifier,
           password,
           context,
+          showErrorToast: !isPhone,
         );
         if (result != null && mounted) {
           await _handleAuthResult(result);
@@ -374,7 +382,7 @@ class _LoginScreenState extends State<LoginScreen> {
         }
         // Phone-only accounts created on register use Firebase with synthetic email.
         // Try signing in with that when backend doesn't know the phone.
-        if (_looksLikePhone(identifier) && mounted) {
+        if (isPhone && mounted) {
           final authEmail =
               '${_normalizePhoneForAuth(identifier)}@phone.vero360.app';
           try {
@@ -395,6 +403,14 @@ class _LoginScreenState extends State<LoginScreen> {
               return;
             }
           } on FirebaseAuthException catch (_) {}
+        }
+        if (mounted && isPhone) {
+          ToastHelper.showCustomToast(
+            context,
+            'Incorrect phone number or password.',
+            isSuccess: false,
+            errorMessage: '',
+          );
         }
         return;
       }
@@ -496,6 +512,32 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // -------------------- Social sign-in via Firebase (no platform lock) --------------------
 
+  static String _googleSignInErrorMessage(Object e) {
+    if (e is FirebaseAuthException) {
+      switch (e.code) {
+        case 'network-request-failed':
+          return 'Network error. Check your connection and try again.';
+        case 'user-disabled':
+          return 'This account has been disabled.';
+        case 'too-many-requests':
+          return 'Too many attempts. Try again later.';
+        default:
+          return e.message?.trim().isNotEmpty == true
+              ? e.message!
+              : 'Google sign-in failed. Please try again.';
+      }
+    }
+    final msg = e.toString();
+    if (msg.contains('network') ||
+        msg.contains('connection') ||
+        msg.contains('hostname') ||
+        msg.contains('unreachable') ||
+        msg.contains('UNAVAILABLE')) {
+      return 'Network error. Check your connection and try again.';
+    }
+    return msg.length > 80 ? 'Google sign-in failed. Please try again.' : msg;
+  }
+
   Future<void> _google() async {
     setState(() => _socialLoading = true);
     // Show progress feedback right when user taps Google.
@@ -510,7 +552,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (user == null) {
         ToastHelper.showCustomToast(
           context,
-          'login failed check your internet connection.',
+          'Google sign-in cancelled or failed.',
           isSuccess: false,
           errorMessage: '',
         );
@@ -530,11 +572,12 @@ class _LoginScreenState extends State<LoginScreen> {
       // Warm up Firestore profile in the background (non-blocking).
       _buildResultFromUser(user);
     } catch (e) {
+      if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Google sign-in failed.',
+        _googleSignInErrorMessage(e),
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     } finally {
       if (mounted) setState(() => _socialLoading = false);
@@ -688,8 +731,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
                               decoration: _fieldDecoration(
-                                label: 'Email or phone number',
-                                hint: 'you@vero.com or +265...',
+                                label: 'phone number or email',
+                                hint: '09xxxxxxxx or you@vero.com',
                                 icon: Icons.person_outline,
                               ),
                               validator: (v) {

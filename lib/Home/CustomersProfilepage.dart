@@ -144,20 +144,53 @@ class _ProfilePageState extends State<ProfilePage> {
         '';
   }
 
+  /// True if [s] looks like a phone number (digits only or +digits), not a display name.
+  bool _looksLikePhoneNumber(String? s) {
+    if (s == null || s.trim().isEmpty) return true;
+    final t = s.trim().replaceAll(RegExp(r'[\s\-\(\)]'), '');
+    return RegExp(r'^\+?\d+$').hasMatch(t);
+  }
+
   Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
     final prefs = await SharedPreferences.getInstance();
 
     // API might return either root fields or inside { user: {...} }
     final user = (data['user'] is Map) ? (data['user'] as Map) : data;
 
-    final userName = (user['name'] ??
+    var userName = (user['name'] ??
             _joinName(user['firstName'], user['lastName'], fallback: ''))
-        .toString();
-    final emailVal = (user['email'] ?? user['userEmail'] ?? '').toString();
-    var phoneVal = (user['phone'] ?? user['phoneNumber'] ?? user['mobile'] ?? '').toString().trim();
+        .toString()
+        .trim();
+    // If API returns phone as "name", keep existing prefs name so profile shows real name, not number.
+    if (userName.isEmpty || _looksLikePhoneNumber(userName)) {
+      userName = prefs.getString('fullName') ?? prefs.getString('name') ?? '';
+    }
+
+    var emailVal = (user['email'] ?? user['userEmail'] ?? '').toString().trim();
+    // Hide synthetic phone-based login email on profile card.
+    if (emailVal.toLowerCase().endsWith('@phone.vero360.app')) {
+      emailVal = '';
+    }
+
+    var phoneVal =
+        (user['phone'] ?? user['phoneNumber'] ?? user['mobile'] ?? '')
+            .toString()
+            .trim();
     if (_isFirebaseInternalPhone(phoneVal)) phoneVal = '';
-    final picVal =
-        (user['profilepicture'] ?? user['profilePicture'] ?? user['photoURL'] ?? user['photoUrl'] ?? '').toString();
+    // If backend doesn't send phone, keep previously stored phone (from login) so it doesn't become "No phone number".
+    if (phoneVal.isEmpty) {
+      final existingPhone = prefs.getString('phone') ?? '';
+      if (!_isFirebaseInternalPhone(existingPhone)) {
+        phoneVal = existingPhone;
+      }
+    }
+
+    final picVal = (user['profilepicture'] ??
+            user['profilePicture'] ??
+            user['photoURL'] ??
+            user['photoUrl'] ??
+            '')
+        .toString();
 
     String addr = 'No Address';
     final addresses = user['addresses'];
@@ -173,9 +206,9 @@ class _ProfilePageState extends State<ProfilePage> {
     }
 
     setState(() {
-      name = userName.trim().isEmpty ? 'Guest User' : userName.trim();
-      email = emailVal.trim().isEmpty ? 'No Email' : emailVal.trim();
-      phone = phoneVal.trim().isEmpty ? 'No Phone' : phoneVal.trim();
+      name = userName.isEmpty ? 'Guest User' : userName;
+      email = emailVal.isEmpty ? 'No Email' : emailVal;
+      phone = phoneVal.isEmpty ? 'No Phone' : phoneVal;
       address = (addr.trim().isEmpty) ? 'No Address' : addr.trim();
       profileUrl = picVal;
     });

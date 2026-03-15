@@ -691,7 +691,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     if (ctx.mounted) Navigator.pop(ctx);
                     ToastHelper.showCustomToast(
                       context,
-                      _t('Language set to English. Restart app for full effect.', 'Chilankhulo chasankhidwa Chingerezi. Tsegulani pulogalamu kachiwiri kuti zitha.'),
+                      _t('Language set to English.', 'Chilankhulo chasankhidwa Chingerezi..'),
                       isSuccess: true,
                       errorMessage: '',
                     );
@@ -710,7 +710,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     if (ctx.mounted) Navigator.pop(ctx);
                     ToastHelper.showCustomToast(
                       context,
-                      _t('Language set to Chichewa. Restart app for full effect.', 'Chilankhulo chasankhidwa Chichewa. Tsegulani pulogalamu kachiwiri kuti zitha.'),
+                      _t('Language set to Chichewa. ', 'Chilankhulo chasankhidwa Chichewa.'),
                       isSuccess: true,
                       errorMessage: '',
                     );
@@ -850,7 +850,10 @@ class _SettingsPageState extends State<SettingsPage> {
                     subject: _t('Support request', 'Kufuna thandizo'),
                     body: _t('Hi, I need help with...', 'Moni, ndikufuna thandizo pa...'));
               },
+              
             ),
+              
+            
             const SizedBox(height: 8),
           ],
         ),
@@ -886,6 +889,17 @@ class _SettingsPageState extends State<SettingsPage> {
       },
     );
     await launchUrl(uri);
+  }
+
+  /// Opens the default email app with a pre-filled bug report (subject + app version + placeholder for description).
+  Future<void> _reportBug() async {
+    _maybeHaptic();
+    final subject = _t('Bug report - Vero360', 'Vuto la pulogalamu - Vero360');
+    final body = _t(
+      'Please describe the problem or what went wrong:\n\n\n---\nApp version: $_appVersion (build $_buildNumber)',
+      'Chonde fotokozani vuto kapena chimene chinachitika:\n\n\n---\nMtundu wa pulogalamu: $_appVersion (build $_buildNumber)',
+    );
+    await _launchEmail(_supportEmail, subject: subject, body: body);
   }
 
   Future<void> _launchWhatsApp(String phone, String message) async {
@@ -964,6 +978,124 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// Deletes the Firebase Auth user. If Firebase requires recent login, prompts for password and re-authenticates, then deletes.
+  /// Returns true if the Firebase user was deleted (or was already gone), false if user cancelled or reauth failed.
+  Future<bool> _deleteFirebaseUserWithReauth(User u) async {
+    try {
+      await u.delete();
+      return true;
+    } on FirebaseAuthException catch (e) {
+      if (e.code != 'requires-recent-login') {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            _t('Delete failed', 'Kuchotsa kudagonjetsedwa'),
+            isSuccess: false,
+            errorMessage: e.message ?? 'Could not delete account.',
+          );
+        }
+        return false;
+      }
+
+      // Require password to re-authenticate, then delete
+      final prefs = await SharedPreferences.getInstance();
+      final email = u.email?.trim() ?? prefs.getString('email')?.trim() ?? '';
+      if (email.isEmpty) {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            _t('Please sign in again to delete your account', 'Chonde lowani kachiwiri kuti muchotse akaunti'),
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+        return false;
+      }
+
+      final password = await _showPasswordDialogForDelete();
+      if (password == null || password.isEmpty || !mounted) return false;
+
+      try {
+        final cred = EmailAuthProvider.credential(
+          email: email,
+          password: password,
+        );
+        await u.reauthenticateWithCredential(cred);
+        await u.delete();
+        return true;
+      } on FirebaseAuthException catch (reauthE) {
+        if (mounted) {
+          final msg = reauthE.code == 'wrong-password' ||
+                  reauthE.code == 'invalid-credential'
+              ? _t('Wrong password', 'Password yolakwika')
+              : (reauthE.message ?? _t('Delete failed', 'Kuchotsa kudagonjetsedwa'));
+          ToastHelper.showCustomToast(context, msg, isSuccess: false, errorMessage: '');
+        }
+        return false;
+      }
+    } catch (e) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Delete failed', 'Kuchotsa kudagonjetsedwa'),
+          isSuccess: false,
+          errorMessage: e.toString(),
+        );
+      }
+      return false;
+    }
+  }
+
+  /// Shows a dialog asking for the user's password to confirm account deletion. Returns the password or null if cancelled.
+  Future<String?> _showPasswordDialogForDelete() async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(_t('Confirm your password', 'Lembetsani password yanu')),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _t('Enter your password to permanently delete your account.', 'Ingizani password yanu kuti muchotse akaunti yanu mwamuyaya.'),
+                style: const TextStyle(height: 1.35),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                obscureText: true,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: _t('Password', 'Password'),
+                  border: const OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => Navigator.pop(ctx, controller.text.trim()),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(_t('Cancel', 'Lekani')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: Text(_t('Delete account', 'Chotsani akaunti'),
+                style: const TextStyle(fontWeight: FontWeight.w900)),
+          ),
+        ],
+      ),
+    );
+    // Defer dispose until after the dialog is fully closed to avoid "used after being disposed".
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    return result;
+  }
+
   // ---------- DELETE ACCOUNT ----------
   Future<void> _deleteAccount() async {
     _maybeHaptic();
@@ -1012,23 +1144,15 @@ class _SettingsPageState extends State<SettingsPage> {
           }
         } catch (_) {}
 
-        // 3) Delete Firebase auth user
-        try {
-          await u.delete();
-        } on FirebaseAuthException catch (e) {
-          if (e.code == 'requires-recent-login') {
-        if (mounted) {
-              ToastHelper.showCustomToast(
-                context,
-                _t('Please login again', 'Chonde lowani kachiwiri'),
-                isSuccess: false,
-                errorMessage: 'Login again then try deleting your account.',
-              );
-            }
-            await AuthService().logout(context: context);
-            return;
+        // 3) Delete Firebase Auth user (with re-auth if required)
+        final deleted = await _deleteFirebaseUserWithReauth(u);
+        if (!deleted) {
+          if (mounted) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _refreshing = false);
+            });
           }
-          rethrow;
+          return;
         }
       }
 
@@ -1052,10 +1176,14 @@ class _SettingsPageState extends State<SettingsPage> {
         (route) => route.isFirst,
       );
     } catch (_) {
-      ToastHelper.showCustomToast(context, _t('Delete failed', 'Kuchotsa kudagonjetsedwa'),
+      ToastHelper.showCustomToast(context, _t('Delete failed', 'Kuchotsa kwakanika'),
           isSuccess: false, errorMessage: '');
     } finally {
-      if (mounted) setState(() => _refreshing = false);
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _refreshing = false);
+        });
+      }
     }
   }
 
@@ -1167,6 +1295,13 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: _t('Customer service', 'Thandizo la makasitomala'),
                   subtitle: _t('Call, WhatsApp, or email', 'Imbani, WhatsApp, kapena imelo'),
                   onTap: _openCustomerService,
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.bug_report_outlined,
+                  title: _t('Report a bug', 'Lemberani vuto'),
+                  subtitle: _t('Send us a problem or feedback', 'Titumizireni vuto kapena malingaliro'),
+                  onTap: _reportBug,
                 ),
               ]),
               const SizedBox(height: 14),

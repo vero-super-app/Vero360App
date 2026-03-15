@@ -299,6 +299,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await prefs.setString('uid', uid);
     }
 
+    // Show merchant dashboard guide once when they next open the dashboard (after register).
+    if (role == 'merchant' && prefs.getBool('marketplace_merchant_guide_v1_done') != true) {
+      await prefs.setBool('marketplace_merchant_guide_show_on_next_open', true);
+    }
+
     if (!mounted) return;
 
     if (role == 'merchant') {
@@ -750,6 +755,32 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // ---------- Social signup/login via Firebase (no platform lock) ----------
 
+  static String _googleSignInErrorMessage(Object e) {
+    if (e is FirebaseAuthException) {
+      switch (e.code) {
+        case 'network-request-failed':
+          return 'Network error. Check your connection and try again.';
+        case 'user-disabled':
+          return 'This account has been disabled.';
+        case 'too-many-requests':
+          return 'Too many attempts. Try again later.';
+        default:
+          return e.message?.trim().isNotEmpty == true
+              ? e.message!
+              : 'Google sign-in failed. Please try again.';
+      }
+    }
+    final msg = e.toString();
+    if (msg.contains('network') ||
+        msg.contains('connection') ||
+        msg.contains('hostname') ||
+        msg.contains('unreachable') ||
+        msg.contains('UNAVAILABLE')) {
+      return 'Network error. Check your connection and try again.';
+    }
+    return msg.length > 80 ? 'Google sign-in failed. Please try again.' : msg;
+  }
+
   Future<void> _google() async {
     if (!_canProceedWithSocialSignIn()) return;
     setState(() => _socialLoading = true);
@@ -763,6 +794,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
           errorMessage: '',
         );
         return;
+      }
+
+      // If this Google account already has a profile in Firestore, treat it
+      // as an existing account and ask the user to sign in instead of
+      // creating a duplicate via the register screen.
+      try {
+        final snap = await _firestore.collection('users').doc(user.uid).get();
+        if (snap.exists) {
+          await _auth.signOut();
+          if (!mounted) return;
+          ToastHelper.showCustomToast(
+            context,
+            'Account already exists. Please sign in.',
+            isSuccess: false,
+            errorMessage: '',
+          );
+          return;
+        }
+      } catch (_) {
+        // If this check fails, continue with normal flow to avoid blocking login.
       }
 
       // Build a lightweight result so we can navigate immediately.
@@ -785,11 +836,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         });
       });
     } catch (e) {
+      if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Google sign-in failed.',
+        _googleSignInErrorMessage(e),
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     } finally {
       if (mounted) setState(() => _socialLoading = false);
@@ -809,6 +861,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
           errorMessage: '',
         );
         return;
+      }
+
+      // Prevent duplicate Apple-based accounts from the register screen.
+      try {
+        final snap = await _firestore.collection('users').doc(user.uid).get();
+        if (snap.exists) {
+          await _auth.signOut();
+          if (!mounted) return;
+          ToastHelper.showCustomToast(
+            context,
+            'Account already exists. Please sign in.',
+            isSuccess: false,
+            errorMessage: '',
+          );
+          return;
+        }
+      } catch (_) {
+        // Ignore and continue with normal flow on failure.
       }
 
       // Build a lightweight result so we can navigate immediately.
@@ -1009,6 +1079,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     _selectedMerchantService = null;
                                   }),
                                 ),
+                                 ChoiceChip(
+                                  label: const Text('Merchant'),
+                                  selected: _role == UserRole.merchant,
+                                  onSelected: (_) =>
+                                      setState(() => _role = UserRole.merchant),
+                                ),
                                 ChoiceChip(
                                   label: const Text('Driver'),
                                   selected: _role == UserRole.driver,
@@ -1019,12 +1095,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     _selectedMerchantService = null;
                                   }),
                                 ),
-                                ChoiceChip(
-                                  label: const Text('Merchant'),
-                                  selected: _role == UserRole.merchant,
-                                  onSelected: (_) =>
-                                      setState(() => _role = UserRole.merchant),
-                                ),
+                               
                               ],
                             ),
                             const SizedBox(height: 16),
@@ -1060,8 +1131,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
                               decoration: _dec(
-                                label: 'Email or phone number',
-                                hint: 'you@example.com or 09xxxxxxxx',
+                                label: ' phone number or email',
+                                hint: ' 09xxxxxxxx or you@vero.com',
                                 icon: Icons.contact_mail_outlined,
                               ),
                               validator: _validateIdentifier,

@@ -267,11 +267,13 @@ class AuthService {
 
   // -------------------- Login (Backend first, Firebase fallback for email) --------------------
 
+  /// When [showErrorToast] is false, errors are not shown (caller may try Firebase fallback and show one error).
   Future<Map<String, dynamic>?> loginWithIdentifier(
     String identifier,
     String password,
-    BuildContext context,
-  ) async {
+    BuildContext context, {
+    bool showErrorToast = true,
+  }) async {
     final trimmedId = identifier.trim();
 
     try {
@@ -343,7 +345,7 @@ class AuthService {
         );
         if (fb != null) return fb;
       }
-      _toast(context, e.message, ok: false);
+      if (showErrorToast) _toast(context, e.message, ok: false);
       return null;
     } catch (e) {
       if (trimmedId.contains('@')) {
@@ -354,9 +356,11 @@ class AuthService {
         );
         if (fb != null) return fb;
       }
-      _toast(context,
-          _looksLikeServerDown(e) ? 'Server unreachable.' : 'Login failed.',
-          ok: false);
+      if (showErrorToast) {
+        _toast(context,
+            _looksLikeServerDown(e) ? 'Server unreachable.' : 'Login failed.',
+            ok: false);
+      }
       return null;
     }
   }

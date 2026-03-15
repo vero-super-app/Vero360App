@@ -851,6 +851,7 @@ bool _aiSearchMode=false;
         if (snapshot.docs.isNotEmpty) {
           final all = snapshot.docs
               .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
+              .where((item) => item.isActive)
               .toList();
 
           if (category == null || category.isEmpty) return all;
@@ -869,6 +870,7 @@ bool _aiSearchMode=false;
 
         final all = snapshot.docs
             .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
+            .where((item) => item.isActive)
             .toList();
 
         if (category == null || category.isEmpty) return all;

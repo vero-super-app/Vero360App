@@ -178,7 +178,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
           markerId: const MarkerId('driver'),
           position: widget.driverLocation!,
           infoWindow: InfoWindow(title: widget.driverLabel ?? 'Your Driver'),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          icon:
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
         ),
       );
     }
@@ -437,8 +438,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   /// Update taxi markers on the map from nearby taxis data
   void _updateTaxiMarkers(List<NearbyTaxi> taxis) {
     // Remove old taxi markers (keep user, pickup, dropoff, route)
-    _markers
-        .removeWhere((marker) => marker.markerId.value.startsWith('taxi_'));
+    _markers.removeWhere((marker) => marker.markerId.value.startsWith('taxi_'));
 
     // Add new taxi markers
     for (final taxi in taxis) {
@@ -448,8 +448,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
           position: LatLng(taxi.latitude, taxi.longitude),
           infoWindow: InfoWindow(
             title: '${taxi.make} ${taxi.model}',
-            snippet:
-                '${taxi.distance.toStringAsFixed(1)}km • ⭐${taxi.rating}',
+            snippet: '${taxi.distance.toStringAsFixed(1)}km • ⭐${taxi.rating}',
           ),
           icon: _getTaxiMarkerIcon(taxi.taxiClass),
         ),
@@ -530,7 +529,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
       initialCameraPosition: _initialCameraPosition,
       markers: _markers,
       polylines: _polylines,
-      mapType: _mapType,
+      mapType: MapType.hybrid,
       style: _mapStyleJson,
       myLocationEnabled: true,
       myLocationButtonEnabled: true,
@@ -543,6 +542,6 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   @override
   void dispose() {
     _mapController.dispose();
-      super.dispose();
+    super.dispose();
   }
 }

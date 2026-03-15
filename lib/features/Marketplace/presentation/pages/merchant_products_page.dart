@@ -882,6 +882,22 @@ class _MerchantProfileCard extends StatelessWidget {
 
   static const Color _brandOrange = Color(0xFFFF8A00);
 
+  ImageProvider? _profileImageProvider() {
+    final raw = profileUrl?.trim() ?? '';
+    if (raw.isEmpty) return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      return NetworkImage(raw);
+    }
+    // Try base64 (same pattern as dashboard)
+    try {
+      final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+      final bytes = base64Decode(base64Part);
+      return MemoryImage(bytes);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Color _statusColor(String s) {
     switch (s.toLowerCase()) {
       case 'verified':
@@ -901,7 +917,8 @@ class _MerchantProfileCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final effectiveStatus = status?.isNotEmpty == true ? status! : 'pending';
-    final hasPhoto = profileUrl != null && profileUrl!.trim().isNotEmpty;
+    final img = _profileImageProvider();
+    final hasPhoto = img != null;
     final emailStr = email?.trim().isNotEmpty == true ? email! : null;
     final phoneStr = phone?.trim().isNotEmpty == true ? phone! : null;
 
@@ -929,7 +946,7 @@ class _MerchantProfileCard extends StatelessWidget {
               CircleAvatar(
                 radius: 32,
                 backgroundColor: Colors.grey.shade200,
-                backgroundImage: hasPhoto ? NetworkImage(profileUrl!) : null,
+                backgroundImage: img,
                 child: hasPhoto
                     ? null
                     : const Icon(Icons.storefront_rounded,

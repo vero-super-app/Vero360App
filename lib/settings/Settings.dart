@@ -1520,6 +1520,20 @@ class AboutUsPage extends StatelessWidget {
               ),
 
               const SizedBox(height: 20),
+              const Text(
+                'Our Values',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Innovation · Reliability · Security ·Accessibility · Customer-Centricity',
+                style: TextStyle(height: 1.4),
+              ),
+
+              const SizedBox(height: 20),
 
               // App version
               Container(

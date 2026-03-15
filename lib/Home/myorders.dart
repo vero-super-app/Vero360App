@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -38,6 +41,11 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   /// Backend may not support ?status=, so we filter client-side.
   late Future<List<OrderItem>> _ordersFuture;
 
+  // Backup path: when we see confirmed + paid marketplace orders that expose
+  // itemSqlId, mark those listings as sold so they disappear from shelves.
+  final MarketplaceService _marketplaceService = MarketplaceService();
+  final Set<String> _syncedSoldOrders = <String>{};
+
   @override
   void initState() {
     super.initState();
@@ -49,7 +57,15 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     if (!mounted) return;
     setState(() => _ordersFuture = _svc.getMyOrders());
     try {
-      await _ordersFuture;
+      final orders = await _ordersFuture;
+      for (final o in orders) {
+        if (o.itemSqlId == null) continue;
+        if (o.status != OrderStatus.confirmed) continue;
+        if (o.paymentStatus != PaymentStatus.paid) continue;
+        if (_syncedSoldOrders.contains(o.id)) continue;
+        _syncedSoldOrders.add(o.id);
+        unawaited(_marketplaceService.markItemSold(o.itemSqlId!));
+      }
     } catch (_) {
       // Error shown by FutureBuilder
     }
@@ -248,12 +264,33 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                             ),
                           ),
                           const SizedBox(height: 2),
-                          Text(
-                            'Order: ${o.orderNumber}',
-                            style: const TextStyle(
-                              color: Color(0xFF6B778C),
-                              fontWeight: FontWeight.w600,
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Order: ${o.orderNumber}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF6B778C),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.copy, size: 18, color: Color(0xFF6B778C)),
+                                tooltip: 'Copy order number',
+                                onPressed: () async {
+                                  await Clipboard.setData(ClipboardData(text: o.orderNumber));
+                                  if (!mounted) return;
+                                  ToastHelper.showCustomToast(
+                                    context,
+                                    'Order number copied',
+                                    isSuccess: true,
+                                    errorMessage: '',
+                                  );
+                                },
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -448,6 +485,13 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         backgroundColor: Colors.white,
         foregroundColor: const Color(0xFF222222),
         title: const Text('My Orders'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh orders',
+            onPressed: _reloadCurrent,
+          ),
+        ],
         centerTitle: true,
         bottom: TabBar(
           controller: _tab,

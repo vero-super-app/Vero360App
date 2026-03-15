@@ -31,12 +31,27 @@ OrderCategory orderCategoryFrom(String? v) {
 
 PaymentStatus paymentStatusFrom(String? v) {
   final s = (v ?? '').toLowerCase().trim();
-  switch (s) {
-    case 'paid':    return PaymentStatus.paid;
-    case 'pending': return PaymentStatus.pending;
-    case 'unpaid':
-    default:        return PaymentStatus.unpaid;
+
+  // Treat common “success” variants (PayChangu, backend enums, etc.) as PAID
+  if (s == 'paid' ||
+      s == 'success' ||
+      s == 'successful' ||
+      s == 'completed' ||
+      s == 'complete' ||
+      s == 'paid_out') {
+    return PaymentStatus.paid;
   }
+
+  // Explicit pending / processing states
+  if (s == 'pending' ||
+      s == 'processing' ||
+      s == 'awaiting_payment' ||
+      s == 'awaiting') {
+    return PaymentStatus.pending;
+  }
+
+  // Fallback – anything else counts as unpaid
+  return PaymentStatus.unpaid;
 }
 
 class OrderItem {
@@ -50,6 +65,10 @@ class OrderItem {
   final String description;
   final OrderStatus status;
   final PaymentStatus paymentStatus;
+
+  /// Optional numeric marketplace listing id (SQL id) if backend includes it,
+  /// e.g. ItemId / itemId. Used to mark items as sold automatically.
+  final int? itemSqlId;
 
   // Merchant
   final int merchantId;
@@ -78,6 +97,7 @@ class OrderItem {
     required this.status,
     required this.paymentStatus,
     required this.merchantId,
+    this.itemSqlId,
     this.merchantName,
     this.merchantPhone,
     this.merchantAvgRating,
@@ -107,15 +127,22 @@ class OrderItem {
     final qty   = int.tryParse((_first(m, ['Quantity','quantity']) ?? 1).toString()) ?? 1;
     final desc  = _first<String>(m, ['Description','description']) ?? '';
     final stat  = orderStatusFrom(_first<String>(m, ['Status','status']));
-    // Be tolerant of different backend payment keys.
-    final pay   = paymentStatusFrom(_first<String>(m, [
+    // Be tolerant of different backend payment keys and value types (string / number / bool).
+    final rawPay = _first(m, [
       'paymentStatus',
       'PaymentStatus',
       'payment_status',
       'Payment_status',
       'payment',
       'Payment',
-    ]));
+    ]);
+    final pay   = paymentStatusFrom(rawPay?.toString());
+
+    // Optional: marketplace listing id from backend
+    final rawItemId = _first(m, ['ItemId', 'itemId', 'listingId', 'ListingId']);
+    final parsedItemId = rawItemId != null
+        ? int.tryParse(rawItemId.toString())
+        : null;
 
     // merchant block
     int merchId = int.tryParse((_first(m, ['merchantId','MerchantId']) ?? 0).toString()) ?? 0;
@@ -157,6 +184,7 @@ class OrderItem {
       status: stat,
       paymentStatus: pay,
       merchantId: merchId,
+      itemSqlId: parsedItemId,
       merchantName: merchName,
       merchantPhone: merchPhone,
       merchantAvgRating: merchAvg,

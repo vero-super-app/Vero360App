@@ -23,6 +23,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 // HTTP + prefs
 import 'package:http/http.dart' as http;
+import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Pages
@@ -601,16 +602,20 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late final AppLinks _appLinks;
   StreamSubscription<Uri>? _sub;
 
   // Which shell we’re currently showing
   String _currentShell = 'customer';
 
+  bool _showBiometricLock = false;
+  AppLifecycleState? _lastLifecycleState;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initDeepLinks();
 
     SchedulerBinding.instance.addPostFrameCallback((_) async {
@@ -637,7 +642,38 @@ class _MyAppState extends State<MyApp> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasInBackground = _lastLifecycleState == AppLifecycleState.paused ||
+        _lastLifecycleState == AppLifecycleState.inactive;
+    _lastLifecycleState = state;
+    if (state == AppLifecycleState.resumed && wasInBackground) {
+      _checkBiometricLockOnResume();
+    }
+  }
+
+  Future<void> _checkBiometricLockOnResume() async {
+    if (kIsWeb) return;
+    if (defaultTargetPlatform != TargetPlatform.iOS &&
+        defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final enabled = prefs.getBool('pref_biometric_lock') ?? false;
+      if (!enabled || !mounted) return;
+      final auth = LocalAuthentication();
+      final canCheck = await auth.canCheckBiometrics;
+      final hasBiometrics = await auth.getAvailableBiometrics();
+      if (!canCheck || hasBiometrics.isEmpty) return;
+      if (mounted) setState(() => _showBiometricLock = true);
+    } catch (_) {}
+  }
+
+  void _onBiometricUnlockSuccess() {
+    if (mounted) setState(() => _showBiometricLock = false);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     super.dispose();
   }
@@ -910,11 +946,20 @@ class _MyAppState extends State<MyApp> {
           colorSchemeSeed: const Color(0xFFFF8A00),
         ),
 
-        // ✅ Wrap app shell with RideRequestOverlay
+        // ✅ Wrap app shell with RideRequestOverlay; show biometric lock when enabled and returning to app
         builder: (context, child) {
-          return RideRequestOverlay(
+          Widget content = RideRequestOverlay(
             child: child ?? const SizedBox.shrink(),
           );
+          if (_showBiometricLock) {
+            content = Stack(
+              children: [
+                content,
+                _BiometricLockOverlay(onUnlock: _onBiometricUnlockSuccess),
+              ],
+            );
+          }
+          return content;
         },
 
         // ✅ keep public home
@@ -961,6 +1006,112 @@ class _MyAppState extends State<MyApp> {
               return null;
           }
         },
+      ),
+    );
+  }
+}
+
+/// Full-screen overlay shown when app lock (Face ID / fingerprint) is enabled and user returns to app.
+class _BiometricLockOverlay extends StatefulWidget {
+  final VoidCallback onUnlock;
+
+  const _BiometricLockOverlay({required this.onUnlock});
+
+  @override
+  State<_BiometricLockOverlay> createState() => _BiometricLockOverlayState();
+}
+
+class _BiometricLockOverlayState extends State<_BiometricLockOverlay> {
+  String _label = 'Unlock';
+  bool _authenticating = false;
+
+  Future<void> _authenticate() async {
+    if (_authenticating) return;
+    setState(() => _authenticating = true);
+    try {
+      final auth = LocalAuthentication();
+      final canCheck = await auth.canCheckBiometrics;
+      final available = await auth.getAvailableBiometrics();
+      if (!canCheck || available.isEmpty) {
+        if (mounted) setState(() => _authenticating = false);
+        return;
+      }
+      final isFace = available.contains(BiometricType.face);
+      final isFinger = available.contains(BiometricType.fingerprint);
+      final reason = isFace && isFinger
+          ? 'Unlock Vero360 with Face ID or fingerprint'
+          : isFace
+              ? 'Unlock Vero360 with Face ID'
+              : 'Unlock Vero360 with fingerprint';
+      final success = await auth.authenticate(
+        localizedReason: reason,
+        options: const AuthenticationOptions(
+          stickyAuth: true,
+          useErrorDialogs: true,
+        ),
+      );
+      if (success && mounted) widget.onUnlock();
+    } catch (_) {}
+    if (mounted) setState(() => _authenticating = false);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _authenticate());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.fingerprint,
+                  size: 80,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'App locked',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Use Face ID or fingerprint to unlock',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 32),
+                FilledButton.icon(
+                  onPressed: _authenticating ? null : _authenticate,
+                  icon: _authenticating
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.fingerprint),
+                  label: Text(_authenticating ? 'Checking…' : _label),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

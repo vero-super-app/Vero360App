@@ -2,7 +2,6 @@
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart'
     show kDebugMode, kIsWeb, defaultTargetPlatform, TargetPlatform, debugPrint;
@@ -138,12 +137,19 @@ class NotificationService {
     // 6. FCM token: register with backend (if user logged in)
     final token = await messaging.getToken();
     if (token != null) {
-      if (kDebugMode) debugPrint("FCM Token: $token");
+      if (kDebugMode) {
+        // Avoid logging the raw FCM token; just log a non-sensitive summary.
+        debugPrint(
+            "FCM token acquired (length=${token.length}, hash=${token.hashCode})");
+      }
       await _registerTokenWithBackend(token);
     }
 
     messaging.onTokenRefresh.listen((newToken) async {
-      if (kDebugMode) debugPrint("FCM token refreshed: $newToken");
+      if (kDebugMode) {
+        debugPrint(
+            "FCM token refreshed (length=${newToken.length}, hash=${newToken.hashCode})");
+      }
       await _registerTokenWithBackend(newToken);
     });
 
@@ -195,10 +201,10 @@ class NotificationService {
       if (res.statusCode >= 200 && res.statusCode < 300) {
         if (kDebugMode) debugPrint("FCM token registered with backend ✅");
       } else if (kDebugMode) {
-        debugPrint("FCM token register failed: ${res.statusCode} ${res.body}");
+        debugPrint("FCM token register failed: ${res.statusCode}");
       }
     } catch (e) {
-      if (kDebugMode) debugPrint("FCM token register error: $e");
+      if (kDebugMode) debugPrint("FCM token register error");
     }
   }
 
@@ -212,7 +218,7 @@ class NotificationService {
     final data = message.data;
     final title = notification?.title ?? data['title'] as String? ?? 'Vero360';
     final body = notification?.body ?? data['body'] as String? ?? 'New notification';
-    debugPrint("Foreground FCM: $title / $body");
+    if (kDebugMode) debugPrint("Foreground FCM received");
 
     final id = message.messageId ?? 'fcm_${message.hashCode}_${DateTime.now().millisecondsSinceEpoch}';
     try {
@@ -223,7 +229,7 @@ class NotificationService {
         payload: data,
       );
     } catch (e) {
-      debugPrint("NotificationStore add failed: $e");
+      if (kDebugMode) debugPrint("NotificationStore add failed");
     }
 
     final notificationId = message.hashCode.abs();
@@ -240,7 +246,7 @@ class NotificationService {
         interactive: interactive,
       );
     } catch (e) {
-      debugPrint("Show local notification failed: $e");
+      if (kDebugMode) debugPrint("Show local notification failed");
     }
   }
 
@@ -257,13 +263,13 @@ class NotificationService {
   }
 
   void _handleMessageOpenedApp(RemoteMessage message) {
-    debugPrint("Notification tap from background: ${message.messageId}");
+    if (kDebugMode) debugPrint("Notification tap from background");
     _addToStoreIfNeeded(message);
     _navigateBasedOnPayload(message.data);
   }
 
   void _handleInitialMessage(RemoteMessage message) {
-    debugPrint("Launched from terminated via notification: ${message.messageId}");
+    if (kDebugMode) debugPrint("Launched from terminated via notification");
     _addToStoreIfNeeded(message);
     _navigateBasedOnPayload(message.data);
   }
@@ -285,7 +291,7 @@ class NotificationService {
       try {
         data = jsonDecode(response.payload!) as Map<String, dynamic>;
       } catch (e) {
-        debugPrint("Invalid notification payload: $e");
+        if (kDebugMode) debugPrint("Invalid notification payload");
       }
     }
 
@@ -339,10 +345,10 @@ class NotificationService {
           payload: null,
         );
       } else if (kDebugMode) {
-        debugPrint("Notification reply failed: ${res.statusCode} ${res.body}");
+        debugPrint("Notification reply failed: ${res.statusCode}");
       }
     } catch (e) {
-      if (kDebugMode) debugPrint("Notification reply error: $e");
+      if (kDebugMode) debugPrint("Notification reply error");
     }
   }
 
@@ -377,10 +383,10 @@ class NotificationService {
           payload: null,
         );
       } else if (kDebugMode) {
-        debugPrint("Notification reaction failed: ${res.statusCode} ${res.body}");
+        debugPrint("Notification reaction failed: ${res.statusCode}");
       }
     } catch (e) {
-      if (kDebugMode) debugPrint("Notification reaction error: $e");
+      if (kDebugMode) debugPrint("Notification reaction error");
     }
   }
 
@@ -430,28 +436,25 @@ class NotificationService {
     if (navigator == null) return;
 
     final type = (data['type'] as String?)?.toLowerCase();
-    final rideId = data['rideId'] as String?;
-    final chatId = data['chatId'] as String?;
-    final orderId = data['orderId'] as String?;
 
     switch (type ?? '') {
       case 'new_ride':
       case 'ride_update':
-        debugPrint("→ Open ride: $rideId");
+        if (kDebugMode) debugPrint("→ Open ride");
         navigator.push(MaterialPageRoute(
           builder: (_) => const NotificationsPage(),
         ));
         break;
 
       case 'new_message':
-        debugPrint("→ Open chat: $chatId");
+        if (kDebugMode) debugPrint("→ Open chat");
         navigator.push(MaterialPageRoute(
           builder: (_) => const ChatListPage(),
         ));
         break;
 
       case 'order_update':
-        debugPrint("→ Open order: $orderId");
+        if (kDebugMode) debugPrint("→ Open order");
         navigator.push(MaterialPageRoute(
           builder: (_) => const OrdersPage(),
         ));

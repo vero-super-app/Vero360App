@@ -30,7 +30,7 @@ class AuthHandler {
     if (firebaseToken != null && firebaseToken.isNotEmpty) {
       if (kDebugMode) {
         // ignore: avoid_print
-        print('[AuthHandler] full token (Firebase): $firebaseToken');
+        // print('[AuthHandler] full token (Firebase): $firebaseToken');
       }
       await persistTokenToSp(firebaseToken);
       return firebaseToken;
@@ -41,7 +41,7 @@ class AuthHandler {
       if (v != null && v.isNotEmpty) {
         if (kDebugMode) {
           // ignore: avoid_print
-          print('[AuthHandler] full token (SP $k): $v');
+          // print('[AuthHandler] full token (SP $k): $v');
         }
         return v;
       }

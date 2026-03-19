@@ -64,7 +64,7 @@ final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  debugPrint("Background/terminated FCM message: ${message.messageId}");
+  // debugPrint("Background/terminated FCM message: ${message.messageId}");
 
   // You can add minimal logic here (e.g. update local storage)
   // Full display logic is already in NotificationService
@@ -88,12 +88,12 @@ Future<void> main() async {
         appId: "1:1010595167807:android:f63d7c7959bdb2891dc28a",
       ),
     );
-    debugPrint("Firebase initialized ✅");
+    // debugPrint("Firebase initialized ✅");
 
     // Register background handler FIRST (important for FCM)
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   } catch (e) {
-    debugPrint("Firebase init error: $e");
+    // debugPrint("Firebase init error: $e");
   }
 
   runApp(
@@ -142,16 +142,16 @@ class _AppBootstrapState extends State<AppBootstrap> {
       try {
         await GoogleMapsConfig.initialize();
       } catch (e) {
-        debugPrint("GoogleMapsConfig init warning (offline?): $e");
+        // debugPrint("GoogleMapsConfig init warning (offline?): $e");
       }
 
       // Push notifications (channels, permissions, listeners)
       try {
         await NotificationService.instance.initialize();
         NotificationService.setNavigatorKey(navKey);
-        debugPrint("NotificationService initialized ✅");
+        // debugPrint("NotificationService initialized ✅");
       } catch (e) {
-        debugPrint("NotificationService init error: $e");
+        // debugPrint("NotificationService init error: $e");
       }
     });
   }
@@ -166,13 +166,13 @@ class _AppBootstrapState extends State<AppBootstrap> {
     firebaseOk = true; // since we did it in main()
 
     // Keep boot work as light as possible so we hit the home UI quickly.
-    _log("Configuring API…");
+    // _log("Configuring API…");
     try {
       await ApiConfig.useProd();
-      _log("API config OK ✅");
+      // _log("API config OK ✅");
     } catch (e) {
       // If this fails (e.g., no internet), continue in a degraded/offline mode.
-      _log("API config warning (using offline/defaults): $e");
+      // _log("API config warning (using offline/defaults): $e");
     }
 
     // Run heavier messaging initialization in the background so it
@@ -181,13 +181,13 @@ class _AppBootstrapState extends State<AppBootstrap> {
     unawaited(Future(() async {
       try {
         await MessagingInitializationService.initialize();
-        _log("Messaging services initialized ✅");
+        // _log("Messaging services initialized ✅");
       } catch (e) {
-        _log("Messaging init warning: $e");
+        // _log("Messaging init warning: $e");
       }
     }));
 
-    _log("Launch ready 🚀");
+    // _log("Launch ready 🚀");
 
     return _BootState(firebaseOk: firebaseOk, clearedOldCache: clearedOldCache);
   }
@@ -204,7 +204,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
               title: 'Starting…',
               message: 'Preparing and optimizing your app.',
               showSpinner: true,
-              logs: _logs,
+              // logs: _logs,
             ),
           );
         }
@@ -217,7 +217,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
               title: 'Could not start',
               message: 'Tap retry to start again.',
               showSpinner: false,
-              logs: _logs,
+              // logs: _logs,
               actionLabel: 'Retry',
               onAction: () {
                 setState(() {
@@ -247,7 +247,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
               title: 'Repair completed',
               message: 'We repaired local data to prevent crashes. Launching…',
               showSpinner: true,
-              logs: _logs,
+              // logs: _logs,
             ),
           );
         }
@@ -757,8 +757,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           if (firestoreRole != null &&
               firestoreRole != 'customer' &&
               firestoreRole != backendRole) {
-            debugPrint(
-                '⚠️ Firestore says "$firestoreRole" but backend says "$backendRole". Re-syncing…');
+            // debugPrint(
+            //     '⚠️ Firestore says "$firestoreRole" but backend says "$backendRole". Re-syncing…');
             await prefs.setString('user_role', firestoreRole);
             await prefs.setString('role', firestoreRole);
             await _resyncRoleToBackend(prefs, token, firestoreRole);
@@ -849,7 +849,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         }
       }
     } catch (e) {
-      debugPrint('⚠️ Role re-sync failed: $e');
+      // debugPrint('⚠️ Role re-sync failed: $e');
     }
   }
 
@@ -1197,7 +1197,7 @@ class AuthFlow {
           await prefs.setString('role', 'customer');
         }
 
-        debugPrint("✅ Login: email=$email, role=${isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer')}");
+        // debugPrint("✅ Login: email=$email, role=${isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer')}");
 
         // Navigate based on role
         await _navigateByRole(email, isMerchant, isDriver);
@@ -1208,7 +1208,7 @@ class AuthFlow {
         );
       }
     } catch (e) {
-      debugPrint("❌ onLoginSuccess error: $e");
+      // debugPrint("❌ onLoginSuccess error: $e");
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
         (route) => false,

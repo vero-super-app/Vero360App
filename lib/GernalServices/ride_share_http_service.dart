@@ -22,7 +22,7 @@ class RideShareHttpService {
     _initializeControllers();
     // Initialize socket asynchronously without blocking constructor
     _initializationFuture = _initializeSocket().catchError((e) {
-      print('[RideShareHttpService] Error initializing socket in constructor: $e');
+      print('[RideShareHttpService] Error initializing socket in constructor');
     });
   }
 
@@ -57,7 +57,7 @@ class RideShareHttpService {
             return freshToken;
           }
         } catch (e) {
-          print('[RideShare] Error getting fresh Firebase token: $e');
+          print('[RideShare] Error getting fresh Firebase token');
         }
       }
 
@@ -75,7 +75,7 @@ class RideShareHttpService {
       print('[RideShare] No authentication token available');
       return null;
     } catch (e) {
-      print('Error reading auth token: $e');
+      print('Error reading auth token');
       return null;
     }
   }
@@ -123,7 +123,7 @@ class RideShareHttpService {
     });
 
     socket.onError((error) {
-      print('[RideShareHttpService] Socket error: $error');
+      print('[RideShareHttpService] Socket error');
       _connectionStatusController.add('error');
     });
   }
@@ -157,7 +157,7 @@ class RideShareHttpService {
         throw Exception('Failed to estimate fare: ${response.statusCode}');
       }
     } catch (e) {
-      print('Error estimating fare: $e');
+      print('Error estimating fare');
       rethrow;
     }
   }
@@ -231,7 +231,7 @@ class RideShareHttpService {
         throw Exception('Failed to request ride: ${response.statusCode}');
       }
     } catch (e) {
-      print('[RideShareHttpService] Error requesting ride: $e');
+      print('[RideShareHttpService] Error requesting ride');
       rethrow;
     }
   }
@@ -258,7 +258,7 @@ class RideShareHttpService {
         throw Exception('Failed to get ride: ${response.statusCode}');
       }
     } catch (e) {
-      print('Error getting ride: $e');
+      print('Error getting ride');
       rethrow;
     }
   }
@@ -297,7 +297,7 @@ class RideShareHttpService {
         throw Exception('Failed to get rides: ${response.statusCode}');
       }
     } catch (e) {
-      print('Error getting rides: $e');
+      print('Error getting rides');
       rethrow;
     }
   }
@@ -327,7 +327,7 @@ class RideShareHttpService {
         throw Exception('Failed to accept ride: ${response.statusCode}');
       }
     } catch (e) {
-      print('Error accepting ride: $e');
+      print('Error accepting ride');
       rethrow;
     }
   }
@@ -356,7 +356,7 @@ class RideShareHttpService {
         throw Exception('Failed to mark driver arrived: ${response.statusCode}');
       }
     } catch (e) {
-      print('Error marking driver arrived: $e');
+      print('Error marking driver arrived');
       rethrow;
     }
   }
@@ -385,7 +385,7 @@ class RideShareHttpService {
         throw Exception('Failed to start ride: ${response.statusCode}');
       }
     } catch (e) {
-      print('Error starting ride: $e');
+      print('Error starting ride');
       rethrow;
     }
   }
@@ -423,7 +423,7 @@ class RideShareHttpService {
         throw Exception('Failed to complete ride: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
-      print('Error completing ride: $e');
+      print('Error completing ride');
       rethrow;
     }
   }
@@ -460,7 +460,7 @@ class RideShareHttpService {
         throw Exception('Failed to cancel ride: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
-      print('Error cancelling ride: $e');
+      print('Error cancelling ride');
       rethrow;
     }
   }
@@ -488,7 +488,7 @@ class RideShareHttpService {
         throw Exception('Failed to get active rides: ${response.statusCode}');
       }
     } catch (e) {
-      print('Error getting active rides: $e');
+      print('Error getting active rides');
       rethrow;
     }
   }
@@ -535,7 +535,7 @@ class RideShareHttpService {
         print('[RideShareHttpService] Parsed ride: ${ride.id}, status: ${ride.status}, driverId: ${ride.driverId}');
         _rideUpdateController.add(ride);
       } catch (e) {
-        print('[RideShareHttpService] ❌ Error parsing ride update: $e');
+        print('[RideShareHttpService] ❌ Error parsing ride update');
         print('[RideShareHttpService] Data was: $data');
         // Don't crash - log and continue
       }
@@ -552,7 +552,7 @@ class RideShareHttpService {
         socket.emit('passenger:unsubscribe');
       }
     } catch (e) {
-      print('[RideShareHttpService] Error unsubscribing from ride: $e');
+      print('[RideShareHttpService] Error unsubscribing from ride');
       // Don't rethrow - unsubscribe is cleanup, not critical
     }
   }
@@ -586,7 +586,7 @@ class RideShareHttpService {
         callback(Map<String, dynamic>.from(data));
       });
     } catch (e) {
-      print('[RideShareHttpService] Error registering driver location listener: $e');
+      print('[RideShareHttpService] Error registering driver location listener');
     }
   }
 
@@ -597,7 +597,7 @@ class RideShareHttpService {
         callback(Map<String, dynamic>.from(data));
       });
     } catch (e) {
-      print('[RideShareHttpService] Error registering ride status listener: $e');
+      print('[RideShareHttpService] Error registering ride status listener');
     }
   }
 
@@ -611,7 +611,7 @@ class RideShareHttpService {
         _connectionStatusController.add('connected');
       }
     } catch (e) {
-      print('Error reconnecting WebSocket: $e');
+      print('Error reconnecting WebSocket');
       _connectionStatusController.add('error');
       rethrow;
     }
@@ -622,7 +622,7 @@ class RideShareHttpService {
     try {
       socket.disconnect();
     } catch (e) {
-      print('[RideShareHttpService] Error disconnecting socket: $e');
+      print('[RideShareHttpService] Error disconnecting socket');
     }
   }
 
@@ -631,27 +631,27 @@ class RideShareHttpService {
     try {
       _connectionStatusController.close();
     } catch (e) {
-      print('[RideShareHttpService] Error closing connection status controller: $e');
+      print('[RideShareHttpService] Error closing connection status controller');
     }
     try {
       _driverLocationController.close();
     } catch (e) {
-      print('[RideShareHttpService] Error closing driver location controller: $e');
+      print('[RideShareHttpService] Error closing driver location controller');
     }
     try {
       _rideStatusController.close();
     } catch (e) {
-      print('[RideShareHttpService] Error closing ride status controller: $e');
+      print('[RideShareHttpService] Error closing ride status controller');
     }
     try {
       _rideUpdateController.close();
     } catch (e) {
-      print('[RideShareHttpService] Error closing ride update controller: $e');
+      print('[RideShareHttpService] Error closing ride update controller');
     }
     try {
       disconnect();
     } catch (e) {
-      print('[RideShareHttpService] Error in disconnect during dispose: $e');
+      print('[RideShareHttpService] Error in disconnect during dispose');
     }
   }
 }

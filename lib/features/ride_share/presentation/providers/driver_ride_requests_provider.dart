@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/config/api_config.dart';
@@ -98,29 +99,41 @@ class DriverRideRequestsWebSocketService {
     try {
       // Get auth token
       final firebaseUser = FirebaseAuth.instance.currentUser;
-      print('[DriverRideRequests] Firebase user: ${firebaseUser?.email}');
+      if (kDebugMode) {
+        debugPrint('[DriverRideRequests] Firebase user present');
+      }
       
       String? token;
 
       if (firebaseUser != null) {
         try {
           token = await firebaseUser.getIdToken();
-          print('[DriverRideRequests] ✅ Got Firebase token: ${token?.substring(0, 20)}...');
+          if (kDebugMode) {
+            debugPrint('[DriverRideRequests] Got Firebase token');
+          }
         } catch (e) {
-          print('[DriverRideRequests] ❌ Error getting Firebase token: $e');
+          if (kDebugMode) {
+            debugPrint('[DriverRideRequests] Error getting Firebase token');
+          }
           token = null;
         }
       } else {
-        print('[DriverRideRequests] ❌ No Firebase user logged in');
+        if (kDebugMode) {
+          debugPrint('[DriverRideRequests] No Firebase user logged in');
+        }
       }
 
       if (token == null || token.isEmpty) {
-        print('[DriverRideRequests] ❌ No auth token available - WebSocket connection skipped');
+        if (kDebugMode) {
+          debugPrint('[DriverRideRequests] No auth token - skipping WebSocket');
+        }
         _connectionStatusController.add(false);
         return;
       }
 
-      print('[DriverRideRequests] 🔗 Connecting WebSocket with token: ${token.substring(0, 20)}...');
+      if (kDebugMode) {
+        debugPrint('[DriverRideRequests] Connecting WebSocket');
+      }
 
       socket = IO.io(
         ApiConfig.prod,
@@ -132,36 +145,49 @@ class DriverRideRequestsWebSocketService {
       );
 
       socket.onConnect((_) {
-        print('[DriverRideRequests] ✅ WebSocket connected successfully');
-        print('[DriverRideRequests] Socket ID: ${socket.id}');
+        if (kDebugMode) {
+          debugPrint('[DriverRideRequests] WebSocket connected');
+        }
         _isConnected = true;
         _connectionStatusController.add(true);
         _listenForRideRequests();
-        print('[DriverRideRequests] ✅ Ride request listeners registered');
+        if (kDebugMode) {
+          debugPrint('[DriverRideRequests] Ride listeners registered');
+        }
       });
 
       socket.onDisconnect((_) {
-        print('[DriverRideRequests] ⏸️ WebSocket disconnected');
+        if (kDebugMode) {
+          debugPrint('[DriverRideRequests] WebSocket disconnected');
+        }
         _isConnected = false;
         _connectionStatusController.add(false);
       });
 
       socket.onError((error) {
-        print('[DriverRideRequests] ❌ WebSocket error: $error');
+        if (kDebugMode) {
+          debugPrint('[DriverRideRequests] WebSocket error');
+        }
         _isConnected = false;
         _connectionStatusController.add(false);
       });
 
       socket.onConnectError((error) {
-        print('[DriverRideRequests] ❌ WebSocket connection error: $error');
+        if (kDebugMode) {
+          debugPrint('[DriverRideRequests] WebSocket connection error');
+        }
         _isConnected = false;
         _connectionStatusController.add(false);
       });
 
-      print('[DriverRideRequests] 🔗 Calling socket.connect()');
+      if (kDebugMode) {
+        debugPrint('[DriverRideRequests] Calling socket.connect()');
+      }
       socket.connect();
     } catch (e) {
-      print('[DriverRideRequests] ❌ Error connecting WebSocket: $e');
+      if (kDebugMode) {
+        debugPrint('[DriverRideRequests] Error connecting WebSocket');
+      }
       _isConnected = false;
       _connectionStatusController.add(false);
     }
@@ -170,20 +196,26 @@ class DriverRideRequestsWebSocketService {
   void _listenForRideRequests() {
     // Listen for ride requests globally
     socket.on('ride:ride-request', (data) {
-      print('[DriverRideRequests] ✅ Received ride request event: $data');
       try {
         final request = IncomingRideRequest.fromJson(data as Map<String, dynamic>);
-        print('[DriverRideRequests] ✅ Parsed ride request - rideId: ${request.rideId}');
+        if (kDebugMode) {
+          debugPrint(
+              '[DriverRideRequests] Ride request received (rideId=${request.rideId})');
+        }
         _rideRequestsController.add(request);
       } catch (e) {
-        print('[DriverRideRequests] ❌ Error parsing ride request: $e');
+        if (kDebugMode) {
+          debugPrint('[DriverRideRequests] Error parsing ride request: $e');
+        }
       }
     });
 
     // Debug: Log all incoming events
     socket.onAny((event, data) {
       if (event.contains('ride') || event.contains('notification')) {
-        print('[DriverRideRequests] 📡 Received event: $event - $data');
+        if (kDebugMode) {
+          debugPrint('[DriverRideRequests] Event received: $event');
+        }
       }
     });
   }

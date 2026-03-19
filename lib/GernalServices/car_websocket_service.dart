@@ -174,7 +174,7 @@ class CarWebSocketService {
         }
       },
       onError: (error) {
-        _log('WebSocket error: $error');
+        _log('WebSocket error');
         _isConnected = false;
         _scheduleReconnect();
       },

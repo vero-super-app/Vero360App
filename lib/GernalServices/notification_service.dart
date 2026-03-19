@@ -158,6 +158,9 @@ class NotificationService {
     FirebaseAuth.instance.authStateChanges().listen((user) async {
       if (user != null) {
         await registerTokenWithBackend();
+      } else {
+        // Ensure notifications from previous account do not remain visible.
+        await NotificationStore.instance.clearAll();
       }
     });
   }

@@ -10,10 +10,12 @@ import 'package:http/http.dart' as http;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import 'package:local_auth/local_auth.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 
@@ -1264,39 +1266,19 @@ class _SettingsPageState extends State<SettingsPage> {
         return false;
       }
 
-      // Require password to re-authenticate, then delete
-      final prefs = await SharedPreferences.getInstance();
-      final email = u.email?.trim() ?? prefs.getString('email')?.trim() ?? '';
-      if (email.isEmpty) {
+      final verified = await _authenticateDeleteWithProvider(u);
+      if (!verified) return false;
+      try {
+        await u.delete();
+        return true;
+      } on FirebaseAuthException catch (deleteAfterReauth) {
         if (mounted) {
           ToastHelper.showCustomToast(
             context,
-            _t('Please sign in again to delete your account', 'Chonde lowani kachiwiri kuti muchotse akaunti'),
+            deleteAfterReauth.message ?? _t('Delete failed', 'Kuchotsa kudagonjetsedwa'),
             isSuccess: false,
             errorMessage: '',
           );
-        }
-        return false;
-      }
-
-      final password = await _showPasswordDialogForDelete();
-      if (password == null || password.isEmpty || !mounted) return false;
-
-      try {
-        final cred = EmailAuthProvider.credential(
-          email: email,
-          password: password,
-        );
-        await u.reauthenticateWithCredential(cred);
-        await u.delete();
-        return true;
-      } on FirebaseAuthException catch (reauthE) {
-        if (mounted) {
-          final msg = reauthE.code == 'wrong-password' ||
-                  reauthE.code == 'invalid-credential'
-              ? _t('Wrong password', 'Password yolakwika')
-              : (reauthE.message ?? _t('Delete failed', 'Kuchotsa kudagonjetsedwa'));
-          ToastHelper.showCustomToast(context, msg, isSuccess: false, errorMessage: '');
         }
         return false;
       }
@@ -1362,6 +1344,79 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  String _primaryAuthProvider(User user) {
+    final ids = user.providerData
+        .map((p) => p.providerId)
+        .where((e) => e.trim().isNotEmpty)
+        .toList();
+    if (ids.contains('google.com')) return 'google.com';
+    if (ids.contains('apple.com')) return 'apple.com';
+    if (ids.contains('password')) return 'password';
+    return ids.isNotEmpty ? ids.first : 'password';
+  }
+
+  Future<bool> _authenticateDeleteWithProvider(User user) async {
+    final provider = _primaryAuthProvider(user);
+    try {
+      if (provider == 'google.com') {
+        final google = GoogleSignIn.instance;
+        await google.initialize(
+          serverClientId:
+              '1010595167807-vl7asia9e4eep8u68g9c8mp5aa3eotgi.apps.googleusercontent.com',
+        );
+        final account = await google.authenticate();
+        final auth = account.authentication;
+        final cred = GoogleAuthProvider.credential(idToken: auth.idToken);
+        await user.reauthenticateWithCredential(cred);
+        return true;
+      }
+
+      if (provider == 'apple.com') {
+        final appleCred = await SignInWithApple.getAppleIDCredential(
+          scopes: [
+            AppleIDAuthorizationScopes.email,
+            AppleIDAuthorizationScopes.fullName,
+          ],
+        );
+        final oauthCred = OAuthProvider('apple.com').credential(
+          idToken: appleCred.identityToken,
+          accessToken: appleCred.authorizationCode,
+        );
+        await user.reauthenticateWithCredential(oauthCred);
+        return true;
+      }
+
+      return _authenticateDeleteWithPassword(user);
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          e.message ??
+              _t(
+                'Could not verify your account. Please try again.',
+                'Sitinathe kutsimikizira akaunti yanu. Yesaninso.',
+              ),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
+    } catch (_) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t(
+            'Could not verify your account. Please try again.',
+            'Sitinathe kutsimikizira akaunti yanu. Yesaninso.',
+          ),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
+    }
+  }
+
   Future<bool> _authenticateDeleteWithBiometric() async {
     final auth = LocalAuthentication();
     try {
@@ -1415,6 +1470,13 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<bool> _promptDeleteAuthMethod(User user) async {
+    final provider = _primaryAuthProvider(user);
+    final providerLabel = provider == 'google.com'
+        ? _t('Google sign-in', 'Google sign-in')
+        : provider == 'apple.com'
+            ? _t('Apple sign-in', 'Apple sign-in')
+            : _t('App password', 'Password ya app');
+
     final method = await showModalBottomSheet<String>(
       context: context,
       useSafeArea: true,
@@ -1444,8 +1506,8 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 8),
             Text(
               _t(
-                'Use your app password or biometric to continue.',
-                'Gwiritsani password ya app kapena biometric kuti mupitirire.',
+                'Use your sign-in method or biometric to continue.',
+                'Gwiritsani njira yolowera kapena biometric kuti mupitirire.',
               ),
               style: TextStyle(color: Colors.grey.shade700),
             ),
@@ -1454,11 +1516,15 @@ class _SettingsPageState extends State<SettingsPage> {
               contentPadding: EdgeInsets.zero,
               leading: _roundIcon(Icons.lock_outline),
               title: Text(
-                _t('Use app password', 'Gwiritsani password ya app'),
+                _t('Use $providerLabel', 'Gwiritsani $providerLabel'),
                 style: const TextStyle(fontWeight: FontWeight.w800),
               ),
-              subtitle: Text(_t('Enter your account password', 'Lembani password ya akaunti')),
-              onTap: () => Navigator.pop(ctx, 'password'),
+              subtitle: Text(
+                provider == 'password'
+                    ? _t('Enter your account password', 'Lembani password ya akaunti')
+                    : _t('Verify with your sign-in provider', 'Tsimikizirani ndi njira yolowera'),
+              ),
+              onTap: () => Navigator.pop(ctx, 'provider'),
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -1478,7 +1544,7 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
 
-    if (method == 'password') return _authenticateDeleteWithPassword(user);
+    if (method == 'provider') return _authenticateDeleteWithProvider(user);
     if (method == 'biometric') return _authenticateDeleteWithBiometric();
     return false;
   }

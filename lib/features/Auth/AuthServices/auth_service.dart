@@ -17,6 +17,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 enum DeleteAccountStatus { success, requiresRecentLogin, failed }
@@ -836,6 +837,10 @@ class AuthService {
     // Firebase
     try {
       await _firebaseAuth.signOut();
+    } catch (_) {}
+
+    try {
+      await NotificationStore.instance.clearAll();
     } catch (_) {}
 
     final ok = await _clearLocalSession();

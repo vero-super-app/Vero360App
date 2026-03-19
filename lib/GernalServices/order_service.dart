@@ -10,6 +10,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
+import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 
@@ -41,6 +42,12 @@ class FriendlyApiException implements Exception {
 }
 
 class OrderService {
+  static const String _orderStatusCacheKey = 'order_status_cache_v1';
+  static const String _orderStatusInitializedKey = 'order_status_cache_initialized_v1';
+  static const String _orderNotifWindowStartKey = 'order_notif_window_start_v1';
+  static const String _orderNotifWindowCountKey = 'order_notif_window_count_v1';
+  static const int _orderNotifWindowSeconds = 45;
+
   /* --------------------- infra helpers --------------------- */
 
   /// Use AuthHandler so we get a fresh Firebase token (auto-refreshes when expired)
@@ -101,6 +108,183 @@ class OrderService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ${await _token()}',
       };
+
+  String _statusLabel(OrderStatus s) {
+    switch (s) {
+      case OrderStatus.pending:
+        return 'Pending';
+      case OrderStatus.confirmed:
+        return 'Confirmed';
+      case OrderStatus.delivered:
+        return 'Delivered';
+      case OrderStatus.cancelled:
+        return 'Cancelled';
+    }
+  }
+
+  Future<bool> _canSendOrderNotifications() async {
+    final prefs = await SharedPreferences.getInstance();
+    final enabled = prefs.getBool('pref_notifications_enabled') ?? true;
+    final ordersEnabled = prefs.getBool('pref_notifications_orders') ?? true;
+    return enabled && ordersEnabled;
+  }
+
+  Future<void> _notifyOrderActivity({
+    required String orderId,
+    required String orderNumber,
+    required OrderStatus status,
+    required bool changed,
+    bool isIncomingForMerchant = false,
+    String? customerName,
+  }) async {
+    if (!await _canSendOrderNotifications()) return;
+
+    final label = _statusLabel(status);
+    final title = switch (status) {
+      OrderStatus.pending => 'Order placed',
+      OrderStatus.confirmed => 'Order confirmed',
+      OrderStatus.delivered => 'Order delivered',
+      OrderStatus.cancelled => 'Order cancelled',
+    };
+    final who = (customerName ?? '').trim();
+    final customerSuffix = who.isEmpty ? '' : ' from $who';
+    final body = switch (status) {
+      OrderStatus.pending => isIncomingForMerchant
+          ? (orderNumber.trim().isEmpty
+              ? 'You received a new order${who.isEmpty ? ' from a customer' : customerSuffix}.'
+              : 'New order received: $orderNumber$customerSuffix.')
+          : (orderNumber.trim().isEmpty
+              ? 'We received your order and it is pending confirmation.'
+              : 'Order $orderNumber has been placed and is pending confirmation.'),
+      OrderStatus.confirmed => orderNumber.trim().isEmpty
+          ? 'Great news! Your order has been confirmed.'
+          : 'Great news! Order $orderNumber has been confirmed.',
+      OrderStatus.delivered => orderNumber.trim().isEmpty
+          ? 'Your order has been delivered. Enjoy!'
+          : 'Order $orderNumber has been delivered. Enjoy!',
+      OrderStatus.cancelled => orderNumber.trim().isEmpty
+          ? 'Your order was cancelled.'
+          : 'Order $orderNumber was cancelled.',
+    };
+
+    final grouped = await _buildGroupedOrderNotificationText(currentStatus: label);
+
+    final payload = jsonEncode({
+      'type': 'order_update',
+      'orderId': orderId,
+      'orderNumber': orderNumber,
+      'status': orderStatusToApi(status),
+    });
+
+    await NotificationService.instance.showManualNotification(
+      title: grouped.$1 ?? title,
+      body: grouped.$2 ?? body,
+      payload: payload,
+    );
+  }
+
+  Future<(String?, String?)> _buildGroupedOrderNotificationText({
+    required String currentStatus,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final startRaw = prefs.getInt(_orderNotifWindowStartKey);
+    final countRaw = prefs.getInt(_orderNotifWindowCountKey) ?? 0;
+
+    final inWindow = startRaw != null &&
+        now.difference(DateTime.fromMillisecondsSinceEpoch(startRaw)).inSeconds <=
+            _orderNotifWindowSeconds;
+
+    if (!inWindow) {
+      await prefs.setInt(_orderNotifWindowStartKey, now.millisecondsSinceEpoch);
+      await prefs.setInt(_orderNotifWindowCountKey, 1);
+      return (null, null);
+    }
+
+    final nextCount = countRaw + 1;
+    await prefs.setInt(_orderNotifWindowCountKey, nextCount);
+    if (nextCount < 3) return (null, null);
+
+    return (
+      'Order activity update',
+      'You have $nextCount recent order updates. Latest: $currentStatus.',
+    );
+  }
+
+  Future<void> _syncOrderStatusNotifications(
+    List<OrderItem> orders, {
+    Set<String> incomingMerchantOrderIds = const <String>{},
+  }) async {
+    if (orders.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final initialized = prefs.getBool(_orderStatusInitializedKey) ?? false;
+
+    Map<String, String> cache = {};
+    try {
+      final raw = prefs.getString(_orderStatusCacheKey);
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          cache = decoded.map((k, v) => MapEntry(k.toString(), v.toString()));
+        }
+      }
+    } catch (_) {}
+
+    final nextCache = <String, String>{...cache};
+    if (!initialized) {
+      for (final o in orders) {
+        nextCache[o.id] = orderStatusToApi(o.status);
+      }
+      await prefs.setString(_orderStatusCacheKey, jsonEncode(nextCache));
+      await prefs.setBool(_orderStatusInitializedKey, true);
+      return;
+    }
+
+    for (final o in orders) {
+      final current = orderStatusToApi(o.status);
+      final previous = cache[o.id];
+      final changed = previous != null && previous != current;
+      final firstSeen = previous == null;
+
+      if (changed || firstSeen) {
+        await _notifyOrderActivity(
+          orderId: o.id,
+          orderNumber: o.orderNumber,
+          status: o.status,
+          changed: changed,
+          isIncomingForMerchant: incomingMerchantOrderIds.contains(o.id),
+          customerName: o.customerName,
+        );
+      }
+      nextCache[o.id] = current;
+    }
+
+    await prefs.setString(_orderStatusCacheKey, jsonEncode(nextCache));
+  }
+
+  Future<void> _upsertOrderStatusCache({
+    required String orderId,
+    required OrderStatus status,
+  }) async {
+    final cleanId = orderId.trim();
+    if (cleanId.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    Map<String, String> cache = {};
+    try {
+      final raw = prefs.getString(_orderStatusCacheKey);
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          cache = decoded.map((k, v) => MapEntry(k.toString(), v.toString()));
+        }
+      }
+    } catch (_) {}
+
+    cache[cleanId] = orderStatusToApi(status);
+    await prefs.setString(_orderStatusCacheKey, jsonEncode(cache));
+  }
 
   String _friendlyMessageForStatus(int code, {required String action}) {
     if (code == 401 || code == 403) return 'Your session has expired. Please sign in again.';
@@ -260,7 +444,61 @@ class OrderService {
         debugPrint('[OrderService] create order failed: status=${r.statusCode} body=${_safeBodyForLogs(r.body)}');
         _bad(r, action: 'place your order');
       }
+
+      String createdOrderId = '';
+      String createdOrderNumber = '';
+      try {
+        final decoded = jsonDecode(r.body);
+        if (decoded is Map) {
+          final data = decoded['data'] is Map ? decoded['data'] as Map : decoded;
+          createdOrderId = (data['id'] ?? data['_id'] ?? '').toString().trim();
+          createdOrderNumber =
+              (data['orderNumber'] ?? data['orderNo'] ?? '').toString().trim();
+        }
+      } catch (_) {}
+
+      final fallbackId = createdOrderId.isNotEmpty
+          ? createdOrderId
+          : 'new_${item.merchantId}_${DateTime.now().millisecondsSinceEpoch}';
+      final fallbackOrderNo =
+          createdOrderNumber.isNotEmpty ? createdOrderNumber : item.name.trim();
+
+      await _notifyOrderActivity(
+        orderId: fallbackId,
+        orderNumber: fallbackOrderNo,
+        status: status,
+        changed: false,
+        isIncomingForMerchant: false,
+      );
+      await _upsertOrderStatusCache(orderId: fallbackId, status: status);
     }
+  }
+
+  Future<List<OrderItem>> _fetchOrdersFromPath({
+    required String path,
+    required Map<String, String> headers,
+    Map<String, String>? queryParameters,
+  }) async {
+    final uri = ApiConfig.endpoint(path).replace(queryParameters: queryParameters);
+    final r = await _retry(() => http.get(uri, headers: headers), action: 'load your orders');
+
+    if (r.statusCode == 404) return <OrderItem>[];
+    if (r.statusCode == 403) return <OrderItem>[];
+    if (r.statusCode != 200) _bad(r, action: 'load your orders');
+
+    final decoded = jsonDecode(r.body);
+    final List<dynamic> list = decoded is List
+        ? decoded
+        : (decoded is Map && decoded['data'] is List)
+            ? (decoded['data'] as List)
+            : (decoded is Map && decoded['orders'] is List)
+                ? (decoded['orders'] as List)
+                : <dynamic>[];
+
+    return list
+        .whereType<Map>()
+        .map((m) => OrderItem.fromJson(Map<String, dynamic>.from(m)))
+        .toList();
   }
 
   // Chooses the right “me” endpoint by role.
@@ -269,39 +507,38 @@ class OrderService {
     final qp = status != null ? {'status': orderStatusToApi(status)} : null;
     final h = await _headers();
 
-    String basePath = isMerchant ? '/orders/merchant/me' : '/orders/me';
-    var u = ApiConfig.endpoint(basePath).replace(queryParameters: qp);
-    var r = await _retry(() => http.get(u, headers: h), action: 'load your orders');
-
-    // If app thought we were merchant but backend returns 403, load customer orders instead
-    if (r.statusCode == 403 && isMerchant) {
-      basePath = '/orders/me';
-      u = ApiConfig.endpoint(basePath).replace(queryParameters: qp);
-      r = await _retry(() => http.get(u, headers: h), action: 'load your orders');
-    }
-
-    if (r.statusCode == 404) {
-      return <OrderItem>[];
-    }
-    if (r.statusCode != 200) _bad(r, action: 'load your orders');
-
     try {
-      final decoded = jsonDecode(r.body);
+      final byId = <String, OrderItem>{};
+      final incomingMerchantOrderIds = <String>{};
 
-      final List<dynamic> list = decoded is List
-          ? decoded
-          : (decoded is Map && decoded['data'] is List)
-              ? (decoded['data'] as List)
-              : (decoded is Map && decoded['orders'] is List)
-                  ? (decoded['orders'] as List)
-                  : <dynamic>[];
+      final customerOrders = await _fetchOrdersFromPath(
+        path: '/orders/me',
+        headers: h,
+        queryParameters: qp,
+      );
+      for (final o in customerOrders) {
+        byId[o.id] = o;
+      }
 
-      final all = list
-          .whereType<Map>()
-          .map((m) => OrderItem.fromJson(Map<String, dynamic>.from(m)))
-          .toList();
+      if (isMerchant) {
+        final merchantOrders = await _fetchOrdersFromPath(
+          path: '/orders/merchant/me',
+          headers: h,
+          queryParameters: qp,
+        );
+        for (final o in merchantOrders) {
+          byId[o.id] = o;
+          incomingMerchantOrderIds.add(o.id);
+        }
+      }
+
+      final all = byId.values.toList();
 
       // If backend ignored the filter, narrow client-side.
+      await _syncOrderStatusNotifications(
+        all,
+        incomingMerchantOrderIds: incomingMerchantOrderIds,
+      );
       if (status != null) {
         return all.where((o) => o.status == status).toList();
       }
@@ -326,6 +563,15 @@ class OrderService {
 
     final r = await _retry(() => http.patch(u, headers: h, body: body), action: 'update the order');
     if (r.statusCode < 200 || r.statusCode >= 300) _bad(r, action: 'update the order');
+
+    await _notifyOrderActivity(
+      orderId: id,
+      orderNumber: id,
+      status: next,
+      changed: true,
+      isIncomingForMerchant: false,
+    );
+    await _upsertOrderStatusCache(orderId: id, status: next);
   }
 
   // Cancel, else delete as fallback.
@@ -343,6 +589,14 @@ class OrderService {
       final h = await _headers();
       final r = await _retry(() => http.delete(u, headers: h), action: 'cancel the order');
       if (r.statusCode < 200 || r.statusCode >= 300) _bad(r, action: 'cancel the order');
+      await _notifyOrderActivity(
+        orderId: id,
+        orderNumber: id,
+        status: OrderStatus.cancelled,
+        changed: true,
+        isIncomingForMerchant: false,
+      );
+      await _upsertOrderStatusCache(orderId: id, status: OrderStatus.cancelled);
       return false;
     }
   }

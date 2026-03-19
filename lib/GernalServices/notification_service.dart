@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
@@ -436,7 +437,7 @@ class NotificationService {
     if (navigator == null) return;
 
     final type = (data['type'] as String?)?.toLowerCase();
-
+ 
     switch (type ?? '') {
       case 'new_ride':
       case 'ride_update':
@@ -455,8 +456,15 @@ class NotificationService {
 
       case 'order_update':
         if (kDebugMode) debugPrint("→ Open order");
+        final orderId = data['orderId']?.toString();
+        final orderNumber = data['orderNumber']?.toString();
+        final status = data['status']?.toString();
         navigator.push(MaterialPageRoute(
-          builder: (_) => const OrdersPage(),
+          builder: (_) => OrdersPage(
+            initialOrderId: orderId,
+            initialOrderNumber: orderNumber,
+            initialStatus: status,
+          ),
         ));
         break;
 
@@ -494,5 +502,48 @@ class NotificationService {
       payload: payload,
       interactive: interactive,
     );
+  }
+
+  /// Sends a one-time welcome notification for a newly created account.
+  Future<void> sendWelcomeNotificationIfFirstTime({
+    required String uid,
+    required String name,
+    String? role,
+  }) async {
+    final cleanUid = uid.trim();
+    if (cleanUid.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'welcome_notification_sent_$cleanUid';
+    if (prefs.getBool(key) == true) return;
+
+    final safeName = name.trim().isEmpty ? 'there' : name.trim();
+    final normalizedRole = (role ?? '').trim().toLowerCase();
+    final title = switch (normalizedRole) {
+      'merchant' => 'Welcome to Vero360 Merchant Account, $safeName!',
+      'driver' => 'Welcome to Vero360 Driver Account, $safeName!',
+      _ => 'Welcome to Vero360, $safeName!',
+    };
+    final body = switch (normalizedRole) {
+      'merchant' =>
+        'Start listing your products and services, manage orders, and grow your business in one app.',
+      'driver' =>
+        'Start accepting rides, manage trips, and track your earnings with the all-in-one Vero360 app.',
+      _ =>
+        'Vero360 is your all-in-one app for rides, marketplace, food, transport, accommodation, and more.',
+    };
+    final payloadMap = <String, dynamic>{
+      'type': 'welcome',
+      'uid': cleanUid,
+      'role': normalizedRole,
+    };
+
+    await showManualNotification(
+      title: title,
+      body: body,
+      payload: jsonEncode(payloadMap),
+    );
+
+    await prefs.setBool(key, true);
   }
 }

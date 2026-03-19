@@ -11,7 +11,16 @@ import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:path_provider/path_provider.dart';
 
 class OrdersPage extends StatefulWidget {
-  const OrdersPage({super.key});
+  final String? initialOrderId;
+  final String? initialOrderNumber;
+  final String? initialStatus;
+
+  const OrdersPage({
+    super.key,
+    this.initialOrderId,
+    this.initialOrderNumber,
+    this.initialStatus,
+  });
 
   @override
   State<OrdersPage> createState() => _OrdersPageState();
@@ -45,17 +54,26 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   // itemSqlId, mark those listings as sold so they disappear from shelves.
   final MarketplaceService _marketplaceService = MarketplaceService();
   final Set<String> _syncedSoldOrders = <String>{};
+  String? _focusOrderId;
+  String? _focusOrderNumber;
 
   @override
   void initState() {
     super.initState();
     _tab = TabController(length: _statuses.length, vsync: this);
+    _focusOrderId = widget.initialOrderId?.trim();
+    _focusOrderNumber = widget.initialOrderNumber?.trim();
+    final s = (widget.initialStatus ?? '').trim().toLowerCase();
+    final idx = _statuses.indexWhere((v) => _statusLabel(v).toLowerCase() == s);
+    if (idx >= 0) _tab.index = idx;
     _ordersFuture = _svc.getMyOrders();
   }
 
   Future<void> _reloadCurrent() async {
     if (!mounted) return;
-    setState(() => _ordersFuture = _svc.getMyOrders());
+    setState(() {
+      _ordersFuture = _svc.getMyOrders();
+    });
     try {
       final orders = await _ordersFuture;
       for (final o in orders) {
@@ -207,13 +225,16 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     );
   }
 
-  Widget _orderCard(OrderItem o) {
+  Widget _orderCard(OrderItem o, {bool highlighted = false}) {
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
+        border: highlighted
+            ? Border.all(color: _brand.withValues(alpha: 0.6), width: 1.6)
+            : null,
         boxShadow: const [
           BoxShadow(
             blurRadius: 22,
@@ -431,6 +452,23 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
           final items = byStatus
               .where((o) => _orderMatchesSearch(o, _searchQuery))
               .toList();
+          final focusId = _focusOrderId;
+          final focusNo = _focusOrderNumber;
+          if ((focusId != null && focusId.isNotEmpty) ||
+              (focusNo != null && focusNo.isNotEmpty)) {
+            items.sort((a, b) {
+              final aHit = (focusId != null && a.id == focusId) ||
+                  (focusNo != null &&
+                      focusNo.isNotEmpty &&
+                      a.orderNumber == focusNo);
+              final bHit = (focusId != null && b.id == focusId) ||
+                  (focusNo != null &&
+                      focusNo.isNotEmpty &&
+                      b.orderNumber == focusNo);
+              if (aHit == bHit) return 0;
+              return aHit ? -1 : 1;
+            });
+          }
           if (items.isEmpty) {
             return ListView(
               children: [
@@ -449,7 +487,14 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
           return ListView.builder(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             itemCount: items.length,
-            itemBuilder: (_, i) => _orderCard(items[i]),
+            itemBuilder: (_, i) {
+              final o = items[i];
+              final highlighted = (focusId != null && o.id == focusId) ||
+                  (focusNo != null &&
+                      focusNo.isNotEmpty &&
+                      o.orderNumber == focusNo);
+              return _orderCard(o, highlighted: highlighted);
+            },
           );
         },
       ),

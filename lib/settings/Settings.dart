@@ -1313,6 +1313,176 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<bool> _authenticateDeleteWithPassword(User user) async {
+    final prefs = await SharedPreferences.getInstance();
+    final email =
+        user.email?.trim() ?? prefs.getString('email')?.trim() ?? '';
+    if (email.isEmpty) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t(
+            'Password sign-in is not available for this account. Use biometric instead.',
+            'Kulowa ndi password kulibe pa akaunti iyi. Gwiritsani biometric.',
+          ),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
+    }
+
+    final password = await _showPasswordDialogForDelete();
+    if (password == null || password.isEmpty) return false;
+
+    try {
+      final cred = EmailAuthProvider.credential(
+        email: email,
+        password: password,
+      );
+      await user.reauthenticateWithCredential(cred);
+      return true;
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        final msg = e.code == 'wrong-password' || e.code == 'invalid-credential'
+            ? _t('Wrong password', 'Password yolakwika')
+            : (e.message ??
+                _t(
+                  'Could not verify password',
+                  'Sitinathe kutsimikizira password',
+                ));
+        ToastHelper.showCustomToast(
+          context,
+          msg,
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _authenticateDeleteWithBiometric() async {
+    final auth = LocalAuthentication();
+    try {
+      final canCheck = await auth.canCheckBiometrics;
+      final isSupported = await auth.isDeviceSupported();
+      if (!canCheck || !isSupported) {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            _t(
+              'Biometric authentication is not available on this device.',
+              'Biometric ilibe pa chipangizochi.',
+            ),
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+        return false;
+      }
+
+      final ok = await auth.authenticate(
+        localizedReason: _t(
+          'Verify your identity to delete your account',
+          'Tsimikizirani kuti ndinu inu kuti muchotse akaunti',
+        ),
+        options: const AuthenticationOptions(
+          biometricOnly: true,
+          stickyAuth: true,
+        ),
+      );
+      if (!ok && mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Biometric verification failed', 'Kutsimikizira biometric kwalephera'),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return ok;
+    } catch (_) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Biometric verification failed', 'Kutsimikizira biometric kwalephera'),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _promptDeleteAuthMethod(User user) async {
+    final method = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.black12,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _t('Verify before delete', 'Tsimikizirani musanachotse'),
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _t(
+                'Use your app password or biometric to continue.',
+                'Gwiritsani password ya app kapena biometric kuti mupitirire.',
+              ),
+              style: TextStyle(color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: _roundIcon(Icons.lock_outline),
+              title: Text(
+                _t('Use app password', 'Gwiritsani password ya app'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(_t('Enter your account password', 'Lembani password ya akaunti')),
+              onTap: () => Navigator.pop(ctx, 'password'),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: _roundIcon(Icons.fingerprint),
+              title: Text(
+                _t('Use biometric', 'Gwiritsani biometric'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                _t('Face ID or fingerprint', 'Face ID kapena chala'),
+              ),
+              onTap: () => Navigator.pop(ctx, 'biometric'),
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+
+    if (method == 'password') return _authenticateDeleteWithPassword(user);
+    if (method == 'biometric') return _authenticateDeleteWithBiometric();
+    return false;
+  }
+
   /// Shows a dialog asking for the user's password to confirm account deletion. Returns the password or null if cancelled.
   Future<String?> _showPasswordDialogForDelete() async {
     final controller = TextEditingController();
@@ -1378,6 +1548,20 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _refreshing = true);
 
     try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Please sign in again', 'Chonde lowani kachiwiri'),
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+
+      final verified = await _promptDeleteAuthMethod(currentUser);
+      if (!verified) return;
+
       // 1) Delete on Nest backend (best effort)
       final token = await _getAuthToken();
       if (token.isNotEmpty) {

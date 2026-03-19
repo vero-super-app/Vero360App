@@ -147,11 +147,12 @@ final syncDriverStatusProvider = FutureProvider<bool>((ref) async {
 // ==================== SHARED PREFERENCES HELPERS ====================
 bool? _isDriverCachedValue;
 
-/// Load driver status from SharedPreferences
+/// Load driver status from SharedPreferences (checks user_role == 'driver')
 Future<bool?> loadDriverStatusFromPrefs() async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    final value = prefs.getBool('user_is_driver');
+    final role = (prefs.getString('user_role') ?? '').toLowerCase();
+    final value = role == 'driver';
     _isDriverCachedValue = value;
     return value;
   } catch (_) {
@@ -163,7 +164,10 @@ Future<bool?> loadDriverStatusFromPrefs() async {
 Future<void> _saveDriverStatusToPrefs(bool isDriver) async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('user_is_driver', isDriver);
+    if (isDriver) {
+      await prefs.setString('user_role', 'driver');
+      await prefs.setString('role', 'driver');
+    }
     _isDriverCachedValue = isDriver;
   } catch (_) {
     // Silent fail

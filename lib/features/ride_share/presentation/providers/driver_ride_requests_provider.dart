@@ -13,6 +13,8 @@ class IncomingRideRequest {
   final String? pickupAddress;
   final String vehicleClass;
   final double searchRadiusKm;
+  final double estimatedFare;
+  final double estimatedDistance;
   final List<AvailableVehicle> availableVehicles;
   final DateTime timestamp;
 
@@ -23,6 +25,8 @@ class IncomingRideRequest {
     this.pickupAddress,
     required this.vehicleClass,
     required this.searchRadiusKm,
+    required this.estimatedFare,
+    required this.estimatedDistance,
     required this.availableVehicles,
     required this.timestamp,
   });
@@ -35,6 +39,8 @@ class IncomingRideRequest {
       pickupAddress: json['pickupAddress'] as String?,
       vehicleClass: json['vehicleClass'] as String? ?? 'STANDARD',
       searchRadiusKm: (json['searchRadiusKm'] as num?)?.toDouble() ?? 5.0,
+      estimatedFare: (json['estimatedFare'] as num?)?.toDouble() ?? 0.0,
+      estimatedDistance: (json['estimatedDistance'] as num?)?.toDouble() ?? 0.0,
       availableVehicles: (json['availableVehicles'] as List?)
               ?.map((v) => AvailableVehicle.fromJson(v as Map<String, dynamic>))
               .toList() ??
@@ -65,7 +71,7 @@ class AvailableVehicle {
 
   factory AvailableVehicle.fromJson(Map<String, dynamic> json) {
     return AvailableVehicle(
-      vehicleId: json['vehicleId'] as int? ?? 0,
+      vehicleId: json['taxiId'] as int? ?? json['vehicleId'] as int? ?? 0,
       driverId: json['driverId'] as int? ?? 0,
       distance: (json['distance'] as num?)?.toDouble() ?? 0.0,
       licensePlate: json['licensePlate'] as String? ?? '',

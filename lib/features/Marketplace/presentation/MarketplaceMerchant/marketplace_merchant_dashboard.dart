@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -47,6 +48,8 @@ import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/GeneralPages/ToRefund.dart';
 import 'package:vero360_app/GeneralPages/Toreceive.dart';
 import 'package:vero360_app/GeneralPages/Toship.dart';
+import 'package:vero360_app/GernalServices/order_service.dart';
+import 'package:vero360_app/GeneralModels/order_model.dart';
 
 import 'package:intl/intl.dart'; // ✅ NEW
 
@@ -114,6 +117,7 @@ class _MarketplaceMerchantDashboardState
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final MerchantServiceHelper _helper = MerchantServiceHelper();
+  final OrderService _orderService = OrderService();
 
   // ✅ Use CartService singleton from provider
   final CartService _cartService = CartServiceProvider.getInstance();
@@ -159,7 +163,10 @@ class _MarketplaceMerchantDashboardState
   String _filterStatus = 'all'; // all | active | inactive
 
   // Dashboard state
-  List<dynamic> _recentSales = [];
+  /// Real sold orders (confirmed+paid or delivered) from OrderService for Recent Sales.
+  List<OrderItem> _recentSalesOrders = [];
+  final TextEditingController _recentSalesSearchController = TextEditingController();
+  final FocusNode _recentSalesSearchFocus = FocusNode();
   bool _isLoading = true;
   bool _initialLoadComplete = false;
 
@@ -188,6 +195,13 @@ class _MarketplaceMerchantDashboardState
 
   // ✅ prevent periodic refresh while an edit sheet is open (stops random crashes)
   bool _sheetOpen = false;
+
+  // First-time merchant guide (show once after login, then persist as done)
+  static const String _kMerchantGuidePrefKey = 'marketplace_merchant_guide_v1_done';
+  static const String _kMerchantGuideShowOnNextOpenKey = 'marketplace_merchant_guide_show_on_next_open';
+  bool _showMerchantGuide = false;
+  int _merchantGuideStep = 0;
+  bool _merchantGuideCheckScheduled = false;
 
   // Brand
   static const Color _brandOrange = Color(0xFFFF8A00);
@@ -449,6 +463,8 @@ class _MarketplaceMerchantDashboardState
     _price.dispose();
     _location.dispose();
     _desc.dispose();
+    _recentSalesSearchController.dispose();
+    _recentSalesSearchFocus.dispose();
     super.dispose();
   }
 
@@ -462,6 +478,7 @@ class _MarketplaceMerchantDashboardState
       await _fetchCurrentUserMe();
       await _loadMerchantData();
       await _loadItems();
+      await _loadOrderStats();
     });
   }
 
@@ -761,14 +778,16 @@ class _MarketplaceMerchantDashboardState
 
     if (_uid.isNotEmpty) {
       try {
-        final dashboardData =
-            await _helper.getMerchantDashboardData(_uid, 'marketplace');
-
+        final dashboardFuture =
+            _helper.getMerchantDashboardData(_uid, 'marketplace');
+        final walletFuture = _loadWalletBalance();
+        final results = await Future.wait([dashboardFuture, walletFuture]);
+        final dashboardData = results[0] as Map<String, dynamic>;
         if (!dashboardData.containsKey('error')) {
           final merchant = dashboardData['merchant'];
 
           setState(() {
-            _recentSales = dashboardData['recentOrders'] ?? [];
+            // Recent sales come from real orders in _loadOrderStats(), not dashboard API
 
             _totalEarnings = (dashboardData['totalRevenue'] is num)
                 ? (dashboardData['totalRevenue'] as num).toDouble()
@@ -797,7 +816,8 @@ class _MarketplaceMerchantDashboardState
           });
         }
 
-        await _loadWalletBalance();
+        // Load order stats in background (real sold/earnings)
+        unawaited(_loadOrderStats());
       } catch (e) {
         debugPrint('Error loading dashboard: $e');
       }
@@ -808,6 +828,35 @@ class _MarketplaceMerchantDashboardState
         _isLoading = false;
         _initialLoadComplete = true;
       });
+    }
+  }
+
+  /// Load sold items count, total earnings, and recent sales from real confirmed+paid orders.
+  Future<void> _loadOrderStats() async {
+    if (!mounted) return;
+    try {
+      final orders = await _orderService.getMyOrders();
+      final sold = orders.where((o) {
+        if (o.status == OrderStatus.delivered) return true;
+        if (o.status == OrderStatus.confirmed && o.paymentStatus == PaymentStatus.paid) return true;
+        return false;
+      }).toList();
+      // Sort by date descending (most recent first)
+      sold.sort((a, b) {
+        final da = a.orderDate ?? DateTime(0);
+        final db = b.orderDate ?? DateTime(0);
+        return db.compareTo(da);
+      });
+      final count = sold.length;
+      final earnings = sold.fold<double>(0, (sum, o) => sum + o.total.toDouble());
+      if (!mounted) return;
+      setState(() {
+        _soldItems = count;
+        _totalEarnings = earnings;
+        _recentSalesOrders = sold;
+      });
+    } catch (e) {
+      debugPrint('Error loading order stats: $e');
     }
   }
 
@@ -909,17 +958,12 @@ class _MarketplaceMerchantDashboardState
       final total = list.length;
       final active = list.where((e) => e['isActive'] == true).length;
 
-      int sold = 0;
-      for (final it in list) {
-        if (it['sold'] == true) sold += 1;
-      }
-
       if (!mounted) return;
       setState(() {
         _items = list;
         _totalItems = total;
         _activeItems = active;
-        _soldItems = sold;
+        // _soldItems and _totalEarnings come from _loadOrderStats (real completed orders)
       });
     } catch (e) {
       debugPrint('Error loading items: $e');
@@ -928,7 +972,7 @@ class _MarketplaceMerchantDashboardState
         _items = [];
         _totalItems = 0;
         _activeItems = 0;
-        _soldItems = 0;
+        // keep _soldItems from _loadOrderStats
       });
     } finally {
       if (mounted) setState(() => _loadingItems = false);
@@ -960,6 +1004,7 @@ class _MarketplaceMerchantDashboardState
     await _fetchCurrentUserMe();
     await _loadMerchantData();
     await _loadItems();
+    await _loadOrderStats();
   }
 
   // ----------------- Profile image helpers -----------------
@@ -1990,61 +2035,241 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
+  Future<void> _maybeShowMerchantGuide() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Show guide until the merchant has completed or skipped it (once).
+      if (prefs.getBool(_kMerchantGuidePrefKey) == true) return;
+      if (!mounted) return;
+      setState(() {
+        _showMerchantGuide = true;
+        _merchantGuideStep = 0;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _completeMerchantGuide() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kMerchantGuidePrefKey, true);
+      await prefs.setBool(_kMerchantGuideShowOnNextOpenKey, false);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _showMerchantGuide = false;
+      _merchantGuideStep = 0;
+    });
+  }
+
+  static const List<({String title, String body, IconData icon})> _merchantGuideSteps = [
+    (title: 'ikani katundu wanu koyamba', body: 'Dinani "Add Item" kuti muike katundu wanu. kenako ikani  name, price, photo and category.', icon: Icons.add_box_rounded),
+    (title: 'kulongosola katundu wanu', body: 'Yuzani "My Items"  kt mu wone, musithe,kuika ndikuchosa katundu wanu pa msika.', icon: Icons.inventory_2_rounded),
+    (title: 'Tsegulani waleti yanu', body: 'tsegulani Waleti yanu pa dashboard kuti muthe kulandila ma payments and ikani PIN kuti muteteze waleti yanu.', icon: Icons.account_balance_wallet_rounded),
+    (title: 'Mukagulisa', body: 'chongani ma  orders as shipped or delivered. onani zomwe mwagulisa pa recent Sales  ndipo pangani makasitomala anu kukhala a tcheru.', icon: Icons.local_shipping_rounded),
+  ];
+
+  Widget _buildMerchantGuideOverlay() {
+    final step = _merchantGuideSteps[_merchantGuideStep];
+    final isLast = _merchantGuideStep == _merchantGuideSteps.length - 1;
+
+    return Material(
+      color: Colors.black54,
+      child: SafeArea(
+        child: Stack(
+          children: [
+            GestureDetector(onTap: () {}),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.15),
+                        blurRadius: 20,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Quick guide',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              color: _brandNavy,
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => _completeMerchantGuide(),
+                            child: const Text('Skip'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: _brandOrange.withOpacity(0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(step.icon, size: 48, color: _brandOrange),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        step.title,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        step.body,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey.shade700,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(
+                          _merchantGuideSteps.length,
+                          (i) => Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 3),
+                            width: i == _merchantGuideStep ? 20 : 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: i == _merchantGuideStep
+                                  ? _brandOrange
+                                  : Colors.grey.shade300,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _brandOrange,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: () {
+                            if (isLast) {
+                              _completeMerchantGuide();
+                              return;
+                            }
+                            if (_merchantGuideStep == 0) {
+                              _marketplaceTabs.animateTo(1);
+                            } else if (_merchantGuideStep == 1) {
+                              _marketplaceTabs.animateTo(2);
+                            } else if (_merchantGuideStep == 2) {
+                              _marketplaceTabs.animateTo(0);
+                            }
+                            setState(() => _merchantGuideStep++);
+                          },
+                          child: Text(
+                            isLast ? 'Ndamva!' : 'Next',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildDashboardContent() {
     if (_isLoading) {
       return const _DashboardSkeleton();
     }
 
+    if (!_merchantGuideCheckScheduled) {
+      _merchantGuideCheckScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowMerchantGuide());
+    }
+
     // ✅ removed DefaultTabController (it can trigger dependents assertion in some setups)
-    return Column(
+    return Stack(
       children: [
-        Container(
-          color: Colors.white,
-          child: TabBar(
-            controller: _marketplaceTabs,
-            labelColor: _brandOrange,
-            unselectedLabelColor: Colors.grey,
-            indicatorColor: _brandOrange,
-            tabs: const [
-              Tab(text: 'Dashboard'),
-              Tab(text: 'Add Item'),
-              Tab(text: 'My Items'),
-             //  Tab(text: 'Vero Ride'),
-            ],
-          ),
-        ),
-        Expanded(
-          child: TabBarView(
-            controller: _marketplaceTabs,
-            children: [
-              RefreshIndicator(
-                onRefresh: _refreshAll,
-                child: SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildModernHeaderCard(),
-                      const SizedBox(height: 12),
-                      _buildStatsSection(),
-                      const SizedBox(height: 12),
-                      _buildQuickActionsSection(),
-                      const SizedBox(height: 12),
-                      _buildWalletSummary(),
-                      const SizedBox(height: 12),
-                      _buildRecentSales(),
-                      const SizedBox(height: 12),
-                      _buildAllClientItemsSection(),
-                    ],
-                  ),
-                ),
+        Column(
+          children: [
+            Container(
+              color: Colors.white,
+              child: TabBar(
+                controller: _marketplaceTabs,
+                labelColor: _brandOrange,
+                unselectedLabelColor: Colors.grey,
+                indicatorColor: _brandOrange,
+                tabs: const [
+                  Tab(text: 'Dashboard'),
+                  Tab(text: 'Add Item'),
+                  Tab(text: 'My Items'),
+                 //  Tab(text: 'Vero Ride'),
+                ],
               ),
-              _buildAddItemTab(),
-              _buildMyItemsTab(),
-            ],
-          ),
+            ),
+            Expanded(
+              child: TabBarView(
+                controller: _marketplaceTabs,
+                children: [
+                  RefreshIndicator(
+                    onRefresh: _refreshAll,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildModernHeaderCard(),
+                          const SizedBox(height: 12),
+                          _buildStatsSection(),
+                          const SizedBox(height: 12),
+                          _buildQuickActionsSection(),
+                          const SizedBox(height: 12),
+                          _buildWalletSummary(),
+                          const SizedBox(height: 12),
+                          _buildRecentSales(),
+                          const SizedBox(height: 12),
+                          _buildAllClientItemsSection(),
+                        ],
+                      ),
+                    ),
+                  ),
+                  _buildAddItemTab(),
+                  _buildMyItemsTab(),
+                ],
+              ),
+            ),
+          ],
         ),
+        if (_showMerchantGuide) _buildMerchantGuideOverlay(),
       ],
     );
   }
@@ -2460,21 +2685,64 @@ class _MarketplaceMerchantDashboardState
     );
   }
 
-  // ----------------- Recent Sales -----------------
+  // ----------------- Recent Sales (real confirmed+paid orders) -----------------
+  static final DateFormat _recentSaleDateFmt =
+      DateFormat('dd MMM yyyy, HH:mm');
+
   Widget _buildRecentSales() {
+    final query = _recentSalesSearchController.text.trim().toLowerCase();
+    final filtered = query.isEmpty
+        ? _recentSalesOrders
+        : _recentSalesOrders.where((o) {
+            return o.orderNumber.toLowerCase().contains(query) ||
+                o.itemName.toLowerCase().contains(query);
+          }).toList();
+    final displayList = filtered.take(20).toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Row(
+        Row(
           children: [
-            Expanded(
+            const Expanded(
               child: Text('Recent Sales',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
             ),
+            IconButton(
+              icon: const Icon(Icons.search_rounded),
+              onPressed: () => _recentSalesSearchFocus.requestFocus(),
+              tooltip: 'Search by order number or item name',
+            ),
           ],
         ),
-        const SizedBox(height: 10),
-        if (_recentSales.isEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: TextField(
+            controller: _recentSalesSearchController,
+            focusNode: _recentSalesSearchFocus,
+            decoration: InputDecoration(
+              hintText: 'Order No or item name',
+              prefixIcon: const Icon(Icons.search_rounded, size: 20),
+              suffixIcon: query.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear_rounded, size: 20),
+                      onPressed: () {
+                        _recentSalesSearchController.clear();
+                        setState(() {});
+                      },
+                    )
+                  : null,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              filled: true,
+              fillColor: Colors.grey.shade50,
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ),
+        const SizedBox(height: 6),
+        if (_recentSalesOrders.isEmpty)
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -2484,14 +2752,22 @@ class _MarketplaceMerchantDashboardState
             ),
             child: const Center(child: Text('No sales yet')),
           )
+        else if (displayList.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.black12),
+            ),
+            child: Center(
+                child: Text('No matches for "$query"')),
+          )
         else
-          ..._recentSales.take(4).map((sale) {
-            final saleMap = sale as Map<String, dynamic>;
-            final orderId = (saleMap['orderId'] ?? '').toString();
-            final shortId = orderId.length >= 8
-                ? orderId.substring(0, 8)
-                : (orderId.isEmpty ? 'N/A' : orderId);
-
+          ...displayList.map((o) {
+            final dateStr = o.orderDate != null
+                ? _recentSaleDateFmt.format(o.orderDate!.toLocal())
+                : '—';
             return Container(
               margin: const EdgeInsets.only(bottom: 10),
               decoration: BoxDecoration(
@@ -2510,17 +2786,31 @@ class _MarketplaceMerchantDashboardState
                   child: const Icon(Icons.shopping_bag_rounded,
                       color: _brandOrange),
                 ),
-                title: Text('Sale #$shortId',
-                    style: const TextStyle(fontWeight: FontWeight.w900)),
+                title: Text(o.itemName,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
                 subtitle: Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Customer: ${saleMap['customerName'] ?? 'N/A'}'),
-                      Text('Items: ${saleMap['itemCount'] ?? '0'}'),
-                      Text(
-                          'Total: ${mwk0(saleMap['totalAmount'])}'), // ✅ commas
+                      Row(
+                        children: [
+                          Text('Order: ${o.orderNumber}'),
+                          IconButton(
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                            icon: const Icon(Icons.copy_rounded, size: 18),
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(text: o.orderNumber));
+                              ToastHelper.showCustomToast(context, 'Order number copied', isSuccess: true, errorMessage: '');
+                            },
+                            tooltip: 'Copy order number',
+                          ),
+                        ],
+                      ),
+                      Text('${mwk0(o.total)}  ·  $dateStr'),
                     ],
                   ),
                 ),
@@ -2528,11 +2818,11 @@ class _MarketplaceMerchantDashboardState
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: _getSaleStatusColor(saleMap['status']?.toString()),
+                    color: Colors.green.shade100,
                     borderRadius: BorderRadius.circular(999),
                   ),
-                  child: Text((saleMap['status'] ?? 'pending').toString(),
-                      style: const TextStyle(
+                  child: const Text('Paid',
+                      style: TextStyle(
                           fontWeight: FontWeight.w900, fontSize: 12)),
                 ),
               ),
@@ -2542,22 +2832,6 @@ class _MarketplaceMerchantDashboardState
     );
   }
 
-  Color _getSaleStatusColor(String? status) {
-    switch (status?.toLowerCase()) {
-      case 'completed':
-        return Colors.green[100]!;
-      case 'processing':
-        return Colors.blue[100]!;
-      case 'shipped':
-        return Colors.orange[100]!;
-      case 'pending':
-        return Colors.yellow[100]!;
-      case 'cancelled':
-        return Colors.red[100]!;
-      default:
-        return Colors.grey[100]!;
-    }
-  }
 
   // ----------------- “Top items” replaced: list ALL merchant items -----------------
   Widget _buildAllClientItemsSection() {

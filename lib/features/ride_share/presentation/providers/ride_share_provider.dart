@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart'
     show Provider, FutureProvider, StreamProvider;
 import 'package:flutter_riverpod/legacy.dart' show StateProvider;
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/place_prediction_model.dart';
 import 'package:vero360_app/GernalServices/ride_share_service.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/GernalServices/location_service.dart';
 import 'package:vero360_app/GernalServices/place_service.dart';
 import 'package:vero360_app/GernalServices/google_places_service.dart';
@@ -16,8 +18,15 @@ import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 // ==================== SERVICES ====================
+final rideShareHttpServiceProvider = Provider<RideShareHttpService>((ref) {
+  final service = RideShareHttpService();
+  ref.onDispose(service.dispose);
+  return service;
+});
+
 final rideShareServiceProvider = Provider<RideShareService>((ref) {
-  return RideShareService();
+  final httpService = ref.watch(rideShareHttpServiceProvider);
+  return RideShareService(httpService);
 });
 
 final locationServiceProvider = Provider<LocationService>((ref) {
@@ -52,9 +61,41 @@ final googleDirectionsServiceProvider =
 });
 
 // ==================== CURRENT LOCATION ====================
+const _lastKnownLatKey = 'last_known_lat';
+const _lastKnownLngKey = 'last_known_lng';
+
+/// Reads the last GPS position persisted to SharedPreferences.
+/// Returns instantly (no GPS call), so the map can start here while
+/// the real GPS fix is being acquired.
+final lastKnownLocationProvider = FutureProvider<Position?>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  final lat = prefs.getDouble(_lastKnownLatKey);
+  final lng = prefs.getDouble(_lastKnownLngKey);
+  if (lat == null || lng == null) return null;
+  return Position(
+    latitude: lat,
+    longitude: lng,
+    timestamp: DateTime.now(),
+    accuracy: 0,
+    altitude: 0,
+    altitudeAccuracy: 0,
+    heading: 0,
+    headingAccuracy: 0,
+    speed: 0,
+    speedAccuracy: 0,
+  );
+});
+
 final currentLocationProvider = FutureProvider<Position?>((ref) async {
   final locationService = ref.watch(locationServiceProvider);
-  return await locationService.getCurrentLocation();
+  final position = await locationService.getCurrentLocation();
+  if (position != null) {
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setDouble(_lastKnownLatKey, position.latitude);
+      prefs.setDouble(_lastKnownLngKey, position.longitude);
+    });
+  }
+  return position;
 });
 
 final locationStreamProvider = StreamProvider<Position>((ref) {
@@ -427,3 +468,8 @@ final durationMinutesProvider =
     return 0;
   }
 });
+
+// ==================== CACHED ROUTE POLYLINE ====================
+/// Stores the last computed polyline coordinates so the tracking screen can
+/// reuse them without making another Google API call.
+final cachedRoutePolylineProvider = StateProvider<List<LatLng>>((ref) => []);

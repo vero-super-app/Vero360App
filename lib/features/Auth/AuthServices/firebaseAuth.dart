@@ -62,8 +62,8 @@ class FirebaseAuthService {
       await logCurrentIdToken();
       return userCred.user;
     } catch (e) {
-      print('Google sign-in failed: $e');
-      return null;
+      debugPrint('Google sign-in failed: $e');
+      rethrow;
     }
   }
 
@@ -86,8 +86,8 @@ class FirebaseAuthService {
       await logCurrentIdToken();
       return userCred.user;
     } catch (e) {
-      print('Apple sign-in failed: $e');
-      return null;
+      debugPrint('Apple sign-in failed: $e');
+      rethrow;
     }
   }
 

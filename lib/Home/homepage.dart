@@ -204,7 +204,21 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
 
   Future<void> _resolveGreetingName() async {
     if (widget.email.isNotEmpty) return;
-    final name = await AuthStorage.userNameFromToken();
+    // Prefer name from SharedPreferences (set at login) so "Hi, chawezi" not "Hi, Phone" for phone users.
+    String? name;
+    final prefs = await SharedPreferences.getInstance();
+    name = prefs.getString('fullName') ?? prefs.getString('name');
+    if (name != null && name.trim().isNotEmpty && !name.contains('@')) {
+      // Use prefs name (not an email)
+    } else {
+      name = await AuthStorage.userNameFromToken();
+      // If token only has email (e.g. 0992695612@phone.vero360.app), don't use "Phone" from the local part.
+      if (name != null && name.contains('@')) {
+        final local = name.split('@').first.trim();
+        if (RegExp(r'^\d+$').hasMatch(local)) name = null; // all digits => don't use as display name
+        else name = local;
+      }
+    }
     if (!mounted) return;
     setState(() {
       _resolvedGreetingName = name;

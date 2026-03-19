@@ -19,9 +19,11 @@ import 'package:app_links/app_links.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // HTTP + prefs
 import 'package:http/http.dart' as http;
+import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Pages
@@ -136,8 +138,12 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
     // Defer heavier, non-blocking services until after the first frame.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      // Google Maps config (reads .env, sets up API keys)
-      unawaited(GoogleMapsConfig.initialize());
+      // Google Maps config (reads .env, sets up API keys). Safe to skip if offline.
+      try {
+        await GoogleMapsConfig.initialize();
+      } catch (e) {
+        debugPrint("GoogleMapsConfig init warning (offline?): $e");
+      }
 
       // Push notifications (channels, permissions, listeners)
       try {
@@ -161,8 +167,13 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
     // Keep boot work as light as possible so we hit the home UI quickly.
     _log("Configuring API…");
-    await ApiConfig.useProd();
-    _log("API config OK ✅");
+    try {
+      await ApiConfig.useProd();
+      _log("API config OK ✅");
+    } catch (e) {
+      // If this fails (e.g., no internet), continue in a degraded/offline mode.
+      _log("API config warning (using offline/defaults): $e");
+    }
 
     // Run heavier messaging initialization in the background so it
     // does not block the user from seeing the home screen.
@@ -591,25 +602,25 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late final AppLinks _appLinks;
   StreamSubscription<Uri>? _sub;
 
   // Which shell we’re currently showing
   String _currentShell = 'customer';
 
+  bool _showBiometricLock = false;
+  AppLifecycleState? _lastLifecycleState;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initDeepLinks();
 
     SchedulerBinding.instance.addPostFrameCallback((_) async {
       await _fastRedirectFromCache();
-      // Only verify role in background if we're NOT showing BottomNavbar
-      // (BottomNavbar handles role verification on its own to avoid double navigation)
-      if (_currentShell != 'customer') {
-        unawaited(_verifyRoleFromServerInBg());
-      }
+      unawaited(_verifyRoleFromServerInBg());
     });
   }
 
@@ -631,7 +642,38 @@ class _MyAppState extends State<MyApp> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasInBackground = _lastLifecycleState == AppLifecycleState.paused ||
+        _lastLifecycleState == AppLifecycleState.inactive;
+    _lastLifecycleState = state;
+    if (state == AppLifecycleState.resumed && wasInBackground) {
+      _checkBiometricLockOnResume();
+    }
+  }
+
+  Future<void> _checkBiometricLockOnResume() async {
+    if (kIsWeb) return;
+    if (defaultTargetPlatform != TargetPlatform.iOS &&
+        defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final enabled = prefs.getBool('pref_biometric_lock') ?? false;
+      if (!enabled || !mounted) return;
+      final auth = LocalAuthentication();
+      final canCheck = await auth.canCheckBiometrics;
+      final hasBiometrics = await auth.getAvailableBiometrics();
+      if (!canCheck || hasBiometrics.isEmpty) return;
+      if (mounted) setState(() => _showBiometricLock = true);
+    } catch (_) {}
+  }
+
+  void _onBiometricUnlockSuccess() {
+    if (mounted) setState(() => _showBiometricLock = false);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     super.dispose();
   }
@@ -656,7 +698,7 @@ class _MyAppState extends State<MyApp> {
     _currentShell = 'driver';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const DriverDashboard()),
-      (route) => route.isFirst,
+      (route) => false,
     );
   }
 
@@ -677,7 +719,6 @@ class _MyAppState extends State<MyApp> {
 
     if (token == null || token.trim().isEmpty) return;
 
-    // ✅ Use ApiConfig for production-ready endpoint
     try {
       final resp = await http.get(
         ApiConfig.endpoint('/users/me'),
@@ -694,6 +735,36 @@ class _MyAppState extends State<MyApp> {
             : (decoded is Map
                 ? Map<String, dynamic>.from(decoded)
                 : <String, dynamic>{});
+
+        final backendRole = (user['role'] ?? '').toString().toLowerCase();
+        final cachedRole = (prefs.getString('user_role') ?? '').toLowerCase();
+
+        // Case 1: cached role says driver/merchant but backend says customer
+        // -> re-sync cached role to backend
+        if (cachedRole.isNotEmpty &&
+            cachedRole != 'customer' &&
+            backendRole == 'customer') {
+          await _resyncRoleToBackend(prefs, token, cachedRole);
+          return;
+        }
+
+        // Case 2: both cached and backend say customer, but Firestore
+        // (the registration source of truth) says driver/merchant.
+        // This happens when SharedPreferences was overwritten by a previous
+        // backend fetch before the re-sync could fix it.
+        if (backendRole == 'customer') {
+          final firestoreRole = await _getRoleFromFirestore();
+          if (firestoreRole != null &&
+              firestoreRole != 'customer' &&
+              firestoreRole != backendRole) {
+            debugPrint(
+                '⚠️ Firestore says "$firestoreRole" but backend says "$backendRole". Re-syncing…');
+            await prefs.setString('user_role', firestoreRole);
+            await prefs.setString('role', firestoreRole);
+            await _resyncRoleToBackend(prefs, token, firestoreRole);
+            return;
+          }
+        }
 
         await _persistUserToPrefs(prefs, user);
 
@@ -712,6 +783,73 @@ class _MyAppState extends State<MyApp> {
       }
     } catch (_) {
       // network hiccup: keep current shell
+    }
+  }
+
+  /// Read the user's role from Firestore (registration source of truth).
+  Future<String?> _getRoleFromFirestore() async {
+    try {
+      final fbUser = FirebaseAuth.instance.currentUser;
+      if (fbUser == null) return null;
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(fbUser.uid)
+          .get();
+      if (doc.exists && doc.data() != null) {
+        return (doc.data()!['role'] ?? '').toString().toLowerCase();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Backend has the wrong role (e.g. 'customer' when it should be 'driver').
+  /// Send PUT /users/me to correct it, then re-verify.
+  Future<void> _resyncRoleToBackend(
+      SharedPreferences prefs, String token, String correctRole) async {
+    try {
+      final body = json.encode({'role': correctRole});
+      final putResp = await http.put(
+        ApiConfig.endpoint('/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: body,
+      ).timeout(const Duration(seconds: 6));
+
+      if (putResp.statusCode >= 200 && putResp.statusCode < 300) {
+        debugPrint('✅ Re-synced role to backend: $correctRole');
+        // Re-read the updated user from backend
+        final getResp = await http.get(
+          ApiConfig.endpoint('/users/me'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Accept': 'application/json',
+          },
+        ).timeout(const Duration(seconds: 6));
+        if (getResp.statusCode == 200) {
+          final decoded = json.decode(getResp.body);
+          final user = (decoded is Map && decoded['data'] is Map)
+              ? Map<String, dynamic>.from(decoded['data'])
+              : (decoded is Map
+                  ? Map<String, dynamic>.from(decoded)
+                  : <String, dynamic>{});
+          await _persistUserToPrefs(prefs, user);
+
+          final merchant = _isMerchant(user);
+          final driver = _isDriver(user);
+          if (merchant && _currentShell != 'merchant') {
+            _pushMerchant((user['email'] ?? '').toString());
+          } else if (!merchant && driver && _currentShell != 'driver') {
+            _pushDriver();
+          } else if (!merchant && !driver && _currentShell != 'customer') {
+            _pushCustomer((user['email'] ?? '').toString());
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Role re-sync failed: $e');
     }
   }
 
@@ -753,15 +891,12 @@ class _MyAppState extends State<MyApp> {
     if (isMerchant) {
       await prefs.setString('user_role', 'merchant');
       await prefs.setString('role', 'merchant');
-      await prefs.setBool('user_is_driver', false);
     } else if (isDriver) {
       await prefs.setString('user_role', 'driver');
       await prefs.setString('role', 'driver');
-      await prefs.setBool('user_is_driver', true);
     } else {
       await prefs.setString('user_role', 'customer');
       await prefs.setString('role', 'customer');
-      await prefs.setBool('user_is_driver', false);
     }
   }
 
@@ -771,7 +906,6 @@ class _MyAppState extends State<MyApp> {
     await prefs.remove('authToken');
     await prefs.remove('user_role');
     await prefs.remove('role');
-    await prefs.remove('user_is_driver');
   }
 
   void _pushMerchant(String email) {
@@ -783,7 +917,7 @@ class _MyAppState extends State<MyApp> {
                 email: email,
                 onBackToHomeTab: () {},
               )),
-      (route) => route.isFirst,
+      (route) => false,
     );
   }
 
@@ -792,7 +926,7 @@ class _MyAppState extends State<MyApp> {
     _currentShell = 'customer';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
-      (route) => route.isFirst,
+      (route) => false,
     );
   }
 
@@ -812,11 +946,20 @@ class _MyAppState extends State<MyApp> {
           colorSchemeSeed: const Color(0xFFFF8A00),
         ),
 
-        // ✅ Wrap app shell with RideRequestOverlay
+        // ✅ Wrap app shell with RideRequestOverlay; show biometric lock when enabled and returning to app
         builder: (context, child) {
-          return RideRequestOverlay(
+          Widget content = RideRequestOverlay(
             child: child ?? const SizedBox.shrink(),
           );
+          if (_showBiometricLock) {
+            content = Stack(
+              children: [
+                content,
+                _BiometricLockOverlay(onUnlock: _onBiometricUnlockSuccess),
+              ],
+            );
+          }
+          return content;
         },
 
         // ✅ keep public home
@@ -868,6 +1011,112 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
+/// Full-screen overlay shown when app lock (Face ID / fingerprint) is enabled and user returns to app.
+class _BiometricLockOverlay extends StatefulWidget {
+  final VoidCallback onUnlock;
+
+  const _BiometricLockOverlay({required this.onUnlock});
+
+  @override
+  State<_BiometricLockOverlay> createState() => _BiometricLockOverlayState();
+}
+
+class _BiometricLockOverlayState extends State<_BiometricLockOverlay> {
+  String _label = 'Unlock';
+  bool _authenticating = false;
+
+  Future<void> _authenticate() async {
+    if (_authenticating) return;
+    setState(() => _authenticating = true);
+    try {
+      final auth = LocalAuthentication();
+      final canCheck = await auth.canCheckBiometrics;
+      final available = await auth.getAvailableBiometrics();
+      if (!canCheck || available.isEmpty) {
+        if (mounted) setState(() => _authenticating = false);
+        return;
+      }
+      final isFace = available.contains(BiometricType.face);
+      final isFinger = available.contains(BiometricType.fingerprint);
+      final reason = isFace && isFinger
+          ? 'Unlock Vero360 with Face ID or fingerprint'
+          : isFace
+              ? 'Unlock Vero360 with Face ID'
+              : 'Unlock Vero360 with fingerprint';
+      final success = await auth.authenticate(
+        localizedReason: reason,
+        options: const AuthenticationOptions(
+          stickyAuth: true,
+          useErrorDialogs: true,
+        ),
+      );
+      if (success && mounted) widget.onUnlock();
+    } catch (_) {}
+    if (mounted) setState(() => _authenticating = false);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _authenticate());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.fingerprint,
+                  size: 80,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'App locked',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Use Face ID or fingerprint to unlock',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 32),
+                FilledButton.icon(
+                  onPressed: _authenticating ? null : _authenticate,
+                  icon: _authenticating
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.fingerprint),
+                  label: Text(_authenticating ? 'Checking…' : _label),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// -------- Helpers to call from Login / Logout screens ---------------
 class AuthFlow {
   static String? _readToken(SharedPreferences p) =>
@@ -884,17 +1133,17 @@ class AuthFlow {
                   email: email,
                   onBackToHomeTab: () {},
                 )),
-        (route) => route.isFirst,
+        (route) => false,
       );
     } else if (isDriver) {
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const DriverDashboard()),
-        (route) => route.isFirst,
+        (route) => false,
       );
     } else {
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
-        (route) => route.isFirst,
+        (route) => false,
       );
     }
   }
@@ -955,14 +1204,14 @@ class AuthFlow {
       } else {
         navKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-          (route) => route.isFirst,
+          (route) => false,
         );
       }
     } catch (e) {
       debugPrint("❌ onLoginSuccess error: $e");
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-        (route) => route.isFirst,
+        (route) => false,
       );
     }
   }
@@ -975,7 +1224,6 @@ class AuthFlow {
     await p.remove('authToken');
     await p.remove('user_role');
     await p.remove('role');
-    await p.remove('user_is_driver');
 
     try {
       await FirebaseAuth.instance.signOut();
@@ -983,7 +1231,7 @@ class AuthFlow {
 
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-      (route) => route.isFirst,
+      (route) => false,
     );
   }
 

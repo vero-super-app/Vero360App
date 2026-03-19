@@ -61,8 +61,6 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       case 'food':
         return FoodMerchantDashboard(email: email);
-      case 'taxi':
-        return DriverDashboard();
       case 'accommodation':
         return AccommodationMerchantDashboard(email: email);
       case 'courier':
@@ -174,6 +172,11 @@ class _LoginScreenState extends State<LoginScreen> {
       if (businessAddress != null && businessAddress.isNotEmpty) {
         await prefs.setString('business_address', businessAddress);
       }
+
+      // Show merchant dashboard guide once when they next open the dashboard.
+      if (prefs.getBool('marketplace_merchant_guide_v1_done') != true) {
+        await prefs.setBool('marketplace_merchant_guide_show_on_next_open', true);
+      }
     }
 
     if (!mounted) return;
@@ -187,7 +190,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
          Navigator.of(context).pushAndRemoveUntil(
            MaterialPageRoute(builder: (_) => merchantDashboard),
-           (route) => route.isFirst,
+           (route) => false,
          );
        } else {
          Navigator.of(context).pushAndRemoveUntil(
@@ -197,26 +200,22 @@ class _LoginScreenState extends State<LoginScreen> {
                onBackToHomeTab: () {},
              ),
            ),
-           (route) => route.isFirst,
+           (route) => false,
          );
        }
      } else if (role == 'driver') {
-       // Driver routes to Bottomnavbar with driver flag set
-       await prefs.setBool('user_is_driver', true);
        Navigator.of(context).pushAndRemoveUntil(
          MaterialPageRoute(
-           builder: (_) => Bottomnavbar(email: displayId),
+           builder: (_) => const DriverDashboard(),
          ),
-         (route) => route.isFirst,
+         (route) => false,
        );
      } else {
-       // Customer
-       await prefs.setBool('user_is_driver', false);
        Navigator.of(context).pushAndRemoveUntil(
          MaterialPageRoute(
            builder: (_) => Bottomnavbar(email: displayId),
          ),
-         (route) => route.isFirst,
+         (route) => false,
        );
      }
   }
@@ -263,11 +262,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
     // Ensure at least a basic profile exists
     if (profile.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedRole = (prefs.getString('user_role') ?? 'customer').toLowerCase();
       profile = {
         'email': user.email,
         'name': user.displayName,
         'phone': '',
-        'role': 'customer',
+        'role': cachedRole,
       };
       try {
         await _firestore.collection('users').doc(user.uid).set({
@@ -303,12 +304,25 @@ class _LoginScreenState extends State<LoginScreen> {
     };
   }
 
-  /// Fast auth result used for Google/Apple login so we can navigate quickly
-  /// without waiting for Firestore profile reads. Assumes customer role by
-  /// default; merchant routes are handled via other flows.
+  /// Fast auth result for Google/Apple login. Reads role from Firestore
+  /// (or SharedPreferences as fallback) so drivers/merchants route correctly.
   Future<Map<String, dynamic>> _buildQuickResultFromUser(User user) async {
     final token = await user.getIdToken();
     final email = user.email ?? _identifier.text.trim();
+
+    // Read role from Firestore profile, fall back to SharedPreferences
+    String role = 'customer';
+    try {
+      final snap = await _firestore.collection('users').doc(user.uid).get();
+      if (snap.exists && snap.data() != null) {
+        role = (snap.data()!['role'] ?? '').toString().toLowerCase();
+      }
+    } catch (_) {}
+    if (role.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      role = (prefs.getString('user_role') ?? 'customer').toLowerCase();
+    }
+
     return <String, dynamic>{
       'authProvider': 'firebase',
       'token': token,
@@ -318,7 +332,7 @@ class _LoginScreenState extends State<LoginScreen> {
         'email': email,
         'phone': user.phoneNumber ?? '',
         'name': user.displayName ?? '',
-        'role': 'customer',
+        'role': role,
         'merchantService': null,
         'businessName': null,
         'businessAddress': null,
@@ -354,10 +368,13 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       // Phone or backend-first: use AuthService (backend + Firebase fallback for email)
       if (!_looksLikeEmail(identifier)) {
+        // For phone: don't show backend error toast yet; try Firebase fallback first, then show one error if both fail.
+        final isPhone = _looksLikePhone(identifier);
         var result = await _authService.loginWithIdentifier(
           identifier,
           password,
           context,
+          showErrorToast: !isPhone,
         );
         if (result != null && mounted) {
           await _handleAuthResult(result);
@@ -365,7 +382,7 @@ class _LoginScreenState extends State<LoginScreen> {
         }
         // Phone-only accounts created on register use Firebase with synthetic email.
         // Try signing in with that when backend doesn't know the phone.
-        if (_looksLikePhone(identifier) && mounted) {
+        if (isPhone && mounted) {
           final authEmail =
               '${_normalizePhoneForAuth(identifier)}@phone.vero360.app';
           try {
@@ -386,6 +403,14 @@ class _LoginScreenState extends State<LoginScreen> {
               return;
             }
           } on FirebaseAuthException catch (_) {}
+        }
+        if (mounted && isPhone) {
+          ToastHelper.showCustomToast(
+            context,
+            'Incorrect phone number or password.',
+            isSuccess: false,
+            errorMessage: '',
+          );
         }
         return;
       }
@@ -487,6 +512,32 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // -------------------- Social sign-in via Firebase (no platform lock) --------------------
 
+  static String _googleSignInErrorMessage(Object e) {
+    if (e is FirebaseAuthException) {
+      switch (e.code) {
+        case 'network-request-failed':
+          return 'Network error. Check your connection and try again.';
+        case 'user-disabled':
+          return 'This account has been disabled.';
+        case 'too-many-requests':
+          return 'Too many attempts. Try again later.';
+        default:
+          return e.message?.trim().isNotEmpty == true
+              ? e.message!
+              : 'Google sign-in failed. Please try again.';
+      }
+    }
+    final msg = e.toString();
+    if (msg.contains('network') ||
+        msg.contains('connection') ||
+        msg.contains('hostname') ||
+        msg.contains('unreachable') ||
+        msg.contains('UNAVAILABLE')) {
+      return 'Network error. Check your connection and try again.';
+    }
+    return msg.length > 80 ? 'Google sign-in failed. Please try again.' : msg;
+  }
+
   Future<void> _google() async {
     setState(() => _socialLoading = true);
     // Show progress feedback right when user taps Google.
@@ -521,11 +572,12 @@ class _LoginScreenState extends State<LoginScreen> {
       // Warm up Firestore profile in the background (non-blocking).
       _buildResultFromUser(user);
     } catch (e) {
+      if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Google sign-in failed.',
+        _googleSignInErrorMessage(e),
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     } finally {
       if (mounted) setState(() => _socialLoading = false);
@@ -679,8 +731,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
                               decoration: _fieldDecoration(
-                                label: 'Email or phone number',
-                                hint: 'you@vero.com or +265...',
+                                label: 'phone number or email',
+                                hint: '09xxxxxxxx or you@vero.com',
                                 icon: Icons.person_outline,
                               ),
                               validator: (v) {

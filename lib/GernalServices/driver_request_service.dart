@@ -246,15 +246,22 @@ class DriverRequestService {
     int? taxiId,
   }) async {
     try {
+      final token = await _getAuthToken();
+
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final body = <String, dynamic>{
         'taxiId': taxiId,
       };
 
       final response = await http.patch(
         ApiConfig.endpoint('$_baseUrl/rides/$rideId/accept'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: headers,
         body: jsonEncode(body),
       );
 
@@ -271,11 +278,18 @@ class DriverRequestService {
   /// Reject a ride request
   static Future<void> rejectRideRequest(String rideId) async {
     try {
+      final token = await _getAuthToken();
+
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await http.patch(
         ApiConfig.endpoint('$_baseUrl/rides/$rideId/reject'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: headers,
       );
 
       if (response.statusCode != 200 && response.statusCode != 204) {
@@ -294,6 +308,15 @@ class DriverRequestService {
     Map<String, dynamic>? additionalData,
   }) async {
     try {
+      final token = await _getAuthToken();
+
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final body = <String, dynamic>{'status': status};
       if (additionalData != null) {
         body.addAll(additionalData);
@@ -301,9 +324,7 @@ class DriverRequestService {
 
       final response = await http.patch(
         ApiConfig.endpoint('$_baseUrl/rides/$rideId/status'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: headers,
         body: jsonEncode(body),
       );
 

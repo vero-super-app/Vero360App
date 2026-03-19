@@ -27,7 +27,7 @@ class AppColors {
   static const fieldFill = Color(0xFFF7F7F9);
 }
 
-enum UserRole { customer, merchant }
+enum UserRole { customer, merchant, driver }
 
 // Merchant service types
 class MerchantService {
@@ -48,11 +48,6 @@ const List<MerchantService> kMerchantServices = [
     key: 'marketplace',
     name: 'Marketplace',
     icon: Icons.store_rounded,
-  ),
-  MerchantService(
-    key: 'taxi',
-    name: 'Vero Ride/Taxi',
-    icon: Icons.local_taxi_rounded,
   ),
   MerchantService(
     key: 'food',
@@ -134,6 +129,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return 'Business name is required';
     }
     return null;
+  }
+
+  String get _roleString {
+    switch (_role) {
+      case UserRole.merchant:
+        return 'merchant';
+      case UserRole.driver:
+        return 'driver';
+      case UserRole.customer:
+        return 'customer';
+    }
   }
 
   static bool _looksLikeEmail(String s) =>
@@ -293,6 +299,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await prefs.setString('uid', uid);
     }
 
+    // Show merchant dashboard guide once when they next open the dashboard (after register).
+    if (role == 'merchant' && prefs.getBool('marketplace_merchant_guide_v1_done') != true) {
+      await prefs.setBool('marketplace_merchant_guide_show_on_next_open', true);
+    }
+
     if (!mounted) return;
 
     if (role == 'merchant') {
@@ -303,7 +314,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             _getMerchantDashboard(serviceKey, displayId);
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => merchantDashboard),
-          (route) => route.isFirst,
+          (route) => false,
         );
       } else {
         Navigator.of(context).pushAndRemoveUntil(
@@ -313,15 +324,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
               onBackToHomeTab: () {},
             ),
           ),
-          (route) => route.isFirst,
+          (route) => false,
         );
       }
+    } else if (role == 'driver') {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const DriverDashboard()),
+        (route) => false,
+      );
     } else {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => Bottomnavbar(email: displayId),
         ),
-        (route) => route.isFirst,
+        (route) => false,
       );
     }
   }
@@ -335,12 +351,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         );
       case 'food':
         return FoodMerchantDashboard(email: email);
-      case 'taxi':
-        return DriverDashboard();
       case 'accommodation':
         return AccommodationMerchantDashboard(email: email);
-      // case 'courier':
-      //   return CourierMerchantDashboard(email: email);
     }
     return MarketplaceMerchantDashboard(
       email: email,
@@ -360,9 +372,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     if (profile.isEmpty) {
-      final newRole = _role == UserRole.merchant ? 'merchant' : 'customer';
-      // Avoid storing internal "phone-based" auth emails (e.g. xxx@phone.vero360.app)
-      // as the user's real email. Prefer explicit form email or leave blank.
+      final newRole = _roleString;
       final rawEmail = user.email ?? _identifierEmail;
       final emailForProfile = !rawEmail.endsWith('@phone.vero360.app')
           ? rawEmail
@@ -449,7 +459,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   /// Fast auth result for social signup so we can navigate quickly without
   /// waiting for Firestore reads/writes. Uses current form state for fields.
   Future<Map<String, dynamic>> _buildQuickResultFromUser(User user) async {
-    final role = _role == UserRole.merchant ? 'merchant' : 'customer';
+    final role = _roleString;
     final token = await user.getIdToken();
     // Prefer explicit email from form, fall back to Firebase email.
     final rawEmail = user.email ?? _identifierEmail;
@@ -480,7 +490,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   /// When form fields are empty (e.g. after Google/Apple sign-in), uses [user] email/displayName.
   /// Returns true if sync succeeded (2xx), false otherwise.
   Future<bool> _syncProfileToBackend(User user) async {
-    final role = _role == UserRole.merchant ? 'merchant' : 'customer';
+    final role = _roleString;
     final name = _name.text.trim().isEmpty
         ? (user.displayName ?? user.email ?? '')
         : _name.text.trim();
@@ -623,7 +633,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final user = userCredential.user;
       if (user == null) throw Exception('Firebase user creation failed');
 
-      final role = _role == UserRole.merchant ? 'merchant' : 'customer';
+      final role = _roleString;
 
       final userData = <String, dynamic>{
         'uid': user.uid,
@@ -698,9 +708,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         await prefs.setString('business_address', _businessAddress.text.trim());
       }
 
-      // Sync role (and merchant data) to backend so API user is merchant when chosen.
+      // Sync role to backend so the API user record matches the chosen role.
+      // Both merchants and drivers need the retry to ensure the backend profile is created.
       await _syncProfileToBackend(user);
-      if (_role == UserRole.merchant) {
+      if (_role == UserRole.merchant || _role == UserRole.driver) {
         _retrySyncRoleToBackend(user);
       }
 
@@ -744,6 +755,32 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // ---------- Social signup/login via Firebase (no platform lock) ----------
 
+  static String _googleSignInErrorMessage(Object e) {
+    if (e is FirebaseAuthException) {
+      switch (e.code) {
+        case 'network-request-failed':
+          return 'Network error. Check your connection and try again.';
+        case 'user-disabled':
+          return 'This account has been disabled.';
+        case 'too-many-requests':
+          return 'Too many attempts. Try again later.';
+        default:
+          return e.message?.trim().isNotEmpty == true
+              ? e.message!
+              : 'Google sign-in failed. Please try again.';
+      }
+    }
+    final msg = e.toString();
+    if (msg.contains('network') ||
+        msg.contains('connection') ||
+        msg.contains('hostname') ||
+        msg.contains('unreachable') ||
+        msg.contains('UNAVAILABLE')) {
+      return 'Network error. Check your connection and try again.';
+    }
+    return msg.length > 80 ? 'Google sign-in failed. Please try again.' : msg;
+  }
+
   Future<void> _google() async {
     if (!_canProceedWithSocialSignIn()) return;
     setState(() => _socialLoading = true);
@@ -757,6 +794,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
           errorMessage: '',
         );
         return;
+      }
+
+      // If this Google account already has a profile in Firestore, treat it
+      // as an existing account and ask the user to sign in instead of
+      // creating a duplicate via the register screen.
+      try {
+        final snap = await _firestore.collection('users').doc(user.uid).get();
+        if (snap.exists) {
+          await _auth.signOut();
+          if (!mounted) return;
+          ToastHelper.showCustomToast(
+            context,
+            'Account already exists. Please sign in.',
+            isSuccess: false,
+            errorMessage: '',
+          );
+          return;
+        }
+      } catch (_) {
+        // If this check fails, continue with normal flow to avoid blocking login.
       }
 
       // Build a lightweight result so we can navigate immediately.
@@ -773,17 +830,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // Run heavy Firebase + backend sync in the background so navigation is not blocked.
       _buildResultFromUser(user).then((_) {
         _syncProfileToBackend(user).then((_) {
-          if (_role == UserRole.merchant) {
+          if (_role == UserRole.merchant || _role == UserRole.driver) {
             _retrySyncRoleToBackend(user);
           }
         });
       });
     } catch (e) {
+      if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Google sign-in failed.',
+        _googleSignInErrorMessage(e),
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     } finally {
       if (mounted) setState(() => _socialLoading = false);
@@ -805,6 +863,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return;
       }
 
+      // Prevent duplicate Apple-based accounts from the register screen.
+      try {
+        final snap = await _firestore.collection('users').doc(user.uid).get();
+        if (snap.exists) {
+          await _auth.signOut();
+          if (!mounted) return;
+          ToastHelper.showCustomToast(
+            context,
+            'Account already exists. Please sign in.',
+            isSuccess: false,
+            errorMessage: '',
+          );
+          return;
+        }
+      } catch (_) {
+        // Ignore and continue with normal flow on failure.
+      }
+
       // Build a lightweight result so we can navigate immediately.
       final result = await _buildQuickResultFromUser(user);
       if (!mounted) return;
@@ -819,7 +895,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // Run heavy Firebase + backend sync in the background so navigation is not blocked.
       _buildResultFromUser(user).then((_) {
         _syncProfileToBackend(user).then((_) {
-          if (_role == UserRole.merchant) {
+          if (_role == UserRole.merchant || _role == UserRole.driver) {
             _retrySyncRoleToBackend(user);
           }
         });
@@ -990,7 +1066,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         onChanged: () => setState(() {}),
                         child: Column(
                           children: [
-                            Row(
+                            Wrap(
+                              spacing: 8,
                               children: [
                                 ChoiceChip(
                                   label: const Text('Customer'),
@@ -1002,13 +1079,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     _selectedMerchantService = null;
                                   }),
                                 ),
-                                const SizedBox(width: 8),
-                                ChoiceChip(
+                                 ChoiceChip(
                                   label: const Text('Merchant'),
                                   selected: _role == UserRole.merchant,
                                   onSelected: (_) =>
                                       setState(() => _role = UserRole.merchant),
                                 ),
+                                ChoiceChip(
+                                  label: const Text('Driver'),
+                                  selected: _role == UserRole.driver,
+                                  onSelected: (_) => setState(() {
+                                    _role = UserRole.driver;
+                                    _businessName.clear();
+                                    _businessAddress.clear();
+                                    _selectedMerchantService = null;
+                                  }),
+                                ),
+                               
                               ],
                             ),
                             const SizedBox(height: 16),
@@ -1044,8 +1131,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
                               decoration: _dec(
-                                label: 'Email or phone number',
-                                hint: 'you@example.com or 09xxxxxxxx',
+                                label: ' phone number or email',
+                                hint: ' 09xxxxxxxx or you@vero.com',
                                 icon: Icons.contact_mail_outlined,
                               ),
                               validator: _validateIdentifier,

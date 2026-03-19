@@ -11,7 +11,9 @@ import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'package:local_auth/local_auth.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 
@@ -29,7 +31,7 @@ import 'package:vero360_app/GernalServices/address_service.dart';
 const Color kBrandOrange = Color(0xFFFF8A00); // Vero360 main color
 
 /// Filters out Firebase identifiers (e.g. +firebase_xxx) so we show real phone numbers only.
-String _sanitizePhone(String s) {
+String _sanitizePhone(String? s) {
   final t = (s ?? '').trim();
   if (t.isEmpty) return '';
   if (t.toLowerCase().startsWith('+firebase_') ||
@@ -76,10 +78,19 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _haptics = true;
   String _languageCode = 'en'; // en = English, ny = Chichewa
 
-  // customer service
+  // notifications (prefs; actual FCM can be wired elsewhere)
+  bool _notificationsEnabled = true;
+  bool _notificationsOrders = true;
+  bool _notificationsMessages = true;
+
+  // security: Face ID / fingerprint app lock
+  bool _biometricLockEnabled = false;
+
+  // customer service & app links
   static const String _supportPhone = '+265999955270';
   static const String _supportWhatsApp = '+265992695612';
   static const String _supportEmail = 'support@vero360.app';
+  static const String _playStoreId = 'com.vero.vero360';
 
   /// Display phone; filters out Firebase identifiers so we never show +firebase_xxx.
   String get _displayPhone {
@@ -181,7 +192,16 @@ class _SettingsPageState extends State<SettingsPage> {
       _compactMode = prefs.getBool('pref_compact_mode') ?? false;
       _haptics = prefs.getBool('pref_haptics') ?? true;
       _languageCode = prefs.getString('pref_language_code') ?? 'en';
+      _notificationsEnabled = prefs.getBool('pref_notifications_enabled') ?? true;
+      _notificationsOrders = prefs.getBool('pref_notifications_orders') ?? true;
+      _notificationsMessages = prefs.getBool('pref_notifications_messages') ?? true;
+      _biometricLockEnabled = prefs.getBool('pref_biometric_lock') ?? false;
     });
+  }
+
+  Future<void> _saveBiometricLockPref(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('pref_biometric_lock', value);
   }
 
   Future<void> _savePersonalizationPrefs() async {
@@ -189,6 +209,10 @@ class _SettingsPageState extends State<SettingsPage> {
     await prefs.setBool('pref_compact_mode', _compactMode);
     await prefs.setBool('pref_haptics', _haptics);
     await prefs.setString('pref_language_code', _languageCode);
+    await prefs.setBool('pref_notifications_enabled', _notificationsEnabled);
+    await prefs.setBool('pref_notifications_orders', _notificationsOrders);
+    await prefs.setBool('pref_notifications_messages', _notificationsMessages);
+    await prefs.setBool('pref_biometric_lock', _biometricLockEnabled);
   }
 
   void _maybeHaptic() {
@@ -577,8 +601,188 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  /// Opens the App lock (Face ID / fingerprint) settings bottom sheet.
+  Future<void> _openAppLockSettings() async {
+    _maybeHaptic();
+    final auth = LocalAuthentication();
+    bool canCheck = false;
+    List<BiometricType> available = [];
+    try {
+      canCheck = await auth.canCheckBiometrics;
+      if (canCheck) available = await auth.getAvailableBiometrics();
+    } catch (_) {}
+
+    if (!mounted) return;
+    final hasBiometric = canCheck && available.isNotEmpty;
+    final isFace = available.contains(BiometricType.face);
+    final isFinger = available.contains(BiometricType.fingerprint);
+    final biometricLabel = isFace && isFinger
+        ? _t('Face ID or fingerprint', 'Face ID kapena chala')
+        : isFace
+            ? _t('Face ID', 'Face ID')
+            : isFinger
+                ? _t('Fingerprint', 'Chala')
+                : _t('Biometric', 'Chala');
+
+    await showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _t('App lock', 'Chitseko cha pulogalamu'),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (!hasBiometric)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      _t(
+                        'Face ID or fingerprint is not available on this device.',
+                        'Face ID kapena chala silipezeka pa chipangizochi.',
+                      ),
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  )
+                else ...[
+                  SwitchListTile(
+                    value: _biometricLockEnabled,
+                    onChanged: (v) async {
+                      setLocal(() => _biometricLockEnabled = v);
+                      setState(() => _biometricLockEnabled = v);
+                      await _saveBiometricLockPref(v);
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      if (v && mounted) {
+                        ToastHelper.showCustomToast(
+                          context,
+                          _t(
+                            'App lock enabled. You will need $biometricLabel when returning to the app.',
+                            'Chitseko chayatsidwa. Mudzafuna $biometricLabel mukabwerera ku pulogalamu.',
+                          ),
+                          isSuccess: true,
+                          errorMessage: '',
+                        );
+                      }
+                    },
+                    title: Text(
+                      _t('Unlock with $biometricLabel', 'Tsegulani ndi $biometricLabel'),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text(
+                      _t(
+                        'Require $biometricLabel when opening or returning to the app.',
+                        'Funsani $biometricLabel mukatsegula kapena kubwerera ku pulogalamu.',
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   // ---------- Personalization ----------
   void _openPersonalization() {
+    _maybeHaptic();
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          return SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 44,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: Colors.black12,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _t('Personalization', 'Zokonda'),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w900, fontSize: 16),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    value: _compactMode,
+                    onChanged: (v) async {
+                      setLocal(() => _compactMode = v);
+                      setState(() => _compactMode = v);
+                      await _savePersonalizationPrefs();
+                    },
+                    title: Text(_t('Compact mode', 'Mtundu wofupi'),
+                        style: const TextStyle(fontWeight: FontWeight.w800)),
+                    subtitle: Text(_t('Smaller spacing in settings list', 'Mtunda wopingasa pamndandanda wa setingi')),
+                  ),
+                  SwitchListTile(
+                    value: _haptics,
+                    onChanged: (v) async {
+                      setLocal(() => _haptics = v);
+                      setState(() => _haptics = v);
+                      await _savePersonalizationPrefs();
+                    },
+                    title: Text(_t('Haptics', 'Kuthamangira'),
+                        style: const TextStyle(fontWeight: FontWeight.w800)),
+                    subtitle: Text(_t('Vibration feedback when tapping', 'Kuthamangira mukafinya')),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _openNotifications() {
     _maybeHaptic();
     showModalBottomSheet(
       context: context,
@@ -603,39 +807,48 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _t('Personalization', 'Zokonda'),
-                        style: TextStyle(
-                            fontWeight: FontWeight.w900, fontSize: 16),
-                      ),
-                    ),
-                  ],
+                Text(
+                  _t('Notifications', 'Zidziwitso'),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w900, fontSize: 18),
                 ),
                 const SizedBox(height: 8),
                 SwitchListTile(
-                  value: _compactMode,
+                  value: _notificationsEnabled,
                   onChanged: (v) async {
-                    setLocal(() => _compactMode = v);
-                    setState(() => _compactMode = v);
+                    setLocal(() => _notificationsEnabled = v);
+                    setState(() => _notificationsEnabled = v);
                     await _savePersonalizationPrefs();
                   },
-                  title: Text(_t('Compact mode', 'Mtundu wofupi'),
+                  title: Text(_t('Push notifications', 'Zidziwitso zapush'),
                       style: const TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: Text(_t('Smaller spacing in settings list', 'Mtunda wopingasa pamndandanda wa setingi')),
+                  subtitle: Text(_t('Receive alerts and updates', 'Landirani zidziwitso ndi zosintha')),
                 ),
                 SwitchListTile(
-                  value: _haptics,
-                  onChanged: (v) async {
-                    setLocal(() => _haptics = v);
-                    setState(() => _haptics = v);
-                    await _savePersonalizationPrefs();
-                  },
-                  title: Text(_t('Haptics', 'Kuthamangira'),
+                  value: _notificationsOrders,
+                  onChanged: _notificationsEnabled
+                      ? (v) async {
+                          setLocal(() => _notificationsOrders = v);
+                          setState(() => _notificationsOrders = v);
+                          await _savePersonalizationPrefs();
+                        }
+                      : null,
+                  title: Text(_t('Order updates', 'Zosintha za maoda'),
                       style: const TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: Text(_t('Vibration feedback when tapping', 'Kuthamangira mukafinya')),
+                  subtitle: Text(_t('Status of orders and deliveries', 'Mkhalidwe wa maoda ndi zopereka')),
+                ),
+                SwitchListTile(
+                  value: _notificationsMessages,
+                  onChanged: _notificationsEnabled
+                      ? (v) async {
+                          setLocal(() => _notificationsMessages = v);
+                          setState(() => _notificationsMessages = v);
+                          await _savePersonalizationPrefs();
+                        }
+                      : null,
+                  title: Text(_t('Messages', 'Mauthenga'),
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text(_t('Chat and support messages', 'Mauthenga a nkhani ndi thandizo')),
                 ),
                 const SizedBox(height: 8),
               ],
@@ -691,7 +904,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     if (ctx.mounted) Navigator.pop(ctx);
                     ToastHelper.showCustomToast(
                       context,
-                      _t('Language set to English. Restart app for full effect.', 'Chilankhulo chasankhidwa Chingerezi. Tsegulani pulogalamu kachiwiri kuti zitha.'),
+                      _t('Language set to English.', 'Chilankhulo chasankhidwa Chingerezi..'),
                       isSuccess: true,
                       errorMessage: '',
                     );
@@ -710,7 +923,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     if (ctx.mounted) Navigator.pop(ctx);
                     ToastHelper.showCustomToast(
                       context,
-                      _t('Language set to Chichewa. Restart app for full effect.', 'Chilankhulo chasankhidwa Chichewa. Tsegulani pulogalamu kachiwiri kuti zitha.'),
+                      _t('Language set to Chichewa. ', 'Chilankhulo chasankhidwa Chichewa.'),
                       isSuccess: true,
                       errorMessage: '',
                     );
@@ -850,7 +1063,10 @@ class _SettingsPageState extends State<SettingsPage> {
                     subject: _t('Support request', 'Kufuna thandizo'),
                     body: _t('Hi, I need help with...', 'Moni, ndikufuna thandizo pa...'));
               },
+              
             ),
+              
+            
             const SizedBox(height: 8),
           ],
         ),
@@ -888,11 +1104,76 @@ class _SettingsPageState extends State<SettingsPage> {
     await launchUrl(uri);
   }
 
+  /// Opens the default email app with a pre-filled bug report (subject + app version + placeholder for description).
+  Future<void> _reportBug() async {
+    _maybeHaptic();
+    final subject = _t('Bug report - Vero360', 'Vuto la pulogalamu - Vero360');
+    final body = _t(
+      'Please describe the problem or what went wrong:\n\n\n---\nApp version: $_appVersion (build $_buildNumber)',
+      'Chonde fotokozani vuto kapena chimene chinachitika:\n\n\n---\nMtundu wa pulogalamu: $_appVersion (build $_buildNumber)',
+    );
+    await _launchEmail(_supportEmail, subject: subject, body: body);
+  }
+
   Future<void> _launchWhatsApp(String phone, String message) async {
     final p = phone.replaceAll(' ', '').replaceAll('+', '');
     final uri =
         Uri.parse('https://wa.me/$p?text=${Uri.encodeComponent(message)}');
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  /// Opens the store listing so the user can rate the app.
+  Future<void> _rateApp() async {
+    _maybeHaptic();
+    try {
+      final uri = Uri.parse(
+        'https://play.google.com/store/apps/details?id=$_playStoreId',
+      );
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            _t('Could not open store', 'Sidathe kutsegula sitolo'),
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Could not open store', 'Sidathe kutsegula sitolo'),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+    }
+  }
+
+  /// Shares the app link and short message (share_plus).
+  Future<void> _shareApp() async {
+    _maybeHaptic();
+    try {
+      const storeUrl =
+          'https://play.google.com/store/apps/details?id=com.vero.vero360';
+      final text = _t(
+        'Try Vero360 – one app for VeroRide,marketplace, food, transport,accomodation and more. $storeUrl',
+        'Yesani Vero360 – pulogalamu imodzi ya msika, chakudya, mayendedwe, ndi zina. $storeUrl',
+      );
+      await Share.share(text, subject: 'Vero360');
+    } catch (_) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Could not share', 'Sidathe kugawana'),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+    }
   }
 
   Future<bool?> _confirm({
@@ -964,6 +1245,124 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// Deletes the Firebase Auth user. If Firebase requires recent login, prompts for password and re-authenticates, then deletes.
+  /// Returns true if the Firebase user was deleted (or was already gone), false if user cancelled or reauth failed.
+  Future<bool> _deleteFirebaseUserWithReauth(User u) async {
+    try {
+      await u.delete();
+      return true;
+    } on FirebaseAuthException catch (e) {
+      if (e.code != 'requires-recent-login') {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            _t('Delete failed', 'Kuchotsa kudagonjetsedwa'),
+            isSuccess: false,
+            errorMessage: e.message ?? 'Could not delete account.',
+          );
+        }
+        return false;
+      }
+
+      // Require password to re-authenticate, then delete
+      final prefs = await SharedPreferences.getInstance();
+      final email = u.email?.trim() ?? prefs.getString('email')?.trim() ?? '';
+      if (email.isEmpty) {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            _t('Please sign in again to delete your account', 'Chonde lowani kachiwiri kuti muchotse akaunti'),
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+        return false;
+      }
+
+      final password = await _showPasswordDialogForDelete();
+      if (password == null || password.isEmpty || !mounted) return false;
+
+      try {
+        final cred = EmailAuthProvider.credential(
+          email: email,
+          password: password,
+        );
+        await u.reauthenticateWithCredential(cred);
+        await u.delete();
+        return true;
+      } on FirebaseAuthException catch (reauthE) {
+        if (mounted) {
+          final msg = reauthE.code == 'wrong-password' ||
+                  reauthE.code == 'invalid-credential'
+              ? _t('Wrong password', 'Password yolakwika')
+              : (reauthE.message ?? _t('Delete failed', 'Kuchotsa kudagonjetsedwa'));
+          ToastHelper.showCustomToast(context, msg, isSuccess: false, errorMessage: '');
+        }
+        return false;
+      }
+    } catch (e) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Delete failed', 'Kuchotsa kudagonjetsedwa'),
+          isSuccess: false,
+          errorMessage: e.toString(),
+        );
+      }
+      return false;
+    }
+  }
+
+  /// Shows a dialog asking for the user's password to confirm account deletion. Returns the password or null if cancelled.
+  Future<String?> _showPasswordDialogForDelete() async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(_t('Confirm your password', 'Lembetsani password yanu')),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _t('Enter your password to permanently delete your account.', 'Ingizani password yanu kuti muchotse akaunti yanu mwamuyaya.'),
+                style: const TextStyle(height: 1.35),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                obscureText: true,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: _t('Password', 'Password'),
+                  border: const OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => Navigator.pop(ctx, controller.text.trim()),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(_t('Cancel', 'Lekani')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: Text(_t('Delete account', 'Chotsani akaunti'),
+                style: const TextStyle(fontWeight: FontWeight.w900)),
+          ),
+        ],
+      ),
+    );
+    // Defer dispose until after the dialog is fully closed to avoid "used after being disposed".
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    return result;
+  }
+
   // ---------- DELETE ACCOUNT ----------
   Future<void> _deleteAccount() async {
     _maybeHaptic();
@@ -1012,23 +1411,15 @@ class _SettingsPageState extends State<SettingsPage> {
           }
         } catch (_) {}
 
-        // 3) Delete Firebase auth user
-        try {
-          await u.delete();
-        } on FirebaseAuthException catch (e) {
-          if (e.code == 'requires-recent-login') {
-        if (mounted) {
-              ToastHelper.showCustomToast(
-                context,
-                _t('Please login again', 'Chonde lowani kachiwiri'),
-                isSuccess: false,
-                errorMessage: 'Login again then try deleting your account.',
-              );
-            }
-            await AuthService().logout(context: context);
-            return;
+        // 3) Delete Firebase Auth user (with re-auth if required)
+        final deleted = await _deleteFirebaseUserWithReauth(u);
+        if (!deleted) {
+          if (mounted) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _refreshing = false);
+            });
           }
-          rethrow;
+          return;
         }
       }
 
@@ -1052,10 +1443,14 @@ class _SettingsPageState extends State<SettingsPage> {
         (route) => route.isFirst,
       );
     } catch (_) {
-      ToastHelper.showCustomToast(context, _t('Delete failed', 'Kuchotsa kudagonjetsedwa'),
+      ToastHelper.showCustomToast(context, _t('Delete failed', 'Kuchotsa kwakanika'),
           isSuccess: false, errorMessage: '');
     } finally {
-      if (mounted) setState(() => _refreshing = false);
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _refreshing = false);
+        });
+      }
     }
   }
 
@@ -1127,6 +1522,15 @@ class _SettingsPageState extends State<SettingsPage> {
               _card([
                 _SettingsTile(
                   compact: _compactMode,
+                  icon: Icons.fingerprint,
+                  title: _t('App lock (Face ID / fingerprint)', 'Chitseko (Face ID / chala)'),
+                  subtitle: _biometricLockEnabled
+                      ? _t('On – unlock when returning to app', 'Yayatsidwa – tsegulani mukabwerera')
+                      : _t('Off – require Face ID or fingerprint', 'Yazimitsidwa – Face ID kapena chala'),
+                  onTap: _openAppLockSettings,
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
                   icon: Icons.lock_outline,
                   title: _t('Change password', 'Sinthani chipangizo'),
                   subtitle: _t('Update your password', 'Sinthani chipangizo chanu'),
@@ -1152,6 +1556,13 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 _SettingsTile(
                   compact: _compactMode,
+                  icon: Icons.notifications_outlined,
+                  title: _t('Notifications', 'Zidziwitso'),
+                  subtitle: _t('Push, orders, messages', 'Zidziwitso, maoda, mauthenga'),
+                  onTap: _openNotifications,
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
                   icon: Icons.cleaning_services_outlined,
                   title: _t('Clear cache', 'Chotsani cache'),
                   subtitle: _t('Clear temporary cached data', 'Chotsani data yosungidwa'),
@@ -1167,6 +1578,31 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: _t('Customer service', 'Thandizo la makasitomala'),
                   subtitle: _t('Call, WhatsApp, or email', 'Imbani, WhatsApp, kapena imelo'),
                   onTap: _openCustomerService,
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.bug_report_outlined,
+                  title: _t('Report a bug', 'Lemberani vuto'),
+                  subtitle: _t('Send us a problem or feedback', 'Titumizireni vuto kapena malingaliro'),
+                  onTap: _reportBug,
+                ),
+              ]),
+              const SizedBox(height: 14),
+              _sectionTitle(_t('App', 'Pulogalamu')),
+              _card([
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.star_outline,
+                  title: _t('Rate the app', 'Votani pulogalamu'),
+                  subtitle: _t('Leave a review on the store', 'Siylani ndemanga pa sitolo'),
+                  onTap: _rateApp,
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.share_outlined,
+                  title: _t('Share the app', 'Gawanani pulogalamu'),
+                  subtitle: _t('Invite friends with a link', 'Itanani anzanu ndi ulalo'),
+                  onTap: _shareApp,
                 ),
               ]),
               const SizedBox(height: 14),
@@ -1516,6 +1952,20 @@ class AboutUsPage extends StatelessWidget {
               const SizedBox(height: 6),
               const Text(
                 'To become Malawi’s leading super app for digital services, empowering businesses and improving customer experiences.',
+                style: TextStyle(height: 1.4),
+              ),
+
+              const SizedBox(height: 20),
+              const Text(
+                'Our Values',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Innovation · Reliability · Security ·Accessibility · Customer-Centricity',
                 style: TextStyle(height: 1.4),
               ),
 

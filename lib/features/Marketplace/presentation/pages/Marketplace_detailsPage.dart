@@ -1,5 +1,6 @@
 // lib/Pages/details_page.dart
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -68,6 +69,64 @@ class _Media {
   factory _Media.video(String u) => _Media._(u, true);
 }
 
+Widget _buildMarketplaceImage(String src, {BoxFit fit = BoxFit.cover}) {
+  final s = src.trim();
+  if (s.isEmpty) {
+    return Container(
+      color: Colors.grey.shade200,
+      child: const Icon(
+        Icons.broken_image_outlined,
+        color: Colors.grey,
+      ),
+    );
+  }
+
+  // HTTP/HTTPS URL
+  if (s.startsWith('http://') || s.startsWith('https://')) {
+    return Image.network(
+      s,
+      fit: fit,
+      errorBuilder: (_, __, ___) => Container(
+        color: Colors.grey.shade200,
+        child: const Icon(
+          Icons.broken_image_outlined,
+          color: Colors.grey,
+        ),
+      ),
+    );
+  }
+
+  // Try base64 (with or without data: prefix)
+  try {
+    final base64Part = s.contains(',') ? s.split(',').last : s;
+    final bytes = base64Decode(base64Part);
+    return Image.memory(
+      bytes,
+      fit: fit,
+      errorBuilder: (_, __, ___) => Container(
+        color: Colors.grey.shade200,
+        child: const Icon(
+          Icons.broken_image_outlined,
+          color: Colors.grey,
+        ),
+      ),
+    );
+  } catch (_) {
+    // Fallback: try network again (in case it's some other kind of URL)
+    return Image.network(
+      s,
+      fit: fit,
+      errorBuilder: (_, __, ___) => Container(
+        color: Colors.grey.shade200,
+        child: const Icon(
+          Icons.broken_image_outlined,
+          color: Colors.grey,
+        ),
+      ),
+    );
+  }
+}
+
 class _DetailsPageState extends State<DetailsPage> {
   // ── Brand (UI only)
   static const Color _brandOrange = Color(0xFFFF8A00);
@@ -91,14 +150,19 @@ class _DetailsPageState extends State<DetailsPage> {
     _fToast.init(context);
 
     final it = widget.item;
-    final images = it.gallery;
-    final videos = it.videos;
+    final images = it.gallery.where((u) => u.toString().trim().isNotEmpty).toList();
+    final videos = it.videos.where((u) => u.toString().trim().isNotEmpty).toList();
+    final mainImg = it.image.toString().trim();
     _media = [
-      if (it.image.toString().trim().isNotEmpty) _Media.image(it.image.toString().trim()),
+      if (mainImg.isNotEmpty) _Media.image(mainImg),
       ...images.map((u) => _Media.image(u.toString().trim())),
       ...videos.map((u) => _Media.video(u.toString().trim())),
     ];
-    if (_media.length > 1) _startAutoplay();
+    if (_media.length > 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _startAutoplay();
+      });
+    }
   }
 
   /// Share current product
@@ -152,7 +216,9 @@ class _DetailsPageState extends State<DetailsPage> {
     _pc.animateToPage(n,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut);
-    Future.delayed(const Duration(seconds: 5), _startAutoplay);
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && _media.length > 1) _startAutoplay();
+    });
   }
 
   void _prev() {
@@ -162,7 +228,9 @@ class _DetailsPageState extends State<DetailsPage> {
     _pc.animateToPage(p,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut);
-    Future.delayed(const Duration(seconds: 5), _startAutoplay);
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && _media.length > 1) _startAutoplay();
+    });
   }
 
   // seller/data
@@ -285,7 +353,7 @@ class _DetailsPageState extends State<DetailsPage> {
       final d = diff.inDays;
       return d == 1 ? '1 day ago' : '$d days ago';
     }
-    return '${time.day}/${time.month}/${time.year}';
+    return DateFormat('d MMMM yyyy').format(time);
   }
 
   Widget _infoRow(String label, String? value, {IconData? icon}) {
@@ -490,8 +558,10 @@ class _DetailsPageState extends State<DetailsPage> {
                               ? const BouncingScrollPhysics()
                               : const NeverScrollableScrollPhysics(),
                           itemCount: _media.length,
-                          onPageChanged: (i) =>
-                              setState(() => _page = i),
+                          onPageChanged: (i) {
+                            setState(() => _page = i);
+                            if (_media.length > 1) _startAutoplay();
+                          },
                           itemBuilder: (_, i) {
                             final m = _media[i];
                             if (!m.isVideo) {
@@ -501,13 +571,9 @@ class _DetailsPageState extends State<DetailsPage> {
                                   merchantName: widget.item.merchantName ??
                                       widget.item.sellerBusinessName,
                                 ),
-                                child: Image.network(
+                                child: _buildMarketplaceImage(
                                   m.url,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) =>
-                                      Container(
-                                          color:
-                                              Colors.grey.shade200),
                                 ),
                               );
                             }
@@ -1017,12 +1083,9 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
             minScale: 0.5,
             maxScale: 4,
             child: Center(
-              child: Image.network(
+              child: _buildMarketplaceImage(
                 widget.imageUrl,
                 fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Center(
-                  child: Icon(Icons.broken_image_outlined, color: Colors.white54, size: 64),
-                ),
               ),
             ),
           ),

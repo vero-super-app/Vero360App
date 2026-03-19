@@ -3,10 +3,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:dio/dio.dart';
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
@@ -307,35 +307,11 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   }
 
   Widget _buildMap() {
-    return GoogleMap(
+    return MapViewWidget(
       onMapCreated: (controller) {
         mapController = controller;
-        // Animate to driver's last known position if available
-        if (_lastPosition != null) {
-          Future.delayed(const Duration(milliseconds: 300), () {
-            mapController?.animateCamera(
-              CameraUpdate.newCameraPosition(
-                CameraPosition(
-                  target:
-                      LatLng(_lastPosition!.latitude, _lastPosition!.longitude),
-                  zoom: 15.0,
-                ),
-              ),
-            );
-          });
-        }
       },
-      initialCameraPosition: CameraPosition(
-        target: _lastPosition != null
-            ? LatLng(_lastPosition!.latitude, _lastPosition!.longitude)
-            : const LatLng(-13.1939, 34.3015),
-        zoom: 15,
-      ),
-      myLocationEnabled: true,
-      myLocationButtonEnabled: true,
-      zoomControlsEnabled: true,
-      compassEnabled: true,
-      mapToolbarEnabled: false,
+      initialPosition: _lastPosition,
     );
   }
 

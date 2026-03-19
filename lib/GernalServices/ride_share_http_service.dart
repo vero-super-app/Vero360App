@@ -239,8 +239,18 @@ class RideShareHttpService {
   /// Get ride details
   Future<Ride> getRideDetails(int rideId) async {
     try {
-      final response =
-          await http.get(ApiConfig.endpoint('/ride-share/rides/$rideId'));
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
+      final response = await http.get(
+        ApiConfig.endpoint('/ride-share/rides/$rideId'),
+        headers: headers,
+      );
 
       if (response.statusCode == 200) {
         return Ride.fromJson(jsonDecode(response.body));

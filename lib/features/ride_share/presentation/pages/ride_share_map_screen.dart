@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/place_search_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/bookmarked_places_modal.dart';
@@ -12,6 +11,8 @@ import 'package:vero360_app/features/ride_share/presentation/pages/destination_s
 import 'package:vero360_app/features/ride_share/presentation/pages/passenger_ride_tracking_screen.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
@@ -27,17 +28,14 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   bool _showBookmarkedPlaces = false;
-  bool _isLoadingRide = false;
   Place? _cachedPickupPlace;
   late AnimationController _bottomSheetAnimationController;
   late AnimationController _fadeAnimationController;
-  bool _checkingConnectivity = true;
+
+  /// Initialisation state — resolved once in initState, never re-created.
+  bool _initialising = true;
   bool _isOffline = false;
-  RideShareHttpService? _rideHttpService;
-  // Real ride data threaded from VehicleTypeModal
-  double _rideEstimatedFare = 0.0;
-  double _rideDistanceKm = 0.0;
-  int _rideDurationMin = 0;
+  bool _isLoggedIn = false;
 
   void _onMapCreated(GoogleMapController controller) {
     mapController = controller;
@@ -108,13 +106,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
             userLat: position.latitude,
             userLng: position.longitude,
             onRideRequested: (rideId, fare, distKm, durMin) {
-              setState(() {
-                _isLoadingRide = true;
-                _rideEstimatedFare = fare;
-                _rideDistanceKm = distKm;
-                _rideDurationMin = durMin;
-              });
-              _showWaitingForDriverScreen(rideId);
+              _navigateToTracking(int.tryParse(rideId) ?? 0);
             },
           ),
         );
@@ -122,31 +114,18 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     });
   }
 
-  void _showWaitingForDriverScreen(String rideId) {
+  void _navigateToTracking(int rideId) {
+    if (rideId <= 0) return;
     _unfocusKeyboard();
 
-    // Subscribe to WebSocket immediately when showing waiting screen
-    _rideHttpService = RideShareHttpService();
-    final rideIdInt = int.tryParse(rideId) ?? 0;
-    if (rideIdInt > 0) {
-      // Subscribe asynchronously - don't block UI
-      _rideHttpService!.subscribeToRideTracking(rideIdInt).then((_) {
-        print(
-            '[RideShareMapScreen] Subscribed to ride tracking for ride: $rideId');
-      }).catchError((e) {
-        print('[RideShareMapScreen] Failed to subscribe to ride tracking: $e');
-      });
-    }
-
-    // Navigate to unified passenger tracking screen
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => _PassengerRideTrackingScreenWrapper(
-          rideId: rideIdInt,
+          rideId: rideId,
           onRideEnded: () {
-            setState(() => _isLoadingRide = false);
-            Navigator.pop(context);
+            ref.read(rideLifecycleProvider.notifier).reset();
+            ref.read(cachedRoutePolylineProvider.notifier).state = [];
           },
         ),
       ),
@@ -161,12 +140,32 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       vsync: this,
     );
     _fadeAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 500),
       vsync: this,
     );
 
-    _checkConnectivity();
+    _initialise();
+  }
 
+  Future<void> _initialise() async {
+    // Run connectivity + auth in parallel, then reveal UI once.
+    final results = await Future.wait([
+      _checkConnectivity(),
+      AuthStorage.isLoggedIn(),
+    ]);
+
+    if (!mounted) return;
+
+    final loggedIn = results[1];
+
+    setState(() {
+      _isLoggedIn = loggedIn;
+      _initialising = false;
+    });
+
+    _fadeAnimationController.forward();
+
+    // Load recent places & GPS after frame to avoid jank
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       RecentPlacesManager.loadAndSet(ref);
@@ -190,10 +189,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
-        // Only unfocus if the search field currently has focus
-        if (_searchFocusNode.hasFocus) {
-          _unfocusKeyboard();
-        }
+        if (_searchFocusNode.hasFocus) _unfocusKeyboard();
       },
       child: Scaffold(
         appBar: PreferredSize(
@@ -214,220 +210,260 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
         ),
         resizeToAvoidBottomInset: true,
         backgroundColor: Colors.white,
-        body: _checkingConnectivity
-            ? const Center(
-                child: CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00)),
+        body: _buildBody(selectedDropoffPlace),
+      ),
+    );
+  }
+
+  Widget _buildBody(Place? selectedDropoffPlace) {
+    // ---------- still initialising (connectivity + auth) ----------
+    if (_initialising) {
+      return const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00)),
+        ),
+      );
+    }
+
+    // ---------- resolved: offline / not-logged-in / ready ----------
+    return FadeTransition(
+      opacity: _fadeAnimationController,
+      child: _isOffline
+          ? _buildNoInternetScreen()
+          : !_isLoggedIn
+              ? _buildAuthRequiredScreen()
+              : _buildMainContent(selectedDropoffPlace),
+    );
+  }
+
+  Widget _buildMainContent(Place? selectedDropoffPlace) {
+    return Column(
+      children: [
+        // ---- Map section (always rendered; shows default position while GPS loads) ----
+        Expanded(
+          flex: 3,
+          child: _buildMapSection(),
+        ),
+        // ---- Booking section ----
+        Expanded(
+          flex: 2,
+          child: Container(
+            color: Colors.white,
+            child: Stack(
+              children: [
+                SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(
+                            left: 16, right: 16, top: 20, bottom: 12),
+                        child: Column(
+                          children: [
+                            _buildPickupLocationCard(),
+                            const SizedBox(height: 14),
+                            if (selectedDropoffPlace == null)
+                              PlaceSearchWidget(
+                                searchController: _searchController,
+                                focusNode: _searchFocusNode,
+                                onToggleBookmarkedPlaces:
+                                    _toggleBookmarkedPlacesModal,
+                                readOnly: true,
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const DestinationSearchScreen(),
+                                    ),
+                                  );
+                                },
+                              )
+                            else
+                              _buildDropoffLocationCard(selectedDropoffPlace),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
+                        child: _buildActionButton(selectedDropoffPlace),
+                      ),
+                    ],
+                  ),
                 ),
-              )
-            : _isOffline
-                ? _buildNoInternetScreen()
-                : FutureBuilder<bool>(
-                    future: AuthStorage.isLoggedIn(),
-                    builder: (context, authSnapshot) {
-                      if (authSnapshot.connectionState ==
-                          ConnectionState.waiting) {
-                        return const Center(
+                if (_showBookmarkedPlaces)
+                  Positioned.fill(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 300),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.2),
+                      ),
+                      child: Center(
+                        child: Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 40),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.12),
+                                blurRadius: 24,
+                                offset: const Offset(0, 8),
+                                spreadRadius: 2,
+                              ),
+                            ],
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: BookmarkedPlacesModal(
+                              onClose: _toggleBookmarkedPlacesModal,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Always renders the map — shows the default position immediately while GPS
+  /// resolves, then smoothly pans to the user's location once available.
+  Widget _buildMapSection() {
+    return Consumer(
+      builder: (context, ref, _) {
+        final currentLocation = ref.watch(currentLocationProvider);
+        final lastKnown = ref.watch(lastKnownLocationProvider);
+        final dropoffPlace = ref.watch(selectedDropoffPlaceProvider);
+
+        // Use live GPS if available, otherwise fall back to last persisted location
+        final position = currentLocation.maybeWhen(
+          data: (p) => p,
+          orElse: () => null,
+        ) ?? lastKnown.maybeWhen(
+          data: (p) => p,
+          orElse: () => null,
+        );
+
+        if (position != null &&
+            (_cachedPickupPlace == null ||
+                _cachedPickupPlace!.latitude != position.latitude ||
+                _cachedPickupPlace!.longitude != position.longitude)) {
+          _cachedPickupPlace = Place(
+            id: 'current_location',
+            name: 'Your Location',
+            address: 'Current Location',
+            latitude: position.latitude,
+            longitude: position.longitude,
+            type: PlaceType.RECENT,
+          );
+        }
+
+        return Stack(
+          children: [
+            MapViewWidget(
+              onMapCreated: _onMapCreated,
+              initialPosition: position,
+              pickupPlace: _cachedPickupPlace,
+              dropoffPlace: dropoffPlace,
+            ),
+            // Subtle GPS-loading indicator overlay instead of replacing the map
+            if (currentLocation.isLoading)
+              Positioned(
+                top: 16,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 12,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
                           child: CircularProgressIndicator(
+                            strokeWidth: 2,
                             valueColor: AlwaysStoppedAnimation<Color>(
                                 Color(0xFFFF8A00)),
                           ),
-                        );
-                      }
-
-                      if (!(authSnapshot.data ?? false)) {
-                        return _buildAuthRequiredScreen();
-                      }
-
-                      return Column(
-                        children: [
-                          // Map view - 60% of screen
-                          Expanded(
-                            flex: 3,
-                            child: Consumer(
-                              builder: (context, ref, _) {
-                                final currentLocation =
-                                    ref.watch(currentLocationProvider);
-                                final dropoffPlace =
-                                    ref.watch(selectedDropoffPlaceProvider);
-
-                                return currentLocation.when(
-                                  data: (position) {
-                                    // Cache pickup place to ensure object identity
-                                    if (position != null &&
-                                        (_cachedPickupPlace == null ||
-                                            _cachedPickupPlace!.latitude !=
-                                                position.latitude ||
-                                            _cachedPickupPlace!.longitude !=
-                                                position.longitude)) {
-                                      _cachedPickupPlace = Place(
-                                        id: 'current_location',
-                                        name: 'Your Location',
-                                        address: 'Current Location',
-                                        latitude: position.latitude,
-                                        longitude: position.longitude,
-                                        type: PlaceType.RECENT,
-                                      );
-                                    }
-
-                                    return MapViewWidget(
-                                      onMapCreated: _onMapCreated,
-                                      initialPosition: position,
-                                      pickupPlace: _cachedPickupPlace,
-                                      dropoffPlace: dropoffPlace,
-                                    );
-                                  },
-                                  loading: () => const Center(
-                                    child: CircularProgressIndicator(
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                          Color(0xFFFF8A00)),
-                                    ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Detecting your location…',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Colors.grey[700],
+                                    fontWeight: FontWeight.w500,
                                   ),
-                                  error: (error, __) => Center(
-                                    child: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.location_off_outlined,
-                                          size: 48,
-                                          color: Colors.grey[400],
-                                        ),
-                                        const SizedBox(height: 16),
-                                        Text(
-                                          'Unable to load location',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyLarge
-                                              ?.copyWith(
-                                                color: Colors.grey[600],
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          'Please enable location services',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall
-                                              ?.copyWith(
-                                                  color: Colors.grey[500]),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          // Search and booking section - 45% of screen
-                          Expanded(
-                            flex: 2,
-                            child: Container(
-                              color: Colors.white,
-                              child: Stack(
-                                children: [
-                                  SingleChildScrollView(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                              left: 16,
-                                              right: 16,
-                                              top: 20,
-                                              bottom: 12),
-                                          child: Column(
-                                            children: [
-                                              _buildPickupLocationCard(),
-                                              const SizedBox(height: 14),
-                                              if (selectedDropoffPlace == null)
-                                                PlaceSearchWidget(
-                                                  searchController:
-                                                      _searchController,
-                                                  focusNode: _searchFocusNode,
-                                                  onToggleBookmarkedPlaces:
-                                                      _toggleBookmarkedPlacesModal,
-                                                  readOnly: true,
-                                                  onTap: () {
-                                                    Navigator.push(
-                                                      context,
-                                                      MaterialPageRoute(
-                                                        builder: (context) =>
-                                                            const DestinationSearchScreen(),
-                                                      ),
-                                                    );
-                                                  },
-                                                )
-                                              else
-                                                _buildDropoffLocationCard(
-                                                    selectedDropoffPlace),
-                                            ],
-                                          ),
-                                        ),
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 16, vertical: 12),
-                                          child: _buildActionButton(
-                                              selectedDropoffPlace),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  // Search results popup overlay
-                                  if (_showBookmarkedPlaces)
-                                    Positioned(
-                                      bottom: 0,
-                                      left: 0,
-                                      right: 0,
-                                      top: 0,
-                                      child: AnimatedContainer(
-                                        duration:
-                                            const Duration(milliseconds: 300),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black
-                                              .withValues(alpha: 0.2),
-                                        ),
-                                        child: Center(
-                                          child: Container(
-                                            width: double.infinity,
-                                            margin: const EdgeInsets.symmetric(
-                                                horizontal: 12, vertical: 40),
-                                            decoration: BoxDecoration(
-                                              color: Colors.white,
-                                              borderRadius:
-                                                  BorderRadius.circular(16),
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: Colors.black
-                                                      .withValues(alpha: 0.12),
-                                                  blurRadius: 24,
-                                                  offset: const Offset(0, 8),
-                                                  spreadRadius: 2,
-                                                ),
-                                              ],
-                                            ),
-                                            child: ClipRRect(
-                                              borderRadius:
-                                                  BorderRadius.circular(16),
-                                              child: BookmarkedPlacesModal(
-                                                onClose:
-                                                    _toggleBookmarkedPlacesModal,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
+                        ),
+                      ],
+                    ),
                   ),
-      ),
+                ),
+              ),
+            // Location error chip
+            if (currentLocation.hasError)
+              Positioned(
+                top: 16,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 12,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.location_off_outlined,
+                            size: 16, color: Colors.grey[500]),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Enable location services',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Colors.grey[600],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
@@ -436,12 +472,12 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     return pickupAsync.when(
       // Defensive null coalescing for async provider (avoids runtime Null subtype of String)
       data: (pickup) => _buildPickupCardContent(
-        userName: pickup.userName ??
-            'Your Location', // ignore: unnecessary_null_in_if_null_operators
-        address: pickup.address ??
-            'Current Location', // ignore: unnecessary_null_in_if_null_operators
-        profilePictureUrl: pickup.profilePictureUrl ??
-            '', // ignore: unnecessary_null_in_if_null_operators
+        userName:
+            pickup.userName, // ignore: unnecessary_null_in_if_null_operators
+        address:
+            pickup.address, // ignore: unnecessary_null_in_if_null_operators
+        profilePictureUrl: pickup
+            .profilePictureUrl, // ignore: unnecessary_null_in_if_null_operators
       ),
       loading: () => _buildPickupCardContent(
         userName: 'Your Location',
@@ -607,9 +643,8 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
           GestureDetector(
             onTap: () {
               _searchController.clear();
-              setState(() {
-                ref.read(selectedDropoffPlaceProvider.notifier).state = null;
-              });
+              ref.read(selectedDropoffPlaceProvider.notifier).state = null;
+              ref.read(cachedRoutePolylineProvider.notifier).state = [];
               _focusSearchBar();
             },
             child: Container(
@@ -627,114 +662,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                     ),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchResultsSection() {
-    final recentPlaces = ref.watch(recentPlacesProvider);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Recent Places',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
-          ),
-          const SizedBox(height: 12),
-          if (recentPlaces.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                'No recent searches. Tap "Where to?" to search.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey[500],
-                    ),
-              ),
-            )
-          else
-            ...recentPlaces.map(
-              (place) => _buildRecentPlaceItem(place),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecentPlaceItem(Place place) {
-    return GestureDetector(
-      onTap: () {
-        ref.read(selectedDropoffPlaceProvider.notifier).state = place;
-        _unfocusKeyboard();
-      },
-      child: _buildPlaceItem(
-        place.name,
-        place.address,
-        Icons.history,
-      ),
-    );
-  }
-
-  Widget _buildPlaceItem(String title, String subtitle, IconData icon) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: Colors.grey.withValues(alpha: 0.1),
-          width: 1,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF8A00).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              icon,
-              color: const Color(0xFFFF8A00),
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black87,
-                      ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[500],
-                      ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          Icon(
-            Icons.arrow_forward_ios,
-            size: 14,
-            color: Colors.grey[400],
           ),
         ],
       ),
@@ -823,24 +750,23 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     );
   }
 
-  Future<void> _checkConnectivity() async {
-    setState(() {
-      _checkingConnectivity = true;
-    });
+  Future<bool> _checkConnectivity() async {
     bool offline = false;
     try {
-      // Simple DNS lookup – if this fails, we consider the device offline
       final result = await InternetAddress.lookup('example.com')
           .timeout(const Duration(seconds: 3));
       offline = result.isEmpty || result.first.rawAddress.isEmpty;
     } catch (_) {
       offline = true;
     }
-    if (!mounted) return;
-    setState(() {
-      _isOffline = offline;
-      _checkingConnectivity = false;
-    });
+    _isOffline = offline;
+    return !offline;
+  }
+
+  Future<void> _retryConnectivity() async {
+    setState(() => _initialising = true);
+    _fadeAnimationController.reset();
+    await _initialise();
   }
 
   Widget _buildNoInternetScreen() {
@@ -885,7 +811,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            onPressed: _checkConnectivity,
+            onPressed: _retryConnectivity,
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
             label: const Text(
               'Try Again',
@@ -960,6 +886,8 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
 
   Widget _buildActionButton(Place? selectedDropoffPlace) {
     final isReady = selectedDropoffPlace != null;
+    final rideState = ref.watch(rideLifecycleProvider);
+    final isBusy = rideState is RideRequesting;
 
     return SizedBox(
       width: double.infinity,
@@ -972,13 +900,13 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          elevation: _isLoadingRide ? 4 : 2,
+          elevation: isBusy ? 4 : 2,
           shadowColor: const Color(0xFFFF8A00).withValues(alpha: 0.4),
         ),
-        onPressed: _isLoadingRide
+        onPressed: isBusy
             ? null
             : () => _handleBottomButtonPressed(ref, selectedDropoffPlace),
-        icon: _isLoadingRide
+        icon: isBusy
             ? const SizedBox(
                 height: 20,
                 width: 20,

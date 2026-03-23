@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -24,6 +26,10 @@ class AppColors {
   static const fieldFill = Color(0xFFF7F7F9);
 }
 
+/// Google/Apple: [providerSheet] = system account picker is open;
+/// [finishingVero] = account chosen; token + prefs + navigation.
+enum _OAuthPhase { idle, providerSheet, finishingVero }
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
   @override
@@ -41,7 +47,12 @@ class _LoginScreenState extends State<LoginScreen> {
   final _password = TextEditingController();
   bool _obscure = true;
   bool _loading = false;
-  bool _socialLoading = false;
+  _OAuthPhase _oauthPhase = _OAuthPhase.idle;
+  /// Which provider flow is active (for overlay copy). Cleared when idle.
+  String? _oauthProviderLabel;
+
+  /// True while Google/Apple flow is running (buttons disabled + overlay shown).
+  bool get _socialLoading => _oauthPhase != _OAuthPhase.idle;
 
   @override
   void dispose() {
@@ -307,13 +318,18 @@ class _LoginScreenState extends State<LoginScreen> {
   /// Fast auth result for Google/Apple login. Reads role from Firestore
   /// (or SharedPreferences as fallback) so drivers/merchants route correctly.
   Future<Map<String, dynamic>> _buildQuickResultFromUser(User user) async {
-    final token = await user.getIdToken();
     final email = user.email ?? _identifier.text.trim();
 
-    // Read role from Firestore profile, fall back to SharedPreferences
+    // Start token + Firestore together; await separately so one failure doesn’t drop the other.
+    final tokenFut = user.getIdToken(false);
+    final snapFut = _firestore.collection('users').doc(user.uid).get();
     String role = 'customer';
+    String? token;
     try {
-      final snap = await _firestore.collection('users').doc(user.uid).get();
+      token = await tokenFut;
+    } catch (_) {}
+    try {
+      final snap = await snapFut;
       if (snap.exists && snap.data() != null) {
         role = (snap.data()!['role'] ?? '').toString().toLowerCase();
       }
@@ -539,38 +555,31 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _google() async {
-    setState(() => _socialLoading = true);
-    // Show progress feedback right when user taps Google.
-    ToastHelper.showCustomToast(
-      context,
-      'Signing in with Google…',
-      isSuccess: true,
-      errorMessage: '',
-    );
+    FocusScope.of(context).unfocus();
+    // 1) Show Vero UI + overlay while the system Google sheet is open (not empty).
+    setState(() {
+      _oauthProviderLabel = 'Google';
+      _oauthPhase = _OAuthPhase.providerSheet;
+    });
     try {
+      // 2) Returns only after the user finishes or cancels the Google flow.
       final user = await _firebaseAuthService.signInWithGoogle();
+      if (!mounted) return;
       if (user == null) {
         ToastHelper.showCustomToast(
           context,
-          'Google sign-in cancelled or failed.',
+          'Google sign-in was cancelled.',
           isSuccess: false,
           errorMessage: '',
         );
         return;
       }
 
-      // Build a lightweight result so we can navigate immediately.
+      // 3) Google is done — now token + prefs + navigate to Vero.
+      setState(() => _oauthPhase = _OAuthPhase.finishingVero);
       final result = await _buildQuickResultFromUser(user);
-      ToastHelper.showCustomToast(
-        context,
-        'Signed in with Google',
-        isSuccess: true,
-        errorMessage: '',
-      );
       await _handleAuthResult(result);
-
-      // Warm up Firestore profile in the background (non-blocking).
-      _buildResultFromUser(user);
+      unawaited(_buildResultFromUser(user));
     } catch (e) {
       if (!mounted) return;
       ToastHelper.showCustomToast(
@@ -580,44 +589,40 @@ class _LoginScreenState extends State<LoginScreen> {
         errorMessage: '',
       );
     } finally {
-      if (mounted) setState(() => _socialLoading = false);
+      if (mounted) {
+        setState(() {
+          _oauthPhase = _OAuthPhase.idle;
+          _oauthProviderLabel = null;
+        });
+      }
     }
   }
 
   Future<void> _apple() async {
-    setState(() => _socialLoading = true);
-    // Show progress feedback right when user taps Apple.
-    ToastHelper.showCustomToast(
-      context,
-      'Signing in with Apple…',
-      isSuccess: true,
-      errorMessage: '',
-    );
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _oauthProviderLabel = 'Apple';
+      _oauthPhase = _OAuthPhase.providerSheet;
+    });
     try {
       final user = await _firebaseAuthService.signInWithApple();
+      if (!mounted) return;
       if (user == null) {
         ToastHelper.showCustomToast(
           context,
-          'Apple sign-in cancelled or not supported on this device.',
+          'Apple sign-in was cancelled or is not available on this device.',
           isSuccess: false,
           errorMessage: '',
         );
         return;
       }
 
-      // Build a lightweight result so we can navigate immediately.
+      setState(() => _oauthPhase = _OAuthPhase.finishingVero);
       final result = await _buildQuickResultFromUser(user);
-      ToastHelper.showCustomToast(
-        context,
-        'Signed in with Apple',
-        isSuccess: true,
-        errorMessage: '',
-      );
       await _handleAuthResult(result);
-
-      // Warm up Firestore profile in the background (non-blocking).
-      _buildResultFromUser(user);
+      unawaited(_buildResultFromUser(user));
     } catch (e) {
+      if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
         'Apple sign-in failed.',
@@ -625,8 +630,73 @@ class _LoginScreenState extends State<LoginScreen> {
         errorMessage: e.toString(),
       );
     } finally {
-      if (mounted) setState(() => _socialLoading = false);
+      if (mounted) {
+        setState(() {
+          _oauthPhase = _OAuthPhase.idle;
+          _oauthProviderLabel = null;
+        });
+      }
     }
+  }
+
+  Widget _buildOAuthBlockingOverlay() {
+    final label = _oauthProviderLabel ?? '';
+    final isFinishing = _oauthPhase == _OAuthPhase.finishingVero;
+    final title = isFinishing
+        ? 'Signing you in to Vero…'
+        : 'Continue with $label…';
+    final subtitle = isFinishing
+        ? 'Setting up your session…'
+        : 'Finish the $label window first — we\'ll take you to Vero right after.';
+
+    return Positioned.fill(
+      child: AbsorbPointer(
+        child: Material(
+          color: Colors.black.withValues(alpha: 0.45),
+          child: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      subtitle,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.92),
+                        fontSize: 14,
+                        height: 1.35,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   // -------------------- UI helpers --------------------
@@ -783,7 +853,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             Align(
                               alignment: Alignment.centerRight,
                               child: TextButton(
-                                onPressed: _loading ? null : _showForgotPasswordDialog,
+                                onPressed: (_loading || _socialLoading)
+                                    ? null
+                                    : _showForgotPasswordDialog,
                                 child: const Text(
                                   'Forgot password?',
                                   style: TextStyle(
@@ -799,7 +871,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               width: double.infinity,
                               height: 50,
                               child: ElevatedButton(
-                                onPressed: _loading ? null : _submit,
+                                onPressed: (_loading || _socialLoading)
+                                    ? null
+                                    : _submit,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: AppColors.brandOrange,
                                   shape: RoundedRectangleBorder(
@@ -859,7 +933,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(width: 6),
                         TextButton(
-                          onPressed: _loading
+                          onPressed: (_loading || _socialLoading)
                               ? null
                               : () {
                                   Navigator.of(context).push(
@@ -884,6 +958,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
         ),
+        if (_oauthPhase != _OAuthPhase.idle) _buildOAuthBlockingOverlay(),
       ]),
     );
   }

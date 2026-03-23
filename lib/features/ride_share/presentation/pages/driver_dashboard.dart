@@ -180,6 +180,115 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     _mapCenteringTimer = null;
   }
 
+  /// Story entry + avatar (matches [marketplace_merchant_dashboard] app bar).
+  Widget _buildStoryProfileAppBarAction() {
+    final user = FirebaseAuth.instance.currentUser;
+    final asyncProfile = ref.watch(myDriverProfileProvider);
+
+    String? imageUrl = asyncProfile.maybeWhen(
+      data: (driver) {
+        final p = driver['user']?['profilepicture']?.toString();
+        if (p != null && p.trim().isNotEmpty) return p.trim();
+        return null;
+      },
+      orElse: () => null,
+    );
+    imageUrl ??= user?.photoURL;
+
+    ImageProvider? backgroundImage;
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+        backgroundImage = NetworkImage(imageUrl);
+      }
+    }
+
+    final merchantName = asyncProfile.maybeWhen(
+          data: (driver) => driver['user']?['name']?.toString(),
+          orElse: () => null,
+        ) ??
+        user?.displayName ??
+        'Ride Driver';
+
+    return Tooltip(
+      message: 'Post story (24h)',
+      child: GestureDetector(
+        onTap: () {
+          final uid = user?.uid;
+          if (uid == null) {
+            ToastHelper.showCustomToast(
+              context,
+              'Please sign in to post a story',
+              isSuccess: false,
+              errorMessage: '',
+            );
+            return;
+          }
+          Navigator.of(context).push(
+            MaterialPageRoute<bool>(
+              builder: (_) => PostStoryPage(
+                merchantId: uid,
+                merchantName: merchantName,
+                merchantImageUrl: imageUrl,
+                serviceType: 'ride',
+              ),
+            ),
+          );
+        },
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(2),
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    Color(0xFFF58529),
+                    Color(0xFFDD2A7B),
+                    Color(0xFF8134AF),
+                    Color(0xFF515BD4),
+                  ],
+                ),
+              ),
+              child: CircleAvatar(
+                radius: 16,
+                backgroundColor: Colors.grey.shade200,
+                backgroundImage: backgroundImage,
+                child: backgroundImage == null
+                    ? const Icon(Icons.person, size: 18, color: Colors.grey)
+                    : null,
+              ),
+            ),
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+                child: Container(
+                  margin: const EdgeInsets.all(2),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF25D366),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.add,
+                    size: 14,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -190,31 +299,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         elevation: 0,
         centerTitle: false,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.auto_stories_rounded),
-            tooltip: 'Post story (24h)',
-            onPressed: () {
-              final user = FirebaseAuth.instance.currentUser;
-              final uid = user?.uid;
-              if (uid == null) {
-                ToastHelper.showCustomToast(
-                  context,
-                  'Please sign in to post a story',
-                  isSuccess: false,
-                  errorMessage: '',
-                );
-                return;
-              }
-              Navigator.of(context).push(
-                MaterialPageRoute<bool>(
-                  builder: (_) => PostStoryPage(
-                    merchantId: uid,
-                    merchantName: user?.displayName ?? 'Ride Driver',
-                    serviceType: 'ride',
-                  ),
-                ),
-              );
-            },
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: _buildStoryProfileAppBarAction(),
           ),
           IconButton(
             icon: const Icon(Icons.settings),

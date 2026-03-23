@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import 'package:vero360_app/GeneralModels/order_model.dart';   // OrderItem + OrderStatus
 import 'package:vero360_app/GernalServices/order_service.dart';
+import 'package:vero360_app/utils/merchant_contact_display.dart';
 
 class DeliveredOrdersPage extends StatefulWidget {
   const DeliveredOrdersPage({super.key});
@@ -99,7 +100,7 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     final String addressCity   = (o.addressCity ?? '').toString();
     final String addressDesc   = (o.addressDescription ?? '').toString();
     final String merchantName  = (o.merchantName ?? '').toString();
-    final String merchantPhone = (o.merchantPhone ?? '').toString();
+    final String merchantPhone = safeMerchantPhone(o.merchantPhone);
 
     final orderDate = o.orderDate; // DateTime? if your model exposes it
     final addressTxt = [addressCity, addressDesc].where((s) => s.trim().isNotEmpty).join(' • ');

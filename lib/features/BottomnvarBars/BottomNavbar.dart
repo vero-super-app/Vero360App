@@ -70,11 +70,19 @@ class _BottomnavbarState extends State<Bottomnavbar>
   bool _tabIsProtected(int index) => index >= 2;
 
   Future<void> _initialize() async {
-    // Load role and build pages from SharedPreferences first so hot restart
-    // always shows correct navbar (merchant/customer) before auth is restored.
-    await _checkUserRoleAndSetup();
-    await _refreshAuthState();
-    if (mounted) setState(() => _isLoading = false);
+    try {
+      // Load role and build pages from SharedPreferences first so hot restart
+      // always shows correct navbar (merchant/customer) before auth is restored.
+      await _checkUserRoleAndSetup();
+      await _refreshAuthState();
+    } catch (e, st) {
+      assert(() {
+        debugPrint('BottomNavbar._initialize: $e\n$st');
+        return true;
+      }());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _refreshAuthState() async {

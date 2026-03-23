@@ -140,11 +140,27 @@ class OrderItem {
     ]);
     final pay   = paymentStatusFrom(rawPay?.toString());
 
-    // Optional: marketplace listing id from backend
-    final rawItemId = _first(m, ['ItemId', 'itemId', 'listingId', 'ListingId']);
+    // Optional: marketplace listing id from backend (many API shapes)
+    final rawItemId = _first(m, [
+      'ItemId',
+      'itemId',
+      'listingId',
+      'ListingId',
+      'marketplaceItemId',
+      'MarketplaceItemId',
+      'productId',
+      'ProductId',
+      'sqlItemId',
+      'SqlItemId',
+    ]);
+    final nestedItem = _first<Map>(m, ['item', 'Item', 'marketplaceItem', 'MarketplaceItem']);
+    final nestedId = nestedItem != null
+        ? _first(nestedItem, ['id', 'Id', 'ID', 'listingId', 'ListingId'])
+        : null;
     final parsedItemId = rawItemId != null
         ? int.tryParse(rawItemId.toString())
-        : null;
+        : (nestedId != null ? int.tryParse(nestedId.toString()) : null);
+    final listingFromDesc = _listingIdFromDescription(desc);
 
     // merchant block
     int merchId = int.tryParse((_first(m, ['merchantId','MerchantId']) ?? 0).toString()) ?? 0;
@@ -193,7 +209,7 @@ class OrderItem {
       status: stat,
       paymentStatus: pay,
       merchantId: merchId,
-      itemSqlId: parsedItemId,
+      itemSqlId: parsedItemId ?? listingFromDesc,
       merchantName: merchName,
       merchantPhone: merchPhone,
       merchantAvgRating: merchAvg,
@@ -206,4 +222,13 @@ class OrderItem {
 
   Map<String, dynamic> toStatusPatch(OrderStatus next) =>
       {'Status': orderStatusToApi(next)};
+
+  /// Fallback when API omits ItemId: we embed `[ListingId: N]` in Description at checkout.
+  static int? _listingIdFromDescription(String? description) {
+    final s = (description ?? '').trim();
+    if (s.isEmpty) return null;
+    final m = RegExp(r'\[ListingId:\s*(\d+)\]', caseSensitive: false).firstMatch(s);
+    if (m != null) return int.tryParse(m.group(1)!);
+    return null;
+  }
 }

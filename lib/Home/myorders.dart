@@ -1,12 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
+import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -24,6 +29,96 @@ class OrdersPage extends StatefulWidget {
 
   @override
   State<OrdersPage> createState() => _OrdersPageState();
+}
+
+class _TrackingWebViewPage extends StatefulWidget {
+  final String url;
+  final String title;
+  const _TrackingWebViewPage({required this.url, required this.title});
+
+  @override
+  State<_TrackingWebViewPage> createState() => _TrackingWebViewPageState();
+}
+
+class _TrackingWebViewPageState extends State<_TrackingWebViewPage> {
+  late final WebViewController _controller;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (_) => setState(() => _loading = true),
+          onPageFinished: (_) => setState(() => _loading = false),
+          onWebResourceError: (_) => setState(() => _loading = false),
+        ),
+      )
+      ..loadRequest(Uri.parse(widget.url));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.title),
+        backgroundColor: const Color(0xFFFF8A00),
+        foregroundColor: Colors.white,
+      ),
+      body: Stack(
+        children: [
+          WebViewWidget(controller: _controller),
+          if (_loading) const Center(child: CircularProgressIndicator()),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProofViewerPage extends StatelessWidget {
+  /// Local file path or `https://` image URL from Firebase Storage.
+  final String pathOrUrl;
+  const _ProofViewerPage({required this.pathOrUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final net = pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://');
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Delivery Proof'),
+        backgroundColor: const Color(0xFFFF8A00),
+        foregroundColor: Colors.white,
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 4.0,
+          child: net
+              ? Image.network(
+                  pathOrUrl,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (ctx, child, progress) {
+                    if (progress == null) return child;
+                    return const Padding(
+                      padding: EdgeInsets.all(32),
+                      child: CircularProgressIndicator(),
+                    );
+                  },
+                  errorBuilder: (_, __, ___) =>
+                      const Text('Could not load proof image'),
+                )
+              : Image.file(
+                  File(pathOrUrl),
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) =>
+                      const Text('Could not load proof image'),
+                ),
+        ),
+      ),
+    );
+  }
 }
 
 class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateMixin {
@@ -56,6 +151,13 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   final Set<String> _syncedSoldOrders = <String>{};
   String? _focusOrderId;
   String? _focusOrderNumber;
+  final Map<String, String> _shippingByOrderId = {};
+  final Map<String, Map<String, String>> _deliveryMetaByOrderId = {};
+
+  static const String _shippingPrefsKey = 'order_shipping_method_v1';
+  static const String _deliveryMetaPrefsKey = 'order_delivery_meta_v1';
+  static const String _ankoloTrackingUrl = 'https://ankolo.com/track-parcel';
+  static const String _smartTrackingUrl = 'https://tracking.smartdeliveriesmw.com/';
 
   @override
   void initState() {
@@ -67,18 +169,193 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     final idx = _statuses.indexWhere((v) => _statusLabel(v).toLowerCase() == s);
     if (idx >= 0) _tab.index = idx;
     _ordersFuture = _svc.getMyOrders();
+    unawaited(_bootstrapOrders());
+  }
+
+  Future<void> _bootstrapOrders() async {
+    await _loadShippingPrefs();
+    await _loadDeliveryMetaPrefs();
+    if (!mounted) return;
+    setState(() {
+      _ordersFuture = _fetchOrdersWithProofs();
+    });
+  }
+
+  Future<List<OrderItem>> _fetchOrdersWithProofs() async {
+    final list = await _svc.getMyOrders();
+    if (!mounted) return list;
+    await _hydrateFirestoreDelivery(list);
+    return list;
+  }
+
+  /// Merges Firestore delivery proof + courier (works for buyer on any device).
+  Future<void> _hydrateFirestoreDelivery(List<OrderItem> orders) async {
+    if (orders.isEmpty) return;
+    try {
+      final ids = orders.map((o) => o.id).toList();
+      final remote = await DeliveryProofService.getDeliveryMetadata(ids);
+      if (!mounted) return;
+      setState(() {
+        for (final e in remote.entries) {
+          final id = e.key;
+          final patch = e.value;
+          final prev = Map<String, String>.from(_deliveryMetaByOrderId[id] ?? {});
+          for (final pe in patch.entries) {
+            if (pe.value.isNotEmpty) prev[pe.key] = pe.value;
+          }
+          _deliveryMetaByOrderId[id] = prev;
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _loadShippingPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_shippingPrefsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final map = <String, String>{};
+      for (final e in decoded.entries) {
+        final k = e.key.toString().trim();
+        final v = e.value.toString().trim().toLowerCase();
+        if (k.isEmpty || v.isEmpty) continue;
+        map[k] = v;
+      }
+      if (!mounted) return;
+      setState(() {
+        _shippingByOrderId
+          ..clear()
+          ..addAll(map);
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _loadDeliveryMetaPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_deliveryMetaPrefsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final map = <String, Map<String, String>>{};
+      for (final e in decoded.entries) {
+        final key = e.key.toString().trim();
+        if (key.isEmpty || e.value is! Map) continue;
+        final valueMap = Map<String, String>.from(
+          (e.value as Map).map(
+            (k, v) => MapEntry(k.toString(), v?.toString() ?? ''),
+          ),
+        );
+        map[key] = valueMap;
+      }
+      if (!mounted) return;
+      setState(() {
+        _deliveryMetaByOrderId
+          ..clear()
+          ..addAll(map);
+      });
+    } catch (_) {}
+  }
+
+  String? _trackingUrlForOrder(OrderItem o) {
+    final method = _resolvedCourierMethod(o);
+    if (method == 'ankolo') return _ankoloTrackingUrl;
+    if (method == 'smart') return _smartTrackingUrl;
+    return null;
+  }
+
+  String _resolvedCourierMethod(OrderItem o) {
+    final fromPrefs = (_deliveryMetaByOrderId[o.id]?['method'] ??
+            _shippingByOrderId[o.id] ??
+            '')
+        .trim()
+        .toLowerCase();
+    if (fromPrefs.isNotEmpty) return fromPrefs;
+    return _shippingFromOrderDescription(o.description);
+  }
+
+  String _shippingFromOrderDescription(String description) {
+    final d = description.toLowerCase();
+    if (d.contains('[delivery: ankolo]') || d.contains('delivery: ankolo')) {
+      return 'ankolo';
+    }
+    if (d.contains('[delivery: smart]') || d.contains('delivery: smart')) {
+      return 'smart';
+    }
+    if (d.contains('[delivery: speed]') || d.contains('delivery: speed')) {
+      return 'speed';
+    }
+    if (d.contains('[delivery: pickup]') || d.contains('delivery: pickup')) {
+      return 'pickup';
+    }
+    return '';
+  }
+
+  String? _proofViewerTarget(OrderItem o) {
+    final u = (_deliveryMeta(o)['proofUrl'] ?? '').trim();
+    if (u.startsWith('http://') || u.startsWith('https://')) return u;
+    final p = (_deliveryMeta(o)['proofPath'] ?? '').trim();
+    if (p.isNotEmpty && File(p).existsSync()) return p;
+    return null;
+  }
+
+  Map<String, String> _deliveryMeta(OrderItem o) =>
+      _deliveryMetaByOrderId[o.id] ?? const <String, String>{};
+
+  String _courierLabel(OrderItem o) {
+    final method = _resolvedCourierMethod(o);
+    switch (method) {
+      case 'ankolo':
+        return 'Ankolo courier';
+      case 'smart':
+        return 'Smart courier';
+      case 'speed':
+        return 'Speed courier';
+      case 'pickup':
+        return 'Shop pickup';
+      case 'cts':
+        return 'CTS courier';
+      default:
+        return 'Courier';
+    }
+  }
+
+  String _trackingTitle(OrderItem o) {
+    final method = _resolvedCourierMethod(o);
+    return method == 'ankolo' ? 'Ankolo Courier Tracking' : 'Smart Courier Tracking';
+  }
+
+  String _trackingButtonLabel(OrderItem o) {
+    final method = _resolvedCourierMethod(o);
+    return method == 'ankolo' ? 'Track Ankolo' : 'Track Smart';
+  }
+
+  Future<void> _openTrackingInApp({
+    required String url,
+    required String title,
+  }) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _TrackingWebViewPage(url: url, title: title),
+      ),
+    );
   }
 
   Future<void> _reloadCurrent() async {
+    await _loadShippingPrefs();
+    await _loadDeliveryMetaPrefs();
     if (!mounted) return;
     setState(() {
-      _ordersFuture = _svc.getMyOrders();
+      _ordersFuture = _fetchOrdersWithProofs();
     });
     try {
       final orders = await _ordersFuture;
       for (final o in orders) {
         if (o.itemSqlId == null) continue;
-        if (o.status != OrderStatus.confirmed) continue;
+        if (o.status != OrderStatus.delivered) continue;
         if (o.paymentStatus != PaymentStatus.paid) continue;
         if (_syncedSoldOrders.contains(o.id)) continue;
         _syncedSoldOrders.add(o.id);
@@ -179,7 +456,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         ..writeln('Category: ${o.category.toString().split('.').last}')
         ..writeln()
         ..writeln('Merchant: ${o.merchantName ?? 'Merchant'}')
-        ..writeln('Merchant phone: ${o.merchantPhone ?? '-'}')
+        ..writeln('Merchant phone: ${safeMerchantPhone(o.merchantPhone)}')
         ..writeln()
         ..writeln('Address city: ${o.addressCity ?? '-'}')
         ..writeln('Address description: ${o.addressDescription ?? '-'}');
@@ -202,6 +479,25 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         errorMessage: e.toString(),
       );
     }
+  }
+
+  Future<void> _showRefundDialog(OrderItem o) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Request a refund'),
+        content: Text(
+          'Refunds are handled by support. Include your order number when you contact us.\n\n'
+          'Order: ${o.orderNumber}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _infoRow({required IconData icon, required String text, String? trailing}) {
@@ -331,7 +627,8 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                 // Merchant
                 _infoRow(
                   icon: Icons.store_mall_directory_outlined,
-                  text: '${o.merchantName ?? 'Merchant'}  •  ${o.merchantPhone ?? '—'}',
+                  text:
+                      '${o.merchantName ?? 'Merchant'}  •  ${safeMerchantPhone(o.merchantPhone)}',
                   trailing: (o.merchantAvgRating != null) ? '⭐ ${o.merchantAvgRating!.toStringAsFixed(1)}' : null,
                 ),
 
@@ -387,13 +684,13 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                   children: [
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black87,
-                        side: BorderSide(color: Colors.black12.withValues(alpha: .4)),
+                        foregroundColor: Colors.red,
+                        side: const BorderSide(color: Colors.red),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
-                      onPressed: () => _reloadCurrent(),
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Refresh'),
+                      onPressed: () => _showRefundDialog(o),
+                      icon: const Icon(Icons.undo_outlined),
+                      label: const Text('Refund'),
                     ),
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
@@ -405,6 +702,61 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                       icon: const Icon(Icons.download_outlined),
                       label: const Text('Download'),
                     ),
+                    if (o.status == OrderStatus.delivered &&
+                        _trackingUrlForOrder(o) != null)
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _brand,
+                          side: BorderSide(color: _brand.withValues(alpha: .45)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () async {
+                          final url = _trackingUrlForOrder(o);
+                          if (url == null) return;
+                          await _openTrackingInApp(
+                            url: url,
+                            title: _trackingTitle(o),
+                          );
+                        },
+                        icon: const Icon(Icons.open_in_new),
+                        label: Text(_trackingButtonLabel(o)),
+                      ),
+                    if (o.status == OrderStatus.delivered &&
+                        _trackingUrlForOrder(o) == null &&
+                        _courierLabel(o) != 'Courier')
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.black87,
+                          side: BorderSide(color: Colors.black12.withValues(alpha: .4)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: null,
+                        icon: const Icon(Icons.local_shipping_outlined),
+                        label: Text(_courierLabel(o)),
+                      ),
+                    if (o.status == OrderStatus.delivered &&
+                        _proofViewerTarget(o) != null)
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _brand,
+                          side: BorderSide(color: _brand.withValues(alpha: .45)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () async {
+                          final target = _proofViewerTarget(o);
+                          if (target == null || target.isEmpty) return;
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => _ProofViewerPage(pathOrUrl: target),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.receipt_long_outlined),
+                        label: const Text('View proof'),
+                      ),
                     if (o.status == OrderStatus.pending)
                       FilledButton.icon(
                         style: FilledButton.styleFrom(

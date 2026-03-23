@@ -51,17 +51,16 @@ class AddressService {
     if (r.statusCode == 401 || r.statusCode == 403) {
       throw AuthRequiredException('Unauthorized or session expired');
     }
-    throw Exception('HTTP ${r.statusCode}: ${r.body}');
+    // Avoid leaking response bodies or sensitive debug info to UI.
+    throw Exception('Request failed. Please try again.');
   }
 
   dynamic _decodeJsonBody(http.Response r, {required String endpointName}) {
     try {
       return jsonDecode(r.body);
     } catch (_) {
-      final snippet = r.body.length > 220 ? '${r.body.substring(0, 220)}...' : r.body;
-      throw Exception(
-        '$endpointName returned non-JSON response (${r.statusCode}). Body: $snippet',
-      );
+      // Avoid leaking raw body content to UI.
+      throw Exception('Unexpected server response. Please try again.');
     }
   }
 
@@ -121,20 +120,20 @@ class AddressService {
           continue;
         }
         rethrow;
-      } on SocketException catch (e) {
+      } on SocketException {
         if (attempt < retries) {
           attempt++;
           await Future.delayed(Duration(milliseconds: 600 * attempt));
           continue;
         }
-        throw Exception('Network error: $e');
-      } on http.ClientException catch (e) {
+        throw Exception('No internet connection. Please check your network and try again.');
+      } on http.ClientException {
         if (attempt < retries) {
           attempt++;
           await Future.delayed(Duration(milliseconds: 600 * attempt));
           continue;
         }
-        throw Exception('HTTP client error: $e');
+        throw Exception('Could not reach the server. Please try again.');
       }
     }
   }
@@ -205,7 +204,8 @@ class AddressService {
       final status = (data['status'] ?? data['error'] ?? '').toString();
       final message = (data['message'] ?? '').toString();
       if (status.isNotEmpty || message.isNotEmpty) {
-        throw Exception('Autocomplete failed: $status ${message.trim()}'.trim());
+        // Avoid leaking backend message/status to UI.
+        throw Exception('Address autocomplete failed. Please try again.');
       }
     }
 

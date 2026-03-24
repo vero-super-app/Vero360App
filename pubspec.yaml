@@ -21,6 +21,7 @@ dependencies:
   share_plus: any  
   fluttertoast: ^9.0.0
   flutter_secure_storage: ^10.0.0
+  local_auth: ^2.3.0
   qr_flutter: ^4.1.0
   saver_gallery: ^4.0.1
   app_links: ^6.0.0
@@ -119,4 +120,7 @@ flutter:
     - assets/icons/car-location-marker.png
     - assets/playstore.png
     - assets/style/map_style.txt
+    - assets/documents/Vero360_Platform_Agreement_Policy.pdf
+    - assets/documents/Vero360_Privacy_Policy.pdf
+    - assets/documents/Vero360_Merchant_Terms_Conditions.pdf
  

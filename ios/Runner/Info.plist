@@ -93,7 +93,9 @@
 <key>NSPhotoLibraryUsageDescription</key>
 <string>We need photo library access to pick a profile picture.</string>
 
-
+	<!-- Face ID for App lock (Settings > Security) -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Vero360 uses Face ID to unlock the app when you return to it, if you enable App lock in Settings.</string>
 
 	<!-- 🔸 ATS: allow https://unbigamous-unappositely-kory.ngrok-free.dev during development.
 	     Tighten for production (remove or set exception domains only). -->

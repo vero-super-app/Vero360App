@@ -70,11 +70,19 @@ class _BottomnavbarState extends State<Bottomnavbar>
   bool _tabIsProtected(int index) => index >= 2;
 
   Future<void> _initialize() async {
-    // Load role and build pages from SharedPreferences first so hot restart
-    // always shows correct navbar (merchant/customer) before auth is restored.
-    await _checkUserRoleAndSetup();
-    await _refreshAuthState();
-    if (mounted) setState(() => _isLoading = false);
+    try {
+      // Load role and build pages from SharedPreferences first so hot restart
+      // always shows correct navbar (merchant/customer) before auth is restored.
+      await _checkUserRoleAndSetup();
+      await _refreshAuthState();
+    } catch (e, st) {
+      assert(() {
+        debugPrint('BottomNavbar._initialize: $e\n$st');
+        return true;
+      }());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _refreshAuthState() async {
@@ -121,8 +129,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
       if (cachedRole.isNotEmpty &&
           cachedRole != 'customer' &&
           backendRole == 'customer') {
-        debugPrint(
-            '⚠️ BottomNavbar: role mismatch! cached=$cachedRole, backend=$backendRole. Re-syncing…');
+       // debugPrint(
+            //'⚠️ BottomNavbar: role mismatch! cached=$cachedRole, backend=$backendRole. Re-syncing…');
         await _putRoleToBackend(token, cachedRole);
         return;
       }
@@ -133,8 +141,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
         if (firestoreRole != null &&
             firestoreRole != 'customer' &&
             firestoreRole != backendRole) {
-          debugPrint(
-              '⚠️ BottomNavbar: Firestore says "$firestoreRole", backend says "$backendRole". Re-syncing…');
+        //  debugPrint(
+            //  '⚠️ BottomNavbar: Firestore says "$firestoreRole", backend says "$backendRole". Re-syncing…');
           await prefs.setString('user_role', firestoreRole);
           await prefs.setString('role', firestoreRole);
           await _putRoleToBackend(token, firestoreRole);
@@ -156,8 +164,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
         await prefs.setString('role', newRole);
       }
       
-      debugPrint(
-          'ℹ️ BottomNavbar: role from /users/me: $newRole (merchant=$isMerchant, driver=$isDriver)');
+      //debugPrint(
+        //  'ℹ️ BottomNavbar: role from /users/me: $newRole (merchant=$isMerchant, driver=$isDriver)');
       
       if (mounted && (_isMerchant != isMerchant || _isDriver != isDriver)) {
         await _checkUserRoleAndSetup();
@@ -177,9 +185,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
         },
         body: json.encode({'role': role}),
       ).timeout(const Duration(seconds: 6));
-      debugPrint('✅ BottomNavbar: role re-synced to backend: $role');
+    //  debugPrint('✅ BottomNavbar: role re-synced to backend: $role');
     } catch (e) {
-      debugPrint('⚠️ BottomNavbar: role re-sync failed: $e');
+     // debugPrint('⚠️ BottomNavbar: role re-sync failed: $e');
     }
   }
 
@@ -209,7 +217,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
      _isDriver = raw == 'driver';
      // (anything else → customer: _isMerchant and _isDriver both false)
      
-     debugPrint("ℹ️ BottomNavbar: role='$raw', _isMerchant=$_isMerchant, _isDriver=$_isDriver (default=customer)");
+    // debugPrint("ℹ️ BottomNavbar: role='$raw', _isMerchant=$_isMerchant, _isDriver=$_isDriver (default=customer)");
 
      // Home page: DriverDashboard for drivers, Homepage for others
      final homePage = _isDriver 

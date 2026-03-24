@@ -22,7 +22,6 @@ import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
-import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class CheckoutFromCartPage extends StatefulWidget {
@@ -39,6 +38,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
   static const double _feeSpeed = 0;
   static const double _feeCts = 0;
+  static const double _feeAnkolo = 0;
+  static const double _feeSmart = 0;
   static const double _feePickup = 0;
 
   bool _paying = false;
@@ -62,6 +63,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         return _feeSpeed;
       case DeliveryType.cts:
         return _feeCts;
+      case DeliveryType.ankolo:
+        return _feeAnkolo;
+      case DeliveryType.smart:
+        return _feeSmart;
       case DeliveryType.pickup:
         return _feePickup;
     }
@@ -75,9 +80,60 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         return 'Speed';
       case DeliveryType.cts:
         return 'CTS';
+      case DeliveryType.ankolo:
+        return 'Ankolo';
+      case DeliveryType.smart:
+        return 'Smart';
       case DeliveryType.pickup:
         return 'Pickup';
     }
+  }
+
+  static const Widget _deliveryPriceUnknownNote = Text(
+    'Delivery prices are not known until your parcel is weighed.',
+    style: TextStyle(
+      color: Colors.red,
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      height: 1.25,
+    ),
+  );
+
+  Widget _deliverySummaryRow() {
+    if (_deliveryType == DeliveryType.pickup) {
+      return _row('Delivery', 'Pickup (no courier fee)');
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              'Delivery',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.normal,
+                color: Colors.grey[700],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            flex: 2,
+            child: Text(
+              'Not known until parcel is weighed',
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                color: Colors.red,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -526,6 +582,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                     items: const [
                       DropdownMenuItem(value: DeliveryType.speed, child: Text('Speed')),
                       DropdownMenuItem(value: DeliveryType.cts, child: Text('CTS')),
+                      DropdownMenuItem(value: DeliveryType.ankolo, child: Text('Ankolo')),
+                      DropdownMenuItem(value: DeliveryType.smart, child: Text('Smart')),
                       DropdownMenuItem(value: DeliveryType.pickup, child: Text('Pickup')),
                     ],
                     onChanged: (v) {
@@ -534,9 +592,17 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '${_deliveryLabel(_deliveryType)} • Fee: ${_mwk(_delivery)}',
-                    style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                    'Selected: ${_deliveryLabel(_deliveryType)}',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
+                  if (_deliveryType != DeliveryType.pickup) ...[
+                    const SizedBox(height: 8),
+                    _deliveryPriceUnknownNote,
+                  ],
                 ],
               ),
             ),
@@ -585,7 +651,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                 ),
                 const SizedBox(height: 12),
                 _row('Subtotal', _mwk(_subtotal)),
-                _row('Delivery', _mwk(_delivery)),
+                _deliverySummaryRow(),
                 const SizedBox(height: 8),
                 const Divider(thickness: 1),
                 const SizedBox(height: 8),
@@ -814,7 +880,6 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   bool _isLoading = true;
   bool _resultHandled = false;
   final order_svc.OrderService _orderService = order_svc.OrderService();
-  final MarketplaceService _marketplaceService = MarketplaceService();
 
   @override
   void initState() {
@@ -1019,6 +1084,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         cartItems: items,
         address: addressForOrder,
         status: status,
+        deliveryMethod: _deliveryTypeLabel(widget.deliveryType),
       );
     } catch (e) {
       debugPrint('[InAppPaymentPage] Failed to create backend orders: $e');
@@ -1036,18 +1102,18 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
-  /// For marketplace items, mark the associated listing as sold (isActive = false)
-  /// once payment succeeds so it no longer appears as available.
-  Future<void> _markMarketplaceItemsSold(List<CartModel> items) async {
-    try {
-      for (final it in items) {
-        // Only apply to marketplace items that have a valid numeric backend id.
-        if (it.serviceType != 'marketplace') continue;
-        if (it.item <= 0) continue;
-        await _marketplaceService.markItemSold(it.item);
-      }
-    } catch (e) {
-      debugPrint('[InAppPaymentPage] Failed to mark items sold: $e');
+  String _deliveryTypeLabel(DeliveryType type) {
+    switch (type) {
+      case DeliveryType.speed:
+        return 'Speed';
+      case DeliveryType.cts:
+        return 'CTS';
+      case DeliveryType.ankolo:
+        return 'Ankolo';
+      case DeliveryType.smart:
+        return 'Smart';
+      case DeliveryType.pickup:
+        return 'Pickup';
     }
   }
 
@@ -1069,8 +1135,6 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     final items = widget.cartItemsForMerchantCredit;
     if (items != null && items.isNotEmpty) {
       unawaited(_creditMerchantWallets(items));
-      // Mark marketplace listings as sold so they are no longer purchasable.
-      unawaited(_markMarketplaceItemsSold(items));
       // Create confirmed orders in backend for these cart items.
       unawaited(_createBackendOrders(OrderStatus.confirmed));
     }

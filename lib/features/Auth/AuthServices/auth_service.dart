@@ -7,6 +7,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
@@ -16,6 +17,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 enum DeleteAccountStatus { success, requiresRecentLogin, failed }
@@ -158,9 +160,9 @@ class AuthService {
 
     final token = await user.getIdToken();
 
-    // Log JWT so you can see it in console (not the UID)
-    if (token != null && token.isNotEmpty) {
-      debugPrint('[JWT] Firebase ID token (JWT): $token');
+    // Avoid logging raw JWT values; they can be used to impersonate users.
+    if (token != null && token.isNotEmpty && kDebugMode) {
+      debugPrint('[JWT] Firebase ID token acquired');
     }
 
     final userMap = <String, dynamic>{
@@ -267,11 +269,13 @@ class AuthService {
 
   // -------------------- Login (Backend first, Firebase fallback for email) --------------------
 
+  /// When [showErrorToast] is false, errors are not shown (caller may try Firebase fallback and show one error).
   Future<Map<String, dynamic>?> loginWithIdentifier(
     String identifier,
     String password,
-    BuildContext context,
-  ) async {
+    BuildContext context, {
+    bool showErrorToast = true,
+  }) async {
     final trimmedId = identifier.trim();
 
     try {
@@ -343,7 +347,7 @@ class AuthService {
         );
         if (fb != null) return fb;
       }
-      _toast(context, e.message, ok: false);
+      if (showErrorToast) _toast(context, e.message, ok: false);
       return null;
     } catch (e) {
       if (trimmedId.contains('@')) {
@@ -354,9 +358,11 @@ class AuthService {
         );
         if (fb != null) return fb;
       }
-      _toast(context,
-          _looksLikeServerDown(e) ? 'Server unreachable.' : 'Login failed.',
-          ok: false);
+      if (showErrorToast) {
+        _toast(context,
+            _looksLikeServerDown(e) ? 'Server unreachable.' : 'Login failed.',
+            ok: false);
+      }
       return null;
     }
   }
@@ -831,6 +837,10 @@ class AuthService {
     // Firebase
     try {
       await _firebaseAuth.signOut();
+    } catch (_) {}
+
+    try {
+      await NotificationStore.instance.clearAll();
     } catch (_) {}
 
     final ok = await _clearLocalSession();

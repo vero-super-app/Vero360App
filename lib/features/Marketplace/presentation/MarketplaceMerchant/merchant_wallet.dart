@@ -1,12 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
-import 'package:http/http.dart' as http;
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet_transactions_page.dart';
 
 class MerchantWalletPage extends StatefulWidget {
   final String merchantId;
@@ -23,10 +21,9 @@ class MerchantWalletPage extends StatefulWidget {
   @override
   State<MerchantWalletPage> createState() => _MerchantWalletPageState();
 }
-
+ 
 class _MerchantWalletPageState extends State<MerchantWalletPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
   
   WalletModel? _wallet;
   double _walletBalance = 0.0;
@@ -41,6 +38,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   final _emailController = TextEditingController();
   final _amountController = TextEditingController();
   final _phoneController = TextEditingController();
+
+  final NumberFormat _mwkFormat = NumberFormat('#,##0', 'en');
   
   static const List<Map<String, String>> _banks = [
     {"uuid": "82310dd1-ec9b-4fe7-a32c-2f262ef08681", "name": "National Bank of Malawi"},
@@ -113,28 +112,41 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   }
 
   void _setupTransactionsStream(String walletId) {
+    _transactionsSubscription?.cancel();
     _transactionsSubscription = _firestore
         .collection('wallet_transactions')
         .where('walletId', isEqualTo: walletId)
-        .where('type', whereIn: ['credit', 'debit', 'payout'])
-        .orderBy('createdAt', descending: true)
-        .limit(20)
         .snapshots()
         .listen((snapshot) {
       if (mounted) {
         setState(() {
-          _recentTransactions = snapshot.docs.map((doc) {
+          var txs = snapshot.docs.map((doc) {
             final data = doc.data();
             return WalletTransaction.fromMap({
               ...data,
               'transactionId': doc.id,
             });
           }).toList();
+
+          // Show recent finalized transactions (completed/success) and pending payouts.
+          txs = txs.where((t) {
+            final s = t.status.toLowerCase();
+            return s == 'completed' || s == 'success' || s == 'pending';
+          }).toList();
+
+          txs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          _recentTransactions = txs.take(20).toList();
         });
       }
     }, onError: (error) {
       print('Transaction stream error: $error');
     });
+  }
+
+  void _forceTransactionsReload() {
+    final walletId = _wallet?.walletId;
+    if (walletId == null || walletId.isEmpty) return;
+    _setupTransactionsStream(walletId);
   }
 
   Future<void> _loadMerchantData() async {
@@ -159,7 +171,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         });
       }
     } catch (e) {
-      print('Error loading merchant data: $e');
+     // print('Error loading merchant data: $e');
     }
   }
 
@@ -241,7 +253,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Available: MWK ${_walletBalance.toStringAsFixed(2)}',
+                      'Available: MWK ${_mwkFormat.format(_walletBalance.truncate())}',
                       style: const TextStyle(
                         fontSize: 14,
                         color: Colors.grey,
@@ -251,7 +263,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(
-                          'Pending: MWK ${_pendingBalance.toStringAsFixed(2)}',
+                          'Pending: MWK ${_mwkFormat.format(_pendingBalance.truncate())}',
                           style: const TextStyle(
                             fontSize: 12,
                             color: Colors.orange,
@@ -447,10 +459,24 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                         icon: Icons.phone,
                         keyboardType: TextInputType.phone,
                         validator: (value) {
-                          if (value?.isEmpty ?? true) return 'Phone number required';
+                          if (value?.isEmpty ?? true) {
+                            return 'Phone number required';
+                          }
                           final phone = value!.replaceAll(' ', '');
-                          if (!phone.startsWith('+265')) return 'Enter with +265 prefix';
-                          if (phone.length != 13) return 'Enter valid 13-digit number';
+                          if (!phone.startsWith('+265')) {
+                            return 'Enter with +265 prefix';
+                          }
+                          if (phone.length != 13) {
+                            return 'Enter valid 13-digit number';
+                          }
+                          if (_selectedMobileProvider == 'airtel_money' &&
+                              !phone.startsWith('+2659')) {
+                            return 'Airtel Money numbers must start with +2659…';
+                          }
+                          if (_selectedMobileProvider == 'mpamba' &&
+                              !phone.startsWith('+2658')) {
+                            return 'TNM Mpamba numbers must start with +2658…';
+                          }
                           return null;
                         },
                       ),
@@ -574,7 +600,11 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           ),
         ),
       ),
-    );
+    ).then((_) {
+      // In practice Firestore listeners sometimes lag behind writes until the route changes.
+      // Refreshing the stream here makes payouts show up immediately when dialog closes.
+      if (mounted) _forceTransactionsReload();
+    });
   }
 
   Widget _buildTextField({
@@ -630,10 +660,6 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
       final amount = double.parse(_amountController.text);
       final payoutRef = 'PAYOUT-${widget.serviceType}-${DateTime.now().millisecondsSinceEpoch}';
       
-      // Calculate fee (1% minimum MWK 100)
-      final fee = (amount * 0.01).clamp(100.0, amount);
-      final netAmount = amount - fee;
-      
       // 1. Debit wallet in Firestore
       await FirebaseWalletService.debitWallet(
         merchantId: widget.merchantId,
@@ -648,6 +674,9 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
       if (_selectedPayoutMethod == 'bank') {
         await _saveBankDetails();
       }
+
+      // Ensure UI shows the new payout transaction immediately.
+      if (mounted) _forceTransactionsReload();
       
       // 3. Show success and close dialog
       if (mounted) {
@@ -871,13 +900,13 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                         if (_pendingBalance > 0)
                           Padding(
                             padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                              'Pending: MWK ${_pendingBalance.toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Colors.orangeAccent,
-                              ),
-                            ),
+                        child: Text(
+                          'Pending: MWK ${NumberFormat('#,##0.00').format(_pendingBalance)}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Colors.orangeAccent,
+                          ),
+                        ),
                           ),
                         const SizedBox(height: 24),
                         SizedBox(
@@ -940,7 +969,18 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                   Center(
                     child: TextButton(
                       onPressed: () {
-                        // Navigate to full transactions page
+                        final walletId = _wallet?.walletId;
+                        if (walletId == null || walletId.isEmpty) return;
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => MerchantWalletTransactionsPage(
+                              walletId: walletId,
+                              merchantName: widget.merchantName,
+                              serviceType: widget.serviceType,
+                            ),
+                          ),
+                        );
                       },
                       child: const Text(
                         'View All Transactions',
@@ -1052,7 +1092,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
               ),
             ),
             Text(
-              '$amountPrefix MWK ${transaction.amount.toStringAsFixed(2)}',
+              '$amountPrefix MWK ${NumberFormat('#,##0', 'en').format(transaction.amount)}',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 color: amountColor,

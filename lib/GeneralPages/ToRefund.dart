@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
+import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 /// Shows orders that are eligible for a refund (confirmed or paid)
@@ -305,7 +306,7 @@ class _ToRefundPageState extends State<ToRefundPage> {
           const SizedBox(height: 6),
           _infoRow(Icons.storefront_outlined, (o.merchantName ?? '').toString()),
           const SizedBox(height: 6),
-          _infoRow(Icons.phone_outlined, (o.merchantPhone ?? '').toString()),
+          _infoRow(Icons.phone_outlined, safeMerchantPhone(o.merchantPhone)),
           const SizedBox(height: 10),
           Row(
             children: [

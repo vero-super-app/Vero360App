@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'dart:async' show unawaited;
+
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:firebase_auth/firebase_auth.dart';
@@ -25,7 +27,7 @@ class FirebaseAuthService {
       await logCurrentIdToken();
       return credential.user;
     } catch (e) {
-      print("Error while creating a user: $e");
+   //   print("Error while creating a user: $e");
       return null;
     }
   }
@@ -39,7 +41,7 @@ class FirebaseAuthService {
       await logCurrentIdToken();
       return credential.user;
     } catch (e) {
-      print("Error while authenticating the user: $e");
+     // print("Error while authenticating the user: $e");
       return null;
     }
   }
@@ -51,7 +53,7 @@ class FirebaseAuthService {
         _googleInitialized = true;
       }
       if (!_google.supportsAuthenticate()) {
-        print('Google Sign-In not supported on this platform');
+     //   print('Google Sign-In not supported on this platform');
         return null;
       }
       final GoogleSignInAccount account = await _google.authenticate();
@@ -59,11 +61,11 @@ class FirebaseAuthService {
       final auth = account.authentication;
       final credential = GoogleAuthProvider.credential(idToken: auth.idToken);
       final userCred = await _auth.signInWithCredential(credential);
-      await logCurrentIdToken();
+      unawaited(logCurrentIdToken());
       return userCred.user;
     } catch (e) {
-      print('Google sign-in failed: $e');
-      return null;
+     // debugPrint('Google sign-in failed: $e');
+      rethrow;
     }
   }
 
@@ -83,11 +85,11 @@ class FirebaseAuthService {
         rawNonce: rawNonce,
       );
       final userCred = await _auth.signInWithCredential(oauthCred);
-      await logCurrentIdToken();
+      unawaited(logCurrentIdToken());
       return userCred.user;
     } catch (e) {
-      print('Apple sign-in failed: $e');
-      return null;
+     // debugPrint('Apple sign-in failed: $e');
+      rethrow;
     }
   }
 
@@ -98,7 +100,7 @@ class FirebaseAuthService {
       if (user == null) return null;
       return await user.getIdToken();
     } catch (e) {
-      print("Error while getting ID token: $e");
+    //  print("Error while getting ID token: $e");
       return null;
     }
   }
@@ -108,12 +110,12 @@ class FirebaseAuthService {
     try {
       final token = await getIdToken();
       if (token != null && token.isNotEmpty) {
-        debugPrint('[JWT] Firebase ID token (JWT): $token');
+    //    debugPrint('[JWT] Firebase ID token (JWT): $token');
       } else {
-        print('[JWT] No current user or empty token');
+     //   print('[JWT] No current user or empty token');
       }
     } catch (e) {
-      print('[JWT] Error logging token: $e');
+    //  print('[JWT] Error logging token: $e');
     }
   }
 

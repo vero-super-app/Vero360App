@@ -23,6 +23,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 // HTTP + prefs
 import 'package:http/http.dart' as http;
+import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Pages
@@ -63,7 +64,7 @@ final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  debugPrint("Background/terminated FCM message: ${message.messageId}");
+  // debugPrint("Background/terminated FCM message: ${message.messageId}");
 
   // You can add minimal logic here (e.g. update local storage)
   // Full display logic is already in NotificationService
@@ -87,12 +88,12 @@ Future<void> main() async {
         appId: "1:1010595167807:android:f63d7c7959bdb2891dc28a",
       ),
     );
-    debugPrint("Firebase initialized ✅");
+    // debugPrint("Firebase initialized ✅");
 
     // Register background handler FIRST (important for FCM)
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   } catch (e) {
-    debugPrint("Firebase init error: $e");
+    // debugPrint("Firebase init error: $e");
   }
 
   runApp(
@@ -141,16 +142,16 @@ class _AppBootstrapState extends State<AppBootstrap> {
       try {
         await GoogleMapsConfig.initialize();
       } catch (e) {
-        debugPrint("GoogleMapsConfig init warning (offline?): $e");
+        // debugPrint("GoogleMapsConfig init warning (offline?): $e");
       }
 
       // Push notifications (channels, permissions, listeners)
       try {
         await NotificationService.instance.initialize();
         NotificationService.setNavigatorKey(navKey);
-        debugPrint("NotificationService initialized ✅");
+        // debugPrint("NotificationService initialized ✅");
       } catch (e) {
-        debugPrint("NotificationService init error: $e");
+        // debugPrint("NotificationService init error: $e");
       }
     });
   }
@@ -165,13 +166,13 @@ class _AppBootstrapState extends State<AppBootstrap> {
     firebaseOk = true; // since we did it in main()
 
     // Keep boot work as light as possible so we hit the home UI quickly.
-    _log("Configuring API…");
+    // _log("Configuring API…");
     try {
       await ApiConfig.useProd();
-      _log("API config OK ✅");
+      // _log("API config OK ✅");
     } catch (e) {
       // If this fails (e.g., no internet), continue in a degraded/offline mode.
-      _log("API config warning (using offline/defaults): $e");
+      // _log("API config warning (using offline/defaults): $e");
     }
 
     // Run heavier messaging initialization in the background so it
@@ -180,13 +181,13 @@ class _AppBootstrapState extends State<AppBootstrap> {
     unawaited(Future(() async {
       try {
         await MessagingInitializationService.initialize();
-        _log("Messaging services initialized ✅");
+        // _log("Messaging services initialized ✅");
       } catch (e) {
-        _log("Messaging init warning: $e");
+        // _log("Messaging init warning: $e");
       }
     }));
 
-    _log("Launch ready 🚀");
+    // _log("Launch ready 🚀");
 
     return _BootState(firebaseOk: firebaseOk, clearedOldCache: clearedOldCache);
   }
@@ -203,7 +204,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
               title: 'Starting…',
               message: 'Preparing and optimizing your app.',
               showSpinner: true,
-              logs: _logs,
+              // logs: _logs,
             ),
           );
         }
@@ -216,7 +217,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
               title: 'Could not start',
               message: 'Tap retry to start again.',
               showSpinner: false,
-              logs: _logs,
+              // logs: _logs,
               actionLabel: 'Retry',
               onAction: () {
                 setState(() {
@@ -246,12 +247,12 @@ class _AppBootstrapState extends State<AppBootstrap> {
               title: 'Repair completed',
               message: 'We repaired local data to prevent crashes. Launching…',
               showSpinner: true,
-              logs: _logs,
+              // logs: _logs,
             ),
           );
         }
 
-        return const _RideSharePreloader(child: MyApp());
+        return const MyApp();
       },
     );
   }
@@ -572,26 +573,31 @@ class _SelfHealPageState extends State<SelfHealPage>
   }
 }
 
-/// ====== RIDE SHARE DATA PRELOADER ======
-/// Loads driver status from local cache on app start
-class _RideSharePreloader extends ConsumerWidget {
+/// Loads driver prefs locally and triggers a background sync **under** [ProviderScope].
+class _DriverStatusBootstrap extends ConsumerStatefulWidget {
   final Widget child;
-  const _RideSharePreloader({required this.child});
+  const _DriverStatusBootstrap({required this.child});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Load driver status from SharedPreferences (local, no network call)
+  ConsumerState<_DriverStatusBootstrap> createState() =>
+      _DriverStatusBootstrapState();
+}
+
+class _DriverStatusBootstrapState extends ConsumerState<_DriverStatusBootstrap> {
+  @override
+  void initState() {
+    super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       loadDriverStatusFromPrefs();
-
-      // Optional: Sync with backend in background (fire and forget)
       Future.delayed(const Duration(seconds: 2), () {
+        if (!mounted) return;
         ref.read(syncDriverStatusProvider);
       });
     });
-
-    return child;
   }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 /// ----------------- ✅ MAIN APP (your original logic preserved) -----------------
@@ -601,16 +607,20 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late final AppLinks _appLinks;
   StreamSubscription<Uri>? _sub;
 
   // Which shell we’re currently showing
   String _currentShell = 'customer';
 
+  bool _showBiometricLock = false;
+  AppLifecycleState? _lastLifecycleState;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initDeepLinks();
 
     SchedulerBinding.instance.addPostFrameCallback((_) async {
@@ -637,7 +647,38 @@ class _MyAppState extends State<MyApp> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasInBackground = _lastLifecycleState == AppLifecycleState.paused ||
+        _lastLifecycleState == AppLifecycleState.inactive;
+    _lastLifecycleState = state;
+    if (state == AppLifecycleState.resumed && wasInBackground) {
+      _checkBiometricLockOnResume();
+    }
+  }
+
+  Future<void> _checkBiometricLockOnResume() async {
+    if (kIsWeb) return;
+    if (defaultTargetPlatform != TargetPlatform.iOS &&
+        defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final enabled = prefs.getBool('pref_biometric_lock') ?? false;
+      if (!enabled || !mounted) return;
+      final auth = LocalAuthentication();
+      final canCheck = await auth.canCheckBiometrics;
+      final hasBiometrics = await auth.getAvailableBiometrics();
+      if (!canCheck || hasBiometrics.isEmpty) return;
+      if (mounted) setState(() => _showBiometricLock = true);
+    } catch (_) {}
+  }
+
+  void _onBiometricUnlockSuccess() {
+    if (mounted) setState(() => _showBiometricLock = false);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     super.dispose();
   }
@@ -721,8 +762,8 @@ class _MyAppState extends State<MyApp> {
           if (firestoreRole != null &&
               firestoreRole != 'customer' &&
               firestoreRole != backendRole) {
-            debugPrint(
-                '⚠️ Firestore says "$firestoreRole" but backend says "$backendRole". Re-syncing…');
+            // debugPrint(
+            //     '⚠️ Firestore says "$firestoreRole" but backend says "$backendRole". Re-syncing…');
             await prefs.setString('user_role', firestoreRole);
             await prefs.setString('role', firestoreRole);
             await _resyncRoleToBackend(prefs, token, firestoreRole);
@@ -813,7 +854,7 @@ class _MyAppState extends State<MyApp> {
         }
       }
     } catch (e) {
-      debugPrint('⚠️ Role re-sync failed: $e');
+      // debugPrint('⚠️ Role re-sync failed: $e');
     }
   }
 
@@ -901,7 +942,8 @@ class _MyAppState extends State<MyApp> {
     final cartSvc = CartServiceProvider.getInstance();
 
     return ProviderScope(
-      child: MaterialApp(
+      child: _DriverStatusBootstrap(
+        child: MaterialApp(
         navigatorKey: navKey,
         debugShowCheckedModeBanner: false,
         title: 'Vero360',
@@ -910,11 +952,20 @@ class _MyAppState extends State<MyApp> {
           colorSchemeSeed: const Color(0xFFFF8A00),
         ),
 
-        // ✅ Wrap app shell with RideRequestOverlay
+        // ✅ Wrap app shell with RideRequestOverlay; show biometric lock when enabled and returning to app
         builder: (context, child) {
-          return RideRequestOverlay(
+          Widget content = RideRequestOverlay(
             child: child ?? const SizedBox.shrink(),
           );
+          if (_showBiometricLock) {
+            content = Stack(
+              children: [
+                content,
+                _BiometricLockOverlay(onUnlock: _onBiometricUnlockSuccess),
+              ],
+            );
+          }
+          return content;
         },
 
         // ✅ keep public home
@@ -961,6 +1012,113 @@ class _MyAppState extends State<MyApp> {
               return null;
           }
         },
+      ),
+      ),
+    );
+  }
+}
+
+/// Full-screen overlay shown when app lock (Face ID / fingerprint) is enabled and user returns to app.
+class _BiometricLockOverlay extends StatefulWidget {
+  final VoidCallback onUnlock;
+
+  const _BiometricLockOverlay({required this.onUnlock});
+
+  @override
+  State<_BiometricLockOverlay> createState() => _BiometricLockOverlayState();
+}
+
+class _BiometricLockOverlayState extends State<_BiometricLockOverlay> {
+  String _label = 'Unlock';
+  bool _authenticating = false;
+
+  Future<void> _authenticate() async {
+    if (_authenticating) return;
+    setState(() => _authenticating = true);
+    try {
+      final auth = LocalAuthentication();
+      final canCheck = await auth.canCheckBiometrics;
+      final available = await auth.getAvailableBiometrics();
+      if (!canCheck || available.isEmpty) {
+        if (mounted) setState(() => _authenticating = false);
+        return;
+      }
+      final isFace = available.contains(BiometricType.face);
+      final isFinger = available.contains(BiometricType.fingerprint);
+      final reason = isFace && isFinger
+          ? 'Unlock Vero360 with Face ID or fingerprint'
+          : isFace
+              ? 'Unlock Vero360 with Face ID'
+              : 'Unlock Vero360 with fingerprint';
+      final success = await auth.authenticate(
+        localizedReason: reason,
+        options: const AuthenticationOptions(
+          stickyAuth: true,
+          useErrorDialogs: true,
+        ),
+      );
+      if (success && mounted) widget.onUnlock();
+    } catch (_) {}
+    if (mounted) setState(() => _authenticating = false);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _authenticate());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.fingerprint,
+                  size: 80,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'App locked',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Use Face ID or fingerprint to unlock',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 32),
+                FilledButton.icon(
+                  onPressed: _authenticating ? null : _authenticate,
+                  icon: _authenticating
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.fingerprint),
+                  label: Text(_authenticating ? 'Checking…' : _label),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1046,7 +1204,7 @@ class AuthFlow {
           await prefs.setString('role', 'customer');
         }
 
-        debugPrint("✅ Login: email=$email, role=${isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer')}");
+        // debugPrint("✅ Login: email=$email, role=${isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer')}");
 
         // Navigate based on role
         await _navigateByRole(email, isMerchant, isDriver);
@@ -1057,7 +1215,7 @@ class AuthFlow {
         );
       }
     } catch (e) {
-      debugPrint("❌ onLoginSuccess error: $e");
+      // debugPrint("❌ onLoginSuccess error: $e");
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
         (route) => false,

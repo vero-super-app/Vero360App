@@ -319,41 +319,63 @@ class MarketplaceService {
     }
   }
 
-  /// Photo search => POST /marketplace/search/photo
+  /// Photo search => upload image then POST /marketplace/search/photo/url (matches backend).
   Future<List<MarketplaceDetailModel>> searchByPhoto(File imageFile) async {
     final bytes = await imageFile.readAsBytes();
     return searchByPhotoBytes(bytes, filename: imageFile.path.split('/').last);
   }
 
-  /// Photo search from bytes (works with XFile, content URIs, etc.)
+  /// Photo search from bytes: upload to get URL, then call search/photo/url API.
   Future<List<MarketplaceDetailModel>> searchByPhotoBytes(
     Uint8List bytes, {
     String filename = 'photo.jpg',
   }) async {
     try {
       await ApiConfig.init();
-      final uri = ApiConfig.endpoint('/marketplace/search/photo');
-      final ext = filename.toLowerCase().split('.').last;
-      MediaType contentType;
-      if (ext == 'png') {
-        contentType = MediaType('image', 'png');
-      } else if (ext == 'webp') {
-        contentType = MediaType('image', 'webp');
-      } else {
-        contentType = MediaType('image', 'jpeg');
-      }
-      final req = http.MultipartRequest('POST', uri)
-        ..headers['Accept'] = 'application/json'
-        ..files.add(http.MultipartFile.fromBytes(
-          'photo',
-          bytes,
-          filename: filename,
-          contentType: contentType,
-        ));
 
-      final streamed = await req.send().timeout(const Duration(seconds: 30));
-      final resp = await http.Response.fromStream(streamed);
-      final body = _decodeOrThrowMultipart(resp);
+      // 1) Upload image to get a URL (backend expects imageUrl for search/photo/url).
+      final detectedMime = lookupMimeType(filename, headerBytes: bytes);
+      final imageUrl = await uploadBytes(
+        bytes,
+        filename: filename,
+        mimeType: detectedMime,
+      );
+      if (imageUrl.isEmpty) {
+        throw const ApiException(
+          message: 'Could not upload image for search. Please try again.',
+        );
+      }
+
+      // 2) POST /marketplace/search/photo/url with JSON body { "imageUrl": "..." }
+      // Use direct http.post so we skip ApiClient's ensureBackendUp (upload already
+      // succeeded to the same host; health check can fail on ngrok/slow networks).
+      final uri = ApiConfig.endpoint('/marketplace/search/photo/url');
+      final token = await _token();
+      final res = await http
+          .post(
+            uri,
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({'imageUrl': imageUrl}),
+          )
+          .timeout(const Duration(seconds: 45));
+
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        String msg = 'Search failed. Please try again.';
+        try {
+          final decoded = jsonDecode(res.body);
+          if (decoded is Map && decoded['message'] != null) {
+            final m = decoded['message'];
+            msg = m is List ? (m.isNotEmpty ? m.first.toString() : msg) : m.toString();
+          }
+        } catch (_) {}
+        throw ApiException(message: msg, statusCode: res.statusCode);
+      }
+
+      final body = jsonDecode(res.body);
       final list = body is Map ? body['data'] : body;
 
       if (list is List) {

@@ -162,7 +162,7 @@ class TaxiRealtimeService {
 
   /// Handle WebSocket errors
   void _handleError(error) {
-    print('[TaxiRealtimeService] WebSocket error: $error');
+    print('[TaxiRealtimeService] WebSocket error');
     _isConnected = false;
     _scheduleReconnect();
   }

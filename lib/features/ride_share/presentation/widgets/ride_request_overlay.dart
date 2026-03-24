@@ -44,6 +44,12 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       driverRideRequestsStreamProvider,
       (prev, next) {
         if (!mounted) return;
+        // Check if current user is actually a driver before processing
+        final isDriver = ref.read(isCurrentUserDriverProvider) ?? false;
+        if (!isDriver) {
+          debugPrint('[RideRequestOverlay] Skipping request - user is not a driver');
+          return;
+        }
         try {
           next.whenData((request) {
             if (!mounted) return;
@@ -63,6 +69,12 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       combinedDriverRideRequestsProvider,
       (prev, next) {
         if (!mounted) return;
+        // Check if current user is actually a driver before processing
+        final isDriver = ref.read(isCurrentUserDriverProvider) ?? false;
+        if (!isDriver) {
+          debugPrint('[RideRequestOverlay] Skipping combined requests - user is not a driver');
+          return;
+        }
         try {
           next.whenData((rideList) {
             if (!mounted) return;
@@ -135,6 +147,13 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
   void _showNotification(DriverRideRequest request) {
     if (!mounted) return;
     try {
+      // Additional safety check - verify user is driver before showing popup
+      final isDriver = ref.read(isCurrentUserDriverProvider) ?? false;
+      if (!isDriver) {
+        debugPrint('[RideRequestOverlay] Blocking notification - user is not a driver');
+        return;
+      }
+      
       ref.read(rideNotificationServiceProvider).addNotification(request);
       setState(() => _activeRequest = request);
     } catch (e) {

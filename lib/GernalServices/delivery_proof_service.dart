@@ -1,5 +1,3 @@
-import 'dart:io';
-
 // Firebase setup (no REST API required):
 // 1) Storage rules: allow authenticated users to write under `delivery_proofs/**`
 //    and allow public read (or signed URLs via getDownloadURL — default is tokenized URL).
@@ -24,11 +22,18 @@ class DeliveryProofService {
   static const String _storageFolder = 'delivery_proofs';
 
   /// Uploads image bytes to Storage and returns a public download URL.
+  ///
+  /// Uses [XFile.readAsBytes] (not `dart:io` [File]) so gallery picks work on
+  /// Android (content:// URIs) and iOS — `File(path).readAsBytes()` often fails
+  /// or yields empty data, which can lead to `object-not-found` on [getDownloadURL].
   static Future<String> uploadProofImage({
     required String orderId,
     required XFile file,
   }) async {
-    final ext = file.path.contains('.') ? file.path.split('.').last : 'jpg';
+    final pathLower = file.path.toLowerCase();
+    final ext = pathLower.contains('.')
+        ? pathLower.split('.').last.split('?').first
+        : 'jpg';
     final name = '${DateTime.now().millisecondsSinceEpoch}.$ext';
     final ref = FirebaseStorage.instance
         .ref()
@@ -36,9 +41,49 @@ class DeliveryProofService {
         .child(orderId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_'))
         .child(name);
 
-    final bytes = await File(file.path).readAsBytes();
-    await ref.putData(bytes);
-    return ref.getDownloadURL();
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) {
+      throw StateError(
+        'Could not read the photo. Please pick the image again or choose another file.',
+      );
+    }
+
+    final contentType = switch (ext) {
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      'gif' => 'image/gif',
+      'heic' => 'image/heic',
+      'heif' => 'image/heic',
+      _ => 'image/jpeg',
+    };
+
+    final task = ref.putData(
+      bytes,
+      SettableMetadata(contentType: contentType),
+    );
+    final snapshot = await task;
+    // Use the upload task's ref for getDownloadURL to avoid path mismatch.
+    // Occasional race: object not yet visible for getDownloadURL right after put.
+    return _getDownloadUrlWithRetry(snapshot.ref);
+  }
+
+  static Future<String> _getDownloadUrlWithRetry(Reference ref) async {
+    const int maxAttempts = 10;
+    const int baseMs = 300;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await ref.getDownloadURL();
+      } catch (e, st) {
+        if (attempt == maxAttempts - 1) {
+          Error.throwWithStackTrace(e, st);
+        }
+        // Exponential backoff: 300, 600, 900, ...
+        await Future<void>.delayed(
+          Duration(milliseconds: baseMs * (attempt + 1)),
+        );
+      }
+    }
+    throw StateError('getDownloadURL failed');
   }
 
   /// Saves proof URL + courier info for [orderId] (doc id = backend order id).

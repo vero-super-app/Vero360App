@@ -10,7 +10,9 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/GeneralModels/order_model.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
@@ -445,6 +447,7 @@ class _ToShipPageState extends State<ToShipPage> {
 
       // For now we map "shipped" → delivered in the existing enum.
       await _svc.updateStatus(o.id, OrderStatus.delivered);
+      await OrderEscrowService.markDelivered(o.id);
       await _markListingSoldIfDelivered(o);
       await _saveDeliveryMeta(
         orderId: o.id,
@@ -481,11 +484,30 @@ class _ToShipPageState extends State<ToShipPage> {
         isSuccess: false,
         errorMessage: e.debugMessage ?? 'Order update failed',
       );
-    } catch (e) {
+    } on FirebaseException catch (e) {
       if (!mounted) return;
+      final isStorage = (e.code == 'object-not-found' ||
+          e.code == 'canceled' ||
+          e.plugin.toLowerCase().contains('storage'));
       ToastHelper.showCustomToast(
         context,
-        'Could not update order: $e',
+        isStorage
+            ? 'Photo upload failed. Enable Firebase Storage in Console (Build → Storage → Get started) so proof can be sent to the buyer.'
+            : 'Could not update order: ${e.message ?? e.code}',
+        isSuccess: false,
+        errorMessage: 'Order update failed',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e.toString();
+      final isStorage = msg.contains('object-not-found') ||
+          msg.contains('404') ||
+          msg.toLowerCase().contains('firebase_storage');
+      ToastHelper.showCustomToast(
+        context,
+        isStorage
+            ? 'Photo upload failed. Enable Firebase Storage in Console (Build → Storage → Get started) so proof can be sent to the buyer.'
+            : 'Could not update order: $e',
         isSuccess: false,
         errorMessage: 'Order update failed',
       );

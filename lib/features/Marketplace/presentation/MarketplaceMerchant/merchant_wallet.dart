@@ -908,6 +908,17 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           ),
                         ),
                           ),
+                        if (widget.serviceType.toLowerCase() == 'marketplace') ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            'Marketplace sales are credited when the buyer confirms receipt, or automatically 5 days after delivery.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.white.withOpacity(0.88),
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 24),
                         SizedBox(
                           width: double.infinity,
@@ -1049,7 +1060,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         statusIcon = Icons.receipt;
     }
     
-    final isCredit = transaction.type.toLowerCase() == 'credit';
+    final tl = transaction.type.toLowerCase();
+    final isCredit = tl == 'credit' || tl == 'sale' || tl == 'sale_escrow';
     final amountPrefix = isCredit ? '+' : '-';
     final amountColor = isCredit ? Colors.green : Colors.red;
 

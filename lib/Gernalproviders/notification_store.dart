@@ -1,7 +1,10 @@
 // lib/Gernalproviders/notification_store.dart
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+
+import 'package:vero360_app/GeneralModels/order_model.dart';
 
 /// Single notification item (in-app + from push).
 class AppNotificationItem {
@@ -59,6 +62,45 @@ class NotificationStore extends ChangeNotifier {
   static const String _prefsKeyBase = 'vero360_notifications';
   static const int _maxStored = 200;
 
+  /// Payload key for routing badge counts to quick actions (profile / merchant grid).
+  static const String kPayloadBadgeRoute = 'badgeRoute';
+
+  /// Quick-action / grid targets — keep in sync with UI tiles.
+  static const String kBadgeMyOrders = 'quick_my_orders';
+  static const String kBadgeShipped = 'quick_shipped';
+  static const String kBadgeReceived = 'quick_received';
+  static const String kBadgeRefund = 'quick_refund';
+  static const String kBadgePromotions = 'quick_promotions';
+  static const String kBadgePostArrival = 'quick_post_arrival';
+
+  /// Maps order notifications to the correct dashboard tile (merchant vs buyer).
+  static String badgeRouteForOrderStatus(
+    OrderStatus status, {
+    required bool isMerchant,
+  }) {
+    if (isMerchant) {
+      switch (status) {
+        case OrderStatus.pending:
+          return kBadgeMyOrders;
+        case OrderStatus.confirmed:
+          return kBadgeShipped;
+        case OrderStatus.delivered:
+          return kBadgeReceived;
+        case OrderStatus.cancelled:
+          return kBadgeMyOrders;
+      }
+    } else {
+      switch (status) {
+        case OrderStatus.pending:
+        case OrderStatus.confirmed:
+        case OrderStatus.cancelled:
+          return kBadgeMyOrders;
+        case OrderStatus.delivered:
+          return kBadgeReceived;
+      }
+    }
+  }
+
   final List<AppNotificationItem> _items = [];
   bool _loaded = false;
   String _loadedKey = '';
@@ -76,6 +118,59 @@ class NotificationStore extends ChangeNotifier {
       List.unmodifiable(_items..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
 
   int get unreadCount => _items.where((e) => !e.read).length;
+
+  /// Unread notifications for a quick-action tile (FCM / manual must set [kPayloadBadgeRoute] or legacy `order_update`).
+  int unreadCountForBadgeRoute(String route) {
+    return _items.where((e) => !e.read && _itemMatchesBadgeRoute(e, route)).length;
+  }
+
+  bool _itemMatchesBadgeRoute(AppNotificationItem e, String route) {
+    final explicit = (e.payload[kPayloadBadgeRoute] ?? e.payload['badgeRoute'])
+        ?.toString()
+        .trim();
+    if (explicit != null && explicit.isNotEmpty) {
+      return explicit == route;
+    }
+    final type = (e.payload['type'] ?? '').toString().toLowerCase();
+    final status = (e.payload['status'] ?? '').toString().toLowerCase();
+    if (type == 'refund_update' || type == 'refund_request') {
+      return route == kBadgeRefund;
+    }
+    if (type != 'order_update') return false;
+    switch (route) {
+      case kBadgeReceived:
+        return status == 'delivered';
+      case kBadgeShipped:
+        return status == 'confirmed';
+      case kBadgeMyOrders:
+        // Legacy: avoid double-counting with shipped (confirmed → shipped only).
+        return status == 'pending' || status == 'cancelled';
+      default:
+        return false;
+    }
+  }
+
+  /// Call when user opens the matching screen so the badge clears.
+  Future<void> markBadgeRouteAsRead(String route) async {
+    await _load();
+    var changed = false;
+    for (final item in _items) {
+      if (!item.read && _itemMatchesBadgeRoute(item, route)) {
+        item.read = true;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await _save();
+      notifyListeners();
+    }
+  }
+
+  /// Loads persisted notifications from disk (call after login / on app start).
+  Future<void> ensureLoaded() async {
+    await _load();
+    notifyListeners();
+  }
 
   Future<void> _load() async {
     final key = await _storageKey();

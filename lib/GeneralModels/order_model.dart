@@ -72,6 +72,8 @@ class OrderItem {
 
   // Merchant
   final int merchantId;
+  /// Firebase UID when available (for lookup in Firestore users/{uid}).
+  final String? merchantUid;
   final String? merchantName;
   final String? merchantPhone;
   final double? merchantAvgRating;
@@ -98,6 +100,7 @@ class OrderItem {
     required this.status,
     required this.paymentStatus,
     required this.merchantId,
+    this.merchantUid,
     this.itemSqlId,
     this.merchantName,
     this.merchantPhone,
@@ -164,6 +167,7 @@ class OrderItem {
 
     // merchant block
     int merchId = int.tryParse((_first(m, ['merchantId','MerchantId']) ?? 0).toString()) ?? 0;
+    String? merchUid;
     String? merchName;
     String? merchPhone;
     double? merchAvg;
@@ -172,6 +176,7 @@ class OrderItem {
     final merchRaw = _first<Map>(m, ['merchant','Merchant']);
     if (merchRaw != null) {
       merchId    = int.tryParse((merchRaw['id'] ?? merchId).toString()) ?? merchId;
+      merchUid   = _first<String>(merchRaw, ['uid','merchantUid','firebaseUid','userId']);
       merchName  = merchRaw['name']?.toString();
       merchPhone = merchRaw['phone']?.toString();
       merchAvg   = double.tryParse((merchRaw['averageRating'] ?? merchRaw['avgRating'] ?? '0').toString());
@@ -209,6 +214,7 @@ class OrderItem {
       status: stat,
       paymentStatus: pay,
       merchantId: merchId,
+      merchantUid: merchUid?.trim().isEmpty == true ? null : merchUid?.trim(),
       itemSqlId: parsedItemId ?? listingFromDesc,
       merchantName: merchName,
       merchantPhone: merchPhone,

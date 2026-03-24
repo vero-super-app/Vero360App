@@ -992,18 +992,30 @@ class _ProfilePageState extends State<ProfilePage> {
         spacing: 6,
         runSpacing: 6,
         children: [
-          _orderAction('My Orders', Icons.book, () {
-            _openBottomSheet(const OrdersPage());
-          }),
-          _orderAction('Shipped', Icons.local_shipping_outlined, () {
-            _openBottomSheet(const ToShipPage());
-          }),
-          _orderAction('Received', Icons.move_to_inbox_outlined, () {
-            _openBottomSheet(const DeliveredOrdersPage());
-          }),
-          _orderAction('Refund', Icons.replay_circle_filled_outlined, () {
-            _openBottomSheet(const ToRefundPage());
-          }),
+          _orderAction(
+            'My Orders',
+            Icons.book,
+            () => _openBottomSheet(const OrdersPage()),
+            badgeRoute: NotificationStore.kBadgeMyOrders,
+          ),
+          _orderAction(
+            'Shipped',
+            Icons.local_shipping_outlined,
+            () => _openBottomSheet(const ToShipPage()),
+            badgeRoute: NotificationStore.kBadgeShipped,
+          ),
+          _orderAction(
+            'Received',
+            Icons.move_to_inbox_outlined,
+            () => _openBottomSheet(const DeliveredOrdersPage()),
+            badgeRoute: NotificationStore.kBadgeReceived,
+          ),
+          _orderAction(
+            'Refund',
+            Icons.replay_circle_filled_outlined,
+            () => _openBottomSheet(const ToRefundPage()),
+            badgeRoute: NotificationStore.kBadgeRefund,
+          ),
           _orderAction('VeroRide', Icons.local_taxi_rounded, () {
             //_openBottomSheet(const MyBookingsPage());
           }),
@@ -1020,37 +1032,91 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Widget _orderAction(String label, IconData icon, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: _chipGrey,
-                  borderRadius: BorderRadius.circular(12),
+  Widget _orderAction(
+    String label,
+    IconData icon,
+    VoidCallback onTap, {
+    String? badgeRoute,
+  }) {
+    return ListenableBuilder(
+      listenable: NotificationStore.instance,
+      builder: (context, _) {
+        final n = badgeRoute == null
+            ? 0
+            : NotificationStore.instance.unreadCountForBadgeRoute(badgeRoute);
+        return InkWell(
+          onTap: () {
+            if (badgeRoute != null) {
+              unawaited(
+                NotificationStore.instance.markBadgeRouteAsRead(badgeRoute),
+              );
+            }
+            onTap();
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: _chipGrey,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(icon, size: 20, color: _veroOrange),
+                    ),
+                    if (n > 0)
+                      Positioned(
+                        right: -4,
+                        top: -4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade700,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 16,
+                            minHeight: 16,
+                          ),
+                          child: Text(
+                            n > 99 ? '99+' : '$n',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              height: 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-                child: Icon(icon, size: 20, color: _veroOrange),
-              ),
-              const SizedBox(height: 4),
-              SizedBox(
-                width: 72,
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 11),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: 72,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 11),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-      ),
+        );
+      },
     );
   }
 
@@ -1184,7 +1250,7 @@ class _ProfilePageState extends State<ProfilePage> {
               ListenableBuilder(
                 listenable: NotificationStore.instance,
                 builder: (_, __) {
-                  final count = NotificationStore.instance.items.length;
+                  final count = NotificationStore.instance.unreadCount;
                   return Badge(
                     isLabelVisible: count > 0,
                     backgroundColor: Colors.red,

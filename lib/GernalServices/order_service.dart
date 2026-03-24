@@ -10,6 +10,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 
@@ -24,6 +25,19 @@ class AuthRequiredException implements Exception {
 
 /// Thrown for any API/network issue, with a user-friendly message only.
 /// (No endpoints, no status codes, no raw response bodies)
+/// One backend order created from a single cart line (used for escrow / payouts).
+class CreatedOrderRef {
+  final String orderId;
+  final String orderNumber;
+  final CartModel item;
+
+  const CreatedOrderRef({
+    required this.orderId,
+    required this.orderNumber,
+    required this.item,
+  });
+}
+
 class FriendlyApiException implements Exception {
   final String message;
 
@@ -178,6 +192,10 @@ class OrderService {
       'orderId': orderId,
       'orderNumber': formattedOrderNumber,
       'status': orderStatusToApi(status),
+      NotificationStore.kPayloadBadgeRoute: NotificationStore.badgeRouteForOrderStatus(
+        status,
+        isMerchant: isIncomingForMerchant,
+      ),
     });
 
     await NotificationService.instance.showManualNotification(
@@ -437,12 +455,29 @@ class OrderService {
     required OrderStatus status,
     String? deliveryMethod,
   }) async {
-    if (cartItems.isEmpty) return;
+    await createOrdersFromCartWithRefs(
+      cartItems: cartItems,
+      address: address,
+      status: status,
+      deliveryMethod: deliveryMethod,
+    );
+  }
+
+  /// Same as [createOrdersFromCart] but returns created order ids (for escrow, etc.).
+  Future<List<CreatedOrderRef>> createOrdersFromCartWithRefs({
+    required List<CartModel> cartItems,
+    Address? address,
+    required OrderStatus status,
+    String? deliveryMethod,
+  }) async {
+    if (cartItems.isEmpty) return [];
 
     final uri = ApiConfig.endpoint('/orders');
     final headers = await _headers();
 
     final addrId = address != null ? int.tryParse(address.id) ?? 0 : 0;
+
+    final out = <CreatedOrderRef>[];
 
     for (final item in cartItems) {
       final rawDescription = item.description.isNotEmpty
@@ -506,7 +541,15 @@ class OrderService {
         itemName: item.name,
       );
       await _upsertOrderStatusCache(orderId: fallbackId, status: status);
+
+      out.add(CreatedOrderRef(
+        orderId: fallbackId,
+        orderNumber: fallbackOrderNo,
+        item: item,
+      ));
     }
+
+    return out;
   }
 
   /// Embeds marketplace SQL id so `OrderItem` can parse `itemSqlId` from Description if API omits ItemId.

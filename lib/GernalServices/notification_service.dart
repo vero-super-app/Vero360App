@@ -158,11 +158,14 @@ class NotificationService {
     FirebaseAuth.instance.authStateChanges().listen((user) async {
       if (user != null) {
         await registerTokenWithBackend();
+        await NotificationStore.instance.ensureLoaded();
       } else {
         // Ensure notifications from previous account do not remain visible.
         await NotificationStore.instance.clearAll();
       }
     });
+
+    await NotificationStore.instance.ensureLoaded();
   }
 
   /// Register FCM token with backend. Call this when user logs in, or it runs
@@ -477,6 +480,10 @@ class NotificationService {
         ));
     }
   }
+
+  /// Push / manual payloads can include `badgeRoute` for quick-action badges, e.g.
+  /// `quick_my_orders`, `quick_shipped`, `quick_received`, `quick_refund`, `quick_promotions`,
+  /// `quick_post_arrival` (see [NotificationStore] constants).
 
   /// Show a local notification manually. Set [interactive] true to show Reply + Like actions.
   Future<void> showManualNotification({

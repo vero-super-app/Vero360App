@@ -120,6 +120,31 @@ final isCurrentUserDriverProvider = Provider<bool?>((ref) {
   return _isDriverCachedValue;
 });
 
+/// Whether ride-request popups should run (avoids blocking on null prefs / stale cache).
+final driverRideNotificationsEnabledProvider = Provider<bool>((ref) {
+  final cached = ref.watch(isCurrentUserDriverProvider);
+  if (cached == true) return true;
+
+  final sync = ref.watch(syncDriverStatusProvider);
+  if (sync.hasValue && sync.value == true) return true;
+
+  final profile = ref.watch(myDriverProfileProvider);
+  final hasDriverProfile = profile.maybeWhen(
+    data: (d) => d['id'] != null,
+    orElse: () => false,
+  );
+  if (hasDriverProfile) return true;
+
+  if (cached == false &&
+      sync.hasValue &&
+      sync.value == false &&
+      !hasDriverProfile) {
+    return false;
+  }
+
+  return false;
+});
+
 /// Syncs driver status with backend (call periodically or on demand)
 final syncDriverStatusProvider = FutureProvider<bool>((ref) async {
   try {
@@ -151,7 +176,10 @@ bool? _isDriverCachedValue;
 Future<bool?> loadDriverStatusFromPrefs() async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    final role = (prefs.getString('user_role') ?? '').toLowerCase();
+    final role = (prefs.getString('user_role') ??
+            prefs.getString('role') ??
+            '')
+        .toLowerCase();
     final value = role == 'driver';
     _isDriverCachedValue = value;
     return value;

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_ride_requests_provider.dart';
@@ -6,6 +8,7 @@ import 'package:vero360_app/features/ride_share/presentation/providers/driver_pr
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_notification_popup.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/driver_request_accept_dialog.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 final _shownRequestIds = <String>{};
 
@@ -40,14 +43,17 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
 
   @override
   Widget build(BuildContext context) {
+    // Keep WebSocket init + notification gate subscribed so overlays work off the ride-requests page.
+    ref.watch(driverRideRequestsInitProvider);
+    ref.watch(driverRideNotificationsEnabledProvider);
+
     ref.listen(
       driverRideRequestsStreamProvider,
       (prev, next) {
         if (!mounted) return;
-        // Check if current user is actually a driver before processing
-        final isDriver = ref.read(isCurrentUserDriverProvider) ?? false;
-        if (!isDriver) {
-          debugPrint('[RideRequestOverlay] Skipping request - user is not a driver');
+        if (!ref.read(driverRideNotificationsEnabledProvider)) {
+          debugPrint(
+              '[RideRequestOverlay] Skipping request — not a driver session');
           return;
         }
         try {
@@ -56,7 +62,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
             final requestId = request.rideId.toString();
             if (!_shownRequestIds.contains(requestId)) {
               _shownRequestIds.add(requestId);
-              _handleNewWebSocketRequest(request);
+              unawaited(_handleNewWebSocketRequest(request));
             }
           });
         } catch (e) {
@@ -69,16 +75,15 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       combinedDriverRideRequestsProvider,
       (prev, next) {
         if (!mounted) return;
-        // Check if current user is actually a driver before processing
-        final isDriver = ref.read(isCurrentUserDriverProvider) ?? false;
-        if (!isDriver) {
-          debugPrint('[RideRequestOverlay] Skipping combined requests - user is not a driver');
+        if (!ref.read(driverRideNotificationsEnabledProvider)) {
+          debugPrint(
+              '[RideRequestOverlay] Skipping combined — not a driver session');
           return;
         }
         try {
-          next.whenData((rideList) {
+          next.whenData((combined) {
             if (!mounted) return;
-            for (final ride in rideList) {
+            for (final ride in combined.rides) {
               final status = ride.status.toLowerCase();
               if ((status == 'pending' || status == 'requested') &&
                   !_shownRequestIds.contains(ride.id)) {
@@ -117,23 +122,30 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
     );
   }
 
-  void _handleNewWebSocketRequest(dynamic request) {
+  Future<void> _handleNewWebSocketRequest(IncomingRideRequest request) async {
     try {
+      final uid = await AuthStorage.userIdFromToken();
+      if (request.passengerId != null &&
+          uid != null &&
+          request.passengerId == uid) {
+        return;
+      }
+
       final driverRequest = DriverRideRequest(
-        id: request.rideId?.toString() ?? DateTime.now().toString(),
-        passengerId: '',
+        id: request.rideId.toString(),
+        passengerId: request.passengerId?.toString() ?? '',
         passengerName: 'Passenger',
-        pickupLat: (request.pickupLatitude as num?)?.toDouble() ?? 0.0,
-        pickupLng: (request.pickupLongitude as num?)?.toDouble() ?? 0.0,
+        pickupLat: request.pickupLatitude,
+        pickupLng: request.pickupLongitude,
         dropoffLat: 0.0,
         dropoffLng: 0.0,
         pickupAddress: request.pickupAddress ?? 'Pickup Location',
         dropoffAddress: 'Destination',
         status: 'pending',
-        createdAt: request.timestamp ?? DateTime.now(),
+        createdAt: request.timestamp,
         estimatedTime: 0,
-        estimatedDistance: (request.estimatedDistance as num?)?.toDouble() ?? 0.0,
-        estimatedFare: (request.estimatedFare as num?)?.toDouble() ?? 0.0,
+        estimatedDistance: request.estimatedDistance,
+        estimatedFare: request.estimatedFare,
       );
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -147,10 +159,9 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
   void _showNotification(DriverRideRequest request) {
     if (!mounted) return;
     try {
-      // Additional safety check - verify user is driver before showing popup
-      final isDriver = ref.read(isCurrentUserDriverProvider) ?? false;
-      if (!isDriver) {
-        debugPrint('[RideRequestOverlay] Blocking notification - user is not a driver');
+      if (!ref.read(driverRideNotificationsEnabledProvider)) {
+        debugPrint(
+            '[RideRequestOverlay] Blocking notification — not a driver session');
         return;
       }
       

@@ -3,12 +3,15 @@ import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
 
 /// Model for incoming ride request from WebSocket
 class IncomingRideRequest {
   final int rideId;
+  /// DB user id of the passenger (same as JWT user id when using backend auth).
+  final int? passengerId;
   final double pickupLatitude;
   final double pickupLongitude;
   final String? pickupAddress;
@@ -21,6 +24,7 @@ class IncomingRideRequest {
 
   IncomingRideRequest({
     required this.rideId,
+    this.passengerId,
     required this.pickupLatitude,
     required this.pickupLongitude,
     this.pickupAddress,
@@ -32,9 +36,19 @@ class IncomingRideRequest {
     required this.timestamp,
   });
 
+  static List<AvailableVehicle> _parseAvailableVehicles(Map<String, dynamic> json) {
+    final raw = json['availableVehicles'] ?? json['availableTaxis'];
+    if (raw is! List) return [];
+    return raw
+        .map((v) => AvailableVehicle.fromJson(v as Map<String, dynamic>))
+        .toList();
+  }
+
   factory IncomingRideRequest.fromJson(Map<String, dynamic> json) {
+    final pid = json['passengerId'];
     return IncomingRideRequest(
       rideId: json['rideId'] as int? ?? 0,
+      passengerId: pid is int ? pid : int.tryParse(pid?.toString() ?? ''),
       pickupLatitude: (json['pickupLatitude'] as num?)?.toDouble() ?? 0.0,
       pickupLongitude: (json['pickupLongitude'] as num?)?.toDouble() ?? 0.0,
       pickupAddress: json['pickupAddress'] as String?,
@@ -42,12 +56,9 @@ class IncomingRideRequest {
       searchRadiusKm: (json['searchRadiusKm'] as num?)?.toDouble() ?? 5.0,
       estimatedFare: (json['estimatedFare'] as num?)?.toDouble() ?? 0.0,
       estimatedDistance: (json['estimatedDistance'] as num?)?.toDouble() ?? 0.0,
-      availableVehicles: (json['availableVehicles'] as List?)
-              ?.map((v) => AvailableVehicle.fromJson(v as Map<String, dynamic>))
-              .toList() ??
-          [],
+      availableVehicles: _parseAvailableVehicles(json),
       timestamp: json['timestamp'] != null
-          ? DateTime.parse(json['timestamp'] as String)
+          ? DateTime.tryParse(json['timestamp'].toString()) ?? DateTime.now()
           : DateTime.now(),
     );
   }
@@ -194,20 +205,32 @@ class DriverRideRequestsWebSocketService {
   }
 
   void _listenForRideRequests() {
-    // Listen for ride requests globally
     socket.on('ride:ride-request', (data) {
-      try {
-        final request = IncomingRideRequest.fromJson(data as Map<String, dynamic>);
-        if (kDebugMode) {
-          debugPrint(
-              '[DriverRideRequests] Ride request received (rideId=${request.rideId})');
+      unawaited(Future(() async {
+        try {
+          final request =
+              IncomingRideRequest.fromJson(data as Map<String, dynamic>);
+          final uid = await AuthStorage.userIdFromToken();
+          if (request.passengerId != null &&
+              uid != null &&
+              request.passengerId == uid) {
+            if (kDebugMode) {
+              debugPrint(
+                  '[DriverRideRequests] Ignoring own passenger ride ${request.rideId}');
+            }
+            return;
+          }
+          if (kDebugMode) {
+            debugPrint(
+                '[DriverRideRequests] Ride request received (rideId=${request.rideId})');
+          }
+          _rideRequestsController.add(request);
+        } catch (e) {
+          if (kDebugMode) {
+            debugPrint('[DriverRideRequests] Error parsing ride request: $e');
+          }
         }
-        _rideRequestsController.add(request);
-      } catch (e) {
-        if (kDebugMode) {
-          debugPrint('[DriverRideRequests] Error parsing ride request: $e');
-        }
-      }
+      }));
     });
 
     // Debug: Log all incoming events
@@ -263,15 +286,24 @@ final driverRideRequestsConnectionProvider =
   return service.connectionStatusStream;
 });
 
+/// Polling result: rides plus optional error when the pending-rides call fails.
+typedef CombinedDriverRidesState = ({
+  List<DriverRideRequest> rides,
+  String? pollErrorMessage,
+});
+
 /// Combined stream of ride requests from both WebSocket and HTTP polling
 final combinedDriverRideRequestsProvider =
-    StreamProvider<List<DriverRideRequest>>((ref) {
-  // Start WebSocket connection
+    StreamProvider<CombinedDriverRidesState>((ref) {
   ref.watch(driverRideRequestsInitProvider);
 
-  // Create a stream that combines both sources
   return Stream.periodic(
     const Duration(seconds: 3),
-    (_) => DriverRequestService.getIncomingRequests(),
-  ).asyncExpand((future) => Stream.fromFuture(future));
+    (_) => DriverRequestService.getIncomingRequestsDetailed(),
+  ).asyncExpand((future) => Stream.fromFuture(future)).map((result) {
+    return (
+      rides: result.requests,
+      pollErrorMessage: result.errorMessage,
+    );
+  });
 });

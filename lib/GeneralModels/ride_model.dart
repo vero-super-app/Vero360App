@@ -287,7 +287,7 @@ class Ride {
 
     try {
       return Ride(
-        id: parseInt(json['id']) ?? 0,
+        id: parseInt(json['id'] ?? json['rideId']) ?? 0,
         passengerId: parseInt(json['passengerId']) ?? 0,
         driverId: parseInt(json['driverId']),
         taxiId: parseInt(json['taxiId']) ?? parseInt(json['vehicleId']),

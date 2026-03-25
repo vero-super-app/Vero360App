@@ -15,12 +15,47 @@ class _NotificationsPageState extends State<NotificationsPage> {
   static const Color _brandOrange = Color(0xFFFF8A00);
 
   String _profilePictureUrl = '';
+  bool _showUnreadOnly = false;
 
   @override
   void initState() {
     super.initState();
-    NotificationStore.instance.markAllAsRead();
     _loadProfilePicture();
+  }
+
+  String _sectionLabel(DateTime dt) {
+    final now = DateTime.now();
+    final d = DateTime(dt.year, dt.month, dt.day);
+    final t = DateTime(now.year, now.month, now.day);
+    final diff = t.difference(d).inDays;
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
+    if (diff < 7) return DateFormat('EEEE').format(dt);
+    return DateFormat('MMM d, y').format(dt);
+  }
+
+  IconData _iconFor(Map<String, dynamic> payload) {
+    final type = (payload['type'] ?? '').toString().toLowerCase();
+    if (type.contains('refund')) return Icons.replay_circle_filled_outlined;
+    if (type.contains('escrow')) return Icons.account_balance_wallet_outlined;
+    if (type.contains('order')) return Icons.shopping_bag_outlined;
+    if (type.contains('chat') || type.contains('message')) return Icons.chat_bubble_outline;
+    return Icons.notifications_rounded;
+  }
+
+  String? _mediaFrom(Map<String, dynamic> payload) {
+    final candidates = [
+      payload['itemImage'],
+      payload['imageUrl'],
+      payload['mediaUrl'],
+      payload['thumbnail'],
+      payload['photoUrl'],
+    ];
+    for (final c in candidates) {
+      final s = (c ?? '').toString().trim();
+      if (s.startsWith('http://') || s.startsWith('https://')) return s;
+    }
+    return null;
   }
 
   Future<void> _loadProfilePicture() async {
@@ -77,7 +112,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
         title: ListenableBuilder(
           listenable: NotificationStore.instance,
           builder: (context, _) {
-            final count = NotificationStore.instance.items.length;
+            final store = NotificationStore.instance;
+            final total = store.items.length;
+            final unread = store.unreadCount;
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -108,7 +145,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
                       ),
                     ),
                     Text(
-                      '$count ${count == 1 ? 'notification' : 'notifications'}',
+                      unread > 0
+                          ? '$unread unread'
+                          : '$total ${total == 1 ? 'notification' : 'notifications'}',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.white.withOpacity(0.9),
@@ -141,7 +180,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
       body: ListenableBuilder(
         listenable: NotificationStore.instance,
         builder: (context, _) {
-          final items = NotificationStore.instance.items;
+          final store = NotificationStore.instance;
+          final items = _showUnreadOnly
+              ? store.items.where((e) => !e.read).toList()
+              : store.items;
           if (items.isEmpty) {
             return const Center(
               child: Column(
@@ -157,49 +199,161 @@ class _NotificationsPageState extends State<NotificationsPage> {
               ),
             );
           }
-          return ListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: items.length,
-            itemBuilder: (context, index) {
-              final n = items[index];
-              return ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: _brandOrange.withOpacity(0.2),
-                  child: const Icon(Icons.notifications_rounded, color: _brandOrange),
+          final grouped = <String, List<AppNotificationItem>>{};
+          for (final n in items) {
+            final key = _sectionLabel(n.createdAt);
+            grouped.putIfAbsent(key, () => []).add(n);
+          }
+          final sections = grouped.entries.toList();
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+            children: [
+              Row(
+                children: [
+                  FilterChip(
+                    label: const Text('All'),
+                    selected: !_showUnreadOnly,
+                    onSelected: (_) => setState(() => _showUnreadOnly = false),
+                    selectedColor: _brandOrange.withOpacity(0.18),
+                  ),
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    label: Text('Unread (${store.unreadCount})'),
+                    selected: _showUnreadOnly,
+                    onSelected: (_) => setState(() => _showUnreadOnly = true),
+                    selectedColor: _brandOrange.withOpacity(0.18),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              for (final sec in sections) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(2, 10, 2, 8),
+                  child: Text(
+                    sec.key,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF6B7280),
+                    ),
+                  ),
                 ),
-                title: Text(
-                  n.title,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (n.body.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          n.body,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade700,
-                          ),
+                for (final n in sec.value)
+                  InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => NotificationStore.instance.markAsRead(n.id),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: n.read
+                              ? Colors.black12
+                              : _brandOrange.withOpacity(0.4),
                         ),
+                        boxShadow: const [
+                          BoxShadow(
+                            blurRadius: 14,
+                            spreadRadius: -10,
+                            offset: Offset(0, 8),
+                            color: Color(0x1A000000),
+                          ),
+                        ],
                       ),
-                    const SizedBox(height: 2),
-                    Text(
-                      DateFormat('MMM d, y • HH:mm').format(n.createdAt),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade600,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          CircleAvatar(
+                            radius: 18,
+                            backgroundColor: _brandOrange.withOpacity(0.14),
+                            child: Icon(
+                              _iconFor(n.payload),
+                              color: _brandOrange,
+                              size: 18,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  n.title,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                if (n.body.trim().isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    n.body,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: Color(0xFF4B5563),
+                                      height: 1.25,
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: [
+                                    Text(
+                                      DateFormat('HH:mm').format(n.createdAt),
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Color(0xFF9CA3AF),
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    if (!n.read) ...[
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        width: 7,
+                                        height: 7,
+                                        decoration: const BoxDecoration(
+                                          color: Color(0xFFFF8A00),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_mediaFrom(n.payload) != null)
+                            Container(
+                              width: 54,
+                              height: 54,
+                              margin: const EdgeInsets.only(left: 8),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(10),
+                                color: Colors.grey.shade100,
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: Image.network(
+                                _mediaFrom(n.payload)!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const Icon(
+                                  Icons.image_not_supported_outlined,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-                isThreeLine: true,
-              );
-            },
+                  ),
+              ],
+            ],
           );
         },
       ),

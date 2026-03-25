@@ -34,7 +34,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   late PageController _pageController;
   int _currentIndex = 0;
   late int _groupIndex;
-  static const Duration _autoAdvance = Duration(seconds: 4);
+  static const Duration _autoAdvance = Duration(seconds: 8);
+  DateTime _lastTap = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _isPaused = false;
   late AnimationController _progressController;
   final StoryService _storyService = StoryService();
 
@@ -73,6 +75,12 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   void _restartProgress() {
+    if (_isPaused) {
+      _progressController
+        ..stop()
+        ..reset();
+      return;
+    }
     _progressController
       ..stop()
       ..reset()
@@ -89,6 +97,13 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     } else {
       _goNextStoryGroupOrClose();
     }
+  }
+
+  bool _allowTapAdvance() {
+    final now = DateTime.now();
+    if (now.difference(_lastTap).inMilliseconds < 320) return false;
+    _lastTap = now;
+    return true;
   }
 
   void _goNextStoryGroupOrClose() {
@@ -124,17 +139,20 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       backgroundColor: Colors.black,
       body: GestureDetector(
         onLongPressStart: (_) => _progressController.stop(),
-        onLongPressEnd: (_) => _progressController.forward(),
-        onTapDown: (details) {
+        onLongPressEnd: (_) {
+          if (!_isPaused) _progressController.forward();
+        },
+        onTapUp: (details) {
+          if (!_allowTapAdvance()) return;
           final w = MediaQuery.of(context).size.width;
-          if (details.globalPosition.dx < w * 0.35) {
+          if (details.globalPosition.dx < w * 0.25) {
             if (_currentIndex > 0) {
               _pageController.previousPage(
                 duration: const Duration(milliseconds: 300),
                 curve: Curves.easeInOut,
               );
             }
-          } else if (details.globalPosition.dx > w * 0.65) {
+          } else if (details.globalPosition.dx > w * 0.75) {
             if (_currentIndex < items.length - 1) {
               _pageController.nextPage(
                 duration: const Duration(milliseconds: 300),
@@ -150,6 +168,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           children: [
             PageView.builder(
               controller: _pageController,
+              physics: const NeverScrollableScrollPhysics(),
               itemCount: items.length,
               onPageChanged: (i) {
                 setState(() => _currentIndex = i);
@@ -168,6 +187,37 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                   const SizedBox(height: 8),
                   _progressBars(items.length),
                 ],
+              ),
+            ),
+            Positioned(
+              top: 56,
+              right: 16,
+              child: SafeArea(
+                child: InkWell(
+                  onTap: () {
+                    setState(() => _isPaused = !_isPaused);
+                    if (_isPaused) {
+                      _progressController.stop();
+                    } else {
+                      _progressController.forward();
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(999),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.45),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      _isPaused
+                          ? Icons.play_arrow_rounded
+                          : Icons.pause_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                ),
               ),
             ),
             Positioned(

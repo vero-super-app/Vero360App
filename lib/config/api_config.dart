@@ -22,7 +22,7 @@ class ApiConfig {
   // 'http://10.0.2.2:3000'; // Android emulator localhost
 
   /// Optional override at build time:
-  /// flutter run --dart-define=API_BASE_URL=http://127.0.0.1:3000
+  /// flutter run --dart-define=API_BASE_URL=http://127.0.0.1:3000 
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
     defaultValue: _defaultProdRoot,

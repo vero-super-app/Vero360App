@@ -70,6 +70,88 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   bool _isRelativePath(String s) =>
       s.isNotEmpty && !s.contains('://') && !_looksLikeBase64(s);
 
+  Widget _profileImageFromAnySource(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) {
+      return Container(
+        color: Colors.grey.shade200,
+        alignment: Alignment.center,
+        child: const Icon(Icons.storefront_rounded, size: 56, color: Colors.grey),
+      );
+    }
+    if (_looksLikeBase64(s)) {
+      try {
+        final base64Part = s.contains(',') ? s.split(',').last : s;
+        final bytes = base64Decode(base64Part);
+        return Image.memory(
+          bytes,
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined, size: 56),
+        );
+      } catch (_) {}
+    }
+    if (_isHttp(s)) {
+      return Image.network(
+        s,
+        fit: BoxFit.contain,
+        loadingBuilder: (_, child, progress) =>
+            progress == null ? child : const Center(child: CircularProgressIndicator()),
+        errorBuilder: (_, __, ___) =>
+            const Icon(Icons.broken_image_outlined, size: 56),
+      );
+    }
+    return FutureBuilder<String?>(
+      future: _toDownloadUrl(s),
+      builder: (context, snap) {
+        final u = snap.data;
+        if (u == null || u.isEmpty) {
+          return const Icon(Icons.broken_image_outlined, size: 56);
+        }
+        return Image.network(
+          u,
+          fit: BoxFit.contain,
+          loadingBuilder: (_, child, progress) =>
+              progress == null ? child : const Center(child: CircularProgressIndicator()),
+          errorBuilder: (_, __, ___) =>
+              const Icon(Icons.broken_image_outlined, size: 56),
+        );
+      },
+    );
+  }
+
+  void _showMerchantProfileViewer() {
+    final raw = (_merchantProfileUrl ?? '').trim();
+    if (raw.isEmpty) return;
+    showDialog(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(20),
+        child: Stack(
+          alignment: Alignment.topRight,
+          children: [
+            InteractiveViewer(
+              minScale: 0.6,
+              maxScale: 4.0,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: _profileImageFromAnySource(raw),
+                ),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 28),
+              onPressed: () => Navigator.of(ctx).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<String> _backendUrlForPath(String path) async {
     final base = await ApiConfig.readBase();
     final baseNorm = base.endsWith('/') ? base : '$base/';
@@ -662,6 +744,39 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           _followerCount = followerCount;
         });
       }
+
+      // Fallback source to match dashboard profile data.
+      final needsProfileFallback =
+          (_merchantProfileUrl?.trim().isEmpty ?? true) ||
+          (_merchantEmail?.trim().isEmpty ?? true) ||
+          (_merchantPhone?.trim().isEmpty ?? true);
+      if (needsProfileFallback) {
+        final userDoc = await _firestore
+            .collection('users')
+            .doc(widget.merchantId.trim())
+            .get();
+        if (userDoc.exists) {
+          final u = userDoc.data() ?? <String, dynamic>{};
+          final profileUrl = (u['profilepicture'] ??
+                  u['profilePicture'] ??
+                  u['photoUrl'] ??
+                  u['photoURL'] ??
+                  '')
+              .toString()
+              .trim();
+          final email = (u['email'] ?? '').toString().trim();
+          final phone = (u['phone'] ?? u['phoneNumber'] ?? '')
+              .toString()
+              .trim();
+          if (mounted) {
+            setState(() {
+              if (profileUrl.isNotEmpty) _merchantProfileUrl = profileUrl;
+              if (email.isNotEmpty) _merchantEmail = email;
+              if (phone.isNotEmpty) _merchantPhone = phone;
+            });
+          }
+        }
+      }
     } catch (e) {
       debugPrint('Error loading merchant header: $e');
     } finally {
@@ -706,6 +821,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             onToggleFollow: _toggleFollow,
             onBlock: _blockMerchant,
             onReport: _reportMerchant,
+            onViewProfile: _showMerchantProfileViewer,
           ),
           const SizedBox(height: 8),
           Padding(
@@ -1052,6 +1168,7 @@ class _MerchantProfileCard extends StatelessWidget {
   final int followerCount;
   final VoidCallback onBlock;
   final VoidCallback onReport;
+  final VoidCallback onViewProfile;
 
   const _MerchantProfileCard({
     required this.name,
@@ -1066,6 +1183,7 @@ class _MerchantProfileCard extends StatelessWidget {
     required this.followerCount,
     required this.onBlock,
     required this.onReport,
+    required this.onViewProfile,
   });
 
   ImageProvider? _profileImageProvider() {
@@ -1134,14 +1252,18 @@ class _MerchantProfileCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                radius: 32,
-                backgroundColor: Colors.grey.shade200,
-                backgroundImage: img,
-                child: hasPhoto
-                    ? null
-                    : const Icon(Icons.storefront_rounded,
-                        color: Colors.grey, size: 32),
+              InkWell(
+                onTap: hasPhoto ? onViewProfile : null,
+                borderRadius: BorderRadius.circular(999),
+                child: CircleAvatar(
+                  radius: 32,
+                  backgroundColor: Colors.grey.shade200,
+                  backgroundImage: img,
+                  child: hasPhoto
+                      ? null
+                      : const Icon(Icons.storefront_rounded,
+                          color: Colors.grey, size: 32),
+                ),
               ),
               const SizedBox(width: 14),
               Expanded(

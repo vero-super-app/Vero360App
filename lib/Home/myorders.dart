@@ -9,8 +9,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:path_provider/path_provider.dart';
@@ -153,6 +156,10 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   String? _focusOrderNumber;
   final Map<String, String> _shippingByOrderId = {};
   final Map<String, Map<String, String>> _deliveryMetaByOrderId = {};
+  /// Firestore `order_escrow` snapshot per order (marketplace payout hold).
+  final Map<String, OrderEscrowSnapshot?> _escrowByOrderId = {};
+  /// Merchant phones from dashboard source (SharedPreferences + Firestore), keyed by order id.
+  final Map<String, String> _merchantPhoneByOrderId = {};
 
   static const String _shippingPrefsKey = 'order_shipping_method_v1';
   static const String _deliveryMetaPrefsKey = 'order_delivery_meta_v1';
@@ -185,7 +192,200 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     final list = await _svc.getMyOrders();
     if (!mounted) return list;
     await _hydrateFirestoreDelivery(list);
+    await _hydrateEscrow(list);
+    await _hydrateMerchantPhones(list);
     return list;
+  }
+
+  /// Loads merchant phones from same source as merchant dashboard:
+  /// SharedPreferences 'phone' for current merchant, Firestore users/{uid} for others.
+  Future<void> _hydrateMerchantPhones(List<OrderItem> orders) async {
+    if (orders.isEmpty) return;
+    try {
+      final map = await MerchantPhoneResolver.resolveForOrders(orders);
+      if (!mounted) return;
+      setState(() {
+        _merchantPhoneByOrderId
+          ..clear()
+          ..addAll(map);
+      });
+    } catch (_) {}
+  }
+
+  /// Loads escrow state, repairs delivery timestamps, auto-releases after 5 days.
+  Future<void> _hydrateEscrow(List<OrderItem> orders) async {
+    if (orders.isEmpty) return;
+    try {
+      final candidates = orders
+          .where((o) =>
+              o.status == OrderStatus.delivered &&
+              o.paymentStatus == PaymentStatus.paid)
+          .toList();
+      if (candidates.isEmpty) return;
+
+      for (final o in candidates) {
+        await OrderEscrowService.repairDeliveredTimestampIfNeeded(o);
+      }
+
+      final ids = candidates.map((o) => o.id).toList();
+      var map = await OrderEscrowService.fetchEscrowForOrderIds(ids);
+
+      for (final o in candidates) {
+        final esc = map[o.id];
+        if (esc == null || !esc.isHeld) continue;
+        if (esc.deliveredAt == null || esc.releaseDueAt == null) continue;
+        if (DateTime.now().isBefore(esc.releaseDueAt!)) continue;
+        try {
+          await OrderEscrowService.releaseFunds(
+            orderId: o.id,
+            buyerConfirmed: false,
+          );
+          map[o.id] = await OrderEscrowService.fetchEscrow(o.id);
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+      setState(() {
+        for (final e in map.entries) {
+          _escrowByOrderId[e.key] = e.value;
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _confirmParcelReceived(OrderItem o) async {
+    final ok = await AppWalletPin.verifyParcelReceipt(context);
+    if (!mounted) return;
+    if (!ok) return;
+    try {
+      await OrderEscrowService.releaseFunds(orderId: o.id, buyerConfirmed: true);
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Payment sent to merchant',
+        isSuccess: true,
+        errorMessage: '',
+      );
+      await _reloadCurrent();
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not release payment',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
+  Widget _parcelEscrowSection(OrderItem o) {
+    final esc = _escrowByOrderId[o.id];
+    if (esc == null) return const SizedBox.shrink();
+
+    if (esc.isReleased) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE8F5E9),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Payment released to merchant wallet',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF2E7D32),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (esc.releasedAt != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6, left: 28),
+                child: Text(
+                  _date.format(esc.releasedAt!.toLocal()),
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF6B778C)),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    if (!esc.isHeld) return const SizedBox.shrink();
+
+    final waitingMerchant = esc.deliveredAt == null;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _brand.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Parcel & payment',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF222222),
+            ),
+          ),
+          const SizedBox(height: 6),
+          if (waitingMerchant)
+            const Text(
+              'Payment is held until the merchant marks this order as delivered. '
+              'Then you can confirm receipt to release funds to their wallet.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B778C),
+                height: 1.35,
+              ),
+            )
+          else ...[
+            Text(
+              [
+                if (esc.releaseDueAt != null)
+                  'If you do not confirm, payment is sent to the merchant on '
+                      '${_date.format(esc.releaseDueAt!.toLocal())}. ',
+                'You’ll confirm with Face ID, fingerprint, or PIN.',
+              ].join(),
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B778C),
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.green.shade700,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () => _confirmParcelReceived(o),
+                icon: const Icon(Icons.inventory_2_outlined),
+                label: const Text('I received this parcel'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   /// Merges Firestore delivery proof + courier (works for buyer on any device).
@@ -303,6 +503,13 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
 
   Map<String, String> _deliveryMeta(OrderItem o) =>
       _deliveryMetaByOrderId[o.id] ?? const <String, String>{};
+
+  /// Phone from dashboard source (SharedPreferences + Firestore), or safe fallback.
+  String _displayMerchantPhone(OrderItem o) {
+    final resolved = _merchantPhoneByOrderId[o.id];
+    if (resolved != null && resolved.isNotEmpty) return resolved;
+    return safeMerchantPhone(o.merchantPhone);
+  }
 
   String _courierLabel(OrderItem o) {
     final method = _resolvedCourierMethod(o);
@@ -456,7 +663,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         ..writeln('Category: ${o.category.toString().split('.').last}')
         ..writeln()
         ..writeln('Merchant: ${o.merchantName ?? 'Merchant'}')
-        ..writeln('Merchant phone: ${safeMerchantPhone(o.merchantPhone)}')
+        ..writeln('Merchant phone: ${_displayMerchantPhone(o)}')
         ..writeln()
         ..writeln('Address city: ${o.addressCity ?? '-'}')
         ..writeln('Address description: ${o.addressDescription ?? '-'}');
@@ -479,25 +686,6 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         errorMessage: e.toString(),
       );
     }
-  }
-
-  Future<void> _showRefundDialog(OrderItem o) async {
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Request a refund'),
-        content: Text(
-          'Refunds are handled by support. Include your order number when you contact us.\n\n'
-          'Order: ${o.orderNumber}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _infoRow({required IconData icon, required String text, String? trailing}) {
@@ -628,7 +816,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                 _infoRow(
                   icon: Icons.store_mall_directory_outlined,
                   text:
-                      '${o.merchantName ?? 'Merchant'}  •  ${safeMerchantPhone(o.merchantPhone)}',
+                      '${o.merchantName ?? 'Merchant'}  •  ${_displayMerchantPhone(o)}',
                   trailing: (o.merchantAvgRating != null) ? '⭐ ${o.merchantAvgRating!.toStringAsFixed(1)}' : null,
                 ),
 
@@ -684,13 +872,13 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                   children: [
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
-                        side: const BorderSide(color: Colors.red),
+                        foregroundColor: Colors.black87,
+                        side: BorderSide(color: Colors.black12.withValues(alpha: .4)),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
-                      onPressed: () => _showRefundDialog(o),
-                      icon: const Icon(Icons.undo_outlined),
-                      label: const Text('Refund'),
+                      onPressed: () => _reloadCurrent(),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Refresh'),
                     ),
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
@@ -769,6 +957,12 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                       ),
                   ],
                 ),
+                if (o.status == OrderStatus.delivered &&
+                    o.paymentStatus == PaymentStatus.paid)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: _parcelEscrowSection(o),
+                  ),
               ],
             ),
           ),

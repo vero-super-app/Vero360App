@@ -48,6 +48,7 @@ import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/GeneralPages/ToRefund.dart';
 import 'package:vero360_app/GeneralPages/Toreceive.dart';
 import 'package:vero360_app/GeneralPages/Toship.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 
@@ -283,7 +284,7 @@ class _MarketplaceMerchantDashboardState
     await sp.setString('app_pin_hash', hash);
 
     if (!mounted) return true;
-    _toastOk('App password set');
+    _toastOk('Wallet password set');
     return true;
   }
 
@@ -835,8 +836,14 @@ class _MarketplaceMerchantDashboardState
   Future<void> _loadOrderStats() async {
     if (!mounted) return;
     try {
+      final myFirebaseUid = (_auth.currentUser?.uid ?? '').trim();
       final orders = await _orderService.getMyOrders();
       final sold = orders.where((o) {
+        final sellerUid = (o.merchantUid ?? '').trim();
+        // Merchant dashboard stats must only reflect orders sold by this merchant.
+        if (myFirebaseUid.isEmpty || sellerUid.isEmpty || sellerUid != myFirebaseUid) {
+          return false;
+        }
         if (o.status == OrderStatus.delivered) return true;
         if (o.status == OrderStatus.confirmed && o.paymentStatus == PaymentStatus.paid) return true;
         return false;
@@ -1888,9 +1895,17 @@ class _MarketplaceMerchantDashboardState
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 4),
-                Text(value,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
                     style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w900)),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -2538,36 +2553,42 @@ class _MarketplaceMerchantDashboardState
               title: 'My Orders',
               icon: Icons.receipt_long,
               color: Colors.green,
+              badgeRoute: NotificationStore.kBadgeMyOrders,
               onTap: () => _openBottomSheet(const OrdersPage()),
             ),
             _QuickActionTile(
-              title: 'Post Arrival',
+              title: 'Latest Arrivals',
               icon: Icons.rocket,
               color: Colors.orange,
+              badgeRoute: NotificationStore.kBadgePostArrival,
               onTap: () => _openBottomSheet(const LatestArrivalsCrudPage()),
             ),
             _QuickActionTile(
-              title: 'Shipped',
+              title: 'Send parcels',
               icon: Icons.local_shipping_outlined,
               color: Colors.orange,
+              badgeRoute: NotificationStore.kBadgeShipped,
               onTap: () => _openBottomSheet(const ToShipPage()),
             ),
             _QuickActionTile(
               title: 'Received',
               icon: Icons.move_to_inbox_outlined,
               color: Colors.blue,
+              badgeRoute: NotificationStore.kBadgeReceived,
               onTap: () => _openBottomSheet(const DeliveredOrdersPage()),
             ),
             _QuickActionTile(
               title: 'Refund',
               icon: Icons.replay_circle_filled_outlined,
               color: Colors.red,
+              badgeRoute: NotificationStore.kBadgeRefund,
               onTap: () => _openBottomSheet(const ToRefundPage()),
             ),
             _QuickActionTile(
               title: 'Promotions',
               icon: Icons.campaign_outlined,
               color: Colors.orange,
+              badgeRoute: NotificationStore.kBadgePromotions,
               onTap: () => _openBottomSheet(const PromotionsCrudPage()),
             ),
               _QuickActionTile(
@@ -3390,54 +3411,107 @@ class _QuickActionTile extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
   final Color color;
+  /// When set, shows unread count from [NotificationStore] and clears on tap.
+  final String? badgeRoute;
 
   const _QuickActionTile({
     required this.title,
     required this.icon,
     required this.onTap,
     required this.color,
+    this.badgeRoute,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      elevation: 0,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
+    return ListenableBuilder(
+      listenable: NotificationStore.instance,
+      builder: (context, _) {
+        final n = badgeRoute == null
+            ? 0
+            : NotificationStore.instance.unreadCountForBadgeRoute(badgeRoute!);
+        return Material(
+          color: Colors.white,
+          elevation: 0,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.black12),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              if (badgeRoute != null) {
+                unawaited(
+                  NotificationStore.instance.markBadgeRouteAsRead(badgeRoute!),
+                );
+              }
+              onTap();
+            },
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.black12),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: color.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(icon, color: color),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right, color: Colors.black38),
+                    ],
+                  ),
                 ),
-                child: Icon(icon, color: color),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const Icon(Icons.chevron_right, color: Colors.black38),
-            ],
+                if (n > 0)
+                  Positioned(
+                    right: 6,
+                    top: 4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade700,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.12),
+                            blurRadius: 4,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                      child: Text(
+                        n > 99 ? '99+' : '$n',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          height: 1.1,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

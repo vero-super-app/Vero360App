@@ -14,10 +14,9 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
-import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
-import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
@@ -824,18 +823,6 @@ class _DeliveryAddressCard extends StatelessWidget {
   }
 }
 
-// Helper for grouping cart total by merchant (marketplace wallet credit)
-class _MerchantTotal {
-  final String merchantId;
-  final String merchantName;
-  double amount;
-  _MerchantTotal({
-    required this.merchantId,
-    required this.merchantName,
-    required this.amount,
-  });
-}
-
 // ────────────────────── IN-APP PAYMENT PAGE ──────────────────────
 class InAppPaymentPage extends StatefulWidget {
   final String checkoutUrl;
@@ -846,7 +833,7 @@ class InAppPaymentPage extends StatefulWidget {
   final String? digitalProductName;
   /// When true, clears the cart (backend + local backup) after a successful payment.
   final bool clearCartOnSuccess;
-  /// Cart items for marketplace: on success, credit each merchant's wallet with their portion.
+  /// Cart items for marketplace: on success, create orders + escrow hold (merchant paid after confirm / 5d).
   final List<CartModel>? cartItemsForMerchantCredit;
   /// Shipping address used during checkout (null when pickup).
   final Address? shippingAddress;
@@ -961,77 +948,34 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     });
   }
 
-  /// Credits each merchant's Firestore wallet with their portion of the sale (marketplace).
-  /// Deducts 2.5% service fee; reports the fee to the admin app (super-admin wallet is managed there, not in Flutter).
-  Future<void> _creditMerchantWallets(List<CartModel> items) async {
+  /// Backend orders + Firestore escrow (merchant wallet credited after buyer confirms or 5 days).
+  Future<void> _createConfirmedOrdersAndEscrow(List<CartModel> items) async {
     try {
-      const feeRate = FirebaseWalletService.serviceFeeRate; // 2.5%
-      double totalServiceFee = 0.0;
-
-      final byMerchant = <String, _MerchantTotal>{};
-      for (final it in items) {
-        if (!it.hasValidMerchant) continue;
-        final id = it.merchantId.trim();
-        if (id.isEmpty) continue;
-        byMerchant.putIfAbsent(
-          id,
-          () => _MerchantTotal(merchantId: id, merchantName: it.merchantName, amount: 0),
-        );
-        byMerchant[id]!.amount += it.price * it.quantity;
-      }
-
-      for (final entry in byMerchant.values) {
-        if (entry.amount <= 0) continue;
-        final merchantAmount = entry.amount * (1.0 - feeRate);
-        final feeAmount = entry.amount * feeRate;
-        totalServiceFee += feeAmount;
-
-        await FirebaseWalletService.getOrCreateWallet(
-          merchantId: entry.merchantId,
-          merchantName: entry.merchantName,
-        );
-        await FirebaseWalletService.creditWallet(
-          merchantId: entry.merchantId,
-          amount: merchantAmount,
-          description: 'Marketplace sale (after 2.5% service fee)',
-          reference: widget.txRef,
-          type: 'sale',
-        );
-      }
-
-      if (totalServiceFee > 0) {
-        await _recordServiceFeeWithAdminApi(totalServiceFee);
-      }
+      final addressForOrder =
+          widget.deliveryType == DeliveryType.pickup ? null : widget.shippingAddress;
+      final refs = await _orderService.createOrdersFromCartWithRefs(
+        cartItems: items,
+        address: addressForOrder,
+        status: OrderStatus.confirmed,
+        deliveryMethod: _deliveryTypeLabel(widget.deliveryType),
+      );
+      await OrderEscrowService.createHoldsForOrders(
+        txRef: widget.txRef,
+        refs: refs,
+      );
     } catch (e) {
-      debugPrint('[InAppPaymentPage] Failed to credit merchant wallets: $e');
-    }
-  }
-
-  /// Sends the service fee to the admin app; super-admin wallet is managed there.
-  Future<void> _recordServiceFeeWithAdminApi(double amount) async {
-    if (!ApiConfig.isAdminApiConfigured) {
-      debugPrint('[InAppPaymentPage] Admin API not configured; service fee not reported.');
-      return;
-    }
-    try {
-      final base = ApiConfig.adminApiBase.trim().replaceFirst(RegExp(r'/+$'), '');
-      final uri = Uri.parse('$base/api/admin/record-service-fee');
-      final response = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-        body: json.encode({
-          'amount': amount,
-          'txRef': widget.txRef,
-          'secret': ApiConfig.adminServiceFeeSecret,
-        }),
-      ).timeout(const Duration(seconds: 10));
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        debugPrint('[InAppPaymentPage] Service fee reported to admin: $amount MWK');
-      } else {
-        debugPrint('[InAppPaymentPage] Admin API returned ${response.statusCode}: ${response.body}');
+      debugPrint('[InAppPaymentPage] Failed to create orders / escrow: $e');
+      final message = (e is order_svc.AuthRequiredException || e is order_svc.FriendlyApiException)
+          ? e.toString()
+          : 'We couldn’t finalize your order. Please contact support.';
+      if (mounted && widget.rootContext.mounted) {
+        ToastHelper.showCustomToast(
+          widget.rootContext,
+          'Order finalize failed',
+          isSuccess: false,
+          errorMessage: message,
+        );
       }
-    } catch (e) {
-      debugPrint('[InAppPaymentPage] Failed to report service fee to admin: $e');
     }
   }
 
@@ -1131,12 +1075,9 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         }
       }());
     }
-    // Credit each marketplace merchant's wallet with their portion of the sale
     final items = widget.cartItemsForMerchantCredit;
     if (items != null && items.isNotEmpty) {
-      unawaited(_creditMerchantWallets(items));
-      // Create confirmed orders in backend for these cart items.
-      unawaited(_createBackendOrders(OrderStatus.confirmed));
+      unawaited(_createConfirmedOrdersAndEscrow(items));
     }
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
     final productName = widget.digitalProductName ?? 'your order';

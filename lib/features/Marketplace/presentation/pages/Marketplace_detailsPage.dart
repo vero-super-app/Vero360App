@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
@@ -271,6 +272,54 @@ class _DetailsPageState extends State<DetailsPage> {
         }
       } catch (_) {}
     }
+
+    // Fallback profile data source (same family as merchant dashboard):
+    // 1) marketplace_merchants/{merchantUid}
+    // 2) users/{merchantUid}
+    final merchantUid = (i.merchantId ?? '').trim();
+    if (merchantUid.isNotEmpty) {
+      try {
+        final mDoc = await FirebaseFirestore.instance
+            .collection('marketplace_merchants')
+            .doc(merchantUid)
+            .get();
+        if (mDoc.exists) {
+          final m = mDoc.data() ?? <String, dynamic>{};
+          info.businessName ??=
+              (m['businessName'] ?? m['merchantName'] ?? '').toString().trim().isEmpty
+                  ? null
+                  : (m['businessName'] ?? m['merchantName']).toString().trim();
+          info.status ??= (m['status'] ?? m['verificationStatus'] ?? '')
+              .toString()
+              .trim()
+              .isEmpty
+              ? null
+              : (m['status'] ?? m['verificationStatus']).toString().trim();
+          final p = (m['profilePicture'] ?? m['profilepicture'] ?? '')
+              .toString()
+              .trim();
+          if (p.isNotEmpty) info.logoUrl ??= p;
+        }
+      } catch (_) {}
+
+      try {
+        final uDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(merchantUid)
+            .get();
+        if (uDoc.exists) {
+          final u = uDoc.data() ?? <String, dynamic>{};
+          final p = (u['profilepicture'] ??
+                  u['profilePicture'] ??
+                  u['photoUrl'] ??
+                  u['photoURL'] ??
+                  '')
+              .toString()
+              .trim();
+          if (p.isNotEmpty) info.logoUrl ??= p;
+        }
+      } catch (_) {}
+    }
     return info;
   }
 
@@ -337,25 +386,6 @@ class _DetailsPageState extends State<DetailsPage> {
     return parts.length == 2 ? parts[1].trim() : null;
   }
 
-  String _formatTimeAgo(DateTime time) {
-    final now = DateTime.now();
-    final diff = now.difference(time);
-    if (diff.inSeconds < 60) return 'Just now';
-    if (diff.inMinutes < 60) {
-      final m = diff.inMinutes;
-      return m == 1 ? '1 min ago' : '$m mins ago';
-    }
-    if (diff.inHours < 24) {
-      final h = diff.inHours;
-      return h == 1 ? '1 hr ago' : '$h hrs ago';
-    }
-    if (diff.inDays < 7) {
-      final d = diff.inDays;
-      return d == 1 ? '1 day ago' : '$d days ago';
-    }
-    return DateFormat('d MMMM yyyy').format(time);
-  }
-
   Widget _infoRow(String label, String? value, {IconData? icon}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -382,6 +412,7 @@ class _DetailsPageState extends State<DetailsPage> {
   Widget _statusChip(String? status) {
     final s = (status ?? '').toLowerCase().trim();
     Color bg = Colors.grey.shade200, fg = Colors.black87;
+    var isPending = false;
     if (s == 'open') {
       bg = Colors.green.shade50;
       fg = Colors.green.shade700;
@@ -391,12 +422,22 @@ class _DetailsPageState extends State<DetailsPage> {
     } else if (s == 'busy') {
       bg = Colors.orange.shade50;
       fg = Colors.orange.shade800;
+    } else if (s == 'pending') {
+      isPending = true;
+      bg = Colors.orange.shade100;
+      fg = Colors.orange.shade900;
     }
     return Chip(
       label: Text((status ?? '—').toUpperCase()),
       backgroundColor: bg,
-      labelStyle: TextStyle(color: fg, fontWeight: FontWeight.w700),
+      labelStyle: TextStyle(
+        color: fg,
+        fontWeight: FontWeight.w700,
+        fontSize: isPending ? 11 : 12,
+      ),
       visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: EdgeInsets.symmetric(horizontal: isPending ? 2 : 4),
     );
   }
 
@@ -422,6 +463,28 @@ class _DetailsPageState extends State<DetailsPage> {
       Text(_fmtRating(rr),
           style: const TextStyle(fontWeight: FontWeight.w600)),
     ]);
+  }
+
+  Widget _merchantAvatar(String? raw) {
+    final s = (raw ?? '').trim();
+    if (s.isEmpty) {
+      return CircleAvatar(
+        radius: 18,
+        backgroundColor: Colors.grey.shade200,
+        child: const Icon(Icons.person_outline_rounded, color: Colors.grey, size: 18),
+      );
+    }
+    return CircleAvatar(
+      radius: 18,
+      backgroundColor: Colors.grey.shade200,
+      child: ClipOval(
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: _buildMarketplaceImage(s, fit: BoxFit.cover),
+        ),
+      ),
+    );
   }
 
   void _openVideo(String url) {
@@ -696,9 +759,7 @@ class _DetailsPageState extends State<DetailsPage> {
                           if (merchantDisplayName.isNotEmpty || item.createdAt != null) ...[
                             const SizedBox(height: 8),
                             Text(
-                              item.createdAt != null
-                                  ? 'Posted by $merchantDisplayName • ${_formatTimeAgo(item.createdAt!)}'
-                                  : 'Posted by $merchantDisplayName',
+                              merchantDisplayName,
                               style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                             ),
                           ],
@@ -743,23 +804,13 @@ class _DetailsPageState extends State<DetailsPage> {
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             // Merchant photo (logo URL from seller info or item)
-                            if ((logo ?? item.sellerLogoUrl) != null &&
-                                (logo ?? item.sellerLogoUrl)!.trim().isNotEmpty)
-                              CircleAvatar(
-                                radius: 18,
-                                backgroundImage: NetworkImage(
-                                    (logo ?? item.sellerLogoUrl)!.trim()),
-                                onBackgroundImageError: (_, __) {},
-                              ),
-                            if ((logo ?? item.sellerLogoUrl) != null &&
-                                (logo ?? item.sellerLogoUrl)!.trim().isNotEmpty)
-                              const SizedBox(width: 10),
-                            const Icon(Icons.storefront_rounded,
-                                size: 20, color: Colors.black87),
-                            const SizedBox(width: 8),
+                            _merchantAvatar(logo ?? item.sellerLogoUrl),
+                            const SizedBox(width: 10),
                             Expanded(
                               child: Text(
-                                'Posted by ${(item.merchantName ?? businessName ?? '').trim().isEmpty ? '—' : merchantDisplayName}',
+                                (item.merchantName ?? businessName ?? '').trim().isEmpty
+                                    ? '—'
+                                    : merchantDisplayName,
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w700,
                                   fontSize: 16,
@@ -769,9 +820,20 @@ class _DetailsPageState extends State<DetailsPage> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            _ratingStars(rating),
-                            const SizedBox(width: 8),
                             _statusChip(status),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Icon(Icons.star_rounded, size: 16, color: Colors.amber),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Rating',
+                              style: TextStyle(color: Colors.black54),
+                            ),
+                            const SizedBox(width: 12),
+                            _ratingStars(rating),
                           ],
                         ),
                         const SizedBox(height: 10),

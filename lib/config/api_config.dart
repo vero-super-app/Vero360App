@@ -13,9 +13,10 @@ class ApiConfig {
   ///   when you see "Failed host lookup" or use --dart-define=API_BASE_URL=...
   /// - For Android emulator + backend on host: use http://10.0.2.2:3000
   /// - For physical device: use your PC's LAN IP, e.g. http://192.168.1.x:3000
-  static const String _defaultProdRoot =
-      'https://unbigamous-unappositely-kory.ngrok-free.dev';
+  // static const String _defaultProdRoot =
+  //     'https://unbigamous-unappositely-kory.ngrok-free.dev';
   //  'https://7f74-102-70-95-217.ngrok-free.app ';
+  static const String _defaultProdRoot = 'http://67.217.59.237:3000';
 
   // static const String _defaultProdRoot =
   // 'http://10.0.2.2:3000'; // Android emulator localhost

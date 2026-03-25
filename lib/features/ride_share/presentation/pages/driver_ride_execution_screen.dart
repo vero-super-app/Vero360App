@@ -905,7 +905,7 @@ class _DriverRideCompletionScreenState
                   child: ElevatedButton(
                     onPressed: () {
                       widget.onDone();
-                      Navigator.of(context).pop();
+                      Navigator.of(context).popUntil((route) => route.isFirst);
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: primaryColor,

@@ -23,7 +23,7 @@ class DriverDashboard extends ConsumerStatefulWidget {
   ConsumerState<DriverDashboard> createState() => _DriverDashboardState();
 }
 
-class _DriverDashboardState extends ConsumerState<DriverDashboard> {
+class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsBindingObserver {
   static const Color primaryColor = Color(0xFFFF8A00);
   GoogleMapController? mapController;
   Timer? _locationBroadcastTimer;
@@ -35,6 +35,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _startLocationBroadcasting();
@@ -45,10 +46,21 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     mapController?.dispose();
     _stopLocationBroadcasting();
     _stopMapCentering();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.inactive) {
+      // App going to background or being closed - ensure taxi is offline
+      _stopLocationBroadcasting();
+    }
   }
 
   /// Start broadcasting driver location to nearby car service

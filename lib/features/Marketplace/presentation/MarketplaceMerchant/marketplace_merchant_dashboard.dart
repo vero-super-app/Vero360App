@@ -284,7 +284,7 @@ class _MarketplaceMerchantDashboardState
     await sp.setString('app_pin_hash', hash);
 
     if (!mounted) return true;
-    _toastOk('App password set');
+    _toastOk('Wallet password set');
     return true;
   }
 
@@ -2543,14 +2543,14 @@ class _MarketplaceMerchantDashboardState
               onTap: () => _openBottomSheet(const OrdersPage()),
             ),
             _QuickActionTile(
-              title: 'Post Arrival',
+              title: 'Latest Arrivals',
               icon: Icons.rocket,
               color: Colors.orange,
               badgeRoute: NotificationStore.kBadgePostArrival,
               onTap: () => _openBottomSheet(const LatestArrivalsCrudPage()),
             ),
             _QuickActionTile(
-              title: 'Shipped',
+              title: 'Send parcels',
               icon: Icons.local_shipping_outlined,
               color: Colors.orange,
               badgeRoute: NotificationStore.kBadgeShipped,

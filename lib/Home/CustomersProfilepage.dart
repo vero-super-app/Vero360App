@@ -998,12 +998,12 @@ class _ProfilePageState extends State<ProfilePage> {
             () => _openBottomSheet(const OrdersPage()),
             badgeRoute: NotificationStore.kBadgeMyOrders,
           ),
-          _orderAction(
-            'Shipped',
-            Icons.local_shipping_outlined,
-            () => _openBottomSheet(const ToShipPage()),
-            badgeRoute: NotificationStore.kBadgeShipped,
-          ),
+          // _orderAction(
+          //   'Shipped',
+          //   Icons.local_shipping_outlined,
+          //   () => _openBottomSheet(const ToShipPage()),
+          //   badgeRoute: NotificationStore.kBadgeShipped,
+          // ),
           _orderAction(
             'Received',
             Icons.move_to_inbox_outlined,

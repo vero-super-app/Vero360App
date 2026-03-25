@@ -30,7 +30,7 @@ class AuthHandler {
     if (firebaseToken != null && firebaseToken.isNotEmpty) {
       if (kDebugMode) {
         // ignore: avoid_print
-       // print('[AuthHandler] full token (Firebase): $firebaseToken');
+      //  print('[AuthHandler] full token (Firebase): $firebaseToken');
       }
       await persistTokenToSp(firebaseToken);
       return firebaseToken;

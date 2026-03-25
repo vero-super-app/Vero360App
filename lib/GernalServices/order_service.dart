@@ -149,6 +149,7 @@ class OrderService {
     required OrderStatus status,
     required bool changed,
     bool isIncomingForMerchant = false,
+    bool orderMarkedShippedByMerchant = false,
     String? customerName,
     String? itemName,
   }) async {
@@ -157,32 +158,46 @@ class OrderService {
     final formattedOrderNumber = _formatOrderNumber(orderNumber);
     final item = itemName?.trim() ?? '';
     final itemPrefix = item.isEmpty ? '' : '$item - ';
+    final itemSeg = item.isEmpty ? '' : ' — $item';
+    final orderSeg = formattedOrderNumber.isEmpty
+        ? 'Your order'
+        : 'Your order $formattedOrderNumber';
     final label = _statusLabel(status);
+    final who = (customerName ?? '').trim();
+    final customerSuffix = who.isEmpty ? '' : ' from $who';
     final title = switch (status) {
       OrderStatus.pending => 'Order placed',
       OrderStatus.confirmed => 'Order confirmed',
-      OrderStatus.delivered => 'Order delivered',
+      OrderStatus.delivered when orderMarkedShippedByMerchant => 'Parcel sent',
+      OrderStatus.delivered when isIncomingForMerchant => 'Order delivered',
+      OrderStatus.delivered => 'Your order has shipped',
       OrderStatus.cancelled => 'Order cancelled',
     };
-    final who = (customerName ?? '').trim();
-    final customerSuffix = who.isEmpty ? '' : ' from $who';
     final body = switch (status) {
       OrderStatus.pending => isIncomingForMerchant
           ? (formattedOrderNumber.isEmpty
               ? 'You received a new order${who.isEmpty ? ' from a customer' : customerSuffix}.'
-              : 'New order received: ${itemPrefix}${formattedOrderNumber}$customerSuffix.')
+              : 'New order received: $itemPrefix$formattedOrderNumber$customerSuffix.')
           : (formattedOrderNumber.isEmpty
               ? 'We received your order and it is pending confirmation.'
-              : 'Order ${itemPrefix}${formattedOrderNumber} has been placed and is pending confirmation.'),
+              : 'Order $itemPrefix$formattedOrderNumber has been placed and is pending confirmation.'),
       OrderStatus.confirmed => formattedOrderNumber.isEmpty
           ? 'Great news! Your order has been confirmed.'
-          : 'Great news! Order ${itemPrefix}${formattedOrderNumber} has been confirmed.',
+          : 'Great news! Order $itemPrefix$formattedOrderNumber has been confirmed.',
+      OrderStatus.delivered when orderMarkedShippedByMerchant =>
+        formattedOrderNumber.isEmpty
+            ? 'The parcel is on its way. The buyer can track it in Delivered orders.'
+            : '$orderSeg$itemSeg has been shipped. The buyer can track progress in Delivered orders.',
+      OrderStatus.delivered when isIncomingForMerchant =>
+        formattedOrderNumber.isEmpty
+            ? 'Waiting for the buyer to confirm receipt to release your payout.'
+            : '$orderSeg$itemSeg was delivered. The buyer can confirm receipt to release funds to your wallet.',
       OrderStatus.delivered => formattedOrderNumber.isEmpty
-          ? 'Your order has been delivered. Enjoy!'
-          : 'Order ${itemPrefix}${formattedOrderNumber} has been delivered. Enjoy!',
+          ? 'Your order has been shipped. Check progress in Delivered orders.'
+          : '$orderSeg$itemSeg has been shipped. Check progress in Delivered orders.',
       OrderStatus.cancelled => formattedOrderNumber.isEmpty
           ? 'Your order was cancelled.'
-          : 'Order ${itemPrefix}${formattedOrderNumber} was cancelled.',
+          : 'Order $itemPrefix$formattedOrderNumber was cancelled.',
     };
 
     final grouped = await _buildGroupedOrderNotificationText(currentStatus: label);
@@ -299,6 +314,7 @@ class OrderService {
           status: o.status,
           changed: changed,
           isIncomingForMerchant: incomingMerchantOrderIds.contains(o.id),
+          orderMarkedShippedByMerchant: false,
           customerName: o.customerName,
           itemName: o.itemName,
         );
@@ -538,6 +554,7 @@ class OrderService {
         status: status,
         changed: false,
         isIncomingForMerchant: false,
+        orderMarkedShippedByMerchant: false,
         itemName: item.name,
       );
       await _upsertOrderStatusCache(orderId: fallbackId, status: status);
@@ -667,12 +684,15 @@ class OrderService {
     if (r.statusCode < 200 || r.statusCode >= 300) _bad(r, action: 'update the order');
 
     final meta = await _resolveOrderMeta(id);
+    final isMerch = await _isMerchant();
     await _notifyOrderActivity(
       orderId: id,
       orderNumber: meta.$1,
       status: next,
       changed: true,
-      isIncomingForMerchant: false,
+      isIncomingForMerchant: isMerch,
+      orderMarkedShippedByMerchant:
+          isMerch && next == OrderStatus.delivered,
       itemName: meta.$2,
     );
     await _upsertOrderStatusCache(orderId: id, status: next);
@@ -700,6 +720,7 @@ class OrderService {
         status: OrderStatus.cancelled,
         changed: true,
         isIncomingForMerchant: false,
+        orderMarkedShippedByMerchant: false,
         itemName: meta.$2,
       );
       await _upsertOrderStatusCache(orderId: id, status: OrderStatus.cancelled);

@@ -13,6 +13,7 @@ import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
@@ -423,7 +424,7 @@ class _ToShipPageState extends State<ToShipPage> {
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Please select photo evidence before marking as delivered.',
+        'Please upload a courier receipt photo before sending the parcel.',
         isSuccess: false,
         errorMessage: 'Proof required',
       );
@@ -447,6 +448,18 @@ class _ToShipPageState extends State<ToShipPage> {
 
       // For now we map "shipped" → delivered in the existing enum.
       await _svc.updateStatus(o.id, OrderStatus.delivered);
+      try {
+        final esc = await OrderEscrowService.fetchEscrow(o.id);
+        final bu = esc?.buyerUid ?? '';
+        if (bu.isNotEmpty) {
+          await OrderPartyNotificationService.publishShippedToBuyer(
+            buyerUid: bu,
+            orderNumber: o.orderNumber,
+            itemName: o.itemName,
+            orderId: o.id,
+          );
+        }
+      } catch (_) {}
       await OrderEscrowService.markDelivered(o.id);
       await _markListingSoldIfDelivered(o);
       await _saveDeliveryMeta(
@@ -459,7 +472,7 @@ class _ToShipPageState extends State<ToShipPage> {
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Marked as shipped via ${_shippingLabel(method)}'
+        'Parcel sent via ${_shippingLabel(method)}'
         '${tracking != null && tracking.isNotEmpty ? ' (tracking: $tracking)' : ''}',
         isSuccess: true,
         errorMessage: '',
@@ -556,6 +569,92 @@ class _ToShipPageState extends State<ToShipPage> {
           trailing,
         ],
       ],
+    );
+  }
+
+  Widget _instructionStep(String n, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 26,
+          child: Text(
+            n,
+            style: TextStyle(
+              fontWeight: FontWeight.w900,
+              color: _brand,
+              fontSize: 14,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(
+              color: Color(0xFF444444),
+              height: 1.4,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Shown at the top of Send parcels so merchants follow courier → receipt → tracking.
+  Widget _shippingInstructionsCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _brand.withValues(alpha: 0.35)),
+        boxShadow: const [
+          BoxShadow(
+            blurRadius: 22,
+            spreadRadius: -8,
+            offset: Offset(0, 14),
+            color: Color(0x1A000000),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.local_shipping_outlined, color: _brand, size: 22),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'How to send a parcel',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                    color: Color(0xFF222222),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _instructionStep(
+            '1.',
+            'Call or go to the branch of the courier chosen by the buyer below and send the parcel to the buyer.',
+          ),
+          const SizedBox(height: 10),
+          _instructionStep(
+            '2.',
+            'Upload a receipt from the courier (tap the camera icon beside shipment method).',
+          ),
+          const SizedBox(height: 10),
+          _instructionStep(
+            '3.',
+            'Enter the waybill or tracking number so the buyer can follow the parcel.',
+          ),
+        ],
+      ),
     );
   }
 
@@ -753,8 +852,8 @@ class _ToShipPageState extends State<ToShipPage> {
                       : Colors.green,
                 ),
                 tooltip: (proof == null && !savedProofExists)
-                    ? 'Upload proof of shipment'
-                    : 'Proof selected',
+                    ? 'Upload courier receipt'
+                    : 'Courier receipt added',
               ),
             ],
           ),
@@ -801,7 +900,8 @@ class _ToShipPageState extends State<ToShipPage> {
           TextField(
             controller: tracking,
             decoration: const InputDecoration(
-              labelText: 'Tracking / courier reference (optional)',
+              labelText: 'Waybill or tracking number',
+              hintText: 'Optional but recommended for the buyer',
               border: OutlineInputBorder(),
               isDense: true,
             ),
@@ -818,8 +918,8 @@ class _ToShipPageState extends State<ToShipPage> {
               icon: const Icon(Icons.local_shipping_outlined),
               label: Text(
                 o.status == OrderStatus.delivered
-                    ? 'Already delivered'
-                    : 'Mark as delivered',
+                    ? 'Already sent'
+                    : 'Send parcel',
               ),
             ),
           ),
@@ -836,7 +936,7 @@ class _ToShipPageState extends State<ToShipPage> {
         elevation: 0,
         backgroundColor: Colors.white,
         foregroundColor: const Color(0xFF222222),
-        title: const Text('To Ship'),
+        title: const Text('Send parcels'),
         centerTitle: true,
       ),
       body: FutureBuilder<List<OrderItem>>(
@@ -859,11 +959,14 @@ class _ToShipPageState extends State<ToShipPage> {
 
           final all = snap.data ?? const <OrderItem>[];
 
-          // "To ship" = confirmed orders, prioritising those already paid.
+          // Parcels to send: merchant must only ship orders that are confirmed *and* paid.
           final toShip = all.where((o) {
-            final isConfirmed = o.status == OrderStatus.confirmed;
-            final isPaid = o.paymentStatus == PaymentStatus.paid;
-            return isConfirmed || isPaid;
+            if (o.status == OrderStatus.delivered ||
+                o.status == OrderStatus.cancelled) {
+              return false;
+            }
+            return o.status == OrderStatus.confirmed &&
+                o.paymentStatus == PaymentStatus.paid;
           }).toList();
 
           return RefreshIndicator(
@@ -875,11 +978,13 @@ class _ToShipPageState extends State<ToShipPage> {
             },
             child: toShip.isEmpty
                 ? ListView(
-                    children: const [
-                      SizedBox(height: 90),
-                      Center(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                    children: [
+                      _shippingInstructionsCard(),
+                      const SizedBox(height: 48),
+                      const Center(
                         child: Text(
-                          'No confirmed or paid orders to ship yet',
+                          'No confirmed, paid orders ready to ship yet',
                           style: TextStyle(color: Colors.redAccent),
                           textAlign: TextAlign.center,
                         ),
@@ -888,8 +993,11 @@ class _ToShipPageState extends State<ToShipPage> {
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                    itemCount: toShip.length,
-                    itemBuilder: (_, i) => _orderCard(toShip[i]),
+                    itemCount: toShip.length + 1,
+                    itemBuilder: (_, i) {
+                      if (i == 0) return _shippingInstructionsCard();
+                      return _orderCard(toShip[i - 1]);
+                    },
                   ),
           );
         },

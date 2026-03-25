@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 
@@ -199,6 +200,17 @@ class OrderEscrowService {
       'releaseKind': buyerConfirmed ? 'buyer_confirm' : 'auto_5d',
       'updatedAt': FieldValue.serverTimestamp(),
     });
+
+    if (buyerConfirmed && merchantUid.isNotEmpty) {
+      final orderNo = (data['orderNumber'] ?? '').toString();
+      final itemNm = (data['itemName'] ?? '').toString();
+      await OrderPartyNotificationService.publishFundsReleasedToMerchant(
+        merchantUid: merchantUid,
+        orderNumber: orderNo,
+        itemName: itemNm,
+        orderId: orderId,
+      );
+    }
   }
 
   static Future<void> _recordServiceFeeWithAdminApi({
@@ -240,6 +252,8 @@ class OrderEscrowSnapshot {
   final DateTime? deliveredAt;
   final DateTime? releaseDueAt;
   final DateTime? releasedAt;
+  final String buyerUid;
+  final String merchantUid;
 
   OrderEscrowSnapshot({
     required this.orderId,
@@ -247,6 +261,8 @@ class OrderEscrowSnapshot {
     this.deliveredAt,
     this.releaseDueAt,
     this.releasedAt,
+    this.buyerUid = '',
+    this.merchantUid = '',
   });
 
   bool get isHeld => status == 'held';
@@ -264,6 +280,8 @@ class OrderEscrowSnapshot {
       deliveredAt: ts(m['deliveredAt']),
       releaseDueAt: ts(m['releaseDueAt']),
       releasedAt: ts(m['releasedAt']),
+      buyerUid: (m['buyerUid'] ?? '').toString(),
+      merchantUid: (m['merchantUid'] ?? '').toString(),
     );
   }
 }

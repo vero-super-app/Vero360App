@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -11,7 +12,9 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:vero360_app/GernalServices/buyer_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
+import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
@@ -91,17 +94,59 @@ class _ToShipPageState extends State<ToShipPage> {
   late Future<List<OrderItem>> _ordersFuture;
   final Map<String, ShippingMethod> _shippingForOrder = {};
   final Map<String, Map<String, String>> _deliveryMetaByOrder = {};
+  final Map<String, String> _buyerPhoneByOrder = {};
+  final Map<String, String> _merchantPhoneByOrder = {};
   final Map<String, TextEditingController> _trackingCtrl = {};
   final Map<String, XFile?> _proofImage = {};
+  final Set<String> _sendingOrderIds = <String>{};
 
   final ImagePicker _picker = ImagePicker();
+
+  /// Only the merchant who owns this order line should ship it.
+  bool _isSellerForOrder(OrderItem o) {
+    final myUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    final sellerUid = (o.merchantUid ?? '').trim();
+    if (myUid.isEmpty || sellerUid.isEmpty) return false;
+    return myUid == sellerUid;
+  }
 
   @override
   void initState() {
     super.initState();
     _loadShippingPrefs();
     _loadDeliveryMetaPrefs();
-    _ordersFuture = _svc.getMyOrders();
+    _ordersFuture = _loadOrdersWithMerchantPhones();
+  }
+
+  Future<List<OrderItem>> _loadOrdersWithMerchantPhones() async {
+    final list = await _svc.getMyOrders();
+    try {
+      final buyerPhones = await BuyerPhoneResolver.resolveForOrders(list);
+      final phones = await MerchantPhoneResolver.resolveForOrders(list);
+      if (mounted) {
+        setState(() {
+          _buyerPhoneByOrder
+            ..clear()
+            ..addAll(buyerPhones);
+          _merchantPhoneByOrder
+            ..clear()
+            ..addAll(phones);
+        });
+      }
+    } catch (_) {}
+    return list;
+  }
+
+  String _displayMerchantPhone(OrderItem o) {
+    final resolved = _merchantPhoneByOrder[o.id];
+    if (resolved != null && resolved.trim().isNotEmpty) return resolved;
+    return safeMerchantPhone(o.merchantPhone);
+  }
+
+  String _displayBuyerPhone(OrderItem o) {
+    final resolved = _buyerPhoneByOrder[o.id];
+    if (resolved != null && resolved.trim().isNotEmpty) return resolved;
+    return safeMerchantPhone(o.customerPhone);
   }
 
   @override
@@ -408,6 +453,7 @@ class _ToShipPageState extends State<ToShipPage> {
   }
 
   Future<void> _markShipped(OrderItem o) async {
+    if (_sendingOrderIds.contains(o.id)) return;
     if (o.status == OrderStatus.delivered) {
       if (!mounted) return;
       ToastHelper.showCustomToast(
@@ -433,6 +479,12 @@ class _ToShipPageState extends State<ToShipPage> {
 
     final method = _shippingOf(o);
     final tracking = _trackingCtrl[o.id]?.text.trim();
+
+    if (mounted) {
+      setState(() {
+        _sendingOrderIds.add(o.id);
+      });
+    }
 
     try {
       final proofUrl = await DeliveryProofService.uploadProofImage(
@@ -479,7 +531,7 @@ class _ToShipPageState extends State<ToShipPage> {
       );
 
       setState(() {
-        _ordersFuture = _svc.getMyOrders();
+        _ordersFuture = _loadOrdersWithMerchantPhones();
       });
     } on AuthRequiredException catch (e) {
       if (!mounted) return;
@@ -519,11 +571,17 @@ class _ToShipPageState extends State<ToShipPage> {
       ToastHelper.showCustomToast(
         context,
         isStorage
-            ? 'Photo upload failed. Enable Firebase Storage in Console (Build → Storage → Get started) so proof can be sent to the buyer.'
+            ? 'Photo upload failed. please check your internet connection and try again.'
             : 'Could not update order: $e',
         isSuccess: false,
         errorMessage: 'Order update failed',
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sendingOrderIds.remove(o.id);
+        });
+      }
     }
   }
 
@@ -669,6 +727,7 @@ class _ToShipPageState extends State<ToShipPage> {
     }
     final method = _shippingOf(o);
     final proof = _proofImage[o.id];
+    final isSending = _sendingOrderIds.contains(o.id);
     final savedProofExists = (() {
       final u = (savedMeta['proofUrl'] ?? '').trim();
       if (u.startsWith('http://') || u.startsWith('https://')) return true;
@@ -751,10 +810,36 @@ class _ToShipPageState extends State<ToShipPage> {
             ],
           ),
           const SizedBox(height: 10),
+          Text(
+            'Buyer',
+            style: TextStyle(
+              color: _brand.withValues(alpha: 0.95),
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 6),
           _infoRow(
-            icon: Icons.store_mall_directory_outlined,
-            text:
-                '${o.merchantName ?? 'Merchant'}  •  ${safeMerchantPhone(o.merchantPhone)}',
+            icon: Icons.person_outline,
+            text: (o.customerName ?? '').trim().isEmpty
+                ? 'Name: —'
+                : 'Name: ${o.customerName}',
+          ),
+          const SizedBox(height: 6),
+          _infoRow(
+            icon: Icons.phone_outlined,
+            text: _displayBuyerPhone(o) == 'No phone number'
+                ? 'Phone: —'
+                : 'Phone: ${_displayBuyerPhone(o)}',
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Delivery',
+            style: TextStyle(
+              color: _brand.withValues(alpha: 0.95),
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
           ),
           const SizedBox(height: 6),
           _infoRow(
@@ -778,6 +863,21 @@ class _ToShipPageState extends State<ToShipPage> {
               icon: Icons.schedule_outlined,
               text: _date.format(o.orderDate!.toLocal()),
             ),
+          const SizedBox(height: 10),
+          Text(
+            'Seller',
+            style: TextStyle(
+              color: _brand.withValues(alpha: 0.95),
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _infoRow(
+            icon: Icons.store_mall_directory_outlined,
+            text:
+                '${o.merchantName ?? 'Merchant'}  •  ${_displayMerchantPhone(o)}',
+          ),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -910,14 +1010,27 @@ class _ToShipPageState extends State<ToShipPage> {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: o.status == OrderStatus.delivered ? null : () => _markShipped(o),
+              onPressed: (o.status == OrderStatus.delivered || isSending)
+                  ? null
+                  : () => _markShipped(o),
               style: FilledButton.styleFrom(
                 backgroundColor: _brand,
                 disabledBackgroundColor: _brand.withOpacity(.45),
               ),
-              icon: const Icon(Icons.local_shipping_outlined),
+              icon: isSending
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.local_shipping_outlined),
               label: Text(
-                o.status == OrderStatus.delivered
+                isSending
+                    ? 'Sending parcel...'
+                    : o.status == OrderStatus.delivered
                     ? 'Already sent'
                     : 'Send parcel',
               ),
@@ -959,8 +1072,10 @@ class _ToShipPageState extends State<ToShipPage> {
 
           final all = snap.data ?? const <OrderItem>[];
 
-          // Parcels to send: merchant must only ship orders that are confirmed *and* paid.
+          // Parcels to send: only orders where current user is the seller,
+          // and the order is confirmed + paid.
           final toShip = all.where((o) {
+            if (!_isSellerForOrder(o)) return false;
             if (o.status == OrderStatus.delivered ||
                 o.status == OrderStatus.cancelled) {
               return false;
@@ -972,7 +1087,7 @@ class _ToShipPageState extends State<ToShipPage> {
           return RefreshIndicator(
             onRefresh: () async {
               setState(() {
-                _ordersFuture = _svc.getMyOrders();
+                _ordersFuture = _loadOrdersWithMerchantPhones();
               });
               await _ordersFuture;
             },

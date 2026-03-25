@@ -836,8 +836,14 @@ class _MarketplaceMerchantDashboardState
   Future<void> _loadOrderStats() async {
     if (!mounted) return;
     try {
+      final myFirebaseUid = (_auth.currentUser?.uid ?? '').trim();
       final orders = await _orderService.getMyOrders();
       final sold = orders.where((o) {
+        final sellerUid = (o.merchantUid ?? '').trim();
+        // Merchant dashboard stats must only reflect orders sold by this merchant.
+        if (myFirebaseUid.isEmpty || sellerUid.isEmpty || sellerUid != myFirebaseUid) {
+          return false;
+        }
         if (o.status == OrderStatus.delivered) return true;
         if (o.status == OrderStatus.confirmed && o.paymentStatus == PaymentStatus.paid) return true;
         return false;
@@ -1889,9 +1895,17 @@ class _MarketplaceMerchantDashboardState
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 4),
-                Text(value,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
                     style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w900)),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),

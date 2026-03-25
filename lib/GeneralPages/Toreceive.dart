@@ -1,11 +1,13 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/GeneralModels/order_model.dart';
+import 'package:vero360_app/GernalServices/buyer_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
+import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
@@ -18,12 +20,16 @@ const String _smartTrackingUrl = 'https://tracking.smartdeliveriesmw.com/';
 class _DeliveredPayload {
   final List<OrderItem> orders;
   final Map<String, Map<String, String>> deliveryMeta;
+  final Map<String, String> buyerPhonesByOrderId;
   final Map<String, OrderEscrowSnapshot?> escrowByOrderId;
+  final Map<String, String> merchantPhonesByOrderId;
 
   const _DeliveredPayload({
     required this.orders,
     required this.deliveryMeta,
+    required this.buyerPhonesByOrderId,
     required this.escrowByOrderId,
+    required this.merchantPhonesByOrderId,
   });
 }
 
@@ -73,6 +79,41 @@ class _TrackingWebViewPageState extends State<_TrackingWebViewPage> {
   }
 }
 
+class _ProofViewerPage extends StatelessWidget {
+  final String proofUrl;
+  const _ProofViewerPage({required this.proofUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Delivery Proof'),
+        backgroundColor: const Color(0xFFFF8A00),
+        foregroundColor: Colors.white,
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 4.0,
+          child: Image.network(
+            proofUrl,
+            fit: BoxFit.contain,
+            loadingBuilder: (ctx, child, progress) {
+              if (progress == null) return child;
+              return const Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
+              );
+            },
+            errorBuilder: (_, __, ___) =>
+                const Text('Could not load proof image'),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Buyer: track courier, view shipment proof, confirm receipt with biometric / PIN to release escrow.
 /// Merchant: see tracking & proof on sales; payout releases when the buyer confirms.
 class DeliveredOrdersPage extends StatefulWidget {
@@ -104,12 +145,18 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     }
     final ids = orders.map((e) => e.id);
     final deliveryMeta = await DeliveryProofService.getDeliveryMetadata(ids);
+    final buyerPhonesByOrderId =
+        await BuyerPhoneResolver.resolveForOrders(orders);
     final escrowByOrderId =
         await OrderEscrowService.fetchEscrowForOrderIds(ids);
+    final merchantPhonesByOrderId =
+        await MerchantPhoneResolver.resolveForOrders(orders);
     return _DeliveredPayload(
       orders: orders,
       deliveryMeta: deliveryMeta,
+      buyerPhonesByOrderId: buyerPhonesByOrderId,
       escrowByOrderId: escrowByOrderId,
+      merchantPhonesByOrderId: merchantPhonesByOrderId,
     );
   }
 
@@ -137,17 +184,12 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
   }
 
   Future<void> _openProofUrl(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      if (!mounted) return;
-      ToastHelper.showCustomToast(
-        context,
-        'Could not open proof link',
-        isSuccess: false,
-        errorMessage: 'Open failed',
-      );
-    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _ProofViewerPage(proofUrl: url),
+      ),
+    );
   }
 
   String _courierDisplay(String raw) {
@@ -338,10 +380,155 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     );
   }
 
+  Widget _parcelEscrowSection({
+    required OrderItem order,
+    required OrderEscrowSnapshot? escrow,
+    required bool canConfirmEscrow,
+    required bool isSellerWaiting,
+    required bool releasing,
+  }) {
+    if (escrow == null && order.paymentStatus == PaymentStatus.paid) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF8E1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _brand.withValues(alpha: 0.35)),
+        ),
+        child: const Text(
+          'Parcel & payment hold not found for this order yet. Pull to refresh.',
+          style: TextStyle(
+            fontSize: 13,
+            color: Color(0xFF6B778C),
+            height: 1.35,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+
+    if (escrow == null) return const SizedBox.shrink();
+
+    if (escrow.isReleased) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE8F5E9),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Payment released to merchant wallet',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF2E7D32),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (escrow.releasedAt != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6, left: 28),
+                child: Text(
+                  _date.format(escrow.releasedAt!.toLocal()),
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF6B778C)),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    if (!escrow.isHeld) return const SizedBox.shrink();
+    final waitingMerchant = escrow.deliveredAt == null;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _brand.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Parcel & payment',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF222222),
+            ),
+          ),
+          const SizedBox(height: 6),
+          if (waitingMerchant)
+            const Text(
+              'Payment is held until the merchant marks this order as delivered.',
+              style: TextStyle(fontSize: 13, color: Color(0xFF6B778C), height: 1.35),
+            )
+          else if (canConfirmEscrow) ...[
+            Text(
+              [
+                if (escrow.releaseDueAt != null)
+                  'If you do not confirm, payment is sent to the merchant on '
+                      '${_date.format(escrow.releaseDueAt!.toLocal())}. ',
+                'Confirm with Face ID, fingerprint, or PIN.',
+              ].join(),
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B778C),
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: releasing
+                  ? null
+                  : () => _confirmReceiptAndRelease(order, escrow),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.green.shade700,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: releasing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.inventory_2_outlined),
+              label: Text(releasing ? 'Confirming…' : 'I received this parcel'),
+            ),
+          ] else if (isSellerWaiting)
+            const Text(
+              'Waiting for the buyer to confirm receipt so your payout can be released.',
+              style: TextStyle(fontSize: 13, color: Color(0xFF6B778C), height: 1.35),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _card(
     OrderItem o,
     Map<String, String> meta,
     OrderEscrowSnapshot? escrow,
+    Map<String, String> buyerPhonesByOrderId,
+    Map<String, String> merchantPhonesByOrderId,
   ) {
     final String imageUrl = o.itemImage.toString();
     final String itemName = o.itemName.toString();
@@ -354,8 +541,14 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
 
     final String addressCity = (o.addressCity ?? '').toString();
     final String addressDesc = (o.addressDescription ?? '').toString();
+    final String buyerName = (o.customerName ?? '').toString().trim();
+    final String buyerPhone = buyerPhonesByOrderId[o.id]?.trim().isNotEmpty == true
+        ? buyerPhonesByOrderId[o.id]!
+        : safeMerchantPhone(o.customerPhone);
     final String merchantName = (o.merchantName ?? '').toString();
-    final String merchantPhone = safeMerchantPhone(o.merchantPhone);
+    final String merchantPhone = merchantPhonesByOrderId[o.id]?.trim().isNotEmpty == true
+        ? merchantPhonesByOrderId[o.id]!
+        : safeMerchantPhone(o.merchantPhone);
 
     final orderDate = o.orderDate;
     final addressTxt =
@@ -464,7 +657,46 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
                   ),
                 ],
                 const SizedBox(height: 6),
+                Text(
+                  'Buyer',
+                  style: TextStyle(
+                    color: _brand.withValues(alpha: 0.95),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                _infoRow(
+                  Icons.person_outline,
+                  buyerName.isEmpty ? 'Name: —' : 'Name: $buyerName',
+                ),
+                const SizedBox(height: 6),
+                _infoRow(
+                  Icons.phone_outlined,
+                  buyerPhone == 'No phone number'
+                      ? 'Phone: —'
+                      : 'Phone: $buyerPhone',
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Delivery',
+                  style: TextStyle(
+                    color: _brand.withValues(alpha: 0.95),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 6),
                 _infoRow(Icons.place_outlined, addressTxt),
+                const SizedBox(height: 8),
+                Text(
+                  'Seller',
+                  style: TextStyle(
+                    color: _brand.withValues(alpha: 0.95),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                  ),
+                ),
                 const SizedBox(height: 6),
                 _infoRow(Icons.storefront_outlined, merchantName),
                 const SizedBox(height: 6),
@@ -481,7 +713,36 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
                     ),
                   if (tracking.isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    _infoRow(Icons.qr_code_2_outlined, 'Tracking: $tracking'),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _infoRow(
+                            Icons.qr_code_2_outlined,
+                            'Tracking: $tracking',
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Copy tracking number',
+                          icon: const Icon(
+                            Icons.copy,
+                            size: 18,
+                            color: Color(0xFF6B778C),
+                          ),
+                          onPressed: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: tracking),
+                            );
+                            if (!mounted) return;
+                            ToastHelper.showCustomToast(
+                              context,
+                              'Tracking number copied',
+                              isSuccess: true,
+                              errorMessage: '',
+                            );
+                          },
+                        ),
+                      ],
+                    ),
                   ],
                   if (method == 'ankolo' || method == 'smart') ...[
                     const SizedBox(height: 8),
@@ -524,99 +785,14 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
                   ),
                 ],
 
-                if (escrow != null) ...[
-                  const SizedBox(height: 10),
-                  const Divider(height: 1),
-                  const SizedBox(height: 10),
-                  if (escrow.isReleased)
-                    _chip(
-                      Colors.teal,
-                      escrow.status == 'auto_released'
-                          ? 'Payment released (auto)'
-                          : 'Payment released to seller',
-                    )
-                  else if (escrow.isHeld) ...[
-                    if (escrow.releaseDueAt != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Text(
-                          'If you do not confirm, payment may auto-release after '
-                          '${OrderEscrowService.escrowAutoReleaseDays} days '
-                          '(${_date.format(escrow.releaseDueAt!.toLocal())}).',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF6B778C),
-                            height: 1.35,
-                          ),
-                        ),
-                      ),
-                    if (canConfirmEscrow) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        margin: const EdgeInsets.only(bottom: 10),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: Colors.orange.shade200,
-                          ),
-                        ),
-                        child: Text(
-                          'Only confirm after you have your parcel or the courier '
-                          'confirms delivery — check tracking / waybill first.',
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            color: Colors.orange.shade900,
-                            fontWeight: FontWeight.w600,
-                            height: 1.35,
-                          ),
-                        ),
-                      ),
-                      FilledButton.icon(
-                        onPressed: releasing
-                            ? null
-                            : () => _confirmReceiptAndRelease(o, escrow),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _brand,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                        icon: releasing
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.verified_user_outlined),
-                        label: Text(
-                          releasing
-                              ? 'Confirming…'
-                              : 'I received my parcel — release payment',
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                    ] else if (isSellerWaiting)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF1F2F6),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Text(
-                          'Waiting for the buyer to confirm receipt so your payout can be released.',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Color(0xFF6B778C),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                  ],
-                ],
+                const SizedBox(height: 10),
+                _parcelEscrowSection(
+                  order: o,
+                  escrow: escrow,
+                  canConfirmEscrow: canConfirmEscrow,
+                  isSellerWaiting: isSellerWaiting,
+                  releasing: releasing,
+                ),
 
                 const SizedBox(height: 10),
                 Row(
@@ -713,7 +889,13 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
                 final o = data[i - 1];
                 final meta = payload.deliveryMeta[o.id] ?? const {};
                 final escrow = payload.escrowByOrderId[o.id];
-                return _card(o, meta, escrow);
+                return _card(
+                  o,
+                  meta,
+                  escrow,
+                  payload.buyerPhonesByOrderId,
+                  payload.merchantPhonesByOrderId,
+                );
               },
             );
           },

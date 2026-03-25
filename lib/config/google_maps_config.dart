@@ -13,7 +13,7 @@ class GoogleMapsConfig {
     if (dartDefineKey.isNotEmpty) {
       apiKey = dartDefineKey;
       if (kDebugMode) {
-        debugPrint('[GoogleMapsConfig] API key loaded from dart-define: ${dartDefineKey.substring(0, 10)}...');
+        debugPrint('[GoogleMapsConfig] API key loaded from dart-define');
       }
       return;
     }
@@ -24,7 +24,7 @@ class GoogleMapsConfig {
       apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
       
       if (apiKey.isNotEmpty && kDebugMode) {
-        debugPrint('[GoogleMapsConfig] API key loaded from .env: ${apiKey.substring(0, 10)}...');
+        debugPrint('[GoogleMapsConfig] API key loaded from .env');
       }
     } catch (e) {
       if (kDebugMode) {

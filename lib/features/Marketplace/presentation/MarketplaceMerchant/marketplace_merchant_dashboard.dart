@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -762,7 +762,7 @@ class _MarketplaceMerchantDashboardState
         setState(() => _meOffline = true);
       }
     } catch (e) {
-      debugPrint('Error fetching /users/me: $e');
+      if (kDebugMode) debugPrint('Error fetching /users/me');
       if (mounted) setState(() => _meOffline = true);
     } finally {
       if (mounted) setState(() => _loadingMe = false);

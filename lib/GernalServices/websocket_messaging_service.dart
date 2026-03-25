@@ -105,7 +105,7 @@ class WebSocketMessagingService {
         try {
           await _onReconnectCallback!();
         } catch (e) {
-          print('[WebSocket] Error during reconnect callback: $e');
+          print('[WebSocket] Error during reconnect callback');
         }
       }
     });
@@ -115,7 +115,7 @@ class WebSocketMessagingService {
         final message = Message.fromJson(data as Map<String, dynamic>);
         _messageController.add(message);
       } catch (e) {
-        print('[WebSocket] Error parsing message: $e');
+        print('[WebSocket] Error parsing message');
       }
     });
 
@@ -125,7 +125,7 @@ class WebSocketMessagingService {
         _handleTypingIndicator(typing);
         _typingController.add(typing);
       } catch (e) {
-        print('[WebSocket] Error parsing typing indicator: $e');
+        print('[WebSocket] Error parsing typing indicator');
       }
     });
 
@@ -135,7 +135,7 @@ class WebSocketMessagingService {
         _onlineUsers[status.userId] = status.isOnline;
         _userStatusController.add(status);
       } catch (e) {
-        print('[WebSocket] Error parsing user status: $e');
+        print('[WebSocket] Error parsing user status');
       }
     });
 
@@ -144,7 +144,7 @@ class WebSocketMessagingService {
         final receipt = MessageReadReceipt.fromJson(data as Map<String, dynamic>);
         _readReceiptController.add(receipt);
       } catch (e) {
-        print('[WebSocket] Error parsing read receipt: $e');
+        print('[WebSocket] Error parsing read receipt');
       }
     });
 
@@ -156,7 +156,7 @@ class WebSocketMessagingService {
     });
 
     _socket.on('error', (error) {
-      print('[WebSocket] Error: $error');
+      print('[WebSocket] Error');
       _isConnected = false;
       _connectionStatusController.add('error');
     });
@@ -193,7 +193,7 @@ class WebSocketMessagingService {
 
   /// Handle connection errors
   void _handleConnectionError(Object error) {
-    print('[WebSocket] Connection error: $error');
+    print('[WebSocket] Connection error');
     _isConnected = false;
     _connectionStatusController.add('error');
     _attemptReconnect();

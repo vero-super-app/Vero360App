@@ -56,11 +56,21 @@ class NotificationStore extends ChangeNotifier {
 
   static final NotificationStore instance = NotificationStore._();
 
-  static const String _prefsKey = 'vero360_notifications';
+  static const String _prefsKeyBase = 'vero360_notifications';
   static const int _maxStored = 200;
 
   final List<AppNotificationItem> _items = [];
   bool _loaded = false;
+  String _loadedKey = '';
+
+  Future<String> _storageKey() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final uid = (prefs.getString('uid') ?? '').trim();
+      if (uid.isNotEmpty) return '${_prefsKeyBase}_$uid';
+    } catch (_) {}
+    return '${_prefsKeyBase}_guest';
+  }
 
   List<AppNotificationItem> get items =>
       List.unmodifiable(_items..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
@@ -68,11 +78,14 @@ class NotificationStore extends ChangeNotifier {
   int get unreadCount => _items.where((e) => !e.read).length;
 
   Future<void> _load() async {
-    if (_loaded) return;
+    final key = await _storageKey();
+    if (_loaded && _loadedKey == key) return;
     _loaded = true;
+    _loadedKey = key;
+    _items.clear();
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_prefsKey);
+      final raw = prefs.getString(key);
       if (raw == null) return;
       final list = jsonDecode(raw);
       if (list is List) {
@@ -88,8 +101,9 @@ class NotificationStore extends ChangeNotifier {
   Future<void> _save() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      final key = await _storageKey();
       final list = items.take(_maxStored).map((e) => e.toJson()).toList();
-      await prefs.setString(_prefsKey, jsonEncode(list));
+      await prefs.setString(key, jsonEncode(list));
     } catch (_) {}
   }
 
@@ -147,11 +161,13 @@ class NotificationStore extends ChangeNotifier {
 
   /// Clear all notifications (optional).
   Future<void> clearAll() async {
+    final key = await _storageKey();
     _items.clear();
     _loaded = true;
+    _loadedKey = key;
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_prefsKey);
+      await prefs.remove(key);
     } catch (_) {}
     notifyListeners();
   }

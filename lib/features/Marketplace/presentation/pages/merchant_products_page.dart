@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_detail_model.dart';
@@ -46,6 +48,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   String? _merchantPhone;
   bool _loadingHeader = true;
   bool _following = false;
+  int _followerCount = 0;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
@@ -440,6 +443,172 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     Share.share(_shareMessage);
   }
 
+  Future<void> _blockMerchant() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Block merchant'),
+        content: const Text(
+          'You will stop seeing this merchant in recommendations and listings. You can undo this later in Settings.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Block',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Merchant blocked (coming soon to sync across devices).')),
+    );
+  }
+
+  Future<void> _reportMerchant() async {
+    final controller = TextEditingController();
+    XFile? picked;
+
+    final sent = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Report merchant'),
+        content: StatefulBuilder(
+          builder: (ctx, setLocal) => SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: controller,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    hintText:
+                        'Tell us what is wrong (fraud, fake products, abuse, etc.)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      final img = await ImagePicker()
+                          .pickImage(source: ImageSource.gallery);
+                      if (img != null) {
+                        setLocal(() => picked = img);
+                      }
+                    } catch (_) {}
+                  },
+                  icon: const Icon(Icons.attach_file),
+                  label: Text(
+                    picked == null
+                        ? 'Add screenshot (optional)'
+                        : 'Screenshot selected',
+                  ),
+                ),
+                if (picked != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    picked!.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Send report',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (sent != true || !mounted) return;
+
+    final user = _auth.currentUser;
+    if (user == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please log in to report a merchant.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    final message = controller.text.trim();
+    if (message.isEmpty && picked == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please write a report message or attach a screenshot.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Sending report…')),
+    );
+
+    try {
+      String? proofUrl;
+      if (picked != null) {
+        final ext = picked!.name.toLowerCase().split('.').last;
+        final safeExt = (ext.length <= 5) ? ext : 'png';
+        final ref = FirebaseStorage.instance.ref().child(
+              'reports/merchant/${widget.merchantId.trim()}/${user.uid}/${DateTime.now().millisecondsSinceEpoch}.$safeExt',
+            );
+        final file = File(picked!.path);
+        final task = await ref.putFile(file);
+        proofUrl = await task.ref.getDownloadURL();
+      }
+
+      await _firestore.collection('merchant_reports').add({
+        'merchantId': widget.merchantId.trim(),
+        'merchantName': widget.merchantName.trim(),
+        'reporterUid': user.uid,
+        'reporterEmail': user.email,
+        'message': message,
+        'proofUrl': proofUrl,
+        'createdAt': FieldValue.serverTimestamp(),
+        'status': 'open',
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Thank you. Your report was sent.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not send report. Please try again.',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
   Future<void> _loadMerchantHeader() async {
     setState(() => _loadingHeader = true);
     try {
@@ -465,6 +634,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             .toString()
             .trim();
         bool following = _following;
+        int followerCount = _followerCount;
         if (user != null) {
           final followSnap = await _firestore
               .collection('merchant_followers')
@@ -474,6 +644,14 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
               .get();
           following = followSnap.exists;
         }
+        try {
+          final followersSnap = await _firestore
+              .collection('merchant_followers')
+              .doc(widget.merchantId.trim())
+              .collection('followers')
+              .get();
+          followerCount = followersSnap.size;
+        } catch (_) {}
         setState(() {
           if (rating is num) _merchantRating = rating.toDouble();
           if (status.isNotEmpty) _merchantStatus = status;
@@ -481,6 +659,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           if (email.isNotEmpty) _merchantEmail = email;
           if (phone.isNotEmpty) _merchantPhone = phone;
           _following = following;
+          _followerCount = followerCount;
         });
       }
     } catch (e) {
@@ -523,7 +702,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             profileUrl: _merchantProfileUrl,
             loading: _loadingHeader,
             following: _following,
+            followerCount: _followerCount,
             onToggleFollow: _toggleFollow,
+            onBlock: _blockMerchant,
+            onReport: _reportMerchant,
           ),
           const SizedBox(height: 8),
           Padding(
@@ -867,6 +1049,9 @@ class _MerchantProfileCard extends StatelessWidget {
   final bool loading;
   final bool following;
   final VoidCallback onToggleFollow;
+  final int followerCount;
+  final VoidCallback onBlock;
+  final VoidCallback onReport;
 
   const _MerchantProfileCard({
     required this.name,
@@ -878,9 +1063,10 @@ class _MerchantProfileCard extends StatelessWidget {
     required this.loading,
     required this.following,
     required this.onToggleFollow,
+    required this.followerCount,
+    required this.onBlock,
+    required this.onReport,
   });
-
-  static const Color _brandOrange = Color(0xFFFF8A00);
 
   ImageProvider? _profileImageProvider() {
     final raw = profileUrl?.trim() ?? '';
@@ -921,6 +1107,11 @@ class _MerchantProfileCard extends StatelessWidget {
     final hasPhoto = img != null;
     final emailStr = email?.trim().isNotEmpty == true ? email! : null;
     final phoneStr = phone?.trim().isNotEmpty == true ? phone! : null;
+    final followersLabel = followerCount <= 0
+        ? 'No followers yet'
+        : followerCount == 1
+            ? '1 follower'
+            : '$followerCount followers';
 
     return Container(
       width: double.infinity,
@@ -990,9 +1181,10 @@ class _MerchantProfileCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                   
-                 
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -1016,7 +1208,6 @@ class _MerchantProfileCard extends StatelessWidget {
                             ],
                           ),
                         ),
-                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 4),
@@ -1047,6 +1238,21 @@ class _MerchantProfileCard extends StatelessWidget {
                             ],
                           ),
                         ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.people_alt_outlined, size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              followersLabel,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                   ],
@@ -1055,11 +1261,17 @@ class _MerchantProfileCard extends StatelessWidget {
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert),
                 padding: EdgeInsets.zero,
-                onSelected: (_) {},
+                onSelected: (value) {
+                  if (value == 'block') {
+                    onBlock();
+                  } else if (value == 'report') {
+                    onReport();
+                  }
+                },
                 itemBuilder: (_) => [
                   const PopupMenuItem(
-                    value: 'share',
-                    child: Text('Share'),
+                    value: 'block',
+                    child: Text('block'),
                   ),
                   const PopupMenuItem(
                     value: 'report',

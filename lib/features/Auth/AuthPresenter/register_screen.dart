@@ -19,6 +19,7 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
+import 'package:vero360_app/GernalServices/notification_service.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -724,6 +725,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         isSuccess: true,
         errorMessage: '',
       );
+      await NotificationService.instance.sendWelcomeNotificationIfFirstTime(
+        uid: user.uid,
+        name: _name.text.trim(),
+        role: _roleString,
+      );
       await _handleAuthResult(firebaseResponse);
     } on FirebaseAuthException catch (e) {
       String errorMessage = 'Registration failed';
@@ -825,6 +831,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         isSuccess: true,
         errorMessage: '',
       );
+      await NotificationService.instance.sendWelcomeNotificationIfFirstTime(
+        uid: user.uid,
+        name: user.displayName ?? _name.text.trim(),
+        role: _roleString,
+      );
       await _handleAuthResult(result);
 
       // Run heavy Firebase + backend sync in the background so navigation is not blocked.
@@ -889,6 +900,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         'Signed in with Apple',
         isSuccess: true,
         errorMessage: '',
+      );
+      await NotificationService.instance.sendWelcomeNotificationIfFirstTime(
+        uid: user.uid,
+        name: user.displayName ?? _name.text.trim(),
+        role: _roleString,
       );
       await _handleAuthResult(result);
 

@@ -102,7 +102,7 @@ class _CarRentalPageState extends State<CarRentalPage> {
         // Rebuild markers with updated car data
         _createMarkers();
       }, onError: (error) {
-        print('WebSocket error: $error');
+        print('WebSocket error');
         // Fall back to REST if WebSocket fails
       });
     } catch (e) {

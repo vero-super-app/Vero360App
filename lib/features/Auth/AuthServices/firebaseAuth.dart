@@ -25,7 +25,7 @@ class FirebaseAuthService {
       await logCurrentIdToken();
       return credential.user;
     } catch (e) {
-      print("Error while creating a user: $e");
+   //   print("Error while creating a user: $e");
       return null;
     }
   }
@@ -39,7 +39,7 @@ class FirebaseAuthService {
       await logCurrentIdToken();
       return credential.user;
     } catch (e) {
-      print("Error while authenticating the user: $e");
+     // print("Error while authenticating the user: $e");
       return null;
     }
   }
@@ -51,7 +51,7 @@ class FirebaseAuthService {
         _googleInitialized = true;
       }
       if (!_google.supportsAuthenticate()) {
-        print('Google Sign-In not supported on this platform');
+     //   print('Google Sign-In not supported on this platform');
         return null;
       }
       final GoogleSignInAccount account = await _google.authenticate();
@@ -62,7 +62,7 @@ class FirebaseAuthService {
       await logCurrentIdToken();
       return userCred.user;
     } catch (e) {
-      debugPrint('Google sign-in failed: $e');
+     // debugPrint('Google sign-in failed: $e');
       rethrow;
     }
   }
@@ -86,7 +86,7 @@ class FirebaseAuthService {
       await logCurrentIdToken();
       return userCred.user;
     } catch (e) {
-      debugPrint('Apple sign-in failed: $e');
+     // debugPrint('Apple sign-in failed: $e');
       rethrow;
     }
   }
@@ -98,7 +98,7 @@ class FirebaseAuthService {
       if (user == null) return null;
       return await user.getIdToken();
     } catch (e) {
-      print("Error while getting ID token: $e");
+    //  print("Error while getting ID token: $e");
       return null;
     }
   }
@@ -108,12 +108,12 @@ class FirebaseAuthService {
     try {
       final token = await getIdToken();
       if (token != null && token.isNotEmpty) {
-        debugPrint('[JWT] Firebase ID token (JWT): $token');
+    //    debugPrint('[JWT] Firebase ID token (JWT): $token');
       } else {
-        print('[JWT] No current user or empty token');
+     //   print('[JWT] No current user or empty token');
       }
     } catch (e) {
-      print('[JWT] Error logging token: $e');
+    //  print('[JWT] Error logging token: $e');
     }
   }
 

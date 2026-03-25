@@ -75,6 +75,7 @@ class OrderItem {
   final String? merchantName;
   final String? merchantPhone;
   final double? merchantAvgRating;
+  final String? customerName;
 
   // Address
   final String? addressCity;
@@ -101,6 +102,7 @@ class OrderItem {
     this.merchantName,
     this.merchantPhone,
     this.merchantAvgRating,
+    this.customerName,
     this.addressCity,
     this.addressDescription,
     this.orderDate,
@@ -149,6 +151,7 @@ class OrderItem {
     String? merchName;
     String? merchPhone;
     double? merchAvg;
+    String? customerName = _first<String>(m, ['customerName', 'CustomerName', 'buyerName', 'BuyerName']);
 
     final merchRaw = _first<Map>(m, ['merchant','Merchant']);
     if (merchRaw != null) {
@@ -156,6 +159,12 @@ class OrderItem {
       merchName  = merchRaw['name']?.toString();
       merchPhone = merchRaw['phone']?.toString();
       merchAvg   = double.tryParse((merchRaw['averageRating'] ?? merchRaw['avgRating'] ?? '0').toString());
+    }
+
+    final customerRaw = _first<Map>(m, ['customer', 'Customer', 'buyer', 'Buyer', 'user', 'User']);
+    if (customerRaw != null) {
+      customerName ??= customerRaw['name']?.toString();
+      customerName ??= customerRaw['fullName']?.toString();
     }
 
     // address block
@@ -188,6 +197,7 @@ class OrderItem {
       merchantName: merchName,
       merchantPhone: merchPhone,
       merchantAvgRating: merchAvg,
+      customerName: customerName,
       addressCity: addrCity,
       addressDescription: addrDesc,
       orderDate: date,

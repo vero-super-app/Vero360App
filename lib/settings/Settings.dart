@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show File;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/painting.dart';
@@ -10,10 +12,14 @@ import 'package:http/http.dart' as http;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import 'package:local_auth/local_auth.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 
@@ -1264,39 +1270,19 @@ class _SettingsPageState extends State<SettingsPage> {
         return false;
       }
 
-      // Require password to re-authenticate, then delete
-      final prefs = await SharedPreferences.getInstance();
-      final email = u.email?.trim() ?? prefs.getString('email')?.trim() ?? '';
-      if (email.isEmpty) {
+      final verified = await _authenticateDeleteWithProvider(u);
+      if (!verified) return false;
+      try {
+        await u.delete();
+        return true;
+      } on FirebaseAuthException catch (deleteAfterReauth) {
         if (mounted) {
           ToastHelper.showCustomToast(
             context,
-            _t('Please sign in again to delete your account', 'Chonde lowani kachiwiri kuti muchotse akaunti'),
+            deleteAfterReauth.message ?? _t('Delete failed', 'Kuchotsa kudagonjetsedwa'),
             isSuccess: false,
             errorMessage: '',
           );
-        }
-        return false;
-      }
-
-      final password = await _showPasswordDialogForDelete();
-      if (password == null || password.isEmpty || !mounted) return false;
-
-      try {
-        final cred = EmailAuthProvider.credential(
-          email: email,
-          password: password,
-        );
-        await u.reauthenticateWithCredential(cred);
-        await u.delete();
-        return true;
-      } on FirebaseAuthException catch (reauthE) {
-        if (mounted) {
-          final msg = reauthE.code == 'wrong-password' ||
-                  reauthE.code == 'invalid-credential'
-              ? _t('Wrong password', 'Password yolakwika')
-              : (reauthE.message ?? _t('Delete failed', 'Kuchotsa kudagonjetsedwa'));
-          ToastHelper.showCustomToast(context, msg, isSuccess: false, errorMessage: '');
         }
         return false;
       }
@@ -1311,6 +1297,260 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       return false;
     }
+  }
+
+  Future<bool> _authenticateDeleteWithPassword(User user) async {
+    final prefs = await SharedPreferences.getInstance();
+    final email =
+        user.email?.trim() ?? prefs.getString('email')?.trim() ?? '';
+    if (email.isEmpty) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t(
+            'Password sign-in is not available for this account. Use biometric instead.',
+            'Kulowa ndi password kulibe pa akaunti iyi. Gwiritsani biometric.',
+          ),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
+    }
+
+    final password = await _showPasswordDialogForDelete();
+    if (password == null || password.isEmpty) return false;
+
+    try {
+      final cred = EmailAuthProvider.credential(
+        email: email,
+        password: password,
+      );
+      await user.reauthenticateWithCredential(cred);
+      return true;
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        final msg = e.code == 'wrong-password' || e.code == 'invalid-credential'
+            ? _t('Wrong password', 'Password yolakwika')
+            : (e.message ??
+                _t(
+                  'Could not verify password',
+                  'Sitinathe kutsimikizira password',
+                ));
+        ToastHelper.showCustomToast(
+          context,
+          msg,
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
+    }
+  }
+
+  String _primaryAuthProvider(User user) {
+    final ids = user.providerData
+        .map((p) => p.providerId)
+        .where((e) => e.trim().isNotEmpty)
+        .toList();
+    if (ids.contains('google.com')) return 'google.com';
+    if (ids.contains('apple.com')) return 'apple.com';
+    if (ids.contains('password')) return 'password';
+    return ids.isNotEmpty ? ids.first : 'password';
+  }
+
+  Future<bool> _authenticateDeleteWithProvider(User user) async {
+    final provider = _primaryAuthProvider(user);
+    try {
+      if (provider == 'google.com') {
+        final google = GoogleSignIn.instance;
+        await google.initialize(
+          serverClientId:
+              '1010595167807-vl7asia9e4eep8u68g9c8mp5aa3eotgi.apps.googleusercontent.com',
+        );
+        final account = await google.authenticate();
+        final auth = account.authentication;
+        final cred = GoogleAuthProvider.credential(idToken: auth.idToken);
+        await user.reauthenticateWithCredential(cred);
+        return true;
+      }
+
+      if (provider == 'apple.com') {
+        final appleCred = await SignInWithApple.getAppleIDCredential(
+          scopes: [
+            AppleIDAuthorizationScopes.email,
+            AppleIDAuthorizationScopes.fullName,
+          ],
+        );
+        final oauthCred = OAuthProvider('apple.com').credential(
+          idToken: appleCred.identityToken,
+          accessToken: appleCred.authorizationCode,
+        );
+        await user.reauthenticateWithCredential(oauthCred);
+        return true;
+      }
+
+      return _authenticateDeleteWithPassword(user);
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          e.message ??
+              _t(
+                'Could not verify your account. Please try again.',
+                'Sitinathe kutsimikizira akaunti yanu. Yesaninso.',
+              ),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
+    } catch (_) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t(
+            'Could not verify your account. Please try again.',
+            'Sitinathe kutsimikizira akaunti yanu. Yesaninso.',
+          ),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _authenticateDeleteWithBiometric() async {
+    final auth = LocalAuthentication();
+    try {
+      final canCheck = await auth.canCheckBiometrics;
+      final isSupported = await auth.isDeviceSupported();
+      if (!canCheck || !isSupported) {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            _t(
+              'Biometric authentication is not available on this device.',
+              'Biometric ilibe pa chipangizochi.',
+            ),
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+        return false;
+      }
+
+      final ok = await auth.authenticate(
+        localizedReason: _t(
+          'Verify your identity to delete your account',
+          'Tsimikizirani kuti ndinu inu kuti muchotse akaunti',
+        ),
+        options: const AuthenticationOptions(
+          biometricOnly: true,
+          stickyAuth: true,
+        ),
+      );
+      if (!ok && mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Biometric verification failed', 'Kutsimikizira biometric kwalephera'),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return ok;
+    } catch (_) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Biometric verification failed', 'Kutsimikizira biometric kwalephera'),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _promptDeleteAuthMethod(User user) async {
+    final provider = _primaryAuthProvider(user);
+    final providerLabel = provider == 'google.com'
+        ? _t('Google sign-in', 'Google sign-in')
+        : provider == 'apple.com'
+            ? _t('Apple sign-in', 'Apple sign-in')
+            : _t('App password', 'Password ya app');
+
+    final method = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.black12,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _t('Verify before delete', 'Tsimikizirani musanachotse'),
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _t(
+                'Use your sign-in method or biometric to continue.',
+                'Gwiritsani njira yolowera kapena biometric kuti mupitirire.',
+              ),
+              style: TextStyle(color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: _roundIcon(Icons.lock_outline),
+              title: Text(
+                _t('Use $providerLabel', 'Gwiritsani $providerLabel'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                provider == 'password'
+                    ? _t('Enter your account password', 'Lembani password ya akaunti')
+                    : _t('Verify with your sign-in provider', 'Tsimikizirani ndi njira yolowera'),
+              ),
+              onTap: () => Navigator.pop(ctx, 'provider'),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: _roundIcon(Icons.fingerprint),
+              title: Text(
+                _t('Use biometric', 'Gwiritsani biometric'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                _t('Face ID or fingerprint', 'Face ID kapena chala'),
+              ),
+              onTap: () => Navigator.pop(ctx, 'biometric'),
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+
+    if (method == 'provider') return _authenticateDeleteWithProvider(user);
+    if (method == 'biometric') return _authenticateDeleteWithBiometric();
+    return false;
   }
 
   /// Shows a dialog asking for the user's password to confirm account deletion. Returns the password or null if cancelled.
@@ -1378,6 +1618,20 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _refreshing = true);
 
     try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Please sign in again', 'Chonde lowani kachiwiri'),
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+
+      final verified = await _promptDeleteAuthMethod(currentUser);
+      if (!verified) return;
+
       // 1) Delete on Nest backend (best effort)
       final token = await _getAuthToken();
       if (token.isNotEmpty) {
@@ -2020,6 +2274,89 @@ class AboutUsPage extends StatelessWidget {
 class PolicyPage extends StatelessWidget {
   const PolicyPage({super.key});
 
+  /// Bundled PDFs under `assets/documents/` (see pubspec.yaml).
+  static const String _platformAgreementAsset =
+      'assets/documents/Vero360_Platform_Agreement_Policy.pdf';
+  static const String _privacyPolicyAsset =
+      'assets/documents/Vero360_Privacy_Policy.pdf';
+  static const String _merchantTermsAsset =
+      'assets/documents/Vero360_Merchant_Terms_Conditions.pdf';
+
+  Future<void> _openAssetPdf(
+    BuildContext context, {
+    required String assetPath,
+    required String fileName,
+  }) async {
+    if (kIsWeb) {
+      if (context.mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'PDF files are bundled in the Android/iOS app.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return;
+    }
+    try {
+      final data = await rootBundle.load(assetPath);
+      final bytes = data.buffer.asUint8List();
+      final dir = await getTemporaryDirectory();
+      final path = p.join(dir.path, fileName);
+      final file = File(path);
+      await file.writeAsBytes(bytes, flush: true);
+
+      final uri = Uri.file(file.path);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+        return;
+      }
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'application/pdf', name: fileName)],
+        subject: fileName,
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Could not open document',
+          isSuccess: false,
+          errorMessage: e.toString(),
+        );
+      }
+    }
+  }
+
+  Widget _docTile(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required String assetPath,
+    required String fileName,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: kBrandOrange.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(icon, color: kBrandOrange),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+      subtitle: Text(subtitle),
+      trailing: const Icon(Icons.download_outlined),
+      onTap: () => _openAssetPdf(
+            context,
+            assetPath: assetPath,
+            fileName: fileName,
+          ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2038,7 +2375,7 @@ class PolicyPage extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: Colors.black12),
           ),
-          child: const SingleChildScrollView(
+          child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2107,10 +2444,49 @@ class PolicyPage extends StatelessWidget {
                 ),
 
                 SizedBox(height: 18),
+                Text(
+                  'Documents',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Download or open legal documents:',
+                  style: TextStyle(height: 1.35),
+                ),
+                SizedBox(height: 10),
+                _docTile(
+                  context,
+                  icon: Icons.description_outlined,
+                  title: 'Platform Agreement & Policy',
+                  subtitle: 'Vero360 platform agreement (PDF)',
+                  assetPath: _platformAgreementAsset,
+                  fileName: 'Vero360_Platform_Agreement_Policy.pdf',
+                ),
+                _docTile(
+                  context,
+                  icon: Icons.privacy_tip_outlined,
+                  title: 'Privacy Policy',
+                  subtitle: 'Vero360 privacy policy (PDF)',
+                  assetPath: _privacyPolicyAsset,
+                  fileName: 'Vero360_Privacy_Policy.pdf',
+                ),
+                _docTile(
+                  context,
+                  icon: Icons.storefront_outlined,
+                  title: 'Merchant Terms & Conditions',
+                  subtitle: 'Merchant terms (PDF)',
+                  assetPath: _merchantTermsAsset,
+                  fileName: 'Vero360_Merchant_Terms_Conditions.pdf',
+                ),
+
+                SizedBox(height: 18),
 
                 // ================= FOOTER =================
                 Text(
-                  'Last updated: February 2026',
+                  'Last updated: April 2026',
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.black54,

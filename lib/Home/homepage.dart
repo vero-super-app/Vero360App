@@ -517,7 +517,7 @@ class _BrandBar extends StatelessWidget {
         ListenableBuilder(
           listenable: NotificationStore.instance,
           builder: (_, __) {
-            final count = NotificationStore.instance.items.length;
+            final count = NotificationStore.instance.unreadCount;
             final labelText = count > 99 ? '99+' : '$count';
             return Badge(
               isLabelVisible: count > 0,

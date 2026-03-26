@@ -1,12 +1,20 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
+import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
+import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -24,6 +32,96 @@ class OrdersPage extends StatefulWidget {
 
   @override
   State<OrdersPage> createState() => _OrdersPageState();
+}
+
+class _TrackingWebViewPage extends StatefulWidget {
+  final String url;
+  final String title;
+  const _TrackingWebViewPage({required this.url, required this.title});
+
+  @override
+  State<_TrackingWebViewPage> createState() => _TrackingWebViewPageState();
+}
+
+class _TrackingWebViewPageState extends State<_TrackingWebViewPage> {
+  late final WebViewController _controller;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (_) => setState(() => _loading = true),
+          onPageFinished: (_) => setState(() => _loading = false),
+          onWebResourceError: (_) => setState(() => _loading = false),
+        ),
+      )
+      ..loadRequest(Uri.parse(widget.url));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.title),
+        backgroundColor: const Color(0xFFFF8A00),
+        foregroundColor: Colors.white,
+      ),
+      body: Stack(
+        children: [
+          WebViewWidget(controller: _controller),
+          if (_loading) const Center(child: CircularProgressIndicator()),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProofViewerPage extends StatelessWidget {
+  /// Local file path or `https://` image URL from Firebase Storage.
+  final String pathOrUrl;
+  const _ProofViewerPage({required this.pathOrUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final net = pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://');
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Delivery Proof'),
+        backgroundColor: const Color(0xFFFF8A00),
+        foregroundColor: Colors.white,
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 4.0,
+          child: net
+              ? Image.network(
+                  pathOrUrl,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (ctx, child, progress) {
+                    if (progress == null) return child;
+                    return const Padding(
+                      padding: EdgeInsets.all(32),
+                      child: CircularProgressIndicator(),
+                    );
+                  },
+                  errorBuilder: (_, __, ___) =>
+                      const Text('Could not load proof image'),
+                )
+              : Image.file(
+                  File(pathOrUrl),
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) =>
+                      const Text('Could not load proof image'),
+                ),
+        ),
+      ),
+    );
+  }
 }
 
 class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateMixin {
@@ -56,6 +154,17 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   final Set<String> _syncedSoldOrders = <String>{};
   String? _focusOrderId;
   String? _focusOrderNumber;
+  final Map<String, String> _shippingByOrderId = {};
+  final Map<String, Map<String, String>> _deliveryMetaByOrderId = {};
+  /// Firestore `order_escrow` snapshot per order (marketplace payout hold).
+  final Map<String, OrderEscrowSnapshot?> _escrowByOrderId = {};
+  /// Merchant phones from dashboard source (SharedPreferences + Firestore), keyed by order id.
+  final Map<String, String> _merchantPhoneByOrderId = {};
+
+  static const String _shippingPrefsKey = 'order_shipping_method_v1';
+  static const String _deliveryMetaPrefsKey = 'order_delivery_meta_v1';
+  static const String _ankoloTrackingUrl = 'https://ankolo.com/track-parcel';
+  static const String _smartTrackingUrl = 'https://tracking.smartdeliveriesmw.com/';
 
   @override
   void initState() {
@@ -67,18 +176,393 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     final idx = _statuses.indexWhere((v) => _statusLabel(v).toLowerCase() == s);
     if (idx >= 0) _tab.index = idx;
     _ordersFuture = _svc.getMyOrders();
+    unawaited(_bootstrapOrders());
+  }
+
+  Future<void> _bootstrapOrders() async {
+    await _loadShippingPrefs();
+    await _loadDeliveryMetaPrefs();
+    if (!mounted) return;
+    setState(() {
+      _ordersFuture = _fetchOrdersWithProofs();
+    });
+  }
+
+  Future<List<OrderItem>> _fetchOrdersWithProofs() async {
+    final list = await _svc.getMyOrders();
+    if (!mounted) return list;
+    await _hydrateFirestoreDelivery(list);
+    await _hydrateEscrow(list);
+    await _hydrateMerchantPhones(list);
+    return list;
+  }
+
+  /// Loads merchant phones from same source as merchant dashboard:
+  /// SharedPreferences 'phone' for current merchant, Firestore users/{uid} for others.
+  Future<void> _hydrateMerchantPhones(List<OrderItem> orders) async {
+    if (orders.isEmpty) return;
+    try {
+      final map = await MerchantPhoneResolver.resolveForOrders(orders);
+      if (!mounted) return;
+      setState(() {
+        _merchantPhoneByOrderId
+          ..clear()
+          ..addAll(map);
+      });
+    } catch (_) {}
+  }
+
+  /// Loads escrow state, repairs delivery timestamps, auto-releases after 5 days.
+  Future<void> _hydrateEscrow(List<OrderItem> orders) async {
+    if (orders.isEmpty) return;
+    try {
+      final candidates = orders
+          .where((o) =>
+              o.status == OrderStatus.delivered &&
+              o.paymentStatus == PaymentStatus.paid)
+          .toList();
+      if (candidates.isEmpty) return;
+
+      for (final o in candidates) {
+        await OrderEscrowService.repairDeliveredTimestampIfNeeded(o);
+      }
+
+      final ids = candidates.map((o) => o.id).toList();
+      var map = await OrderEscrowService.fetchEscrowForOrderIds(ids);
+
+      for (final o in candidates) {
+        final esc = map[o.id];
+        if (esc == null || !esc.isHeld) continue;
+        if (esc.deliveredAt == null || esc.releaseDueAt == null) continue;
+        if (DateTime.now().isBefore(esc.releaseDueAt!)) continue;
+        try {
+          await OrderEscrowService.releaseFunds(
+            orderId: o.id,
+            buyerConfirmed: false,
+          );
+          map[o.id] = await OrderEscrowService.fetchEscrow(o.id);
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+      setState(() {
+        for (final e in map.entries) {
+          _escrowByOrderId[e.key] = e.value;
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _confirmParcelReceived(OrderItem o) async {
+    final ok = await AppWalletPin.verifyParcelReceipt(context);
+    if (!mounted) return;
+    if (!ok) return;
+    try {
+      await OrderEscrowService.releaseFunds(orderId: o.id, buyerConfirmed: true);
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Payment sent to merchant',
+        isSuccess: true,
+        errorMessage: '',
+      );
+      await _reloadCurrent();
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not release payment',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
+  Widget _parcelEscrowSection(OrderItem o) {
+    final esc = _escrowByOrderId[o.id];
+    if (esc == null) return const SizedBox.shrink();
+
+    if (esc.isReleased) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE8F5E9),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Payment released to merchant wallet',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF2E7D32),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (esc.releasedAt != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6, left: 28),
+                child: Text(
+                  _date.format(esc.releasedAt!.toLocal()),
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF6B778C)),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    if (!esc.isHeld) return const SizedBox.shrink();
+
+    final waitingMerchant = esc.deliveredAt == null;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _brand.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Parcel & payment',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF222222),
+            ),
+          ),
+          const SizedBox(height: 6),
+          if (waitingMerchant)
+            const Text(
+              'Payment is held until the merchant marks this order as delivered. '
+              'Then you can confirm receipt to release funds to their wallet.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B778C),
+                height: 1.35,
+              ),
+            )
+          else ...[
+            Text(
+              [
+                if (esc.releaseDueAt != null)
+                  'If you do not confirm, payment is sent to the merchant on '
+                      '${_date.format(esc.releaseDueAt!.toLocal())}. ',
+                'You’ll confirm with Face ID, fingerprint, or PIN.',
+              ].join(),
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B778C),
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.green.shade700,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () => _confirmParcelReceived(o),
+                icon: const Icon(Icons.inventory_2_outlined),
+                label: const Text('I received this parcel'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Merges Firestore delivery proof + courier (works for buyer on any device).
+  Future<void> _hydrateFirestoreDelivery(List<OrderItem> orders) async {
+    if (orders.isEmpty) return;
+    try {
+      final ids = orders.map((o) => o.id).toList();
+      final remote = await DeliveryProofService.getDeliveryMetadata(ids);
+      if (!mounted) return;
+      setState(() {
+        for (final e in remote.entries) {
+          final id = e.key;
+          final patch = e.value;
+          final prev = Map<String, String>.from(_deliveryMetaByOrderId[id] ?? {});
+          for (final pe in patch.entries) {
+            if (pe.value.isNotEmpty) prev[pe.key] = pe.value;
+          }
+          _deliveryMetaByOrderId[id] = prev;
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _loadShippingPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_shippingPrefsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final map = <String, String>{};
+      for (final e in decoded.entries) {
+        final k = e.key.toString().trim();
+        final v = e.value.toString().trim().toLowerCase();
+        if (k.isEmpty || v.isEmpty) continue;
+        map[k] = v;
+      }
+      if (!mounted) return;
+      setState(() {
+        _shippingByOrderId
+          ..clear()
+          ..addAll(map);
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _loadDeliveryMetaPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_deliveryMetaPrefsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final map = <String, Map<String, String>>{};
+      for (final e in decoded.entries) {
+        final key = e.key.toString().trim();
+        if (key.isEmpty || e.value is! Map) continue;
+        final valueMap = Map<String, String>.from(
+          (e.value as Map).map(
+            (k, v) => MapEntry(k.toString(), v?.toString() ?? ''),
+          ),
+        );
+        map[key] = valueMap;
+      }
+      if (!mounted) return;
+      setState(() {
+        _deliveryMetaByOrderId
+          ..clear()
+          ..addAll(map);
+      });
+    } catch (_) {}
+  }
+
+  String? _trackingUrlForOrder(OrderItem o) {
+    final method = _resolvedCourierMethod(o);
+    if (method == 'ankolo') return _ankoloTrackingUrl;
+    if (method == 'smart') return _smartTrackingUrl;
+    return null;
+  }
+
+  String _resolvedCourierMethod(OrderItem o) {
+    final fromPrefs = (_deliveryMetaByOrderId[o.id]?['method'] ??
+            _shippingByOrderId[o.id] ??
+            '')
+        .trim()
+        .toLowerCase();
+    if (fromPrefs.isNotEmpty) return fromPrefs;
+    return _shippingFromOrderDescription(o.description);
+  }
+
+  String _shippingFromOrderDescription(String description) {
+    final d = description.toLowerCase();
+    if (d.contains('[delivery: ankolo]') || d.contains('delivery: ankolo')) {
+      return 'ankolo';
+    }
+    if (d.contains('[delivery: smart]') || d.contains('delivery: smart')) {
+      return 'smart';
+    }
+    if (d.contains('[delivery: speed]') || d.contains('delivery: speed')) {
+      return 'speed';
+    }
+    if (d.contains('[delivery: pickup]') || d.contains('delivery: pickup')) {
+      return 'pickup';
+    }
+    return '';
+  }
+
+  String? _proofViewerTarget(OrderItem o) {
+    final u = (_deliveryMeta(o)['proofUrl'] ?? '').trim();
+    if (u.startsWith('http://') || u.startsWith('https://')) return u;
+    final p = (_deliveryMeta(o)['proofPath'] ?? '').trim();
+    if (p.isNotEmpty && File(p).existsSync()) return p;
+    return null;
+  }
+
+  Map<String, String> _deliveryMeta(OrderItem o) =>
+      _deliveryMetaByOrderId[o.id] ?? const <String, String>{};
+
+  /// Phone from dashboard source (SharedPreferences + Firestore), or safe fallback.
+  String _displayMerchantPhone(OrderItem o) {
+    final resolved = _merchantPhoneByOrderId[o.id];
+    if (resolved != null && resolved.isNotEmpty) return resolved;
+    return safeMerchantPhone(o.merchantPhone);
+  }
+
+  String _courierLabel(OrderItem o) {
+    final method = _resolvedCourierMethod(o);
+    switch (method) {
+      case 'ankolo':
+        return 'Ankolo courier';
+      case 'smart':
+        return 'Smart courier';
+      case 'speed':
+        return 'Speed courier';
+      case 'pickup':
+        return 'Shop pickup';
+      case 'cts':
+        return 'CTS courier';
+      default:
+        return 'Courier';
+    }
+  }
+
+  String _trackingTitle(OrderItem o) {
+    final method = _resolvedCourierMethod(o);
+    return method == 'ankolo' ? 'Ankolo Courier Tracking' : 'Smart Courier Tracking';
+  }
+
+  String _trackingButtonLabel(OrderItem o) {
+    final method = _resolvedCourierMethod(o);
+    return method == 'ankolo' ? 'Track Ankolo' : 'Track Smart';
+  }
+
+  Future<void> _openTrackingInApp({
+    required String url,
+    required String title,
+  }) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _TrackingWebViewPage(url: url, title: title),
+      ),
+    );
   }
 
   Future<void> _reloadCurrent() async {
+    await _loadShippingPrefs();
+    await _loadDeliveryMetaPrefs();
     if (!mounted) return;
     setState(() {
-      _ordersFuture = _svc.getMyOrders();
+      _ordersFuture = _fetchOrdersWithProofs();
     });
     try {
       final orders = await _ordersFuture;
       for (final o in orders) {
         if (o.itemSqlId == null) continue;
-        if (o.status != OrderStatus.confirmed) continue;
+        if (o.status != OrderStatus.delivered) continue;
         if (o.paymentStatus != PaymentStatus.paid) continue;
         if (_syncedSoldOrders.contains(o.id)) continue;
         _syncedSoldOrders.add(o.id);
@@ -179,7 +663,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         ..writeln('Category: ${o.category.toString().split('.').last}')
         ..writeln()
         ..writeln('Merchant: ${o.merchantName ?? 'Merchant'}')
-        ..writeln('Merchant phone: ${o.merchantPhone ?? '-'}')
+        ..writeln('Merchant phone: ${_displayMerchantPhone(o)}')
         ..writeln()
         ..writeln('Address city: ${o.addressCity ?? '-'}')
         ..writeln('Address description: ${o.addressDescription ?? '-'}');
@@ -331,7 +815,8 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                 // Merchant
                 _infoRow(
                   icon: Icons.store_mall_directory_outlined,
-                  text: '${o.merchantName ?? 'Merchant'}  •  ${o.merchantPhone ?? '—'}',
+                  text:
+                      '${o.merchantName ?? 'Merchant'}  •  ${_displayMerchantPhone(o)}',
                   trailing: (o.merchantAvgRating != null) ? '⭐ ${o.merchantAvgRating!.toStringAsFixed(1)}' : null,
                 ),
 
@@ -405,6 +890,61 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                       icon: const Icon(Icons.download_outlined),
                       label: const Text('Download'),
                     ),
+                    if (o.status == OrderStatus.delivered &&
+                        _trackingUrlForOrder(o) != null)
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _brand,
+                          side: BorderSide(color: _brand.withValues(alpha: .45)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () async {
+                          final url = _trackingUrlForOrder(o);
+                          if (url == null) return;
+                          await _openTrackingInApp(
+                            url: url,
+                            title: _trackingTitle(o),
+                          );
+                        },
+                        icon: const Icon(Icons.open_in_new),
+                        label: Text(_trackingButtonLabel(o)),
+                      ),
+                    if (o.status == OrderStatus.delivered &&
+                        _trackingUrlForOrder(o) == null &&
+                        _courierLabel(o) != 'Courier')
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.black87,
+                          side: BorderSide(color: Colors.black12.withValues(alpha: .4)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: null,
+                        icon: const Icon(Icons.local_shipping_outlined),
+                        label: Text(_courierLabel(o)),
+                      ),
+                    if (o.status == OrderStatus.delivered &&
+                        _proofViewerTarget(o) != null)
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _brand,
+                          side: BorderSide(color: _brand.withValues(alpha: .45)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () async {
+                          final target = _proofViewerTarget(o);
+                          if (target == null || target.isEmpty) return;
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => _ProofViewerPage(pathOrUrl: target),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.receipt_long_outlined),
+                        label: const Text('View proof'),
+                      ),
                     if (o.status == OrderStatus.pending)
                       FilledButton.icon(
                         style: FilledButton.styleFrom(
@@ -417,6 +957,12 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                       ),
                   ],
                 ),
+                if (o.status == OrderStatus.delivered &&
+                    o.paymentStatus == PaymentStatus.paid)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: _parcelEscrowSection(o),
+                  ),
               ],
             ),
           ),

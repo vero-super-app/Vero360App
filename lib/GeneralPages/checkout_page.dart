@@ -19,7 +19,7 @@ import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
-enum DeliveryType { speed, cts, pickup }
+enum DeliveryType { speed, cts, ankolo, smart, pickup }
 
 class CheckoutPage extends StatefulWidget {
   final MarketplaceDetailModel item;
@@ -37,6 +37,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
   // ► Delivery fees (edit as you want)
   static const double _feeSpeed = 0; // e.g. 2500
   static const double _feeCts = 0; // e.g. 1500
+  static const double _feeAnkolo = 0;
+  static const double _feeSmart = 0;
   static const double _feePickup = 0;
 
   DeliveryType _deliveryType = DeliveryType.cts;
@@ -64,6 +66,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
         return _feeSpeed;
       case DeliveryType.cts:
         return _feeCts;
+      case DeliveryType.ankolo:
+        return _feeAnkolo;
+      case DeliveryType.smart:
+        return _feeSmart;
       case DeliveryType.pickup:
         return _feePickup;
     }
@@ -159,6 +165,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
         return 'Speed';
       case DeliveryType.cts:
         return 'CTS';
+      case DeliveryType.ankolo:
+        return 'Ankolo';
+      case DeliveryType.smart:
+        return 'Smart';
       case DeliveryType.pickup:
         return 'Pickup';
     }
@@ -168,7 +178,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Widget _deliveryMenuItem({
     required String title,
     required String subtitle,
-    required String trailing,
     required IconData icon,
   }) {
     final w = MediaQuery.sizeOf(context).width;
@@ -212,17 +221,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
               ],
             ),
           ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: 80,
-            child: Text(
-              trailing,
-              textAlign: TextAlign.right,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
         ],
       ),
     );
@@ -231,7 +229,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
   // ✅ Compact single-line selected item — used inside the closed field (fixes bottom overflow)
   Widget _deliverySelectedItem({
     required String title,
-    required String trailing,
     required IconData icon,
   }) {
     return Row(
@@ -252,21 +249,58 @@ class _CheckoutPageState extends State<CheckoutPage> {
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w800),
-          ),
-        ),
-        const SizedBox(width: 10),
-        SizedBox(
-          width: 80,
-          child: Text(
-            trailing,
-            textAlign: TextAlign.right,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w800),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
           ),
         ),
       ],
+    );
+  }
+
+  // ── Delivery cost note (courier fees are not fixed at checkout) ─────────────
+  static const Widget _deliveryPriceUnknownNote = Text(
+    'Delivery prices are not known until your parcel is weighed.',
+    style: TextStyle(
+      color: Colors.red,
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      height: 1.25,
+    ),
+  );
+
+  Widget _deliverySummaryRow() {
+    if (_deliveryType == DeliveryType.pickup) {
+      return _rowLine('Delivery', 'Pickup (no courier fee)');
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              'Delivery',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.normal,
+                color: Colors.grey[700],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            flex: 2,
+            child: Text(
+              'Not known until parcel is weighed',
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                color: Colors.red,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -461,10 +495,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
           final checkoutUrl = responseJson['data']['checkout_url'] as String;
           if (!mounted) return;
           // Pass merchant credit so wallet is credited on payment success (same as cart checkout)
-          final mid = widget.item.merchantId?.trim();
-          final mname = widget.item.merchantName?.trim();
-          final hasMerchant = mid != null && mid.isNotEmpty && mid != 'unknown' &&
-              mname != null && mname.isNotEmpty && mname != 'Unknown Merchant';
+          final mid = (widget.item.merchantId ?? '').trim();
+          final mname = (widget.item.merchantName ?? '').trim();
+          final hasMerchant = mid.isNotEmpty && mid != 'unknown' &&
+              mname.isNotEmpty && mname != 'Unknown Merchant';
           final listForCredit = hasMerchant
               ? <CartModel>[
                   CartModel(
@@ -474,9 +508,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     image: widget.item.image,
                     name: widget.item.name,
                     price: widget.item.price,
-                    description: widget.item.description ?? '',
-                    merchantId: mid!,
-                    merchantName: mname!,
+                    description: widget.item.description,
+                    merchantId: mid,
+                    merchantName: mname,
                     serviceType: 'marketplace',
                   ),
                 ]
@@ -489,6 +523,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 totalAmount: _total,
                 rootContext: context,
                 cartItemsForMerchantCredit: listForCredit,
+                shippingAddress: _deliveryType == DeliveryType.pickup ? null : _defaultAddr,
+                deliveryType: _deliveryType,
               ),
             ),
           );
@@ -749,17 +785,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         selectedItemBuilder: (_) => [
                           _deliverySelectedItem(
                             title: 'Speed',
-                            trailing: _mwk(_feeSpeed),
                             icon: Icons.flash_on_rounded,
                           ),
                           _deliverySelectedItem(
                             title: 'CTS',
-                            trailing: _mwk(_feeCts),
                             icon: Icons.local_shipping_rounded,
                           ),
                           _deliverySelectedItem(
+                            title: 'Ankolo',
+                            icon: Icons.local_shipping_outlined,
+                          ),
+                          _deliverySelectedItem(
+                            title: 'Smart',
+                            icon: Icons.local_shipping,
+                          ),
+                          _deliverySelectedItem(
                             title: 'Pickup',
-                            trailing: _mwk(_feePickup),
                             icon: Icons.storefront_rounded,
                           ),
                         ],
@@ -784,7 +825,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             child: _deliveryMenuItem(
                               title: 'Speed',
                               subtitle: 'Fast delivery',
-                              trailing: _mwk(_feeSpeed),
                               icon: Icons.flash_on_rounded,
                             ),
                           ),
@@ -793,8 +833,23 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             child: _deliveryMenuItem(
                               title: 'CTS',
                               subtitle: 'Standard delivery',
-                              trailing: _mwk(_feeCts),
                               icon: Icons.local_shipping_rounded,
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: DeliveryType.ankolo,
+                            child: _deliveryMenuItem(
+                              title: 'Ankolo',
+                              subtitle: 'Ankolo courier',
+                              icon: Icons.local_shipping_outlined,
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: DeliveryType.smart,
+                            child: _deliveryMenuItem(
+                              title: 'Smart',
+                              subtitle: 'Smart courier',
+                              icon: Icons.local_shipping,
                             ),
                           ),
                           DropdownMenuItem(
@@ -802,7 +857,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
                             child: _deliveryMenuItem(
                               title: 'Pickup',
                               subtitle: 'Collect at shop',
-                              trailing: _mwk(_feePickup),
                               icon: Icons.storefront_rounded,
                             ),
                           ),
@@ -825,9 +879,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                 : Icons.local_shipping_rounded,
                             text: _deliveryLabel(_deliveryType),
                           ),
-                          _pill(icon: Icons.payments_rounded, text: 'Fee: ${_mwk(_delivery)}'),
                         ],
                       ),
+                      if (_deliveryType != DeliveryType.pickup) ...[
+                        const SizedBox(height: 10),
+                        _deliveryPriceUnknownNote,
+                      ],
                     ],
                   ),
                 ),
@@ -875,7 +932,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     const SizedBox(height: 12),
                     _rowLine('Subtotal', _mwk(_subtotal)),
                     const SizedBox(height: 6),
-                    _rowLine('Delivery', _mwk(_delivery)),
+                    _deliverySummaryRow(),
                     const SizedBox(height: 8),
                     const Divider(thickness: 1),
                     const SizedBox(height: 8),

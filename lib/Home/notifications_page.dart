@@ -77,7 +77,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
         title: ListenableBuilder(
           listenable: NotificationStore.instance,
           builder: (context, _) {
-            final count = NotificationStore.instance.items.length;
+            final store = NotificationStore.instance;
+            final total = store.items.length;
+            final unread = store.unreadCount;
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -108,7 +110,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
                       ),
                     ),
                     Text(
-                      '$count ${count == 1 ? 'notification' : 'notifications'}',
+                      unread > 0
+                          ? '$unread unread'
+                          : '$total ${total == 1 ? 'notification' : 'notifications'}',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.white.withOpacity(0.9),

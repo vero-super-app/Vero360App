@@ -158,7 +158,7 @@ class _AddressPageState extends State<AddressPage> {
         context,
         'Failed to set default',
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
       return;
     }
@@ -224,7 +224,7 @@ class _AddressPageState extends State<AddressPage> {
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             child: Text(
-                              'Error: ${snap.error}',
+                              'Could not load addresses. Please try again.',
                               textAlign: TextAlign.center,
                             ),
                           ),
@@ -674,7 +674,7 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
         context,
         'Failed',
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -726,7 +726,7 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
         context,
         'Could not detect your location',
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     } finally {
       if (mounted) {
@@ -772,7 +772,7 @@ class _AddressFormSheetState extends State<AddressFormSheet> {
         context,
         'Failed',
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     } finally {
       if (mounted) setState(() => _saving = false);

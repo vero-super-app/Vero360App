@@ -30,7 +30,7 @@ class AuthHandler {
     if (firebaseToken != null && firebaseToken.isNotEmpty) {
       if (kDebugMode) {
         // ignore: avoid_print
-        print('[AuthHandler] full token (Firebase): $firebaseToken');
+      //  print('[AuthHandler] full token (Firebase): $firebaseToken');
       }
       await persistTokenToSp(firebaseToken);
       return firebaseToken;
@@ -41,7 +41,7 @@ class AuthHandler {
       if (v != null && v.isNotEmpty) {
         if (kDebugMode) {
           // ignore: avoid_print
-          print('[AuthHandler] full token (SP $k): $v');
+        //  print('[AuthHandler] full token (SP $k): $v');
         }
         return v;
       }
@@ -59,11 +59,25 @@ class AuthHandler {
   }
 
   /// Single source of truth: logged in if Firebase has a user (and we can get a token).
+  /// Offline-safe: if the host is unreachable, uses cached ID token when possible;
+  /// if refresh fails but [currentUser] still exists, treats the session as valid so
+  /// the shell (home, etc.) can render like other offline-first apps.
   static Future<bool> isAuthenticated() async {
     final user = _firebaseAuth.currentUser;
     if (user == null) return false;
-    final token = await user.getIdToken();
-    return token != null && token.isNotEmpty;
+    try {
+      final token = await user.getIdToken(false);
+      if (token != null && token.isNotEmpty) return true;
+      final refreshed = await user.getIdToken(true);
+      return refreshed != null && refreshed.isNotEmpty;
+    } catch (_) {
+      final sp = await SharedPreferences.getInstance();
+      for (final k in _spTokenKeys) {
+        final v = sp.getString(k);
+        if (v != null && v.isNotEmpty) return true;
+      }
+      return true;
+    }
   }
 
   static Future<void> logout() async {

@@ -252,7 +252,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
           );
         }
 
-        return const _RideSharePreloader(child: MyApp());
+        return const MyApp();
       },
     );
   }
@@ -573,26 +573,31 @@ class _SelfHealPageState extends State<SelfHealPage>
   }
 }
 
-/// ====== RIDE SHARE DATA PRELOADER ======
-/// Loads driver status from local cache on app start
-class _RideSharePreloader extends ConsumerWidget {
+/// Loads driver prefs locally and triggers a background sync **under** [ProviderScope].
+class _DriverStatusBootstrap extends ConsumerStatefulWidget {
   final Widget child;
-  const _RideSharePreloader({required this.child});
+  const _DriverStatusBootstrap({required this.child});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Load driver status from SharedPreferences (local, no network call)
+  ConsumerState<_DriverStatusBootstrap> createState() =>
+      _DriverStatusBootstrapState();
+}
+
+class _DriverStatusBootstrapState extends ConsumerState<_DriverStatusBootstrap> {
+  @override
+  void initState() {
+    super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       loadDriverStatusFromPrefs();
-
-      // Optional: Sync with backend in background (fire and forget)
       Future.delayed(const Duration(seconds: 2), () {
+        if (!mounted) return;
         ref.read(syncDriverStatusProvider);
       });
     });
-
-    return child;
   }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 /// ----------------- ✅ MAIN APP (your original logic preserved) -----------------
@@ -937,7 +942,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final cartSvc = CartServiceProvider.getInstance();
 
     return ProviderScope(
-      child: MaterialApp(
+      child: _DriverStatusBootstrap(
+        child: MaterialApp(
         navigatorKey: navKey,
         debugShowCheckedModeBanner: false,
         title: 'Vero360',
@@ -1006,6 +1012,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               return null;
           }
         },
+      ),
       ),
     );
   }

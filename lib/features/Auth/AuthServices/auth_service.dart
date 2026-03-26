@@ -19,6 +19,7 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/GernalServices/driver_service.dart';
 
 enum DeleteAccountStatus { success, requiresRecentLogin, failed }
 
@@ -819,6 +820,24 @@ class AuthService {
           sp.getString('jwt');
     } catch (_) {}
 
+    // Step 1: Set all driver taxis to unavailable before logout
+    try {
+      final driverService = DriverService();
+      final driver = await driverService.getMyDriverProfile();
+      if (driver != null && driver['taxis'] != null && driver['taxis'].isNotEmpty) {
+        for (final taxi in driver['taxis']) {
+          try {
+            await driverService.setTaxiAvailability(taxi['id'], false);
+          } catch (e) {
+            if (kDebugMode) debugPrint('Error setting taxi unavailable: $e');
+          }
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('Error getting driver profile for logout: $e');
+    }
+
+    // Step 2: Call backend logout endpoint to clean up FCM tokens and mark driver inactive
     if (token != null && token.isNotEmpty) {
       try {
         await ApiClient.post(
@@ -826,23 +845,27 @@ class AuthService {
           headers: {'Authorization': 'Bearer $token'},
           body: jsonEncode({}),
         );
-      } catch (_) {}
+      } catch (e) {
+        if (kDebugMode) debugPrint('Backend logout call failed: $e');
+      }
     }
 
-    // Google
+    // Step 3: Google sign out
     try {
       await _google.signOut();
     } catch (_) {}
 
-    // Firebase
+    // Step 4: Firebase sign out
     try {
       await _firebaseAuth.signOut();
     } catch (_) {}
 
+    // Step 5: Clear notifications
     try {
       await NotificationStore.instance.clearAll();
     } catch (_) {}
 
+    // Step 6: Clear local session
     final ok = await _clearLocalSession();
     if (context != null) {
       _toast(context, ok ? 'Signed out' : 'Signed out (cleanup error)', ok: ok);

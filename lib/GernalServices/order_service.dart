@@ -10,6 +10,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 
@@ -24,6 +25,19 @@ class AuthRequiredException implements Exception {
 
 /// Thrown for any API/network issue, with a user-friendly message only.
 /// (No endpoints, no status codes, no raw response bodies)
+/// One backend order created from a single cart line (used for escrow / payouts).
+class CreatedOrderRef {
+  final String orderId;
+  final String orderNumber;
+  final CartModel item;
+
+  const CreatedOrderRef({
+    required this.orderId,
+    required this.orderNumber,
+    required this.item,
+  });
+}
+
 class FriendlyApiException implements Exception {
   final String message;
 
@@ -135,36 +149,55 @@ class OrderService {
     required OrderStatus status,
     required bool changed,
     bool isIncomingForMerchant = false,
+    bool orderMarkedShippedByMerchant = false,
     String? customerName,
+    String? itemName,
   }) async {
     if (!await _canSendOrderNotifications()) return;
 
+    final formattedOrderNumber = _formatOrderNumber(orderNumber);
+    final item = itemName?.trim() ?? '';
+    final itemPrefix = item.isEmpty ? '' : '$item - ';
+    final itemSeg = item.isEmpty ? '' : ' — $item';
+    final orderSeg = formattedOrderNumber.isEmpty
+        ? 'Your order'
+        : 'Your order $formattedOrderNumber';
     final label = _statusLabel(status);
+    final who = (customerName ?? '').trim();
+    final customerSuffix = who.isEmpty ? '' : ' from $who';
     final title = switch (status) {
       OrderStatus.pending => 'Order placed',
       OrderStatus.confirmed => 'Order confirmed',
-      OrderStatus.delivered => 'Order delivered',
+      OrderStatus.delivered when orderMarkedShippedByMerchant => 'Parcel sent',
+      OrderStatus.delivered when isIncomingForMerchant => 'Order delivered',
+      OrderStatus.delivered => 'Your order has shipped',
       OrderStatus.cancelled => 'Order cancelled',
     };
-    final who = (customerName ?? '').trim();
-    final customerSuffix = who.isEmpty ? '' : ' from $who';
     final body = switch (status) {
       OrderStatus.pending => isIncomingForMerchant
-          ? (orderNumber.trim().isEmpty
+          ? (formattedOrderNumber.isEmpty
               ? 'You received a new order${who.isEmpty ? ' from a customer' : customerSuffix}.'
-              : 'New order received: $orderNumber$customerSuffix.')
-          : (orderNumber.trim().isEmpty
+              : 'New order received: $itemPrefix$formattedOrderNumber$customerSuffix.')
+          : (formattedOrderNumber.isEmpty
               ? 'We received your order and it is pending confirmation.'
-              : 'Order $orderNumber has been placed and is pending confirmation.'),
-      OrderStatus.confirmed => orderNumber.trim().isEmpty
+              : 'Order $itemPrefix$formattedOrderNumber has been placed and is pending confirmation.'),
+      OrderStatus.confirmed => formattedOrderNumber.isEmpty
           ? 'Great news! Your order has been confirmed.'
-          : 'Great news! Order $orderNumber has been confirmed.',
-      OrderStatus.delivered => orderNumber.trim().isEmpty
-          ? 'Your order has been delivered. Enjoy!'
-          : 'Order $orderNumber has been delivered. Enjoy!',
-      OrderStatus.cancelled => orderNumber.trim().isEmpty
+          : 'Great news! Order $itemPrefix$formattedOrderNumber has been confirmed.',
+      OrderStatus.delivered when orderMarkedShippedByMerchant =>
+        formattedOrderNumber.isEmpty
+            ? 'The parcel is on its way. The buyer can track it in Delivered orders.'
+            : '$orderSeg$itemSeg has been shipped. The buyer can track progress in Delivered orders.',
+      OrderStatus.delivered when isIncomingForMerchant =>
+        formattedOrderNumber.isEmpty
+            ? 'Waiting for the buyer to confirm receipt to release your payout.'
+            : '$orderSeg$itemSeg was delivered. The buyer can confirm receipt to release funds to your wallet.',
+      OrderStatus.delivered => formattedOrderNumber.isEmpty
+          ? 'Your order has been shipped. Check progress in Delivered orders.'
+          : '$orderSeg$itemSeg has been shipped. Check progress in Delivered orders.',
+      OrderStatus.cancelled => formattedOrderNumber.isEmpty
           ? 'Your order was cancelled.'
-          : 'Order $orderNumber was cancelled.',
+          : 'Order $itemPrefix$formattedOrderNumber was cancelled.',
     };
 
     final grouped = await _buildGroupedOrderNotificationText(currentStatus: label);
@@ -172,8 +205,12 @@ class OrderService {
     final payload = jsonEncode({
       'type': 'order_update',
       'orderId': orderId,
-      'orderNumber': orderNumber,
+      'orderNumber': formattedOrderNumber,
       'status': orderStatusToApi(status),
+      NotificationStore.kPayloadBadgeRoute: NotificationStore.badgeRouteForOrderStatus(
+        status,
+        isMerchant: isIncomingForMerchant,
+      ),
     });
 
     await NotificationService.instance.showManualNotification(
@@ -181,6 +218,29 @@ class OrderService {
       body: grouped.$2 ?? body,
       payload: payload,
     );
+  }
+
+  String _formatOrderNumber(String raw) {
+    final clean = raw.trim();
+    if (clean.isEmpty) return '';
+    if (clean.toLowerCase().startsWith('vero')) return clean;
+    return 'Vero$clean';
+  }
+
+  Future<(String orderNumber, String itemName)> _resolveOrderMeta(String orderId) async {
+    final cleanId = orderId.trim();
+    if (cleanId.isEmpty) return ('', '');
+    try {
+      final orders = await getMyOrders();
+      for (final o in orders) {
+        if (o.id == cleanId) {
+          return (o.orderNumber.trim(), o.itemName.trim());
+        }
+      }
+    } catch (_) {
+      // Keep notification flow alive even when lookup fails.
+    }
+    return ('', '');
   }
 
   Future<(String?, String?)> _buildGroupedOrderNotificationText({
@@ -254,7 +314,9 @@ class OrderService {
           status: o.status,
           changed: changed,
           isIncomingForMerchant: incomingMerchantOrderIds.contains(o.id),
+          orderMarkedShippedByMerchant: false,
           customerName: o.customerName,
+          itemName: o.itemName,
         );
       }
       nextCache[o.id] = current;
@@ -407,15 +469,38 @@ class OrderService {
     required List<CartModel> cartItems,
     Address? address,
     required OrderStatus status,
+    String? deliveryMethod,
   }) async {
-    if (cartItems.isEmpty) return;
+    await createOrdersFromCartWithRefs(
+      cartItems: cartItems,
+      address: address,
+      status: status,
+      deliveryMethod: deliveryMethod,
+    );
+  }
+
+  /// Same as [createOrdersFromCart] but returns created order ids (for escrow, etc.).
+  Future<List<CreatedOrderRef>> createOrdersFromCartWithRefs({
+    required List<CartModel> cartItems,
+    Address? address,
+    required OrderStatus status,
+    String? deliveryMethod,
+  }) async {
+    if (cartItems.isEmpty) return [];
 
     final uri = ApiConfig.endpoint('/orders');
     final headers = await _headers();
 
     final addrId = address != null ? int.tryParse(address.id) ?? 0 : 0;
 
+    final out = <CreatedOrderRef>[];
+
     for (final item in cartItems) {
+      final rawDescription = item.description.isNotEmpty
+          ? item.description
+          : (item.comment ?? '');
+      var description = _withDeliveryMethod(rawDescription, deliveryMethod);
+      description = _withListingIdTag(description, item);
       // Match backend: send merchantUid (Firebase UID) and let server resolve to numeric user.id
       final body = jsonEncode({
         'ItemName': item.name,
@@ -423,11 +508,11 @@ class OrderService {
         'Category': 'other',
         'Price': item.price.round(),
         'Quantity': item.quantity,
-        'Description': item.description.isNotEmpty
-            ? item.description
-            : (item.comment ?? ''),
+        'Description': description,
         'Status': orderStatusToApi(status),
         'merchantUid': item.merchantId,
+        // Helps backend / GET orders expose marketplace listing id; ignored if API strips unknown keys.
+        if (item.serviceType == 'marketplace' && item.item > 0) 'ItemId': item.item,
         if (addrId > 0) 'addressId': addrId,
       });
 
@@ -469,9 +554,43 @@ class OrderService {
         status: status,
         changed: false,
         isIncomingForMerchant: false,
+        orderMarkedShippedByMerchant: false,
+        itemName: item.name,
       );
       await _upsertOrderStatusCache(orderId: fallbackId, status: status);
+
+      out.add(CreatedOrderRef(
+        orderId: fallbackId,
+        orderNumber: fallbackOrderNo,
+        item: item,
+      ));
     }
+
+    return out;
+  }
+
+  /// Embeds marketplace SQL id so `OrderItem` can parse `itemSqlId` from Description if API omits ItemId.
+  String _withListingIdTag(String description, CartModel item) {
+    if (item.serviceType != 'marketplace' || item.item <= 0) return description;
+    if (RegExp(r'\[ListingId:\s*\d+\]', caseSensitive: false).hasMatch(description)) {
+      return description;
+    }
+    final tag = '[ListingId: ${item.item}]';
+    final d = description.trim();
+    if (d.isEmpty) return tag;
+    return '$d $tag';
+  }
+
+  String _withDeliveryMethod(String description, String? deliveryMethod) {
+    final base = description.trim();
+    final method = (deliveryMethod ?? '').trim();
+    if (method.isEmpty) return base;
+    if (RegExp(r'\[delivery:\s*', caseSensitive: false).hasMatch(base)) {
+      return base;
+    }
+    final tag = '[Delivery: $method]';
+    if (base.isEmpty) return tag;
+    return '$base $tag';
   }
 
   Future<List<OrderItem>> _fetchOrdersFromPath({
@@ -564,12 +683,17 @@ class OrderService {
     final r = await _retry(() => http.patch(u, headers: h, body: body), action: 'update the order');
     if (r.statusCode < 200 || r.statusCode >= 300) _bad(r, action: 'update the order');
 
+    final meta = await _resolveOrderMeta(id);
+    final isMerch = await _isMerchant();
     await _notifyOrderActivity(
       orderId: id,
-      orderNumber: id,
+      orderNumber: meta.$1,
       status: next,
       changed: true,
-      isIncomingForMerchant: false,
+      isIncomingForMerchant: isMerch,
+      orderMarkedShippedByMerchant:
+          isMerch && next == OrderStatus.delivered,
+      itemName: meta.$2,
     );
     await _upsertOrderStatusCache(orderId: id, status: next);
   }
@@ -589,12 +713,15 @@ class OrderService {
       final h = await _headers();
       final r = await _retry(() => http.delete(u, headers: h), action: 'cancel the order');
       if (r.statusCode < 200 || r.statusCode >= 300) _bad(r, action: 'cancel the order');
+      final meta = await _resolveOrderMeta(id);
       await _notifyOrderActivity(
         orderId: id,
-        orderNumber: id,
+        orderNumber: meta.$1,
         status: OrderStatus.cancelled,
         changed: true,
         isIncomingForMerchant: false,
+        orderMarkedShippedByMerchant: false,
+        itemName: meta.$2,
       );
       await _upsertOrderStatusCache(orderId: id, status: OrderStatus.cancelled);
       return false;

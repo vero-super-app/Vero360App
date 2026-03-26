@@ -41,12 +41,14 @@ class LatestArrivalServices {
               .compareTo(a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0)));
       return withDates;
     } on ApiException {
-      // Re-throw so UI can handle a clean message
       rethrow;
-    } catch (_) {
-      // Any weird decode errors, etc.
-      throw const ApiException(
-        message: 'Failed to load today\'s latest arrivals. Please check your internet and try again.',
+    } catch (e) {
+      // Not a transport error: e.g. unexpected JSON shape from backend.
+      throw ApiException(
+        message: e is FormatException
+            ? 'Could not read latest arrivals (invalid response). Please try again.'
+            : 'Failed to load today\'s latest arrivals. Please try again.',
+        backendMessage: e.toString(),
       );
     }
   }

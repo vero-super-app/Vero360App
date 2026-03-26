@@ -1,6 +1,8 @@
 // lib/services/notification_service.dart
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart'
@@ -12,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
@@ -31,6 +34,8 @@ class NotificationService {
 
   static final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
+
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _partyAlertSub;
 
   static const AndroidNotificationChannel _highPriorityChannel =
       AndroidNotificationChannel(
@@ -158,9 +163,61 @@ class NotificationService {
     FirebaseAuth.instance.authStateChanges().listen((user) async {
       if (user != null) {
         await registerTokenWithBackend();
+        await NotificationStore.instance.ensureLoaded();
+        _syncOrderPartyAlertListener(user);
       } else {
         // Ensure notifications from previous account do not remain visible.
         await NotificationStore.instance.clearAll();
+        _syncOrderPartyAlertListener(null);
+      }
+    });
+
+    await NotificationStore.instance.ensureLoaded();
+    _syncOrderPartyAlertListener(FirebaseAuth.instance.currentUser);
+  }
+
+  /// Listens for [OrderPartyNotificationService] docs so buyers/merchants get
+  /// alerts when the other party ships or confirms escrow (requires Firestore rules
+  /// and a composite index on `toUid` + `consumed`).
+  void _syncOrderPartyAlertListener(User? user) {
+    _partyAlertSub?.cancel();
+    _partyAlertSub = null;
+    if (user == null) return;
+
+    _partyAlertSub = FirebaseFirestore.instance
+        .collection(OrderPartyNotificationService.collectionName)
+        .where('toUid', isEqualTo: user.uid)
+        .where('consumed', isEqualTo: false)
+        .snapshots()
+        .listen((snap) async {
+      for (final change in snap.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final d = change.doc.data();
+        if (d == null) continue;
+        final title = (d['title'] ?? 'Vero360').toString();
+        final body = (d['body'] ?? '').toString();
+        String? payloadStr;
+        final rawPayload = d['payload'];
+        if (rawPayload is Map) {
+          try {
+            final m = Map<String, dynamic>.from(
+              rawPayload.map((k, v) => MapEntry(k.toString(), v)),
+            );
+            payloadStr = jsonEncode(m);
+          } catch (_) {}
+        }
+        await showManualNotification(
+          title: title,
+          body: body,
+          payload: payloadStr,
+        );
+        try {
+          await change.doc.reference.update({'consumed': true});
+        } catch (e) {
+          if (kDebugMode) {
+            debugPrint('[NotificationService] party alert consume failed: $e');
+          }
+        }
       }
     });
   }
@@ -477,6 +534,10 @@ class NotificationService {
         ));
     }
   }
+
+  /// Push / manual payloads can include `badgeRoute` for quick-action badges, e.g.
+  /// `quick_my_orders`, `quick_shipped`, `quick_received`, `quick_refund`, `quick_promotions`,
+  /// `quick_post_arrival` (see [NotificationStore] constants).
 
   /// Show a local notification manually. Set [interactive] true to show Reply + Like actions.
   Future<void> showManualNotification({

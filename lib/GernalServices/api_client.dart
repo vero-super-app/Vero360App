@@ -118,12 +118,19 @@ class ApiClient {
     Set<int>? allowedStatusCodes,
     Map<String, String>? queryParameters,
   }) async {
-    // Ensure backend is reachable
-    final backendOk = await ApiConfig.ensureBackendUp();
-    if (!backendOk) {
-      throw const ApiException(
-        message: 'Please check your internet connection and try again.',
-      );
+    // Do not block the real request on a separate health probe: ensureBackendUp()
+    // uses a short timeout and fixed paths (/vero/healthz, etc.). Ngrok cold start,
+    // slow TLS, or missing health routes often make it return false even when the
+    // API is fine — which incorrectly showed "check your internet" for every call.
+    // Optional warm-up (non-blocking feedback only):
+    if (kDebugMode) {
+      unawaited(ApiConfig.ensureBackendUp().then((ok) {
+        if (!ok) {
+          debugPrint(
+            '[ApiClient] ensureBackendUp=false (probe); still sending $method $path',
+          );
+        }
+      }));
     }
 
     // Build base URI (scheme/host/port + /vero/... path)

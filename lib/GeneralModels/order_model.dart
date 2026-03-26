@@ -72,6 +72,8 @@ class OrderItem {
 
   // Merchant
   final int merchantId;
+  /// Firebase UID when available (for lookup in Firestore users/{uid}).
+  final String? merchantUid;
   final String? merchantName;
   final String? merchantPhone;
   final double? merchantAvgRating;
@@ -98,6 +100,7 @@ class OrderItem {
     required this.status,
     required this.paymentStatus,
     required this.merchantId,
+    this.merchantUid,
     this.itemSqlId,
     this.merchantName,
     this.merchantPhone,
@@ -140,14 +143,31 @@ class OrderItem {
     ]);
     final pay   = paymentStatusFrom(rawPay?.toString());
 
-    // Optional: marketplace listing id from backend
-    final rawItemId = _first(m, ['ItemId', 'itemId', 'listingId', 'ListingId']);
+    // Optional: marketplace listing id from backend (many API shapes)
+    final rawItemId = _first(m, [
+      'ItemId',
+      'itemId',
+      'listingId',
+      'ListingId',
+      'marketplaceItemId',
+      'MarketplaceItemId',
+      'productId',
+      'ProductId',
+      'sqlItemId',
+      'SqlItemId',
+    ]);
+    final nestedItem = _first<Map>(m, ['item', 'Item', 'marketplaceItem', 'MarketplaceItem']);
+    final nestedId = nestedItem != null
+        ? _first(nestedItem, ['id', 'Id', 'ID', 'listingId', 'ListingId'])
+        : null;
     final parsedItemId = rawItemId != null
         ? int.tryParse(rawItemId.toString())
-        : null;
+        : (nestedId != null ? int.tryParse(nestedId.toString()) : null);
+    final listingFromDesc = _listingIdFromDescription(desc);
 
     // merchant block
     int merchId = int.tryParse((_first(m, ['merchantId','MerchantId']) ?? 0).toString()) ?? 0;
+    String? merchUid;
     String? merchName;
     String? merchPhone;
     double? merchAvg;
@@ -156,6 +176,7 @@ class OrderItem {
     final merchRaw = _first<Map>(m, ['merchant','Merchant']);
     if (merchRaw != null) {
       merchId    = int.tryParse((merchRaw['id'] ?? merchId).toString()) ?? merchId;
+      merchUid   = _first<String>(merchRaw, ['uid','merchantUid','firebaseUid','userId']);
       merchName  = merchRaw['name']?.toString();
       merchPhone = merchRaw['phone']?.toString();
       merchAvg   = double.tryParse((merchRaw['averageRating'] ?? merchRaw['avgRating'] ?? '0').toString());
@@ -193,7 +214,8 @@ class OrderItem {
       status: stat,
       paymentStatus: pay,
       merchantId: merchId,
-      itemSqlId: parsedItemId,
+      merchantUid: merchUid?.trim().isEmpty == true ? null : merchUid?.trim(),
+      itemSqlId: parsedItemId ?? listingFromDesc,
       merchantName: merchName,
       merchantPhone: merchPhone,
       merchantAvgRating: merchAvg,
@@ -206,4 +228,13 @@ class OrderItem {
 
   Map<String, dynamic> toStatusPatch(OrderStatus next) =>
       {'Status': orderStatusToApi(next)};
+
+  /// Fallback when API omits ItemId: we embed `[ListingId: N]` in Description at checkout.
+  static int? _listingIdFromDescription(String? description) {
+    final s = (description ?? '').trim();
+    if (s.isEmpty) return null;
+    final m = RegExp(r'\[ListingId:\s*(\d+)\]', caseSensitive: false).firstMatch(s);
+    if (m != null) return int.tryParse(m.group(1)!);
+    return null;
+  }
 }

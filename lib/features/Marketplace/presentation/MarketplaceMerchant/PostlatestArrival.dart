@@ -316,7 +316,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                         Border.all(color: _brandOrange.withValues(alpha: 0.35)),
                   ),
                   child: const Text(
-                    'Upload a clear product photo and correct price so customers trust your post.',
+                    'Upload a clear product photo and correct price so customers trust your post,Latest arrivals will be available for 24 hours.',
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),

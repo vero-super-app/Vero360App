@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'dart:async' show unawaited;
+
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:firebase_auth/firebase_auth.dart';
@@ -59,7 +61,7 @@ class FirebaseAuthService {
       final auth = account.authentication;
       final credential = GoogleAuthProvider.credential(idToken: auth.idToken);
       final userCred = await _auth.signInWithCredential(credential);
-      await logCurrentIdToken();
+      unawaited(logCurrentIdToken());
       return userCred.user;
     } catch (e) {
      // debugPrint('Google sign-in failed: $e');
@@ -83,7 +85,7 @@ class FirebaseAuthService {
         rawNonce: rawNonce,
       );
       final userCred = await _auth.signInWithCredential(oauthCred);
-      await logCurrentIdToken();
+      unawaited(logCurrentIdToken());
       return userCred.user;
     } catch (e) {
      // debugPrint('Apple sign-in failed: $e');

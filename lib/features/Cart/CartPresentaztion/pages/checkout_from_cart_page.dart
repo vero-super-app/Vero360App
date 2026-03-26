@@ -14,15 +14,13 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
-import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
-import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
-import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class CheckoutFromCartPage extends StatefulWidget {
@@ -39,6 +37,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
   static const double _feeSpeed = 0;
   static const double _feeCts = 0;
+  static const double _feeAnkolo = 0;
+  static const double _feeSmart = 0;
   static const double _feePickup = 0;
 
   bool _paying = false;
@@ -62,6 +62,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         return _feeSpeed;
       case DeliveryType.cts:
         return _feeCts;
+      case DeliveryType.ankolo:
+        return _feeAnkolo;
+      case DeliveryType.smart:
+        return _feeSmart;
       case DeliveryType.pickup:
         return _feePickup;
     }
@@ -75,9 +79,60 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         return 'Speed';
       case DeliveryType.cts:
         return 'CTS';
+      case DeliveryType.ankolo:
+        return 'Ankolo';
+      case DeliveryType.smart:
+        return 'Smart';
       case DeliveryType.pickup:
         return 'Pickup';
     }
+  }
+
+  static const Widget _deliveryPriceUnknownNote = Text(
+    'Delivery prices are not known until your parcel is weighed.',
+    style: TextStyle(
+      color: Colors.red,
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      height: 1.25,
+    ),
+  );
+
+  Widget _deliverySummaryRow() {
+    if (_deliveryType == DeliveryType.pickup) {
+      return _row('Delivery', 'Pickup (no courier fee)');
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              'Delivery',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.normal,
+                color: Colors.grey[700],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            flex: 2,
+            child: Text(
+              'Not known until parcel is weighed',
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                color: Colors.red,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -526,6 +581,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                     items: const [
                       DropdownMenuItem(value: DeliveryType.speed, child: Text('Speed')),
                       DropdownMenuItem(value: DeliveryType.cts, child: Text('CTS')),
+                      DropdownMenuItem(value: DeliveryType.ankolo, child: Text('Ankolo')),
+                      DropdownMenuItem(value: DeliveryType.smart, child: Text('Smart')),
                       DropdownMenuItem(value: DeliveryType.pickup, child: Text('Pickup')),
                     ],
                     onChanged: (v) {
@@ -534,9 +591,17 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '${_deliveryLabel(_deliveryType)} • Fee: ${_mwk(_delivery)}',
-                    style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                    'Selected: ${_deliveryLabel(_deliveryType)}',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
+                  if (_deliveryType != DeliveryType.pickup) ...[
+                    const SizedBox(height: 8),
+                    _deliveryPriceUnknownNote,
+                  ],
                 ],
               ),
             ),
@@ -585,7 +650,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                 ),
                 const SizedBox(height: 12),
                 _row('Subtotal', _mwk(_subtotal)),
-                _row('Delivery', _mwk(_delivery)),
+                _deliverySummaryRow(),
                 const SizedBox(height: 8),
                 const Divider(thickness: 1),
                 const SizedBox(height: 8),
@@ -758,18 +823,6 @@ class _DeliveryAddressCard extends StatelessWidget {
   }
 }
 
-// Helper for grouping cart total by merchant (marketplace wallet credit)
-class _MerchantTotal {
-  final String merchantId;
-  final String merchantName;
-  double amount;
-  _MerchantTotal({
-    required this.merchantId,
-    required this.merchantName,
-    required this.amount,
-  });
-}
-
 // ────────────────────── IN-APP PAYMENT PAGE ──────────────────────
 class InAppPaymentPage extends StatefulWidget {
   final String checkoutUrl;
@@ -780,7 +833,7 @@ class InAppPaymentPage extends StatefulWidget {
   final String? digitalProductName;
   /// When true, clears the cart (backend + local backup) after a successful payment.
   final bool clearCartOnSuccess;
-  /// Cart items for marketplace: on success, credit each merchant's wallet with their portion.
+  /// Cart items for marketplace: on success, create orders + escrow hold (merchant paid after confirm / 5d).
   final List<CartModel>? cartItemsForMerchantCredit;
   /// Shipping address used during checkout (null when pickup).
   final Address? shippingAddress;
@@ -814,7 +867,6 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   bool _isLoading = true;
   bool _resultHandled = false;
   final order_svc.OrderService _orderService = order_svc.OrderService();
-  final MarketplaceService _marketplaceService = MarketplaceService();
 
   @override
   void initState() {
@@ -896,77 +948,34 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     });
   }
 
-  /// Credits each merchant's Firestore wallet with their portion of the sale (marketplace).
-  /// Deducts 2.5% service fee; reports the fee to the admin app (super-admin wallet is managed there, not in Flutter).
-  Future<void> _creditMerchantWallets(List<CartModel> items) async {
+  /// Backend orders + Firestore escrow (merchant wallet credited after buyer confirms or 5 days).
+  Future<void> _createConfirmedOrdersAndEscrow(List<CartModel> items) async {
     try {
-      const feeRate = FirebaseWalletService.serviceFeeRate; // 2.5%
-      double totalServiceFee = 0.0;
-
-      final byMerchant = <String, _MerchantTotal>{};
-      for (final it in items) {
-        if (!it.hasValidMerchant) continue;
-        final id = it.merchantId.trim();
-        if (id.isEmpty) continue;
-        byMerchant.putIfAbsent(
-          id,
-          () => _MerchantTotal(merchantId: id, merchantName: it.merchantName, amount: 0),
-        );
-        byMerchant[id]!.amount += it.price * it.quantity;
-      }
-
-      for (final entry in byMerchant.values) {
-        if (entry.amount <= 0) continue;
-        final merchantAmount = entry.amount * (1.0 - feeRate);
-        final feeAmount = entry.amount * feeRate;
-        totalServiceFee += feeAmount;
-
-        await FirebaseWalletService.getOrCreateWallet(
-          merchantId: entry.merchantId,
-          merchantName: entry.merchantName,
-        );
-        await FirebaseWalletService.creditWallet(
-          merchantId: entry.merchantId,
-          amount: merchantAmount,
-          description: 'Marketplace sale (after 2.5% service fee)',
-          reference: widget.txRef,
-          type: 'sale',
-        );
-      }
-
-      if (totalServiceFee > 0) {
-        await _recordServiceFeeWithAdminApi(totalServiceFee);
-      }
+      final addressForOrder =
+          widget.deliveryType == DeliveryType.pickup ? null : widget.shippingAddress;
+      final refs = await _orderService.createOrdersFromCartWithRefs(
+        cartItems: items,
+        address: addressForOrder,
+        status: OrderStatus.confirmed,
+        deliveryMethod: _deliveryTypeLabel(widget.deliveryType),
+      );
+      await OrderEscrowService.createHoldsForOrders(
+        txRef: widget.txRef,
+        refs: refs,
+      );
     } catch (e) {
-      debugPrint('[InAppPaymentPage] Failed to credit merchant wallets: $e');
-    }
-  }
-
-  /// Sends the service fee to the admin app; super-admin wallet is managed there.
-  Future<void> _recordServiceFeeWithAdminApi(double amount) async {
-    if (!ApiConfig.isAdminApiConfigured) {
-      debugPrint('[InAppPaymentPage] Admin API not configured; service fee not reported.');
-      return;
-    }
-    try {
-      final base = ApiConfig.adminApiBase.trim().replaceFirst(RegExp(r'/+$'), '');
-      final uri = Uri.parse('$base/api/admin/record-service-fee');
-      final response = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-        body: json.encode({
-          'amount': amount,
-          'txRef': widget.txRef,
-          'secret': ApiConfig.adminServiceFeeSecret,
-        }),
-      ).timeout(const Duration(seconds: 10));
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        debugPrint('[InAppPaymentPage] Service fee reported to admin: $amount MWK');
-      } else {
-        debugPrint('[InAppPaymentPage] Admin API returned ${response.statusCode}: ${response.body}');
+      debugPrint('[InAppPaymentPage] Failed to create orders / escrow: $e');
+      final message = (e is order_svc.AuthRequiredException || e is order_svc.FriendlyApiException)
+          ? e.toString()
+          : 'We couldn’t finalize your order. Please contact support.';
+      if (mounted && widget.rootContext.mounted) {
+        ToastHelper.showCustomToast(
+          widget.rootContext,
+          'Order finalize failed',
+          isSuccess: false,
+          errorMessage: message,
+        );
       }
-    } catch (e) {
-      debugPrint('[InAppPaymentPage] Failed to report service fee to admin: $e');
     }
   }
 
@@ -1019,6 +1028,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         cartItems: items,
         address: addressForOrder,
         status: status,
+        deliveryMethod: _deliveryTypeLabel(widget.deliveryType),
       );
     } catch (e) {
       debugPrint('[InAppPaymentPage] Failed to create backend orders: $e');
@@ -1036,18 +1046,18 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
-  /// For marketplace items, mark the associated listing as sold (isActive = false)
-  /// once payment succeeds so it no longer appears as available.
-  Future<void> _markMarketplaceItemsSold(List<CartModel> items) async {
-    try {
-      for (final it in items) {
-        // Only apply to marketplace items that have a valid numeric backend id.
-        if (it.serviceType != 'marketplace') continue;
-        if (it.item <= 0) continue;
-        await _marketplaceService.markItemSold(it.item);
-      }
-    } catch (e) {
-      debugPrint('[InAppPaymentPage] Failed to mark items sold: $e');
+  String _deliveryTypeLabel(DeliveryType type) {
+    switch (type) {
+      case DeliveryType.speed:
+        return 'Speed';
+      case DeliveryType.cts:
+        return 'CTS';
+      case DeliveryType.ankolo:
+        return 'Ankolo';
+      case DeliveryType.smart:
+        return 'Smart';
+      case DeliveryType.pickup:
+        return 'Pickup';
     }
   }
 
@@ -1065,14 +1075,9 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         }
       }());
     }
-    // Credit each marketplace merchant's wallet with their portion of the sale
     final items = widget.cartItemsForMerchantCredit;
     if (items != null && items.isNotEmpty) {
-      unawaited(_creditMerchantWallets(items));
-      // Mark marketplace listings as sold so they are no longer purchasable.
-      unawaited(_markMarketplaceItemsSold(items));
-      // Create confirmed orders in backend for these cart items.
-      unawaited(_createBackendOrders(OrderStatus.confirmed));
+      unawaited(_createConfirmedOrdersAndEscrow(items));
     }
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
     final productName = widget.digitalProductName ?? 'your order';

@@ -76,6 +76,8 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  await loadDriverStatusFromPrefs();
+
   try {
     // Keep only absolutely critical init work here so the first frame appears fast.
     await Firebase.initializeApp(
@@ -589,10 +591,7 @@ class _DriverStatusBootstrapState extends ConsumerState<_DriverStatusBootstrap> 
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       loadDriverStatusFromPrefs();
-      Future.delayed(const Duration(seconds: 2), () {
-        if (!mounted) return;
-        ref.read(syncDriverStatusProvider);
-      });
+      ref.read(syncDriverStatusProvider);
     });
   }
 

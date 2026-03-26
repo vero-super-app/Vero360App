@@ -6,6 +6,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 /// Model for driver-specific ride request
+/// Result of fetching pending rides (distinguishes empty list vs error).
+class PendingRidesFetchResult {
+  final List<DriverRideRequest> requests;
+  /// Set when HTTP failed or returned an error status (not for empty 200 list).
+  final String? errorMessage;
+
+  const PendingRidesFetchResult({
+    required this.requests,
+    this.errorMessage,
+  });
+
+  bool get hasError => errorMessage != null && errorMessage!.isNotEmpty;
+}
+
 class DriverRideRequest {
   final String id;
   final String passengerId;
@@ -106,8 +120,10 @@ class DriverRideRequest {
     return DriverRideRequest(
       id: parseId(map['id'] ?? idParam),
       passengerId: parseId(map['passengerId']),
-      passengerName: getPassengerName(map['passenger']) ??
-          (map['passengerName'] ?? 'Unknown'),
+      passengerName: (map['passengerName'] != null &&
+              map['passengerName'].toString().trim().isNotEmpty)
+          ? map['passengerName'].toString()
+          : getPassengerName(map['passenger']),
       pickupLat: parseDouble(map['pickupLatitude'] ?? map['pickupLat']),
       pickupLng: parseDouble(map['pickupLongitude'] ?? map['pickupLng']),
       dropoffLat: parseDouble(map['dropoffLatitude'] ?? map['dropoffLat']),
@@ -166,8 +182,13 @@ class DriverRequestService {
   /// Get pending ride requests for a driver
   /// Note: For real-time updates, use WebSocket instead of polling
   static Future<List<DriverRideRequest>> getIncomingRequests() async {
+    final r = await getIncomingRequestsDetailed();
+    return r.requests;
+  }
+
+  /// Same as [getIncomingRequests] but surfaces HTTP failures for UI messaging.
+  static Future<PendingRidesFetchResult> getIncomingRequestsDetailed() async {
     try {
-      // Get auth token
       final token = await _getAuthToken();
 
       final headers = <String, String>{
@@ -178,7 +199,6 @@ class DriverRequestService {
       }
 
       final url = ApiConfig.endpoint('$_baseUrl/pending-rides');
-
       final response = await http.get(url, headers: headers);
 
       if (response.statusCode == 200) {
@@ -189,7 +209,6 @@ class DriverRequestService {
                 ? (decoded['requests'] as List).cast<Map<String, dynamic>>()
                 : <Map<String, dynamic>>[]);
 
-        // Sort by most recent first
         requests.sort(
           (a, b) {
             final dateA = DateTime.tryParse(a['createdAt'] ?? '');
@@ -201,16 +220,46 @@ class DriverRequestService {
           },
         );
 
-        final result = requests
+        final list = requests
             .map((r) => DriverRideRequest.fromMap(
                 Map<String, dynamic>.from(r), r['id']))
             .toList();
 
-        return result;
-      } else {}
-      return [];
+        return PendingRidesFetchResult(requests: list);
+      }
+
+      if (response.statusCode == 404) {
+        return const PendingRidesFetchResult(
+          requests: [],
+          errorMessage:
+              'No driver profile for this account. Complete driver registration first.',
+        );
+      }
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        return PendingRidesFetchResult(
+          requests: [],
+          errorMessage: 'Session expired. Sign in again to load ride requests.',
+        );
+      }
+
+      String? bodyMsg;
+      try {
+        final err = jsonDecode(response.body);
+        if (err is Map && err['message'] != null) {
+          bodyMsg = err['message'].toString();
+        }
+      } catch (_) {}
+
+      return PendingRidesFetchResult(
+        requests: [],
+        errorMessage: bodyMsg ??
+            'Could not load ride requests (HTTP ${response.statusCode}).',
+      );
     } catch (e) {
-      return [];
+      return PendingRidesFetchResult(
+        requests: [],
+        errorMessage: 'Network error while loading ride requests.',
+      );
     }
   }
 

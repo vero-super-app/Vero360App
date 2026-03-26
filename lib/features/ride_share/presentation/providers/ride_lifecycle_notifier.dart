@@ -69,21 +69,23 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
   // --------------- Join an existing ride (driver or resume) ---------------
 
   Future<void> subscribeToRide(int rideId) async {
-    if (_activeRideId == rideId && _rideSub != null) return;
-    _subscribeToUpdates(rideId);
+    // Always (re)wire the stream when switching rides; same id may need a refresh
+    // after a prior ride left the notifier in Completed/Cancelled.
+    if (_activeRideId != rideId || _rideSub == null) {
+      _subscribeToUpdates(rideId);
+    }
 
-    // Immediately fetch current ride data so UI doesn't stay empty
-    // while waiting for the first WebSocket event.
+    // Always merge HTTP snapshot — do not gate on RideIdle. Otherwise a stale
+    // RideCancelled/RideCompleted from a previous trip blocks loading the new ride.
     try {
       final ride = await _httpService.getRideDetails(rideId);
-      if (state is RideIdle || state is RideRequesting) {
-        if (ride.isCompleted) {
-          state = RideCompleted(ride: ride);
-        } else if (ride.isCancelled) {
-          state = RideCancelled(ride: ride);
-        } else {
-          state = RideActive(ride: ride);
-        }
+      if (ride.id != rideId) return;
+      if (ride.isCompleted) {
+        state = RideCompleted(ride: ride);
+      } else if (ride.isCancelled) {
+        state = RideCancelled(ride: ride);
+      } else {
+        state = RideActive(ride: ride);
       }
     } catch (e) {
       if (kDebugMode) {

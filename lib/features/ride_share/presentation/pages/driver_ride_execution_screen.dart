@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -31,15 +32,21 @@ class _DriverRideExecutionScreenState
   @override
   void initState() {
     super.initState();
+    // Defer reset + subscribe so we don't modify providers during build (Riverpod).
+    // Ride id guards on Completed/Cancelled still protect stale state on frame 1.
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(rideLifecycleProvider.notifier).reset();
       ref.read(rideLifecycleProvider.notifier).subscribeToRide(widget.rideId);
     });
   }
 
   @override
   void dispose() {
+    final notifier = ref.read(rideLifecycleProvider.notifier);
     _mapController?.dispose();
     super.dispose();
+    Future.microtask(() => notifier.reset());
   }
 
   void _onMapCreated(GoogleMapController controller) {
@@ -75,38 +82,48 @@ class _DriverRideExecutionScreenState
     };
 
     if (lifecycleState is RideCompleted && !_hasNavigatedAway) {
-      _hasNavigatedAway = true;
-      final r = lifecycleState.ride;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => _DriverRideCompletionScreen(
-                ride: r,
-                onDone: () => widget.onRideEnded?.call(),
+      final completedRide = lifecycleState.ride;
+      if (completedRide.id != widget.rideId) {
+        // Stale completion from another ride; wait for subscribeToRide to refresh.
+      } else {
+        _hasNavigatedAway = true;
+        final r = completedRide;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (_) => _DriverRideCompletionScreen(
+                  ride: r,
+                  onDone: () => widget.onRideEnded?.call(),
+                ),
               ),
-            ),
-          );
-        }
-      });
+            );
+          }
+        });
+      }
     }
 
     if (lifecycleState is RideCancelled && !_hasNavigatedAway) {
-      _hasNavigatedAway = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Ride cancelled: ${lifecycleState.reason}'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 2),
-            ),
-          );
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (mounted && context.mounted) Navigator.of(context).pop();
-          });
-        }
-      });
+      final cancelledRide = lifecycleState.ride;
+      if (cancelledRide.id != widget.rideId) {
+        // Stale cancel from another ride.
+      } else {
+        _hasNavigatedAway = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Ride cancelled: ${lifecycleState.reason}'),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (mounted && context.mounted) Navigator.of(context).pop();
+            });
+          }
+        });
+      }
     }
 
     if (lifecycleState is RideActive && lifecycleState.actionError != null) {
@@ -904,8 +921,18 @@ class _DriverRideCompletionScreenState
                   height: 48,
                   child: ElevatedButton(
                     onPressed: () {
-                      widget.onDone();
-                      Navigator.of(context).popUntil((route) => route.isFirst);
+                      try {
+                        widget.onDone();
+                      } catch (e, st) {
+                        if (kDebugMode) {
+                          debugPrint('[DriverCompletion] onDone error: $e $st');
+                        }
+                      }
+                      if (!context.mounted) return;
+                      final nav = Navigator.of(context, rootNavigator: true);
+                      if (nav.canPop()) {
+                        nav.popUntil((route) => route.isFirst);
+                      }
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: primaryColor,

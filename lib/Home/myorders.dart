@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -224,11 +225,11 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
       if (candidates.isEmpty) return;
 
       for (final o in candidates) {
+        await OrderEscrowService.repairBuyerUidIfNeeded(o);
         await OrderEscrowService.repairDeliveredTimestampIfNeeded(o);
       }
 
-      final ids = candidates.map((o) => o.id).toList();
-      var map = await OrderEscrowService.fetchEscrowForOrderIds(ids);
+      var map = await OrderEscrowService.fetchEscrowForOrdersResolved(candidates);
 
       for (final o in candidates) {
         final esc = map[o.id];
@@ -253,7 +254,39 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     } catch (_) {}
   }
 
+  bool _buyerMatchesEscrow(OrderItem o, OrderEscrowSnapshot e, String myUid) {
+    if (myUid.isEmpty) return false;
+    final bu = e.buyerUid.trim();
+    final cust = (o.customerUid ?? '').trim();
+    if (bu.isNotEmpty) return bu == myUid;
+    return cust.isNotEmpty && cust == myUid;
+  }
+
+  bool _merchantMatchesEscrow(OrderItem o, OrderEscrowSnapshot e, String myUid) {
+    if (myUid.isEmpty) return false;
+    final mu = e.merchantUid.trim();
+    final om = (o.merchantUid ?? '').trim();
+    if (mu.isNotEmpty) return mu == myUid;
+    return om.isNotEmpty && om == myUid;
+  }
+
   Future<void> _confirmParcelReceived(OrderItem o) async {
+    await OrderEscrowService.repairBuyerUidIfNeeded(o);
+    final esc = await OrderEscrowService.fetchEscrow(o.id);
+    if (!mounted) return;
+    final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (esc == null ||
+        !esc.isHeld ||
+        !_buyerMatchesEscrow(o, esc, myUid)) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Only the buyer can confirm receipt for this order.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
     final ok = await AppWalletPin.verifyParcelReceipt(context);
     if (!mounted) return;
     if (!ok) return;
@@ -281,6 +314,11 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   Widget _parcelEscrowSection(OrderItem o) {
     final esc = _escrowByOrderId[o.id];
     if (esc == null) return const SizedBox.shrink();
+
+    final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final isBuyer = _buyerMatchesEscrow(o, esc, myUid);
+    final isMerchantParty =
+        _merchantMatchesEscrow(o, esc, myUid) && !isBuyer;
 
     if (esc.isReleased) {
       return Container(
@@ -344,16 +382,18 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
           ),
           const SizedBox(height: 6),
           if (waitingMerchant)
-            const Text(
-              'Payment is held until the merchant marks this order as delivered. '
-              'Then you can confirm receipt to release funds to their wallet.',
-              style: TextStyle(
+            Text(
+              isMerchantParty
+                  ? 'Payment is held until you send shipment proof (To ship). The buyer confirms receipt after delivery.'
+                  : 'Payment is held until the merchant sends shipment proof. '
+                      'Then you can confirm receipt here to release funds to their wallet.',
+              style: const TextStyle(
                 fontSize: 13,
                 color: Color(0xFF6B778C),
                 height: 1.35,
               ),
             )
-          else ...[
+          else if (isBuyer) ...[
             Text(
               [
                 if (esc.releaseDueAt != null)
@@ -382,7 +422,25 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                 label: const Text('I received this parcel'),
               ),
             ),
-          ],
+          ] else if (isMerchantParty)
+            const Text(
+              'Waiting for the buyer to confirm receipt so your payout can be released.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B778C),
+                height: 1.35,
+              ),
+            )
+          else
+            const Text(
+              'Payment is held. Sign in as the buyer account that placed this order to see '
+              '“I received this parcel”, or pull to refresh.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B778C),
+                height: 1.35,
+              ),
+            ),
         ],
       ),
     );

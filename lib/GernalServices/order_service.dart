@@ -123,6 +123,16 @@ class OrderService {
         'Authorization': 'Bearer ${await _token()}',
       };
 
+  /// Picks the first non-empty string among common API key spellings (avoids escrow / order id mismatch).
+  String _firstStringFromMap(Map<dynamic, dynamic> m, List<String> keys) {
+    for (final k in keys) {
+      if (!m.containsKey(k) || m[k] == null) continue;
+      final s = m[k].toString().trim();
+      if (s.isNotEmpty) return s;
+    }
+    return '';
+  }
+
   String _statusLabel(OrderStatus s) {
     switch (s) {
       case OrderStatus.pending:
@@ -536,9 +546,24 @@ class OrderService {
         final decoded = jsonDecode(r.body);
         if (decoded is Map) {
           final data = decoded['data'] is Map ? decoded['data'] as Map : decoded;
-          createdOrderId = (data['id'] ?? data['_id'] ?? '').toString().trim();
-          createdOrderNumber =
-              (data['orderNumber'] ?? data['orderNo'] ?? '').toString().trim();
+          createdOrderId = _firstStringFromMap(data, const [
+            'id',
+            '_id',
+            'Id',
+            'ID',
+            'orderId',
+            'OrderId',
+            'OrderID',
+            'order_id',
+          ]);
+          createdOrderNumber = _firstStringFromMap(data, const [
+            'orderNumber',
+            'OrderNumber',
+            'orderNo',
+            'OrderNo',
+            'number',
+            'Number',
+          ]);
         }
       } catch (_) {}
 

@@ -141,6 +141,7 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
   Future<_DeliveredPayload> _loadPayload() async {
     final orders = await _svc.getMyOrders(status: OrderStatus.delivered);
     for (final o in orders) {
+      await OrderEscrowService.repairBuyerUidIfNeeded(o);
       await OrderEscrowService.repairDeliveredTimestampIfNeeded(o);
     }
     final ids = orders.map((e) => e.id);
@@ -148,7 +149,7 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     final buyerPhonesByOrderId =
         await BuyerPhoneResolver.resolveForOrders(orders);
     final escrowByOrderId =
-        await OrderEscrowService.fetchEscrowForOrderIds(ids);
+        await OrderEscrowService.fetchEscrowForOrdersResolved(orders);
     final merchantPhonesByOrderId =
         await MerchantPhoneResolver.resolveForOrders(orders);
     return _DeliveredPayload(
@@ -216,7 +217,11 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     if (_releasingOrderId != null) return;
     final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     if (escrow == null || !escrow.isHeld) return;
-    if (myUid.isEmpty || escrow.buyerUid != myUid) return;
+    await OrderEscrowService.repairBuyerUidIfNeeded(o);
+    final refreshed = await OrderEscrowService.fetchEscrow(o.id);
+    if (!mounted) return;
+    if (refreshed == null || !refreshed.isHeld) return;
+    if (!_buyerMatchesEscrow(o, refreshed, myUid)) return;
 
     setState(() => _releasingOrderId = o.id);
     try {
@@ -253,6 +258,23 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     } finally {
       if (mounted) setState(() => _releasingOrderId = null);
     }
+  }
+
+  /// True when this signed-in user is the buyer for escrow (Firestore buyerUid or order customerUid).
+  bool _buyerMatchesEscrow(OrderItem o, OrderEscrowSnapshot e, String myUid) {
+    if (myUid.isEmpty) return false;
+    final bu = e.buyerUid.trim();
+    final cust = (o.customerUid ?? '').trim();
+    if (bu.isNotEmpty) return bu == myUid;
+    return cust.isNotEmpty && cust == myUid;
+  }
+
+  bool _merchantMatchesEscrow(OrderItem o, OrderEscrowSnapshot e, String myUid) {
+    if (myUid.isEmpty) return false;
+    final mu = e.merchantUid.trim();
+    final om = (o.merchantUid ?? '').trim();
+    if (mu.isNotEmpty) return mu == myUid;
+    return om.isNotEmpty && om == myUid;
   }
 
   Color _paymentColor(String statusUpper) {
@@ -397,7 +419,9 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
           border: Border.all(color: _brand.withValues(alpha: 0.35)),
         ),
         child: const Text(
-          'Parcel & payment hold not found for this order yet. Pull to refresh.',
+          'No escrow hold is linked to this order id (often fixed after refresh if the hold '
+          'was saved under a different id). Pull to refresh. If it persists, the order may '
+          'not have been completed through in-app marketplace checkout.',
           style: TextStyle(
             fontSize: 13,
             color: Color(0xFF6B778C),
@@ -517,6 +541,13 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
             const Text(
               'Waiting for the buyer to confirm receipt so your payout can be released.',
               style: TextStyle(fontSize: 13, color: Color(0xFF6B778C), height: 1.35),
+            )
+          else if (!waitingMerchant)
+            const Text(
+              'Payment is held for this order. Open this screen while signed in as the '
+              'account that bought the item, then confirm receipt to release funds to the seller. '
+              'If the button still does not appear, pull to refresh or contact support.',
+              style: TextStyle(fontSize: 13, color: Color(0xFF6B778C), height: 1.35),
             ),
         ],
       ),
@@ -533,7 +564,11 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     final String imageUrl = o.itemImage.toString();
     final String itemName = o.itemName.toString();
     final String orderNo = o.orderNumber.toString();
-    final String paymentStr = o.paymentStatus.toString().toUpperCase();
+    final String paymentStr = switch (o.paymentStatus) {
+      PaymentStatus.paid => 'PAID',
+      PaymentStatus.pending => 'PENDING',
+      PaymentStatus.unpaid => 'UNPAID',
+    };
 
     final int qty = int.tryParse('${o.quantity}') ?? 1;
     final num unitPrice = num.tryParse('${o.price}') ?? 0;
@@ -563,15 +598,12 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     final canConfirmEscrow = escrow != null &&
         escrow.isHeld &&
         myUid.isNotEmpty &&
-        escrow.buyerUid == myUid;
-    final orderMerchantUid = (o.merchantUid ?? '').trim();
+        _buyerMatchesEscrow(o, escrow, myUid);
     final isSellerWaiting = escrow != null &&
         escrow.isHeld &&
         myUid.isNotEmpty &&
-        escrow.buyerUid.isNotEmpty &&
-        escrow.buyerUid != myUid &&
-        (escrow.merchantUid == myUid ||
-            (orderMerchantUid.isNotEmpty && orderMerchantUid == myUid));
+        _merchantMatchesEscrow(o, escrow, myUid) &&
+        !_buyerMatchesEscrow(o, escrow, myUid);
 
     final releasing = _releasingOrderId == o.id;
 

@@ -58,6 +58,7 @@ dependencies:
   # Media
   image_picker: ^1.2.0
   video_player: ^2.9.2
+  cached_network_image: ^3.4.1
 
   # Firebase
   firebase_core: ^4.3.0

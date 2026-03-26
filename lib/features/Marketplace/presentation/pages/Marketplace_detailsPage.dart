@@ -24,6 +24,7 @@ import 'package:vero360_app/GernalServices/chat_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 import '../../../../GeneralPages/video_player_page.dart';
 
@@ -82,19 +83,9 @@ Widget _buildMarketplaceImage(String src, {BoxFit fit = BoxFit.cover}) {
     );
   }
 
-  // HTTP/HTTPS URL
+  // HTTP/HTTPS URL (disk-cached, full resolution)
   if (s.startsWith('http://') || s.startsWith('https://')) {
-    return Image.network(
-      s,
-      fit: fit,
-      errorBuilder: (_, __, ___) => Container(
-        color: Colors.grey.shade200,
-        child: const Icon(
-          Icons.broken_image_outlined,
-          color: Colors.grey,
-        ),
-      ),
-    );
+    return ResilientCachedNetworkImage(url: s, fit: fit);
   }
 
   // Try base64 (with or without data: prefix)
@@ -113,7 +104,9 @@ Widget _buildMarketplaceImage(String src, {BoxFit fit = BoxFit.cover}) {
       ),
     );
   } catch (_) {
-    // Fallback: try network again (in case it's some other kind of URL)
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      return ResilientCachedNetworkImage(url: s, fit: fit);
+    }
     return Image.network(
       s,
       fit: fit,
@@ -202,35 +195,6 @@ class _DetailsPageState extends State<DetailsPage> {
       _pc.animateToPage(next,
           duration: const Duration(milliseconds: 400),
           curve: Curves.easeOut);
-    });
-  }
-
-  void _stopAutoplay() {
-    _autoTimer?.cancel();
-    _autoTimer = null;
-  }
-
-  void _next() {
-    if (_media.isEmpty) return;
-    _stopAutoplay();
-    final n = (_page + 1) % _media.length;
-    _pc.animateToPage(n,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut);
-    Future.delayed(const Duration(seconds: 5), () {
-      if (mounted && _media.length > 1) _startAutoplay();
-    });
-  }
-
-  void _prev() {
-    if (_media.isEmpty) return;
-    _stopAutoplay();
-    final p = (_page - 1 + _media.length) % _media.length;
-    _pc.animateToPage(p,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut);
-    Future.delayed(const Duration(seconds: 5), () {
-      if (mounted && _media.length > 1) _startAutoplay();
     });
   }
 
@@ -380,12 +344,6 @@ class _DetailsPageState extends State<DetailsPage> {
     );
   }
 
-  String? _closingFromHours(String? openingHours) {
-    if (openingHours == null || openingHours.trim().isEmpty) return null;
-    final parts = openingHours.replaceAll('–', '-').split('-');
-    return parts.length == 2 ? parts[1].trim() : null;
-  }
-
   Widget _infoRow(String label, String? value, {IconData? icon}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -445,6 +403,34 @@ class _DetailsPageState extends State<DetailsPage> {
     if (r == null) return '—';
     final whole = r.truncateToDouble();
     return r == whole ? r.toStringAsFixed(0) : r.toStringAsFixed(1);
+  }
+
+  String _formatTimeAgo(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) {
+      final m = diff.inMinutes;
+      return '$m ${m == 1 ? 'min' : 'mins'} ago';
+    }
+    if (diff.inHours < 24) {
+      final h = diff.inHours;
+      return '$h ${h == 1 ? 'hr' : 'hrs'} ago';
+    }
+    if (diff.inDays < 7) {
+      final d = diff.inDays;
+      return '$d ${d == 1 ? 'day' : 'days'} ago';
+    }
+
+    final weeks = (diff.inDays / 7).floor();
+    if (weeks < 4) return '$weeks ${weeks == 1 ? 'week' : 'weeks'} ago';
+
+    final months = (diff.inDays / 30).floor();
+    if (months < 12) return '$months ${months == 1 ? 'month' : 'months'} ago';
+
+    final years = (diff.inDays / 365).floor();
+    return '$years ${years == 1 ? 'year' : 'years'} ago';
   }
 
   Widget _ratingStars(double? rating) {
@@ -588,8 +574,6 @@ class _DetailsPageState extends State<DetailsPage> {
           final s = snapshot.data;
           final businessName = s?.businessName;
           final status = s?.status;
-          final openingHours = s?.openingHours;
-          final closing = _closingFromHours(openingHours);
           final rating = s?.rating;
           final businessDesc = s?.description;
           final logo = s?.logoUrl;
@@ -602,7 +586,7 @@ class _DetailsPageState extends State<DetailsPage> {
           final merchantId =
               item.merchantId ?? item.serviceProviderId ?? '';
           final merchantDisplayName =
-              item.merchantName ?? businessName ?? 'Merchant';
+              businessName ?? item.sellerBusinessName ?? item.merchantName ?? 'Merchant';
 
           return Padding(
             padding: const EdgeInsets.all(16.0),
@@ -660,57 +644,33 @@ class _DetailsPageState extends State<DetailsPage> {
                           },
                         ),
                       ),
-                      if (_media.length > 1) ...[
-                        Positioned(
-                          left: 8,
-                          top: 0,
-                          bottom: 0,
-                          child: _NavBtn(
-                            icon: Icons.chevron_left,
-                            onTap: _prev,
-                          ),
-                        ),
-                        Positioned(
-                          right: 8,
-                          top: 0,
-                          bottom: 0,
-                          child: _NavBtn(
-                            icon: Icons.chevron_right,
-                            onTap: _next,
-                          ),
-                        ),
+                      if (_media.length > 1)
                         Positioned(
                           bottom: 8,
                           left: 0,
                           right: 0,
                           child: Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.center,
-                            children:
-                                List.generate(_media.length, (i) {
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: List.generate(_media.length, (i) {
                               final active = i == _page;
                               return AnimatedContainer(
-                                duration: const Duration(
-                                    milliseconds: 200),
+                                duration:
+                                    const Duration(milliseconds: 200),
                                 margin:
-                                    const EdgeInsets.symmetric(
-                                        horizontal: 3),
+                                    const EdgeInsets.symmetric(horizontal: 3),
                                 width: active ? 18 : 8,
                                 height: 8,
                                 decoration: BoxDecoration(
                                   color: active
                                       ? _brandOrange
                                       : Colors.white70,
-                                  borderRadius:
-                                      BorderRadius.circular(20),
-                                  border: Border.all(
-                                      color: Colors.black26),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: Colors.black26),
                                 ),
                               );
                             }),
                           ),
                         ),
-                      ],
                     ],
                   ),
                 ),
@@ -756,10 +716,12 @@ class _DetailsPageState extends State<DetailsPage> {
                               style:
                                   const TextStyle(height: 1.3),
                             ),
-                          if (merchantDisplayName.isNotEmpty || item.createdAt != null) ...[
+                          if (merchantDisplayName.isNotEmpty) ...[
                             const SizedBox(height: 8),
                             Text(
-                              merchantDisplayName,
+                              item.createdAt != null
+                                  ? 'Posted by $merchantDisplayName • ${_formatTimeAgo(item.createdAt!)}'
+                                  : 'Posted by $merchantDisplayName',
                               style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                             ),
                           ],
@@ -842,8 +804,6 @@ class _DetailsPageState extends State<DetailsPage> {
                           businessName ?? item.sellerBusinessName ?? item.merchantName,
                           icon: Icons.badge_rounded,
                         ),
-                        _infoRow('Closing hours', closing,
-                            icon: Icons.access_time_rounded),
                         _infoRow(
                           'Status',
                           (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
@@ -928,33 +888,6 @@ class _DetailsPageState extends State<DetailsPage> {
             ),
           );
         },
-      ),
-    );
-  }
-}
-
-class _NavBtn extends StatelessWidget {
-  const _NavBtn({required this.icon, required this.onTap});
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black38,
-      borderRadius: BorderRadius.circular(24),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(24),
-        child: SizedBox(
-          width: 40,
-          height: 40,
-          child: Icon(
-            icon,
-            color: Colors.white,
-            size: 26,
-          ),
-        ),
       ),
     );
   }

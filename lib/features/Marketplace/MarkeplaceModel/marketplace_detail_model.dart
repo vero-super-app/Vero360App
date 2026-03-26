@@ -43,8 +43,10 @@ class MarketplaceDetailModel {
   factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
     final data = (doc.data() as Map<String, dynamic>?) ?? {};
 
-    // Image: base64 → bytes (from your sample)
-    final rawImage = (data['image'] ?? '').toString();
+    // Cover: `image` (base64 or URL) or `imageUrl` (merchant dashboard)
+    final rawImage = (data['image'] ?? data['imageUrl'] ?? data['photo'] ?? data['picture'] ?? '')
+        .toString()
+        .trim();
     Uint8List? bytes;
     if (rawImage.isNotEmpty) {
       try {
@@ -83,10 +85,33 @@ class MarketplaceDetailModel {
 
     final cat = (data['category'] ?? '').toString().toLowerCase();
 
-    List<String> gallery = const [];
-    final galleryRaw = data['gallery'];
-    if (galleryRaw is List) {
-      gallery = galleryRaw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
+    List<String> parseGalleryField(dynamic field) {
+      if (field is List) {
+        return field.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
+      }
+      if (field is String) {
+        final raw = field.trim();
+        if (raw.isEmpty) return const [];
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is List) {
+            return decoded.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
+          }
+        } catch (_) {}
+        return raw.split(',').map((e) => e.trim()).where((s) => s.isNotEmpty).toList();
+      }
+      return const [];
+    }
+
+    final fromGallery = parseGalleryField(data['gallery']);
+    final fromGalleryUrls = parseGalleryField(data['galleryUrls']);
+    final seen = <String>{};
+    final gallery = <String>[];
+    for (final s in [...fromGallery, ...fromGalleryUrls]) {
+      final t = s.trim();
+      if (t.isEmpty || seen.contains(t)) continue;
+      seen.add(t);
+      gallery.add(t);
     }
     List<String> videos = const [];
     final videosRaw = data['videos'];

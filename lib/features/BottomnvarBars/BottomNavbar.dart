@@ -340,7 +340,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
       bottomNavigationBar: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          // Smaller padding on tiny screens to avoid bottom overflow.
+          padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
           child: _GlassPillNavBar(
             selectedIndex: _selectedIndex,
             onTap: _onItemTapped,
@@ -394,16 +395,18 @@ class _GlassPillNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final navHeight =
+        MediaQuery.sizeOf(context).shortestSide < 360 ? 74.0 : 82.0;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(navHeight / 4),
       child: Stack(
         children: [
           BackdropFilter(
             filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-            child: Container(height: 82, color: Colors.white.withOpacity(0.55)),
+            child: Container(height: navHeight, color: Colors.white.withOpacity(0.55)),
           ),
           Container(
-            height: 82,
+            height: navHeight,
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: ClipRect(
               child: Row(
@@ -457,68 +460,75 @@ class _AnimatedNavButton extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final w = constraints.maxWidth;
-        final canShowLabel = selected && w >= 92;
+        const labelStyle = TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+        );
 
-        return Center(
-          child: InkWell(
-            onTap: onTap,
-            splashColor: Colors.transparent,
-            highlightColor: Colors.transparent,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              padding: EdgeInsets.symmetric(
-                horizontal: canShowLabel ? 14 : 10,
-                vertical: 8,
-              ),
-              constraints: const BoxConstraints(
-                minHeight: 44,
-                maxHeight: 52,
-              ),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                gradient: selected ? selectedGradient : null,
-                boxShadow: selected
-                    ? [
-                        BoxShadow(
-                          color: glowColor.withOpacity(0.45),
-                          blurRadius: 14,
-                          offset: const Offset(0, 6),
-                        ),
-                      ]
-                    : null,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TweenAnimationBuilder<double>(
-                    tween:
-                        Tween(begin: 1.0, end: selected ? 1.12 : 1.0),
-                    duration: const Duration(milliseconds: 220),
-                    builder: (_, scale, child) =>
-                        Transform.scale(scale: scale, child: child),
-                    child: Icon(
-                      data.icon,
-                      size: 26,
-                      color:
-                          selected ? selectedIconColor : unselectedIconColor,
-                    ),
-                  ),
-                  if (canShowLabel) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      data.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.fade,
-                      softWrap: false,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
+        // Five tabs ⇒ each slot is narrow. A Row with `mainAxisSize: min` gives Text
+        // unbounded width, so ellipsis does not apply and the pill overflows.
+        // Fix: fixed slot width + Expanded label (strictly bounded).
+        final tightW = w.isFinite ? w : double.infinity;
+        final hPad = selected ? (tightW < 52 ? 6.0 : 12.0) : 8.0;
+
+        return SizedBox(
+          width: tightW,
+          child: Center(
+            child: InkWell(
+              onTap: onTap,
+              splashColor: Colors.transparent,
+              highlightColor: Colors.transparent,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                padding: EdgeInsets.symmetric(
+                  horizontal: hPad,
+                  vertical: 8,
+                ),
+                constraints: const BoxConstraints(
+                  minHeight: 44,
+                  maxHeight: 52,
+                ),
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  gradient: selected ? selectedGradient : null,
+                  boxShadow: selected
+                      ? [
+                          BoxShadow(
+                            color: glowColor.withOpacity(0.45),
+                            blurRadius: 14,
+                            offset: const Offset(0, 6),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: selected
+                    ? Row(
+                        children: [
+                          Icon(
+                            data.icon,
+                            size: 24,
+                            color: selectedIconColor,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              data.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                              style: labelStyle,
+                            ),
+                          ),
+                        ],
+                      )
+                    : Icon(
+                        data.icon,
+                        size: 26,
+                        color: unselectedIconColor,
                       ),
-                    ),
-                  ],
-                ],
               ),
             ),
           ),

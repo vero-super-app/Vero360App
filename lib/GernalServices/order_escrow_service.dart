@@ -107,6 +107,29 @@ class OrderEscrowService {
     await markDelivered(o.id);
   }
 
+  /// Older holds may lack [buyerUid]. When the signed-in user matches the order’s
+  /// [OrderItem.customerUid], backfill so the buyer can confirm receipt and [releaseFunds].
+  static Future<void> repairBuyerUidIfNeeded(OrderItem o) async {
+    final myUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    if (myUid.isEmpty) return;
+    final cust = (o.customerUid ?? '').trim();
+    if (cust.isEmpty || cust != myUid) return;
+
+    final ref = _doc(o.id);
+    final snap = await ref.get();
+    if (!snap.exists) return;
+    final data = snap.data();
+    if (data == null) return;
+    if (data['status'] != 'held') return;
+    final existing = (data['buyerUid'] ?? '').toString().trim();
+    if (existing.isNotEmpty) return;
+
+    await ref.update({
+      'buyerUid': cust,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   static Future<OrderEscrowSnapshot?> fetchEscrow(String orderId) async {
     final snap = await _doc(orderId).get();
     if (!snap.exists || snap.data() == null) return null;
@@ -120,6 +143,109 @@ class OrderEscrowService {
     await Future.wait(orderIds.map((id) async {
       out[id] = await fetchEscrow(id);
     }));
+    return out;
+  }
+
+  /// Values to match Firestore field [orderNumber] when the escrow doc id ≠ API [OrderItem.id].
+  static List<String> orderNumberLookupVariants(String raw) {
+    final s = raw.trim();
+    final out = <String>{};
+    void add(String x) {
+      final t = x.trim();
+      if (t.isNotEmpty) out.add(t);
+    }
+
+    add(s);
+    add(s.replaceFirst(RegExp(r'^#+\s*'), ''));
+    final lower = s.toLowerCase();
+    final veroIdx = lower.indexOf('vero');
+    if (veroIdx >= 0 && veroIdx + 4 < s.length) {
+      add(s.substring(veroIdx + 4).trim());
+    }
+    final digits = RegExp(r'\d{3,}').firstMatch(s)?.group(0);
+    if (digits != null) add(digits);
+    return out.toList();
+  }
+
+  static Future<void> _migrateEscrowToCanonicalId({
+    required String canonicalOrderId,
+    required String strayFirestoreDocId,
+  }) async {
+    if (canonicalOrderId.isEmpty || strayFirestoreDocId == canonicalOrderId) {
+      return;
+    }
+    final srcRef = _doc(strayFirestoreDocId);
+    final dstRef = _doc(canonicalOrderId);
+    await _db.runTransaction((transaction) async {
+      final src = await transaction.get(srcRef);
+      if (!src.exists || src.data() == null) return;
+      final dst = await transaction.get(dstRef);
+      if (dst.exists) return;
+      transaction.set(dstRef, src.data()!, SetOptions(merge: true));
+      transaction.delete(srcRef);
+    });
+  }
+
+  /// Resolves escrow when the hold was stored under a wrong document id (common if POST /orders
+  /// omitted id and the app used a temporary key). Finds by [orderNumber] + buyer, then moves
+  /// the doc to [order.id] so shipment / release use one id.
+  static Future<OrderEscrowSnapshot?> fetchEscrowResolvingOrderId(OrderItem order) async {
+    final direct = await fetchEscrow(order.id);
+    if (direct != null) return direct;
+
+    final myUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    if (order.paymentStatus != PaymentStatus.paid || myUid.isEmpty) return null;
+
+    final variants = orderNumberLookupVariants(order.orderNumber);
+    if (variants.isEmpty) return null;
+
+    DocumentSnapshot<Map<String, dynamic>>? match;
+    for (var i = 0; i < variants.length; i += 10) {
+      final chunk = variants.skip(i).take(10).toList();
+      if (chunk.isEmpty) break;
+      final qs = await _db
+          .collection(_collection)
+          .where('orderNumber', whereIn: chunk)
+          .limit(25)
+          .get();
+      for (final doc in qs.docs) {
+        final data = doc.data();
+        final bu = (data['buyerUid'] ?? '').toString().trim();
+        final st = (data['status'] ?? '').toString();
+        if (st != 'held' && st != 'released' && st != 'auto_released') continue;
+        if (bu.isNotEmpty && bu != myUid) continue;
+        match = doc;
+        break;
+      }
+      if (match != null) break;
+    }
+    if (match == null || !match.exists) return null;
+
+    final strayId = match.id;
+    if (strayId != order.id) {
+      try {
+        await _migrateEscrowToCanonicalId(
+          canonicalOrderId: order.id,
+          strayFirestoreDocId: strayId,
+        );
+      } catch (e) {
+        debugPrint('[OrderEscrow] migrate doc $strayId -> ${order.id} failed: $e');
+      }
+    }
+    return await fetchEscrow(order.id);
+  }
+
+  /// Like [fetchEscrowForOrderIds] but runs [fetchEscrowResolvingOrderId] when a direct read misses.
+  static Future<Map<String, OrderEscrowSnapshot?>> fetchEscrowForOrdersResolved(
+    Iterable<OrderItem> orders,
+  ) async {
+    final list = orders.toList();
+    final initial = await fetchEscrowForOrderIds(list.map((e) => e.id));
+    final out = Map<String, OrderEscrowSnapshot?>.from(initial);
+    for (final o in list) {
+      if (out[o.id] != null) continue;
+      out[o.id] = await fetchEscrowResolvingOrderId(o);
+    }
     return out;
   }
 
@@ -149,9 +275,15 @@ class OrderEscrowService {
     }
 
     if (buyerConfirmed) {
-      final buyerUid = (data['buyerUid'] ?? '').toString();
-      if (buyerUid != uid) {
+      final buyerUid = (data['buyerUid'] ?? '').toString().trim();
+      final me = uid.trim();
+      if (buyerUid.isNotEmpty && buyerUid != me) {
         throw StateError('Only the buyer can confirm this order.');
+      }
+      if (buyerUid.isEmpty) {
+        throw StateError(
+          'Payment hold is missing buyer information. Pull to refresh, then try again.',
+        );
       }
     } else {
       final due = data['releaseDueAt'];

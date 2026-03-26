@@ -17,6 +17,14 @@ if (envFile.exists()) {
     envFile.inputStream().use { envProperties.load(it) }
 }
 
+// Release signing: create android/key.properties (see Flutter keystore guide).
+// If missing, release uses the debug keystore so local APK installs still work.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+}
+
 android {
     namespace = "com.vero.vero360"
 
@@ -53,6 +61,27 @@ android {
     packaging {
         resources {
             excludes += "META-INF/DEPENDENCIES"
+        }
+    }
+
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

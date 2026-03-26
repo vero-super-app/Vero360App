@@ -1,5 +1,6 @@
 // lib/models/marketplace.model.dart
 // Remove the toCartModel methods or comment them out for now
+import 'dart:convert';
 
 class MarketplaceItem {
   final String name;
@@ -125,12 +126,52 @@ class MarketplaceDetailModel {
   });
 
   factory MarketplaceDetailModel.fromJson(Map<String, dynamic> j) {
-    List<String> arr(dynamic v) =>
-        (v is List) ? v.map((e) => '$e').where((s) => s.isNotEmpty).cast<String>().toList() : const <String>[];
+    List<String> arr(dynamic v) {
+      if (v is List) {
+        return v
+            .map((e) => '$e'.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+      if (v is String) {
+        final raw = v.trim();
+        if (raw.isEmpty) return const <String>[];
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is List) {
+            return decoded
+                .map((e) => '$e'.trim())
+                .where((s) => s.isNotEmpty)
+                .toList();
+          }
+        } catch (_) {
+          // Fallback for comma-separated values.
+        }
+        return raw
+            .split(',')
+            .map((e) => e.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+      return const <String>[];
+    }
     double toDoubleVal(dynamic v) => (v is num) ? v.toDouble() : double.tryParse('$v') ?? 0.0;
 
     final String? sellerUserId =
         (j['sellerUserId'] ?? j['ownerId'])?.toString();
+
+    final galleryMerged = () {
+      final a = arr(j['gallery']);
+      final b = arr(j['galleryUrls']);
+      final seen = <String>{};
+      final out = <String>[];
+      for (final s in [...a, ...b]) {
+        if (s.isEmpty || seen.contains(s)) continue;
+        seen.add(s);
+        out.add(s);
+      }
+      return out;
+    }();
 
     return MarketplaceDetailModel(
       id: j['id'] ?? 0,
@@ -141,7 +182,7 @@ class MarketplaceDetailModel {
       location: '${j['location'] ?? ''}',
       comment: j['comment']?.toString(),
       category: j['category']?.toString(),
-      gallery: arr(j['gallery']),
+      gallery: galleryMerged,
       videos: arr(j['videos']),
       sellerBusinessName: j['sellerBusinessName']?.toString(),
       sellerOpeningHours: j['sellerOpeningHours']?.toString(),

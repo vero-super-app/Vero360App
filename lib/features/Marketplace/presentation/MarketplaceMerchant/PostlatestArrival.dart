@@ -438,29 +438,35 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(10, 0, 8, 10),
+                      padding: const EdgeInsets.fromLTRB(10, 0, 4, 10),
                       child: Row(
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: _brandSoft,
-                              borderRadius: BorderRadius.circular(20),
-                              border:
-                                  Border.all(color: _brandOrange, width: 1),
-                            ),
-                            child: Text(
-                              'MWK ${it.price.toStringAsFixed(0)}',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w700),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: _brandSoft,
+                                borderRadius: BorderRadius.circular(20),
+                                border:
+                                    Border.all(color: _brandOrange, width: 1),
+                              ),
+                              child: Text(
+                                'MWK ${it.price.toStringAsFixed(0)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700),
+                              ),
                             ),
                           ),
-                          const Spacer(),
                           IconButton(
                             visualDensity: VisualDensity.compact,
                             padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
+                            constraints: const BoxConstraints(
+                              minWidth: 40,
+                              minHeight: 40,
+                            ),
                             icon: const Icon(Icons.delete_outline,
                                 color: Colors.red),
                             onPressed: _busyRow ? null : () => _delete(it),

@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -31,6 +32,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.s
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 /// ✅ Removes scrollbars + glow everywhere inside bottom-sheet
 class _NoBarsScrollBehavior extends MaterialScrollBehavior {
@@ -189,10 +191,44 @@ class MarketplaceDetailModel {
 
     final cat = (data['category'] ?? '').toString().toLowerCase();
 
-    List<String> gallery = const [];
-    final galleryRaw = data['gallery'];
-    if (galleryRaw is List) {
-      gallery = galleryRaw.map((e) => e.toString()).toList();
+    List<String> parseGalleryField(dynamic field) {
+      if (field is List) {
+        return field
+            .map((e) => e.toString().trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+      if (field is String) {
+        final raw = field.trim();
+        if (raw.isEmpty) return const [];
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is List) {
+            return decoded
+                .map((e) => e.toString().trim())
+                .where((s) => s.isNotEmpty)
+                .toList();
+          }
+        } catch (_) {}
+        return raw
+            .split(',')
+            .map((e) => e.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+      return const [];
+    }
+
+    // `gallery` (Post_On_Marketplace) vs `galleryUrls` (merchant dashboard upload flow)
+    final fromGallery = parseGalleryField(data['gallery']);
+    final fromGalleryUrls = parseGalleryField(data['galleryUrls']);
+    final seen = <String>{};
+    final gallery = <String>[];
+    for (final s in [...fromGallery, ...fromGalleryUrls]) {
+      final t = s.trim();
+      if (t.isEmpty || seen.contains(t)) continue;
+      seen.add(t);
+      gallery.add(t);
     }
 
     double? sellerRating;
@@ -367,96 +403,6 @@ Widget _statusChip(String? status) {
 }
 
 /// Network image that on load error retries with the other scheme (http <-> https).
-class _ResilientNetworkImage extends StatefulWidget {
-  const _ResilientNetworkImage({
-    required this.url,
-    this.fit = BoxFit.cover,
-    this.width,
-    this.height,
-  });
-
-  final String url;
-  final BoxFit fit;
-  final double? width;
-  final double? height;
-
-  @override
-  State<_ResilientNetworkImage> createState() => _ResilientNetworkImageState();
-}
-
-class _ResilientNetworkImageState extends State<_ResilientNetworkImage> {
-  String get _currentUrl => _tryAlternate ? _alternateUrl : widget.url;
-  late String _alternateUrl;
-  bool _tryAlternate = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _alternateUrl = _flipScheme(widget.url);
-  }
-
-  static String _flipScheme(String url) {
-    final u = url.trim().toLowerCase();
-    if (u.startsWith('https://')) return 'http://${url.substring(8)}';
-    if (u.startsWith('http://')) return 'https://${url.substring(7)}';
-    return url;
-  }
-
-  Widget _buildImage(String url) {
-    return Image.network(
-      url,
-      fit: widget.fit,
-      width: widget.width,
-      height: widget.height,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) {
-        if (!_tryAlternate && _flipScheme(url) != url) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _tryAlternate = true);
-          });
-          return Container(
-            width: widget.width,
-            height: widget.height,
-            color: Colors.grey.shade100,
-            alignment: Alignment.center,
-            child: const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          );
-        }
-        return Container(
-          width: widget.width,
-          height: widget.height,
-          color: Colors.grey.shade200,
-          alignment: Alignment.center,
-          child: const Icon(Icons.image_not_supported_rounded),
-        );
-      },
-      loadingBuilder: (c, child, progress) {
-        if (progress == null) return child;
-        return Container(
-          width: widget.width,
-          height: widget.height,
-          color: Colors.grey.shade100,
-          alignment: Alignment.center,
-          child: const SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return _buildImage(_currentUrl);
-  }
-}
-
 /// --------------------
 /// Market Page
 /// --------------------
@@ -509,9 +455,24 @@ class _MarketPageState extends State<MarketPage> {
   String? _selectedCategory;
 
   Timer? _debounce;
+  Timer? _suggestionTimer;
   String _lastQuery = '';
   bool _loading = false;
   bool _photoMode = false;
+  bool _comfortableView = false;
+  bool _forYouMode = true;
+  int _suggestionIndex = 0;
+  static const List<String> _searchSuggestions = <String>[
+    'iphone 13 near me',
+    'nike shoes size 42',
+    'ps5 controller',
+    'laptop under 500k',
+    'kitchen blender',
+    'office chair',
+  ];
+
+  // Search suggestion carousel (interactive + auto-slides)
+  List<String> _activeSearchSuggestions = const <String>[];
 
   /// AI Search mode: when true, shows AI summary, product highlights, and smarter search
 bool _aiSearchMode=false;
@@ -524,6 +485,253 @@ bool _aiSearchMode=false;
 
   // ✅ Cache firebase download URLs to avoid repeated calls
   final Map<String, Future<String?>> _dlUrlCache = {};
+  static const String _prefsPersonalizationPrefix = 'marketplace_personalization_v1_';
+
+  List<String> _keywordsFromText(String text) {
+    final clean = text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+        .trim();
+    if (clean.isEmpty) return const [];
+    const stop = {
+      'the', 'and', 'for', 'with', 'this', 'that', 'from', 'you', 'your', 'item',
+      'items', 'new', 'used', 'very', 'good', 'best', 'all', 'are', 'was', 'were',
+      'has', 'have', 'had', 'not', 'but', 'can', 'will', 'its', 'our', 'their',
+    };
+    final words = clean
+        .split(RegExp(r'\s+'))
+        .where((w) => w.length >= 3 && !stop.contains(w))
+        .toList();
+    return words;
+  }
+
+  Future<String> _personalizationStorageKey() async {
+    final uid = await _getCurrentUserId();
+    final safe = (uid == null || uid.trim().isEmpty) ? 'guest' : uid.trim();
+    return '$_prefsPersonalizationPrefix$safe';
+  }
+
+  Future<Map<String, dynamic>> _readPersonalizationProfile() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final k = await _personalizationStorageKey();
+      final raw = prefs.getString(k);
+      if (raw == null || raw.isEmpty) {
+        return {
+          'cat': <String, num>{},
+          'merchant': <String, num>{},
+          'kw': <String, num>{},
+          'last': <String, int>{},
+        };
+      }
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return {
+          'cat': Map<String, num>.from(decoded['cat'] ?? const {}),
+          'merchant': Map<String, num>.from(decoded['merchant'] ?? const {}),
+          'kw': Map<String, num>.from(decoded['kw'] ?? const {}),
+          'last': Map<String, int>.from(decoded['last'] ?? const {}),
+        };
+      }
+    } catch (_) {}
+    return {
+      'cat': <String, num>{},
+      'merchant': <String, num>{},
+      'kw': <String, num>{},
+      'last': <String, int>{},
+    };
+  }
+
+  DateTime _lastSuggestionRefreshAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  Future<void> _writePersonalizationProfile(Map<String, dynamic> profile) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final k = await _personalizationStorageKey();
+      await prefs.setString(k, jsonEncode(profile));
+    } catch (_) {}
+  }
+
+  Future<void> _trackInteraction(
+    MarketplaceDetailModel item, {
+    double weight = 1.0,
+  }) async {
+    final profile = await _readPersonalizationProfile();
+    final cat = Map<String, num>.from(profile['cat'] ?? const {});
+    final merchant = Map<String, num>.from(profile['merchant'] ?? const {});
+    final kw = Map<String, num>.from(profile['kw'] ?? const {});
+    final last = Map<String, int>.from(profile['last'] ?? const {});
+
+    final c = item.category.trim().toLowerCase();
+    if (c.isNotEmpty) cat[c] = (cat[c] ?? 0) + weight;
+
+    final m = (item.merchantName ?? item.sellerBusinessName ?? '').trim().toLowerCase();
+    if (m.isNotEmpty) merchant[m] = (merchant[m] ?? 0) + (weight * 0.8);
+
+    final keywords = _keywordsFromText('${item.name} ${item.description ?? ''} ${item.location ?? ''}');
+    for (final w in keywords.take(8)) {
+      kw[w] = (kw[w] ?? 0) + (weight * 0.45);
+    }
+
+    last[item.id] = DateTime.now().millisecondsSinceEpoch;
+    if (last.length > 120) {
+      final sorted = last.entries.toList()..sort((a, b) => a.value.compareTo(b.value));
+      for (final e in sorted.take(last.length - 120)) {
+        last.remove(e.key);
+      }
+    }
+
+    profile['cat'] = cat;
+    profile['merchant'] = merchant;
+    profile['kw'] = kw;
+    profile['last'] = last;
+    await _writePersonalizationProfile(profile);
+  }
+
+  Future<void> _trackCategoryInterest(String? cat) async {
+    final c = (cat ?? '').trim().toLowerCase();
+    if (c.isEmpty) return;
+    final profile = await _readPersonalizationProfile();
+    final catMap = Map<String, num>.from(profile['cat'] ?? const {});
+    catMap[c] = (catMap[c] ?? 0) + 1.4;
+    profile['cat'] = catMap;
+    await _writePersonalizationProfile(profile);
+  }
+
+  Future<void> _trackSearchInterest(String raw) async {
+    final words = _keywordsFromText(raw);
+    if (words.isEmpty) return;
+    final profile = await _readPersonalizationProfile();
+    final kw = Map<String, num>.from(profile['kw'] ?? const {});
+    for (final w in words.take(8)) {
+      kw[w] = (kw[w] ?? 0) + 0.35;
+    }
+    profile['kw'] = kw;
+    await _writePersonalizationProfile(profile);
+  }
+
+  Future<void> _refreshSearchSuggestionsFromProfile() async {
+    try {
+      final profile = await _readPersonalizationProfile();
+      final kwMap = Map<String, num>.from(profile['kw'] ?? const {});
+      final catMap = Map<String, num>.from(profile['cat'] ?? const {});
+      final merchantMap = Map<String, num>.from(profile['merchant'] ?? const {});
+
+      final suggestions = <String>[];
+      void addSorted(Map<String, num> map, int take, String Function(String k) toText) {
+        final entries = map.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+        for (final e in entries.take(take)) {
+          final text = toText(e.key);
+          if (text.isNotEmpty) suggestions.add(text);
+        }
+      }
+
+      addSorted(kwMap, 4, (k) => k);
+      addSorted(catMap, 2, (k) => '${k} near me');
+      addSorted(merchantMap, 2, (k) => k);
+
+      final seen = <String>{};
+      final out = <String>[];
+      for (final s in suggestions) {
+        final t = s.trim();
+        if (t.isEmpty || seen.contains(t)) continue;
+        seen.add(t);
+        out.add(t);
+      }
+
+      if (out.isEmpty) {
+        out.addAll(_searchSuggestions);
+      }
+
+      // Keep it small + fast to render
+      final finalOut = out.take(6).toList();
+      if (!mounted) return;
+      setState(() {
+        _activeSearchSuggestions = finalOut;
+        _suggestionIndex = 0;
+      });
+    } catch (_) {}
+  }
+
+  Future<List<MarketplaceDetailModel>> _rankByPersonalization(
+    List<MarketplaceDetailModel> items,
+  ) async {
+    if (items.length < 2) return items;
+    final profile = await _readPersonalizationProfile();
+    final cat = Map<String, num>.from(profile['cat'] ?? const {});
+    final merchant = Map<String, num>.from(profile['merchant'] ?? const {});
+    final kw = Map<String, num>.from(profile['kw'] ?? const {});
+    final last = Map<String, int>.from(profile['last'] ?? const {});
+
+    double score(MarketplaceDetailModel i) {
+      var s = 0.0;
+      final c = i.category.trim().toLowerCase();
+      if (c.isNotEmpty) s += (cat[c] ?? 0).toDouble() * 1.3;
+
+      final m = (i.merchantName ?? i.sellerBusinessName ?? '').trim().toLowerCase();
+      if (m.isNotEmpty) s += (merchant[m] ?? 0).toDouble() * 1.1;
+
+      final words = _keywordsFromText('${i.name} ${i.description ?? ''} ${i.location ?? ''}');
+      for (final w in words.take(10)) {
+        s += (kw[w] ?? 0).toDouble() * 0.45;
+      }
+
+      final t = last[i.id];
+      if (t != null) {
+        final days = DateTime.now()
+                .difference(DateTime.fromMillisecondsSinceEpoch(t))
+                .inHours /
+            24.0;
+        s += (days <= 7 ? 2.2 : 1.2 / (1 + days / 7));
+      }
+      return s;
+    }
+
+    final ranked = List<MarketplaceDetailModel>.from(items);
+    ranked.sort((a, b) {
+      final sb = score(b);
+      final sa = score(a);
+      final byScore = sb.compareTo(sa);
+      if (byScore != 0) return byScore;
+      final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return db.compareTo(da);
+    });
+    return ranked;
+  }
+
+  void _setSuggestionsFromItems(List<MarketplaceDetailModel> items) {
+    if (!mounted) return;
+    if (items.isEmpty) return;
+
+    final seen = <String>{};
+    final out = <String>[];
+    for (final it in items) {
+      final n = it.name.trim();
+      if (n.isEmpty) continue;
+      final k = n.toLowerCase();
+      if (seen.contains(k)) continue;
+      seen.add(k);
+      out.add(n);
+      if (out.length >= 6) break;
+    }
+
+    if (out.isEmpty) return;
+    setState(() {
+      _activeSearchSuggestions = out;
+      _suggestionIndex = 0;
+    });
+  }
+
+  Future<List<MarketplaceDetailModel>> _sortByNewest(List<MarketplaceDetailModel> items) async {
+    final copy = List<MarketplaceDetailModel>.from(items);
+    copy.sort((a, b) {
+      final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return db.compareTo(da);
+    });
+    return copy;
+  }
 
   bool _isHttp(String s) {
     final lower = s.toLowerCase();
@@ -629,7 +837,7 @@ bool _aiSearchMode=false;
 
     // http(s) – use resilient loader (retries with alternate scheme on error)
     if (_isHttp(s)) {
-      return wrap(_ResilientNetworkImage(
+      return wrap(ResilientCachedNetworkImage(
         url: s,
         fit: fit,
         width: width,
@@ -651,7 +859,7 @@ bool _aiSearchMode=false;
             child: const Icon(Icons.image_not_supported_rounded),
           ));
         }
-        return wrap(_ResilientNetworkImage(
+        return wrap(ResilientCachedNetworkImage(
           url: url,
           fit: fit,
           width: width,
@@ -704,15 +912,50 @@ bool _aiSearchMode=false;
     super.initState();
     _future = _loadAll();
     _searchCtrl.addListener(_onSearchChanged);
+    _startSuggestionTimer();
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _suggestionTimer?.cancel();
     _searchCtrl.removeListener(_onSearchChanged);
     _searchCtrl.dispose();
     _askQuestionCtrl.dispose();
     super.dispose();
+  }
+
+  void _startSuggestionTimer() {
+    _suggestionTimer?.cancel();
+    _suggestionTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted) return;
+      if (_aiSearchMode) return; // suggestions UI is hidden in AI mode anyway
+      if (_searchCtrl.text.trim().isNotEmpty) return; // pause while user types
+
+      final suggestions = _activeSearchSuggestions;
+      if (suggestions.length <= 1) return;
+
+      final current = _suggestionIndex % suggestions.length;
+      int next;
+      if (suggestions.length == 2) {
+        next = 1 - current;
+      } else {
+        final rng = Random();
+        next = current;
+        while (next == current) {
+          next = rng.nextInt(suggestions.length);
+        }
+      }
+
+      setState(() {
+        _suggestionIndex = next;
+      });
+    });
+  }
+
+  void _stopSuggestionTimer() {
+    _suggestionTimer?.cancel();
+    _suggestionTimer = null;
   }
 
   void _showLoadingDialog() {
@@ -854,10 +1097,21 @@ bool _aiSearchMode=false;
               .where((item) => item.isActive)
               .toList();
 
-          if (category == null || category.isEmpty) return all;
+          if (category == null || category.isEmpty) {
+            final result = _forYouMode
+                ? await _rankByPersonalization(all)
+                : await _sortByNewest(all);
+            _setSuggestionsFromItems(result);
+            return result;
+          }
 
           final c = category.toLowerCase();
-          return all.where((item) => item.category.toLowerCase() == c).toList();
+          final filtered = all.where((item) => item.category.toLowerCase() == c).toList();
+          final result = _forYouMode
+              ? await _rankByPersonalization(filtered)
+              : await _sortByNewest(filtered);
+          _setSuggestionsFromItems(result);
+          return result;
         }
       } catch (_) {}
 
@@ -873,10 +1127,21 @@ bool _aiSearchMode=false;
             .where((item) => item.isActive)
             .toList();
 
-        if (category == null || category.isEmpty) return all;
+        if (category == null || category.isEmpty) {
+          final result = _forYouMode
+              ? await _rankByPersonalization(all)
+              : await _sortByNewest(all);
+          _setSuggestionsFromItems(result);
+          return result;
+        }
 
         final c = category.toLowerCase();
-        return all.where((item) => item.category.toLowerCase() == c).toList();
+        final filtered = all.where((item) => item.category.toLowerCase() == c).toList();
+        final result = _forYouMode
+            ? await _rankByPersonalization(filtered)
+            : await _sortByNewest(filtered);
+        _setSuggestionsFromItems(result);
+        return result;
       } catch (serverError) {
         final errorStr = serverError.toString().toLowerCase();
         final isNetworkError = errorStr.contains('unavailable') ||
@@ -904,6 +1169,7 @@ bool _aiSearchMode=false;
   /// In AI mode: also uses word splitting for better relevance.
   Future<List<MarketplaceDetailModel>> _searchByName(String raw) async {
     final q = raw.trim();
+    unawaited(_trackSearchInterest(q));
     if (q.isEmpty || q.length < 2) {
       _aiSummary = '';
       return _loadAll(category: _selectedCategory);
@@ -945,7 +1211,11 @@ bool _aiSearchMode=false;
       } else {
         _aiSummary = '';
       }
-      return matches;
+      final result = _forYouMode
+          ? await _rankByPersonalization(matches)
+          : await _sortByNewest(matches);
+      _setSuggestionsFromItems(result);
+      return result;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -1020,6 +1290,7 @@ bool _aiSearchMode=false;
 
   /// Open full details page (replaces bottom sheet so user sees gallery, image viewer, simplified merchant card).
   void _openDetailsPage(MarketplaceDetailModel item) {
+    unawaited(_trackInteraction(item, weight: 1.2));
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1098,6 +1369,7 @@ bool _aiSearchMode=false;
       final apiResults = await service.searchByPhotoBytes(bytes, filename: filename);
       final converted = apiResults.map(_fromCoreMarketplace).toList();
       if (mounted && converted.isNotEmpty) {
+        _setSuggestionsFromItems(converted);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Found ${converted.length} visually similar product${converted.length == 1 ? '' : 's'}.'),
@@ -1269,6 +1541,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     );
 
     await widget.cartService.addToCart(cartItem); // Firestore first = fast
+    unawaited(_trackInteraction(item, weight: 3.0));
 
     if (mounted) Navigator.of(context).pop(); // ✅ close loading
 
@@ -1371,6 +1644,19 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
 
   void _onSearchChanged() {
     _debounce?.cancel();
+
+    // If the user starts typing, immediately hide/stop suggestions.
+    final typingNow = _searchCtrl.text.trim().isNotEmpty;
+    if (typingNow) {
+      _stopSuggestionTimer();
+      setState(() {}); // trigger rebuild so the suggestion widget disappears right away
+    } else {
+      // Restart suggestions when the input is empty again (non-AI mode).
+      if (!_aiSearchMode && _suggestionTimer == null) {
+        _startSuggestionTimer();
+      }
+    }
+
     _debounce = Timer(const Duration(milliseconds: 350), () {
       final txt = _searchCtrl.text;
       if (txt == _lastQuery) return;
@@ -1385,6 +1671,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
   }
 
   void _setCategory(String? cat) {
+    unawaited(_trackCategoryInterest(cat));
     _searchCtrl.clear();
     _lastQuery = '';
     _aiSummary = '';
@@ -1467,18 +1754,42 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
 
   // ✅ Grid image widget (supports base64 + http + firebase + gallery fallback)
   Widget _buildItemImageWidget(MarketplaceDetailModel item) {
-    if (item.imageBytes != null) {
+    final mainImage = item.image.trim();
+    final sources = <String>[
+      if (mainImage.isNotEmpty) mainImage,
+      ...item.gallery.map((e) => e.toString().trim()),
+    ].where((s) => s.isNotEmpty).toList();
+
+    if (sources.isEmpty && item.imageBytes != null) {
       return Image.memory(item.imageBytes!, fit: BoxFit.cover, width: double.infinity);
     }
-    final mainImage = item.image.trim();
-    final fallbackUrl = mainImage.isEmpty && item.gallery.isNotEmpty
-        ? item.gallery.first.toString().trim()
-        : null;
-    return _imageFromAnySource(
-      mainImage.isNotEmpty ? mainImage : (fallbackUrl ?? ''),
-      fit: BoxFit.cover,
-      width: double.infinity,
-      height: double.infinity,
+
+    final deduped = <String>[];
+    final seen = <String>{};
+    for (final src in sources) {
+      if (seen.add(src)) deduped.add(src);
+    }
+
+    if (deduped.length <= 1) {
+      return _imageFromAnySource(
+        deduped.isEmpty ? '' : deduped.first,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    }
+
+    return _AutoSlideImageCarousel(
+      key: ValueKey('item-media-${item.id}-${deduped.length}'),
+      sources: deduped,
+      interval: const Duration(seconds: 3),
+      showIndicators: true,
+      itemBuilder: (src) => _imageFromAnySource(
+        src,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      ),
     );
   }
 
@@ -1911,6 +2222,37 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     );
   }
 
+  Widget _buildFeedModeChip() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => setState(() {
+        _forYouMode = !_forYouMode;
+        _future = _lastQuery.trim().isNotEmpty
+            ? _searchByName(_lastQuery)
+            : _loadAll(category: _selectedCategory);
+      }),
+      child: Chip(
+        avatar: Icon(
+          _forYouMode ? Icons.auto_awesome_rounded : Icons.schedule_rounded,
+          size: 14,
+          color: _forYouMode ? Colors.white : Colors.black87,
+        ),
+        label: Text(
+          _forYouMode ? 'For You' : 'Newest',
+          style: TextStyle(
+            color: _forYouMode ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.w600,
+            fontSize: 12,
+          ),
+        ),
+        backgroundColor: _forYouMode ? const Color(0xFFFF8A00) : Colors.grey[300],
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+    );
+  }
+
   Widget _buildCategoryChip(
     String title, {
     required bool isSelected,
@@ -1936,23 +2278,51 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     );
   }
 
+  Widget _buildViewModeChip() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => setState(() => _comfortableView = !_comfortableView),
+      child: Chip(
+        avatar: Icon(
+          _comfortableView ? Icons.view_agenda_rounded : Icons.grid_view_rounded,
+          size: 14,
+          color: _comfortableView ? Colors.white : Colors.black87,
+        ),
+        label: Text(
+          _comfortableView ? 'Comfortable' : 'Compact',
+          style: TextStyle(
+            color: _comfortableView ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.w600,
+            fontSize: 12,
+          ),
+        ),
+        backgroundColor: _comfortableView ? const Color(0xFFFF8A00) : Colors.grey[300],
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+    );
+  }
+
   Widget _buildMarketItem(MarketplaceDetailModel item) {
+    final screenW = MediaQuery.of(context).size.width;
+    final isCompactPhone = screenW < 380;
     final cat = item.category.trim();
     final merchant = (item.merchantName ?? '').trim();
     final showCat = cat.isNotEmpty;
-    final showMerchant = merchant.isNotEmpty;
+    final showMerchant = merchant.isNotEmpty && !isCompactPhone;
     final isSold = !item.isActive;
 
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(15),
+        borderRadius: BorderRadius.circular(isCompactPhone ? 14 : 16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+            color: Colors.black.withOpacity(0.07),
+            blurRadius: isCompactPhone ? 10 : 14,
+            offset: Offset(0, isCompactPhone ? 4 : 6),
           ),
         ],
       ),
@@ -1965,7 +2335,9 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
               children: [
                 Positioned.fill(
                   child: ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(isCompactPhone ? 14 : 16),
+                    ),
                     child: ColorFiltered(
                       colorFilter: isSold
                           ? const ColorFilter.mode(Colors.black45, BlendMode.darken)
@@ -1974,11 +2346,29 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                     ),
                   ),
                 ),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withOpacity(0.06),
+                            Colors.black.withOpacity(0.24),
+                          ],
+                          stops: const [0.5, 0.78, 1.0],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
                 if (showCat || showMerchant || isSold)
                   Positioned(
-                    left: 8,
-                    right: 8,
-                    top: 8,
+                    left: isCompactPhone ? 6 : 8,
+                    right: isCompactPhone ? 6 : 8,
+                    top: isCompactPhone ? 6 : 8,
                     child: Row(
                       children: [
                         if (showCat)
@@ -1989,7 +2379,7 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                             ),
                           ),
                         if ((showCat && showMerchant) || (showCat && isSold) || (showMerchant && isSold))
-                          const SizedBox(width: 8),
+                          SizedBox(width: isCompactPhone ? 6 : 8),
                         if (showMerchant)
                           Flexible(
                             child: Align(
@@ -2043,15 +2433,20 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
           Container(
             decoration: BoxDecoration(
               color: const Color(0xFFFFF4E6),
-              borderRadius: const BorderRadius.vertical(
-                bottom: Radius.circular(15),
+              borderRadius: BorderRadius.vertical(
+                bottom: Radius.circular(isCompactPhone ? 14 : 16),
               ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+                  padding: EdgeInsets.fromLTRB(
+                    isCompactPhone ? 9 : 12,
+                    isCompactPhone ? 8 : 10,
+                    isCompactPhone ? 9 : 12,
+                    isCompactPhone ? 4 : 6,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -2059,10 +2454,11 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                         item.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                        style: TextStyle(
+                          fontSize: isCompactPhone ? 14 : 15.5,
+                          fontWeight: FontWeight.w700,
                           color: Colors.black87,
+                          height: 1.15,
                         ),
                       ),
                       if (_aiSearchMode && _lastQuery.isNotEmpty) ...[
@@ -2086,27 +2482,27 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                           ],
                         ),
                       ],
-                      const SizedBox(height: 4),
+                      SizedBox(height: isCompactPhone ? 2 : 3),
                       Text(
                         _mwk(item.price),
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFFFF8A00),
+                        style: TextStyle(
+                          fontSize: isCompactPhone ? 13 : 14.5,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFFFF8A00),
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      SizedBox(height: isCompactPhone ? 2 : 3),
                       if (item.location != null && item.location!.trim().isNotEmpty)
                         Row(
                           children: [
-                            Icon(Icons.location_on, size: 12, color: Colors.grey.shade600),
-                      const SizedBox(width: 4),
+                            Icon(Icons.location_on, size: isCompactPhone ? 11 : 12, color: Colors.grey.shade600),
+                            SizedBox(width: isCompactPhone ? 3 : 4),
                             Expanded(
                               child: Text(
                                 item.location!,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                                style: TextStyle(fontSize: isCompactPhone ? 10 : 11, color: Colors.grey[700]),
                               ),
                             ),
                           ],
@@ -2114,13 +2510,18 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                       if (item.createdAt != null)
                         Text(
                           _formatTimeAgo(item.createdAt!),
-                          style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                          style: TextStyle(fontSize: isCompactPhone ? 10 : 11, color: Colors.grey[500]),
                         ),
                     ],
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                  padding: EdgeInsets.fromLTRB(
+                    isCompactPhone ? 9 : 12,
+                    0,
+                    isCompactPhone ? 9 : 12,
+                    isCompactPhone ? 9 : 11,
+                  ),
                   child: Row(
                     children: [
                       Expanded(
@@ -2129,13 +2530,13 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFFFF8A00),
                             side: const BorderSide(color: Color(0xFFFF8A00)),
-                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            padding: EdgeInsets.symmetric(vertical: isCompactPhone ? 9 : 10.5),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           ),
-                          child: const Text("Add to Cart"),
+                          child: Text("Add to Cart", style: TextStyle(fontSize: isCompactPhone ? 12 : 13)),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      SizedBox(width: isCompactPhone ? 8 : 10),
                       Expanded(
                         child: ElevatedButton(
                           onPressed: isSold ? null : () => _openDetailsPage(item),
@@ -2143,10 +2544,13 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                             backgroundColor: const Color(0xFFFF8A00),
                             foregroundColor: Colors.white,
                             elevation: 0,
-                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            padding: EdgeInsets.symmetric(vertical: isCompactPhone ? 9 : 10.5),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           ),
-                          child: Text(isSold ? 'Sold Out' : 'Buy Now'),
+                          child: Text(
+                            isSold ? 'Sold Out' : 'Buy Now',
+                            style: TextStyle(fontSize: isCompactPhone ? 12 : 13),
+                          ),
                         ),
                       ),
                     ],
@@ -2375,49 +2779,116 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
-            child: TextField(
-              controller: _searchCtrl,
-              textInputAction: TextInputAction.search,
-              onSubmitted: _onSubmit,
-              decoration: InputDecoration(
-                hintText: _aiSearchMode
-                    ? "Search with Vero AI... (e.g. canon camera, budget phone)"
-                    : "Search items...",
-                prefixIcon: const Icon(Icons.search_rounded, color: Colors.black54),
-                suffixIcon: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_searchCtrl.text.isNotEmpty)
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 20),
-                        onPressed: () {
-                          _searchCtrl.clear();
-                          _onSubmit('');
-                        },
-                      ),
-                    IconButton(
-                      icon: const Icon(Icons.camera_alt_outlined),
-                      onPressed: _showPhotoPickerSheet,
-                      tooltip: 'Search by Photo',
+            child: Stack(
+              children: [
+                TextField(
+                  controller: _searchCtrl,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: _onSubmit,
+                  decoration: InputDecoration(
+                    hintText: _aiSearchMode
+                        ? "Search with Vero AI... (e.g. canon camera, phones)"
+                        : '',
+                    prefixIcon: const Icon(Icons.search_rounded, color: Colors.black54),
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_searchCtrl.text.isNotEmpty)
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 20),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              _onSubmit('');
+                            },
+                          ),
+                        IconButton(
+                          icon: const Icon(Icons.camera_alt_outlined),
+                          onPressed: _showPhotoPickerSheet,
+                          tooltip: 'Search by Photo',
+                        ),
+                      ],
                     ),
-                  ],
+                    filled: true,
+                    fillColor: Colors.grey.shade50,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(color: Color(0xFFFF8A00), width: 2),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+                  ),
                 ),
-                filled: true,
-                fillColor: Colors.grey.shade50,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(color: Colors.grey.shade300),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide(color: Colors.grey.shade300),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: const BorderSide(color: Color(0xFFFF8A00), width: 2),
-                ),
-                contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-              ),
+
+                // In-input sliding suggestions (only when search is empty & not in AI mode)
+                if (!_aiSearchMode && _searchCtrl.text.trim().isEmpty)
+                  Positioned(
+                    left: 44,
+                    right: 54,
+                    top: 0,
+                    bottom: 0,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox(
+                        height: 46,
+                        child: Builder(
+                          builder: (_) {
+                            final suggestions = _activeSearchSuggestions;
+                            if (suggestions.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            final safeIndex = _suggestionIndex % suggestions.length;
+                            final s = suggestions[safeIndex];
+
+                            return AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 380),
+                              transitionBuilder: (child, anim) {
+                                final beginOffset = const Offset(0, 0.9);
+                                final tween = Tween<Offset>(begin: beginOffset, end: Offset.zero)
+                                    .chain(CurveTween(curve: Curves.easeOut));
+                                return SlideTransition(
+                                  position: anim.drive(tween),
+                                  child: child,
+                                );
+                              },
+                              child: InkWell(
+                                key: ValueKey<String>(s),
+                                onTap: () {
+                                  _debounce?.cancel();
+                                  _searchCtrl.text = s;
+                                  _searchCtrl.selection = TextSelection.fromPosition(
+                                    TextPosition(offset: s.length),
+                                  );
+                                  _onSubmit(s);
+                                },
+                                borderRadius: BorderRadius.circular(12),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    s,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           SizedBox(
@@ -2429,6 +2900,10 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                 _buildSearchModeChip('All', false),
                 const SizedBox(width: 6),
                 _buildSearchModeChip('◆ VeroAI Search', true),
+                const SizedBox(width: 6),
+                _buildFeedModeChip(),
+                const SizedBox(width: 6),
+                _buildViewModeChip(),
               ],
             ),
           ),
@@ -2511,9 +2986,17 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
 
                   return LayoutBuilder(
                     builder: (context, constraints) {
-                      final isWide = constraints.maxWidth >= 700;
-                      final crossAxisCount = isWide ? 3 : 2;
-                      final childAspectRatio = isWide ? 0.70 : 0.68;
+                      final maxW = constraints.maxWidth;
+                      final isWide = maxW >= 700;
+                      final isNarrowPhone = maxW < 380;
+                      final crossAxisCount = _comfortableView
+                          ? (isWide ? 2 : 1)
+                          : (isWide ? 3 : (isNarrowPhone ? 1 : 2));
+                      final childAspectRatio = _comfortableView
+                          ? (isWide ? 1.05 : 1.35)
+                          : (isWide ? 0.70 : (isNarrowPhone ? 1.45 : 0.72));
+                      final gridSpacing = isNarrowPhone ? 10.0 : 12.0;
+                      final gridPadH = isNarrowPhone ? 10.0 : 12.0;
 
                       return CustomScrollView(
                         physics: const AlwaysScrollableScrollPhysics(),
@@ -2552,21 +3035,28 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                               ),
                             ),
                           SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            padding: EdgeInsets.fromLTRB(gridPadH, 0, gridPadH, 12),
                             sliver: SliverGrid(
                               gridDelegate:
                                   SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: crossAxisCount,
-                                crossAxisSpacing: 12,
-                                mainAxisSpacing: 12,
+                                crossAxisSpacing: gridSpacing,
+                                mainAxisSpacing: gridSpacing,
                                 childAspectRatio: childAspectRatio,
                               ),
                               delegate: SliverChildBuilderDelegate(
                                 (context, i) {
                                   final item = items[i];
-                                  return GestureDetector(
-                                    onTap: (!item.isActive) ? null : () => _openDetailsPage(item),
-                                    child: _buildMarketItem(item),
+                                  return Material(
+                                    color: Colors.transparent,
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(16),
+                                      splashColor: const Color(0x22FF8A00),
+                                      highlightColor: const Color(0x11FF8A00),
+                                      onTap: (!item.isActive) ? null : () => _openDetailsPage(item),
+                                      child: _buildMarketItem(item),
+                                    ),
                                   );
                                 },
                                 childCount: items.length,
@@ -2640,6 +3130,94 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _AutoSlideImageCarousel extends StatefulWidget {
+  const _AutoSlideImageCarousel({
+    super.key,
+    required this.sources,
+    required this.itemBuilder,
+    this.interval = const Duration(seconds: 3),
+    this.showIndicators = false,
+  });
+
+  final List<String> sources;
+  final Widget Function(String source) itemBuilder;
+  final Duration interval;
+  final bool showIndicators;
+
+  @override
+  State<_AutoSlideImageCarousel> createState() => _AutoSlideImageCarouselState();
+}
+
+class _AutoSlideImageCarouselState extends State<_AutoSlideImageCarousel> {
+  late final PageController _controller;
+  Timer? _timer;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController();
+    if (widget.sources.length > 1) {
+      _timer = Timer.periodic(widget.interval, (_) {
+        if (!mounted || !_controller.hasClients || widget.sources.length <= 1) return;
+        final next = (_index + 1) % widget.sources.length;
+        _controller.animateToPage(
+          next,
+          duration: const Duration(milliseconds: 420),
+          curve: Curves.easeInOut,
+        );
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        PageView.builder(
+          controller: _controller,
+          itemCount: widget.sources.length,
+          physics: widget.sources.length > 1
+              ? const BouncingScrollPhysics()
+              : const NeverScrollableScrollPhysics(),
+          onPageChanged: (i) => setState(() => _index = i),
+          itemBuilder: (_, i) => widget.itemBuilder(widget.sources[i]),
+        ),
+        if (widget.showIndicators && widget.sources.length > 1)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 8,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(widget.sources.length, (i) {
+                final active = i == _index;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                  width: active ? 14 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: active ? const Color(0xFFFF8A00) : Colors.white70,
+                    borderRadius: BorderRadius.circular(99),
+                    border: Border.all(color: Colors.black26, width: 0.4),
+                  ),
+                );
+              }),
+            ),
+          ),
+      ],
     );
   }
 }

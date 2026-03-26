@@ -71,6 +71,43 @@ String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
 String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
 // ---------------------------------------------------------------------------
 
+/// “Your Items” / “My Items” grids: taller cells on narrow screens + large text scale
+/// so [_ModernItemMiniCard] / [_ItemCard] never bottom-overflow inside the cell.
+SliverGridDelegate _merchantItemsGridDelegate(BuildContext context) {
+  final w = MediaQuery.sizeOf(context).width;
+  final textScale =
+      MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.8).scale(14) /
+          14.0;
+
+  var ratio = 0.78;
+  var spacing = 12.0;
+  if (w < 330) {
+    ratio = 0.52;
+    spacing = 8;
+  } else if (w < 360) {
+    ratio = 0.58;
+    spacing = 8;
+  } else if (w < 400) {
+    ratio = 0.65;
+    spacing = 10;
+  } else if (w < 430) {
+    ratio = 0.72;
+    spacing = 10;
+  }
+
+  if (textScale > 1.08) {
+    ratio -= 0.04 * ((textScale - 1.0) * 2).clamp(0.0, 1.0);
+  }
+  ratio = ratio.clamp(0.48, 0.82);
+
+  return SliverGridDelegateWithFixedCrossAxisCount(
+    crossAxisCount: 2,
+    crossAxisSpacing: spacing,
+    mainAxisSpacing: spacing,
+    childAspectRatio: ratio,
+  );
+}
+
 /// Filters out Firebase identifiers (e.g. +firebase_xxx) so we show real phone numbers only.
 String _sanitizePhone(String s) {
   final t = (s ?? '').trim();
@@ -1609,7 +1646,7 @@ class _MarketplaceMerchantDashboardState
 
             final coverWidget = newCover != null
                 ? Image.memory(newCover!.bytes, fit: BoxFit.cover)
-                : _ImageAny(item['image']);
+                : _ImageAny(_coverImageSourceFromItem(item));
 
             return Padding(
               padding: EdgeInsets.only(
@@ -2859,7 +2896,7 @@ class _MarketplaceMerchantDashboardState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Your Items',
+        const Text('My Items',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
         if (_loadingItems)
@@ -2879,12 +2916,7 @@ class _MarketplaceMerchantDashboardState
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _items.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 0.78,
-            ),
+            gridDelegate: _merchantItemsGridDelegate(context),
             itemBuilder: (_, i) => _ModernItemMiniCard(item: _items[i]),
           ),
       ],
@@ -3195,13 +3227,7 @@ class _MarketplaceMerchantDashboardState
                   : GridView.builder(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       itemCount: filtered.length,
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: 0.78,
-                      ),
+                      gridDelegate: _merchantItemsGridDelegate(context),
                       itemBuilder: (_, i) => _ItemCard(
                         item: filtered[i],
                         busy: _busyRow,
@@ -3358,13 +3384,19 @@ class _MarketplaceMerchantDashboardState
         child: SizedBox(
           height: 72,
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildNavItem(Icons.home_rounded, 'Home', 0),
-              _buildNavItem(Icons.storefront_rounded, 'Marketplace', 1),
-              _buildNavItem(Icons.shopping_cart_rounded, 'Cart', 2),
-              _buildNavItem(Icons.message_rounded, 'Messages', 3),
-              _buildNavItem(Icons.dashboard_rounded, 'Dashboard', 4),
+              Expanded(child: _buildNavItem(Icons.home_rounded, 'Home', 0)),
+              Expanded(
+                  child: _buildNavItem(
+                      Icons.storefront_rounded, 'Marketplace', 1)),
+              Expanded(
+                  child: _buildNavItem(
+                      Icons.shopping_cart_rounded, 'Cart', 2)),
+              Expanded(
+                  child: _buildNavItem(Icons.message_rounded, 'Messages', 3)),
+              Expanded(
+                  child: _buildNavItem(
+                      Icons.dashboard_rounded, 'Dashboard', 4)),
             ],
           ),
         ),
@@ -3374,26 +3406,40 @@ class _MarketplaceMerchantDashboardState
 
   Widget _buildNavItem(IconData icon, String label, int index) {
     final isSelected = _selectedIndex == index;
+    final sw = MediaQuery.sizeOf(context).width;
+    final narrow = sw < 400;
+    final hPad = narrow ? 2.0 : 5.0;
+    final iconSize = narrow ? 22.0 : 24.0;
+    final fontSize = narrow ? 10.0 : 12.0;
+
     return GestureDetector(
       onTap: () => _onItemTapped(index),
+      behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        width: double.infinity,
+        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: narrow ? 8 : 10),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
           color:
               isSelected ? _brandOrange.withOpacity(0.12) : Colors.transparent,
           borderRadius: BorderRadius.circular(14),
         ),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon,
-                color: isSelected ? _brandOrange : Colors.grey[600], size: 24),
-            const SizedBox(height: 4),
+                color: isSelected ? _brandOrange : Colors.grey[600],
+                size: iconSize),
+            SizedBox(height: narrow ? 2 : 4),
             Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: fontSize,
                 color: isSelected ? _brandOrange : Colors.grey[600],
                 fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
               ),
@@ -3582,12 +3628,7 @@ class _ItemsGridSkeleton extends StatelessWidget {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: count,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 0.78,
-      ),
+      gridDelegate: _merchantItemsGridDelegate(context),
       itemBuilder: (_, __) => Container(
         decoration: BoxDecoration(
           color: const Color(0xFFEDEFF3),
@@ -3599,6 +3640,38 @@ class _ItemsGridSkeleton extends StatelessWidget {
 }
 
 // ----------------- Cards -----------------
+
+/// Firestore `marketplace_items` may use `image` (base64), `imageUrl` (upload flow),
+/// or only `gallery` / `galleryUrls` — same as [main_marketPlace] / MerchantProductsPage.
+String? _coverImageSourceFromItem(Map<String, dynamic> item) {
+  String? take(dynamic v) {
+    final t = (v ?? '').toString().trim();
+    return t.isEmpty ? null : t;
+  }
+
+  final direct = take(item['imageUrl']) ??
+      take(item['image']) ??
+      take(item['photo']) ??
+      take(item['picture']);
+  if (direct != null) return direct;
+
+  final urls = item['galleryUrls'];
+  if (urls is List) {
+    for (final e in urls) {
+      final u = e.toString().trim();
+      if (u.isNotEmpty) return u;
+    }
+  }
+  final gal = item['gallery'];
+  if (gal is List) {
+    for (final e in gal) {
+      final u = e.toString().trim();
+      if (u.isNotEmpty) return u;
+    }
+  }
+  return null;
+}
+
 class _ModernItemMiniCard extends StatelessWidget {
   final Map<String, dynamic> item;
   const _ModernItemMiniCard({required this.item});
@@ -3611,7 +3684,11 @@ class _ModernItemMiniCard extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, c) {
         final h = c.maxHeight;
-        final imgH = min(140.0, h * 0.60);
+        final narrow = c.maxWidth < 168;
+        // Leave room for 3 text lines + padding; shorter image on tiny cells.
+        const minTextBlock = 76.0;
+        final maxImg = narrow ? 118.0 : 140.0;
+        final imgH = min(maxImg, max(h - minTextBlock, 56.0));
 
         return Container(
           decoration: BoxDecoration(
@@ -3625,41 +3702,60 @@ class _ModernItemMiniCard extends StatelessWidget {
               ClipRRect(
                 borderRadius:
                     const BorderRadius.vertical(top: Radius.circular(18)),
-                child: SizedBox(height: imgH, child: _ImageAny(item['image'])),
+                child: SizedBox(
+                    height: imgH,
+                    child: _ImageAny(_coverImageSourceFromItem(item))),
               ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                  padding: EdgeInsets.fromLTRB(
+                    narrow ? 8 : 12,
+                    narrow ? 6 : 8,
+                    narrow ? 8 : 12,
+                    narrow ? 8 : 10,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisAlignment: MainAxisAlignment.start,
                     children: [
                       Text(
                         (item['name'] ?? 'Unknown').toString(),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w900),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: narrow ? 12.5 : 14,
+                        ),
                       ),
-                      const SizedBox(height: 4),
+                      SizedBox(height: narrow ? 2 : 4),
                       Text(
                         mwk0(item['price']), // ✅ commas
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w900, color: Colors.green),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: Colors.green,
+                          fontSize: narrow ? 12 : 14,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 4),
+                      SizedBox(height: narrow ? 2 : 4),
                       Row(
                         children: [
                           Icon(Icons.circle,
-                              size: 10,
+                              size: narrow ? 8 : 10,
                               color: active ? Colors.green : Colors.red),
-                          const SizedBox(width: 6),
-                          Text(
-                            active ? 'Active' : 'Inactive',
-                            style: const TextStyle(
+                          SizedBox(width: narrow ? 4 : 6),
+                          Flexible(
+                            child: Text(
+                              active ? 'Active' : 'Inactive',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
                                 fontWeight: FontWeight.w800,
-                                color: Colors.black54),
+                                color: Colors.black54,
+                                fontSize: narrow ? 11 : 12,
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -3696,7 +3792,10 @@ class _ItemCard extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, c) {
         final h = c.maxHeight;
-        final imgH = min(150.0, h * 0.62);
+        final narrow = c.maxWidth < 168;
+        const minTextBlock = 82.0;
+        final maxImg = narrow ? 120.0 : 150.0;
+        final imgH = min(maxImg, max(h - minTextBlock, 58.0));
 
         return Material(
           color: Colors.white,
@@ -3714,38 +3813,49 @@ class _ItemCard extends StatelessWidget {
                           const BorderRadius.vertical(top: Radius.circular(18)),
                       child: SizedBox(
                         height: imgH,
-                        child: _ImageAny(item['image']),
+                        child: _ImageAny(_coverImageSourceFromItem(item)),
                       ),
                     ),
                     Expanded(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                        padding: EdgeInsets.fromLTRB(
+                          narrow ? 8 : 12,
+                          narrow ? 6 : 8,
+                          narrow ? 8 : 12,
+                          narrow ? 8 : 10,
+                        ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisAlignment: MainAxisAlignment.start,
                           children: [
                             Text(
                               (item['name'] ?? 'Unknown').toString(),
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w900, fontSize: 14),
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: narrow ? 12.5 : 14,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 4),
+                            SizedBox(height: narrow ? 2 : 4),
                             Text(
                               mwk0(item['price']), // ✅ commas
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  color: Colors.green),
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: Colors.green,
+                                fontSize: narrow ? 12 : 14,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 4),
+                            SizedBox(height: narrow ? 2 : 4),
                             Text(
                               (item['category'] ?? 'other').toString(),
-                              style: const TextStyle(
-                                  color: Colors.black54,
-                                  fontWeight: FontWeight.w800),
+                              style: TextStyle(
+                                color: Colors.black54,
+                                fontWeight: FontWeight.w800,
+                                fontSize: narrow ? 11 : 13,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -3824,30 +3934,47 @@ class _ItemCard extends StatelessWidget {
   }
 }
 
-// Image widget: supports http OR base64
+// Image widget: supports http(s), data:image, or raw base64 (same idea as MerchantProductsPage)
 class _ImageAny extends StatelessWidget {
   final dynamic imageData;
   const _ImageAny(this.imageData);
 
   @override
   Widget build(BuildContext context) {
-    if (imageData is! String || imageData.isEmpty) return _placeholder();
+    if (imageData == null) return _placeholder();
+    final raw = imageData.toString().trim();
+    if (raw.isEmpty) return _placeholder();
 
     try {
-      if (imageData.startsWith('http')) {
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
         return Image.network(
-          imageData,
+          raw,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _placeholder(),
-        );
-      } else {
-        final bytes = base64Decode(imageData);
-        return Image.memory(
-          bytes,
-          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
           errorBuilder: (_, __, ___) => _placeholder(),
         );
       }
+      if (raw.startsWith('data:image')) {
+        final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+        final bytes = base64Decode(base64Part);
+        return Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+          errorBuilder: (_, __, ___) => _placeholder(),
+        );
+      }
+      final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+      final bytes = base64Decode(base64Part);
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (_, __, ___) => _placeholder(),
+      );
     } catch (_) {
       return _placeholder();
     }

@@ -19,6 +19,7 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 class MerchantProductsPage extends StatefulWidget {
   final String merchantId;
@@ -236,7 +237,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     }
 
     if (_isHttp(s)) {
-      return wrap(_ResilientNetworkImage(
+      return wrap(ResilientCachedNetworkImage(
         url: s,
         fit: fit,
         width: width,
@@ -257,7 +258,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             child: const Icon(Icons.image_not_supported_rounded),
           ));
         }
-        return wrap(_ResilientNetworkImage(
+        return wrap(ResilientCachedNetworkImage(
           url: url,
           fit: fit,
           width: width,
@@ -951,97 +952,6 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         ],
       ),
     );
-  }
-}
-
-/// Network image that on load error retries with the other scheme (http <-> https).
-class _ResilientNetworkImage extends StatefulWidget {
-  const _ResilientNetworkImage({
-    required this.url,
-    this.fit = BoxFit.cover,
-    this.width,
-    this.height,
-  });
-
-  final String url;
-  final BoxFit fit;
-  final double? width;
-  final double? height;
-
-  @override
-  State<_ResilientNetworkImage> createState() => _ResilientNetworkImageState();
-}
-
-class _ResilientNetworkImageState extends State<_ResilientNetworkImage> {
-  String get _currentUrl => _tryAlternate ? _alternateUrl : widget.url;
-  late String _alternateUrl;
-  bool _tryAlternate = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _alternateUrl = _flipScheme(widget.url);
-  }
-
-  static String _flipScheme(String url) {
-    final u = url.trim().toLowerCase();
-    if (u.startsWith('https://')) return 'http://${url.substring(8)}';
-    if (u.startsWith('http://')) return 'https://${url.substring(7)}';
-    return url;
-  }
-
-  Widget _buildImage(String url) {
-    return Image.network(
-      url,
-      fit: widget.fit,
-      width: widget.width,
-      height: widget.height,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) {
-        if (!_tryAlternate && _flipScheme(url) != url) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _tryAlternate = true);
-          });
-          return Container(
-            width: widget.width,
-            height: widget.height,
-            color: Colors.grey.shade100,
-            alignment: Alignment.center,
-            child: const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          );
-        }
-        return Container(
-          width: widget.width,
-          height: widget.height,
-          color: Colors.grey.shade200,
-          alignment: Alignment.center,
-          child: const Icon(Icons.image_not_supported_rounded),
-        );
-      },
-      loadingBuilder: (c, child, progress) {
-        if (progress == null) return child;
-        return Container(
-          width: widget.width,
-          height: widget.height,
-          color: Colors.grey.shade100,
-          alignment: Alignment.center,
-          child: const SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return _buildImage(_currentUrl);
   }
 }
 

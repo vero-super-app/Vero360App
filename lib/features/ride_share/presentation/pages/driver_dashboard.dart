@@ -40,6 +40,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
+        _ensureDriverActive();
         _startLocationBroadcasting();
         _startMapCentering();
       }
@@ -73,6 +74,24 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
           _startLocationBroadcasting();
         }
       });
+    }
+  }
+
+  /// Ensure driver is marked as active in the backend while the app is open
+  /// This keeps the driver active for receiving ride requests regardless of online/offline state
+  Future<void> _ensureDriverActive() async {
+    try {
+      final driverProfile = await ref.read(myDriverProfileProvider.future);
+      if (driverProfile['id'] != null) {
+        await _driverService.activateDriver(int.parse(driverProfile['id'].toString()));
+        if (kDebugMode) {
+          print('[DriverDashboard] ✓ Driver activated successfully');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[DriverDashboard] ✗ Error activating driver: $e');
+      }
     }
   }
 

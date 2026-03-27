@@ -231,9 +231,10 @@ class _ProfilePageState extends State<ProfilePage> {
     }
     try {
       setState(() => _loading = true);
-      final base = await ApiConfig.readBase();
+      // Uses ApiConfig.endpoint() so it automatically includes the `/vero` prefix.
+      final uri = ApiConfig.endpoint('/users/me/profile-picture');
       final resp = await http.delete(
-        Uri.parse('$base/users/me/profile-picture'),
+        uri,
         headers: {
           'Authorization': 'Bearer $token',
           'Accept': 'application/json'
@@ -489,6 +490,54 @@ class _ProfilePageState extends State<ProfilePage> {
               icon: const Icon(Icons.close, color: Colors.white, size: 28),
               onPressed: () => Navigator.of(context).pop(),
             ),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.red.shade700,
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: () async {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: const Text('Remove profile photo?'),
+                      content: const Text(
+                        'This will remove your current profile picture.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          child: const Text(
+                            'Remove',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirmed != true) return;
+                  await _deleteProfilePicture();
+                  if (!mounted) return;
+                  Navigator.of(context).pop();
+                },
+                icon: const Icon(Icons.delete_outline),
+                label: const Text(
+                  'Remove profile photo',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -513,21 +562,103 @@ class _ProfilePageState extends State<ProfilePage> {
                   _showProfilePictureViewer();
                 },
               ),
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take a photo'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickAndUpload(ImageSource.camera);
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: _veroOrange,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_camera_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Take a photo',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose from gallery'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickAndUpload(ImageSource.gallery);
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E88E5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_library_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Choose from gallery',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
             if (profileUrl.isNotEmpty)
               ListTile(
@@ -783,7 +914,21 @@ class _ProfilePageState extends State<ProfilePage> {
       backgroundColor: _veroOrange,
       elevation: 0,
       titleSpacing: 0,
-      title: const Text('Profile', style: TextStyle(color: Colors.white)),
+      title: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Icon(Icons.person_rounded, color: Colors.white, size: 20),
+          SizedBox(width: 8),
+          Text(
+            'Profile',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
+          ),
+        ],
+      ),
       actions: [
         if (_loading)
           const Padding(

@@ -28,6 +28,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   WalletModel? _wallet;
   double _walletBalance = 0.0;
   double _pendingBalance = 0.0;
+  double _escrowHeldBalance = 0.0; // incoming funds on hold (not withdrawable yet)
   bool _isLoading = true;
   bool _isProcessingPayout = false;
   List<WalletTransaction> _recentTransactions = [];
@@ -64,12 +65,35 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   
   StreamSubscription<WalletModel?>? _walletSubscription;
   StreamSubscription<QuerySnapshot>? _transactionsSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _escrowSubscription;
 
   @override
   void initState() {
     super.initState();
     _initializeWallet();
     _loadMerchantData();
+    _setupEscrowHeldStream();
+  }
+
+  void _setupEscrowHeldStream() {
+    _escrowSubscription?.cancel();
+    _escrowSubscription = _firestore
+        .collection('order_escrow')
+        .where('merchantUid', isEqualTo: widget.merchantId)
+        .where('status', isEqualTo: 'held')
+        .snapshots()
+        .listen((snapshot) {
+      double sum = 0.0;
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final raw = data['merchantAmount'];
+        final v =
+            raw is num ? raw.toDouble() : double.tryParse('$raw') ?? 0.0;
+        if (v > 0) sum += v;
+      }
+      if (!mounted) return;
+      setState(() => _escrowHeldBalance = sum);
+    }, onError: (_) {});
   }
 
   Future<void> _initializeWallet() async {
@@ -267,6 +291,54 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           style: const TextStyle(
                             fontSize: 12,
                             color: Colors.orange,
+                          ),
+                        ),
+                      ),
+                    if (_escrowHeldBalance > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.redAccent.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: Colors.redAccent.withValues(alpha: 0.22),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Incoming (Escrow)',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF222222),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'MWK ${_mwkFormat.format(_escrowHeldBalance.truncate())}',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.redAccent,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Waiting for buyer confirmation or auto‑release (not withdrawable yet).',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF6B778C),
+                                  height: 1.25,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -908,6 +980,54 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           ),
                         ),
                           ),
+                        if (_escrowHeldBalance > 0) ...[
+                          const SizedBox(height: 10),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: Colors.white.withOpacity(0.18),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Incoming (Escrow)',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'MWK ${NumberFormat('#,##0.00').format(_escrowHeldBalance)}',
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                const Text(
+                                  'Not withdrawable yet — waiting for buyer confirmation or 5‑day auto‑release.',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.white70,
+                                    height: 1.25,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                         if (widget.serviceType.toLowerCase() == 'marketplace') ...[
                           const SizedBox(height: 10),
                           Text(
@@ -1151,6 +1271,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
   @override
   void dispose() {
+    _escrowSubscription?.cancel();
     _walletSubscription?.cancel();
     _transactionsSubscription?.cancel();
     _accountNameController.dispose();

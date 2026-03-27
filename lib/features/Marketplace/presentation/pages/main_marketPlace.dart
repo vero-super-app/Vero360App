@@ -444,6 +444,7 @@ class _MarketPageState extends State<MarketPage> {
     );
   }
 
+
   static const List<String> _kCategories = <String>[
     'food',
     'drinks',
@@ -479,6 +480,13 @@ bool _aiSearchMode=false;
 
 
   late Future<List<MarketplaceDetailModel>> _future;
+
+  /// Merchant UIDs the signed-in user follows (`merchant_followers/{id}/followers/{uid}`).
+  /// Cached briefly to avoid extra reads on every scroll refresh.
+  Set<String> _followedMerchantIdsCache = {};
+  DateTime _followedMerchantIdsFetchedAt =
+      DateTime.fromMillisecondsSinceEpoch(0);
+  static const Duration _kFollowedMerchantsCacheTtl = Duration(minutes: 2);
 
   /// AI summary text (generated from results). Empty when not in AI mode or no query.
   String _aiSummary = '';
@@ -610,6 +618,44 @@ bool _aiSearchMode=false;
     await _writePersonalizationProfile(profile);
   }
 
+  /// Resolves merchant IDs the current user follows (same paths as [MerchantProductsPage] follow).
+  Future<Set<String>> _fetchFollowedMerchantIds() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return {};
+    try {
+      final qs = await _firestore
+          .collectionGroup('followers')
+          .where(FieldPath.documentId, isEqualTo: uid)
+          .limit(300)
+          .get();
+      final out = <String>{};
+      for (final doc in qs.docs) {
+        final merchantRef = doc.reference.parent.parent;
+        if (merchantRef == null) continue;
+        final id = merchantRef.id.trim();
+        if (id.isNotEmpty) out.add(id);
+      }
+      return out;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('followed merchants query: $e');
+      }
+      return {};
+    }
+  }
+
+  Future<Set<String>> _getFollowedMerchantIdsCached() async {
+    final now = DateTime.now();
+    if (_followedMerchantIdsFetchedAt.millisecondsSinceEpoch > 0 &&
+        now.difference(_followedMerchantIdsFetchedAt) < _kFollowedMerchantsCacheTtl) {
+      return _followedMerchantIdsCache;
+    }
+    final fresh = await _fetchFollowedMerchantIds();
+    _followedMerchantIdsCache = fresh;
+    _followedMerchantIdsFetchedAt = now;
+    return fresh;
+  }
+
   Future<void> _refreshSearchSuggestionsFromProfile() async {
     try {
       final profile = await _readPersonalizationProfile();
@@ -658,10 +704,20 @@ bool _aiSearchMode=false;
   ) async {
     if (items.length < 2) return items;
     final profile = await _readPersonalizationProfile();
+    final followedMerchants = await _getFollowedMerchantIdsCached();
     final cat = Map<String, num>.from(profile['cat'] ?? const {});
     final merchant = Map<String, num>.from(profile['merchant'] ?? const {});
     final kw = Map<String, num>.from(profile['kw'] ?? const {});
     final last = Map<String, int>.from(profile['last'] ?? const {});
+
+    bool _itemIsFromFollowedSeller(MarketplaceDetailModel i) {
+      if (followedMerchants.isEmpty) return false;
+      final mid = (i.merchantId ?? '').trim();
+      if (mid.isNotEmpty && followedMerchants.contains(mid)) return true;
+      final sid = (i.sellerUserId ?? '').trim();
+      if (sid.isNotEmpty && followedMerchants.contains(sid)) return true;
+      return false;
+    }
 
     double score(MarketplaceDetailModel i) {
       var s = 0.0;
@@ -683,6 +739,11 @@ bool _aiSearchMode=false;
                 .inHours /
             24.0;
         s += (days <= 7 ? 2.2 : 1.2 / (1 + days / 7));
+      }
+
+      // Strong boost for merchants you follow (same Firestore follow as merchant shop page).
+      if (_itemIsFromFollowedSeller(i)) {
+        s += 22.0;
       }
       return s;
     }
@@ -1339,7 +1400,6 @@ bool _aiSearchMode=false;
       _aiSummary = '';
     });
     try {
-      await ApiConfig.init();
       final Uint8List bytes;
       final String filename;
       if (imageSource is XFile) {
@@ -1366,13 +1426,16 @@ bool _aiSearchMode=false;
         throw StateError('Invalid image source');
       }
       final service = MarketplaceService();
-      final apiResults = await service.searchByPhotoBytes(bytes, filename: filename);
-      final converted = apiResults.map(_fromCoreMarketplace).toList();
+      final firebaseResults =
+          await service.searchByPhotoBytes(bytes, filename: filename);
+      final converted = firebaseResults.map(_fromCoreMarketplace).toList();
       if (mounted && converted.isNotEmpty) {
         _setSuggestionsFromItems(converted);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Found ${converted.length} visually similar product${converted.length == 1 ? '' : 's'}.'),
+            content: Text(
+              'Found ${converted.length} product${converted.length == 1 ? '' : 's'} from your photo search.',
+            ),
             backgroundColor: Colors.green.shade700,
           ),
         );
@@ -1398,7 +1461,7 @@ bool _aiSearchMode=false;
           SnackBar(
             content: Text(
               isNetwork
-                  ? 'Cannot reach the server, '
+                  ? 'Cannot reach Firebase now.'
                   : 'Photo search failed: ${msg.length > 60 ? '${msg.substring(0, 60)}...' : msg}',
             ),
             backgroundColor: Colors.red,
@@ -1703,42 +1766,117 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (_) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('Use Camera'),
-              onTap: () async {
-                Navigator.pop(context);
-                final XFile? picked = await _picker.pickImage(
-                  source: ImageSource.camera,
-                  imageQuality: 85,
-                  maxWidth: 1280,
-                );
-                if (picked != null) {
-                  final future = _searchByPhoto(picked);
-                  setState(() { _future = future; });
-                }
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Choose from Gallery'),
-              onTap: () async {
-                Navigator.pop(context);
-                final XFile? picked = await _picker.pickImage(
-                  source: ImageSource.gallery,
-                  imageQuality: 85,
-                  maxWidth: 1280,
-                );
-                if (picked != null) {
-                  final future = _searchByPhoto(picked);
-                  setState(() { _future = future; });
-                }
-              },
-            ),
-            const SizedBox(height: 4),
-          ],
+        child: Builder(
+          builder: (sheetContext) {
+            const brandOrange = Color(0xFFFF8A00);
+            const brandBlue = Color(0xFF1E88E5);
+
+            Widget sheetAction({
+              required Color iconBg,
+              required IconData icon,
+              required String title,
+              required VoidCallback onTap,
+            }) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: iconBg,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(icon, color: Colors.white, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF222222),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Search by Photo',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF222222),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  sheetAction(
+                    iconBg: brandOrange,
+                    icon: Icons.camera_alt,
+                    title: 'Use Camera',
+                    onTap: () async {
+                      Navigator.pop(sheetContext);
+                      final XFile? picked = await _picker.pickImage(
+                        source: ImageSource.camera,
+                        imageQuality: 85,
+                        maxWidth: 1280,
+                      );
+                      if (picked != null) {
+                        final future = _searchByPhoto(picked);
+                        if (!mounted) return;
+                        setState(() => _future = future);
+                      }
+                    },
+                  ),
+                  sheetAction(
+                    iconBg: brandBlue,
+                    icon: Icons.photo_library,
+                    title: 'Choose from Gallery',
+                    onTap: () async {
+                      Navigator.pop(sheetContext);
+                      final XFile? picked = await _picker.pickImage(
+                        source: ImageSource.gallery,
+                        imageQuality: 85,
+                        maxWidth: 1280,
+                      );
+                      if (picked != null) {
+                        final future = _searchByPhoto(picked);
+                        if (!mounted) return;
+                        setState(() => _future = future);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 6),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
@@ -1748,6 +1886,8 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     _searchCtrl.clear();
     _lastQuery = '';
     _aiSummary = '';
+    _followedMerchantIdsFetchedAt =
+        DateTime.fromMillisecondsSinceEpoch(0); // pick up new follows after visiting a shop
     setState(() => _future = _loadAll(category: _selectedCategory));
     await _future;
   }
@@ -2767,9 +2907,24 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     return Scaffold(
       backgroundColor: Colors.grey[200],
       appBar: AppBar(
-        title: const Text(
-          "Market Place",
-          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(
+              Icons.storefront_rounded,
+              color: Color(0xFFFF8A00),
+              size: 20,
+            ),
+            SizedBox(width: 8),
+            Text(
+              "Market Place",
+              style: TextStyle(
+                color: Colors.black,
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+              ),
+            ),
+          ],
         ),
         backgroundColor: Colors.white,
         elevation: 2,
@@ -2801,10 +2956,25 @@ Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
                               _onSubmit('');
                             },
                           ),
-                        IconButton(
-                          icon: const Icon(Icons.camera_alt_outlined),
-                          onPressed: _showPhotoPickerSheet,
-                          tooltip: 'Search by Photo',
+                        SizedBox(
+                          width: 38,
+                          height: 38,
+                          child: InkWell(
+                            onTap: _showPhotoPickerSheet,
+                            borderRadius: BorderRadius.circular(19),
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFFF8A00),
+                                shape: BoxShape.circle,
+                              ),
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.camera_alt_outlined,
+                                size: 18,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
                         ),
                       ],
                     ),

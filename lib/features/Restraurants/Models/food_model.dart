@@ -9,6 +9,10 @@ class FoodModel {
   final String? description;
   final String? category;
 
+  /// Seller / listing coordinates when API provides them (for distance sorting).
+  final double? latitude;
+  final double? longitude;
+
   // ✅ New: gallery + videos like Marketplace
   final List<String> gallery;
   final List<String> videos;
@@ -21,6 +25,8 @@ class FoodModel {
     required this.price,
     this.description,
     this.category,
+    this.latitude,
+    this.longitude,
     this.gallery = const [],
     this.videos = const [],
   });
@@ -35,6 +41,12 @@ class FoodModel {
     double safeDouble(dynamic v) {
       if (v is num) return v.toDouble();
       return double.tryParse(v?.toString() ?? '') ?? 0.0;
+    }
+
+    double? optDouble(dynamic v) {
+      if (v == null) return null;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString());
     }
 
     String str(dynamic v) => (v == null) ? '' : v.toString();
@@ -57,6 +69,8 @@ class FoodModel {
       price: safeDouble(json['price']),
       description: json['description']?.toString(),
       category: json['category']?.toString(),
+      latitude: optDouble(json['latitude'] ?? json['lat']),
+      longitude: optDouble(json['longitude'] ?? json['lng']),
       gallery: arr(json['gallery']),
       videos: arr(json['videos']),
     );
@@ -70,6 +84,8 @@ class FoodModel {
         'price': price,
         if (description != null) 'description': description,
         if (category != null) 'category': category,
+        if (latitude != null) 'latitude': latitude,
+        if (longitude != null) 'longitude': longitude,
         if (gallery.isNotEmpty) 'gallery': gallery,
         if (videos.isNotEmpty) 'videos': videos,
       };

@@ -71,6 +71,43 @@ String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
 String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
 // ---------------------------------------------------------------------------
 
+/// “Your Items” / “My Items” grids: taller cells on narrow screens + large text scale
+/// so [_ModernItemMiniCard] / [_ItemCard] never bottom-overflow inside the cell.
+SliverGridDelegate _merchantItemsGridDelegate(BuildContext context) {
+  final w = MediaQuery.sizeOf(context).width;
+  final textScale =
+      MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.8).scale(14) /
+          14.0;
+
+  var ratio = 0.78;
+  var spacing = 12.0;
+  if (w < 330) {
+    ratio = 0.52;
+    spacing = 8;
+  } else if (w < 360) {
+    ratio = 0.58;
+    spacing = 8;
+  } else if (w < 400) {
+    ratio = 0.65;
+    spacing = 10;
+  } else if (w < 430) {
+    ratio = 0.72;
+    spacing = 10;
+  }
+
+  if (textScale > 1.08) {
+    ratio -= 0.04 * ((textScale - 1.0) * 2).clamp(0.0, 1.0);
+  }
+  ratio = ratio.clamp(0.48, 0.82);
+
+  return SliverGridDelegateWithFixedCrossAxisCount(
+    crossAxisCount: 2,
+    crossAxisSpacing: spacing,
+    mainAxisSpacing: spacing,
+    childAspectRatio: ratio,
+  );
+}
+
 /// Filters out Firebase identifiers (e.g. +firebase_xxx) so we show real phone numbers only.
 String _sanitizePhone(String s) {
   final t = (s ?? '').trim();
@@ -478,7 +515,8 @@ class _MarketplaceMerchantDashboardState
       await _ensureBusinessName();
       await _fetchCurrentUserMe();
       await _loadMerchantData();
-      await _loadItems();
+      // Silent refresh so "My Items" grid stays stable on screen.
+      await _loadItems(showLoading: false);
       await _loadOrderStats();
     });
   }
@@ -518,7 +556,10 @@ class _MarketplaceMerchantDashboardState
           .trim();
       if (phoneVal.isEmpty && picVal.isEmpty) return;
       final prefs = await SharedPreferences.getInstance();
-      if (phoneVal.isNotEmpty) await prefs.setString('phone', phoneVal);
+      if (phoneVal.isNotEmpty) {
+        await prefs.setString('phone', phoneVal);
+        await prefs.setString('merchant_profile_phone', phoneVal);
+      }
       if (picVal.isNotEmpty) await prefs.setString('profilepicture', picVal);
       if (!mounted) return;
       setState(() {
@@ -682,7 +723,9 @@ class _MarketplaceMerchantDashboardState
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
 
-    final phone = _sanitizePhone(prefs.getString('phone') ?? '');
+    final phone = _sanitizePhone(
+      prefs.getString('merchant_profile_phone') ?? prefs.getString('phone') ?? '',
+    );
     setState(() {
       _merchantEmail = prefs.getString('email') ?? _merchantEmail;
       if (phone.isNotEmpty) _merchantPhone = phone;
@@ -747,7 +790,10 @@ class _MarketplaceMerchantDashboardState
 
         final prefs = await SharedPreferences.getInstance();
         if (emailVal.isNotEmpty) await prefs.setString('email', emailVal);
-        if (phoneVal.isNotEmpty) await prefs.setString('phone', phoneVal);
+        if (phoneVal.isNotEmpty) {
+          await prefs.setString('phone', phoneVal);
+          await prefs.setString('merchant_profile_phone', phoneVal);
+        }
         if (picVal.isNotEmpty) await prefs.setString('profilepicture', picVal);
 
         if (!mounted) return;
@@ -812,7 +858,10 @@ class _MarketplaceMerchantDashboardState
 
               final mp = _sanitizePhone(
                   (merchant['phone'] ?? '').toString().trim());
-              if (mp.isNotEmpty) _merchantPhone = mp;
+              if (mp.isNotEmpty) {
+                _merchantPhone = mp;
+                unawaited(prefs.setString('merchant_profile_phone', mp));
+              }
             }
           });
         }
@@ -836,8 +885,14 @@ class _MarketplaceMerchantDashboardState
   Future<void> _loadOrderStats() async {
     if (!mounted) return;
     try {
+      final myFirebaseUid = (_auth.currentUser?.uid ?? '').trim();
       final orders = await _orderService.getMyOrders();
       final sold = orders.where((o) {
+        final sellerUid = (o.merchantUid ?? '').trim();
+        // Merchant dashboard stats must only reflect orders sold by this merchant.
+        if (myFirebaseUid.isEmpty || sellerUid.isEmpty || sellerUid != myFirebaseUid) {
+          return false;
+        }
         if (o.status == OrderStatus.delivered) return true;
         if (o.status == OrderStatus.confirmed && o.paymentStatus == PaymentStatus.paid) return true;
         return false;
@@ -936,8 +991,10 @@ class _MarketplaceMerchantDashboardState
   }
 
   // ----------------- Items load + counts (total/active) -----------------
-  Future<void> _loadItems() async {
-    if (mounted) setState(() => _loadingItems = true);
+  /// When [showLoading] is false, keeps the current grid visible while refreshing
+  /// in the background (used by periodic updates so the UI stays stable).
+  Future<void> _loadItems({bool showLoading = true}) async {
+    if (showLoading && mounted) setState(() => _loadingItems = true);
 
     try {
       final nestSellerId = await _getNestUserId();
@@ -969,14 +1026,16 @@ class _MarketplaceMerchantDashboardState
     } catch (e) {
       debugPrint('Error loading items: $e');
       if (!mounted) return;
-      setState(() {
-        _items = [];
-        _totalItems = 0;
-        _activeItems = 0;
-        // keep _soldItems from _loadOrderStats
-      });
+      if (showLoading) {
+        setState(() {
+          _items = [];
+          _totalItems = 0;
+          _activeItems = 0;
+          // keep _soldItems from _loadOrderStats
+        });
+      }
     } finally {
-      if (mounted) setState(() => _loadingItems = false);
+      if (showLoading && mounted) setState(() => _loadingItems = false);
     }
   }
 
@@ -1030,31 +1089,135 @@ class _MarketplaceMerchantDashboardState
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take a photo'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickAndUploadProfile(ImageSource.camera);
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: _brandOrange,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.photo_camera_outlined,
+                            color: Colors.white, size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Take a photo',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose from gallery'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickAndUploadProfile(ImageSource.gallery);
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF1E88E5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.photo_library_outlined,
+                            color: Colors.white, size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Choose from gallery',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
             if (_merchantProfileUrl.trim().isNotEmpty)
-              ListTile(
-                leading:
-                    const Icon(Icons.remove_circle_outline, color: Colors.red),
-                title: const Text('Remove current photo'),
+              InkWell(
                 onTap: () {
                   Navigator.pop(context);
                   _removeProfilePhoto();
                 },
+                borderRadius: BorderRadius.circular(16),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.remove_circle_outline,
+                              color: Colors.white, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'Remove current photo',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF222222),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
           ],
         ),
@@ -1095,6 +1258,57 @@ class _MarketplaceMerchantDashboardState
                   ),
                 ),
               ),
+              if (_merchantProfileUrl.trim().isNotEmpty)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 16,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.red.shade700,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 14,
+                        horizontal: 16,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    onPressed: () async {
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (_) => AlertDialog(
+                          title: const Text('Remove profile photo?'),
+                          content: const Text(
+                            'This will remove your current profile picture.',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(false),
+                              child: const Text('Cancel'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(true),
+                              child: const Text(
+                                'Remove',
+                                style: TextStyle(color: Colors.red),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed != true) return;
+                      await _removeProfilePhoto();
+                      if (!mounted) return;
+                      Navigator.of(context).pop();
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text(
+                      'Remove profile photo',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -1354,8 +1568,10 @@ class _MarketplaceMerchantDashboardState
         filename: _cover!.filename ?? 'cover.jpg',
         mimeType: _cover!.mime,
       );
+      final coverHash = await svc.computeVisualHash(_cover!.bytes);
 
       final galleryUrls = <String>[];
+      final galleryHashes = <String>[];
       for (final m in _gallery) {
         final url = await svc.uploadBytes(
           m.bytes,
@@ -1363,7 +1579,14 @@ class _MarketplaceMerchantDashboardState
           mimeType: m.mime,
         );
         galleryUrls.add(url);
+        final gHash = await svc.computeVisualHash(m.bytes);
+        if (gHash != null) galleryHashes.add(gHash);
       }
+
+      final imageHashes = <String>{
+        if (coverHash != null) coverHash,
+        ...galleryHashes,
+      }.toList();
 
       final data = {
         'name': _name.text.trim(),
@@ -1372,6 +1595,9 @@ class _MarketplaceMerchantDashboardState
         // ✅ store URLs only
         'imageUrl': coverUrl,
         'galleryUrls': galleryUrls,
+        'imageHash': coverHash,
+        'galleryHashes': galleryHashes,
+        'imageHashes': imageHashes,
 
         'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         'location': _location.text.trim(),
@@ -1520,21 +1746,97 @@ class _MarketplaceMerchantDashboardState
                 builder: (_) => SafeArea(
                   child: Wrap(
                     children: [
-                      ListTile(
-                        leading: const Icon(Icons.photo_camera_outlined),
-                        title: const Text('Take a photo'),
+                      InkWell(
                         onTap: () {
                           Navigator.pop(_);
                           pickNewCoverFrom(ImageSource.camera);
                         },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.grey.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFFF8A00),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.photo_camera_outlined,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                const Expanded(
+                                  child: Text(
+                                    'Take a photo',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w900,
+                                      color: Color(0xFF222222),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
-                      ListTile(
-                        leading: const Icon(Icons.photo_library_outlined),
-                        title: const Text('Choose from gallery'),
+                      InkWell(
                         onTap: () {
                           Navigator.pop(_);
                           pickNewCoverFrom(ImageSource.gallery);
                         },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.grey.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF1E88E5),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.photo_library_outlined,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                const Expanded(
+                                  child: Text(
+                                    'Choose from gallery',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w900,
+                                      color: Color(0xFF222222),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -1578,6 +1880,11 @@ class _MarketplaceMerchantDashboardState
 
                 if (newCover != null) {
                   patch['image'] = base64Encode(newCover!.bytes);
+                  final coverHash = await MarketplaceService().computeVisualHash(newCover!.bytes);
+                  if (coverHash != null) {
+                    patch['imageHash'] = coverHash;
+                    patch['imageHashes'] = FieldValue.arrayUnion([coverHash]);
+                  }
                 }
 
                 await _firestore.collection('marketplace_items').doc(id).update(
@@ -1603,7 +1910,7 @@ class _MarketplaceMerchantDashboardState
 
             final coverWidget = newCover != null
                 ? Image.memory(newCover!.bytes, fit: BoxFit.cover)
-                : _ImageAny(item['image']);
+                : _ImageAny(_coverImageSourceFromItem(item));
 
             return Padding(
               padding: EdgeInsets.only(
@@ -1889,9 +2196,17 @@ class _MarketplaceMerchantDashboardState
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 4),
-                Text(value,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
                     style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w900)),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -1917,7 +2232,25 @@ class _MarketplaceMerchantDashboardState
 
   AppBar _buildDashboardAppBar() {
     return AppBar(
-      title: const Text('Merchant Dashboard'),
+      title: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Icon(
+            Icons.storefront_rounded,
+            color: Colors.white,
+            size: 22,
+          ),
+          SizedBox(width: 8),
+          Text(
+            'Merchant Dashboard',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
+          ),
+        ],
+      ),
       backgroundColor: _brandOrange,
       actions: [
         Padding(
@@ -2046,7 +2379,25 @@ class _MarketplaceMerchantDashboardState
         _showMerchantGuide = true;
         _merchantGuideStep = 0;
       });
+      // Match the first card (Add Item) to the Add Item tab — not the previous tab.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_showMerchantGuide) return;
+        _syncMerchantGuideTab(_merchantGuideStep);
+      });
     } catch (_) {}
+  }
+
+  /// Tabs: 0 Dashboard, 1 Add Item, 2 My Items — align with [_merchantGuideSteps] copy.
+  void _syncMerchantGuideTab(int step) {
+    if (step < 0 || step >= _merchantGuideSteps.length) return;
+    final int tab = switch (step) {
+      0 => 1, // Add Item
+      1 => 2, // My Items
+      2 || 3 => 0, // Wallet + orders / recent sales on Dashboard
+      _ => 0,
+    };
+    if (_marketplaceTabs.index == tab) return;
+    _marketplaceTabs.animateTo(tab);
   }
 
   Future<void> _completeMerchantGuide() async {
@@ -2066,7 +2417,7 @@ class _MarketplaceMerchantDashboardState
     (title: 'ikani katundu wanu koyamba', body: 'Dinani "Add Item" kuti muike katundu wanu. kenako ikani  name, price, photo and category.', icon: Icons.add_box_rounded),
     (title: 'kulongosola katundu wanu', body: 'Yuzani "My Items"  kt mu wone, musithe,kuika ndikuchosa katundu wanu pa msika.', icon: Icons.inventory_2_rounded),
     (title: 'Tsegulani waleti yanu', body: 'tsegulani Waleti yanu pa dashboard kuti muthe kulandila ma payments and ikani PIN kuti muteteze waleti yanu.', icon: Icons.account_balance_wallet_rounded),
-    (title: 'Mukagulisa', body: 'chongani ma  orders as shipped or delivered. onani zomwe mwagulisa pa recent Sales  ndipo pangani makasitomala anu kukhala a tcheru.', icon: Icons.local_shipping_rounded),
+    (title: 'Mukagulisa', body: 'pitani ku dashboard dinani send parcels,ikani receipt ya courier tumizani katundu kenako dikililani ndalama zanu . onani zomwe mwagulisa pa recent Sales  ndipo pangani makasitomala anu kukhala a tcheru.', icon: Icons.local_shipping_rounded),
   ];
 
   Widget _buildMerchantGuideOverlay() {
@@ -2177,14 +2528,11 @@ class _MarketplaceMerchantDashboardState
                               _completeMerchantGuide();
                               return;
                             }
-                            if (_merchantGuideStep == 0) {
-                              _marketplaceTabs.animateTo(1);
-                            } else if (_merchantGuideStep == 1) {
-                              _marketplaceTabs.animateTo(2);
-                            } else if (_merchantGuideStep == 2) {
-                              _marketplaceTabs.animateTo(0);
-                            }
                             setState(() => _merchantGuideStep++);
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (!mounted) return;
+                              _syncMerchantGuideTab(_merchantGuideStep);
+                            });
                           },
                           child: Text(
                             isLast ? 'Ndamva!' : 'Next',
@@ -2845,7 +3193,7 @@ class _MarketplaceMerchantDashboardState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Your Items',
+        const Text('My Items',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
         if (_loadingItems)
@@ -2865,12 +3213,7 @@ class _MarketplaceMerchantDashboardState
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _items.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 0.78,
-            ),
+            gridDelegate: _merchantItemsGridDelegate(context),
             itemBuilder: (_, i) => _ModernItemMiniCard(item: _items[i]),
           ),
       ],
@@ -3181,13 +3524,7 @@ class _MarketplaceMerchantDashboardState
                   : GridView.builder(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       itemCount: filtered.length,
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: 0.78,
-                      ),
+                      gridDelegate: _merchantItemsGridDelegate(context),
                       itemBuilder: (_, i) => _ItemCard(
                         item: filtered[i],
                         busy: _busyRow,
@@ -3228,21 +3565,103 @@ class _MarketplaceMerchantDashboardState
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take a photo'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickCover(ImageSource.camera);
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFFF8A00),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_camera_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Take a photo',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose from gallery'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickCover(ImageSource.gallery);
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF1E88E5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_library_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Choose from gallery',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -3276,21 +3695,103 @@ class _MarketplaceMerchantDashboardState
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take a photo'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickMorePhotosFromCamera();
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFFF8A00),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_camera_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Take a photo',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose from gallery'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickMorePhotos();
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF1E88E5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_library_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Choose from gallery',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -3344,13 +3845,19 @@ class _MarketplaceMerchantDashboardState
         child: SizedBox(
           height: 72,
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildNavItem(Icons.home_rounded, 'Home', 0),
-              _buildNavItem(Icons.storefront_rounded, 'Marketplace', 1),
-              _buildNavItem(Icons.shopping_cart_rounded, 'Cart', 2),
-              _buildNavItem(Icons.message_rounded, 'Messages', 3),
-              _buildNavItem(Icons.dashboard_rounded, 'Dashboard', 4),
+              Expanded(child: _buildNavItem(Icons.home_rounded, 'Home', 0)),
+              Expanded(
+                  child: _buildNavItem(
+                      Icons.storefront_rounded, 'Marketplace', 1)),
+              Expanded(
+                  child: _buildNavItem(
+                      Icons.shopping_cart_rounded, 'Cart', 2)),
+              Expanded(
+                  child: _buildNavItem(Icons.message_rounded, 'Messages', 3)),
+              Expanded(
+                  child: _buildNavItem(
+                      Icons.dashboard_rounded, 'Dashboard', 4)),
             ],
           ),
         ),
@@ -3360,26 +3867,40 @@ class _MarketplaceMerchantDashboardState
 
   Widget _buildNavItem(IconData icon, String label, int index) {
     final isSelected = _selectedIndex == index;
+    final sw = MediaQuery.sizeOf(context).width;
+    final narrow = sw < 400;
+    final hPad = narrow ? 2.0 : 5.0;
+    final iconSize = narrow ? 22.0 : 24.0;
+    final fontSize = narrow ? 10.0 : 12.0;
+
     return GestureDetector(
       onTap: () => _onItemTapped(index),
+      behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        width: double.infinity,
+        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: narrow ? 8 : 10),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
           color:
               isSelected ? _brandOrange.withOpacity(0.12) : Colors.transparent,
           borderRadius: BorderRadius.circular(14),
         ),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon,
-                color: isSelected ? _brandOrange : Colors.grey[600], size: 24),
-            const SizedBox(height: 4),
+                color: isSelected ? _brandOrange : Colors.grey[600],
+                size: iconSize),
+            SizedBox(height: narrow ? 2 : 4),
             Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: fontSize,
                 color: isSelected ? _brandOrange : Colors.grey[600],
                 fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
               ),
@@ -3568,12 +4089,7 @@ class _ItemsGridSkeleton extends StatelessWidget {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: count,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 0.78,
-      ),
+      gridDelegate: _merchantItemsGridDelegate(context),
       itemBuilder: (_, __) => Container(
         decoration: BoxDecoration(
           color: const Color(0xFFEDEFF3),
@@ -3585,6 +4101,38 @@ class _ItemsGridSkeleton extends StatelessWidget {
 }
 
 // ----------------- Cards -----------------
+
+/// Firestore `marketplace_items` may use `image` (base64), `imageUrl` (upload flow),
+/// or only `gallery` / `galleryUrls` — same as [main_marketPlace] / MerchantProductsPage.
+String? _coverImageSourceFromItem(Map<String, dynamic> item) {
+  String? take(dynamic v) {
+    final t = (v ?? '').toString().trim();
+    return t.isEmpty ? null : t;
+  }
+
+  final direct = take(item['imageUrl']) ??
+      take(item['image']) ??
+      take(item['photo']) ??
+      take(item['picture']);
+  if (direct != null) return direct;
+
+  final urls = item['galleryUrls'];
+  if (urls is List) {
+    for (final e in urls) {
+      final u = e.toString().trim();
+      if (u.isNotEmpty) return u;
+    }
+  }
+  final gal = item['gallery'];
+  if (gal is List) {
+    for (final e in gal) {
+      final u = e.toString().trim();
+      if (u.isNotEmpty) return u;
+    }
+  }
+  return null;
+}
+
 class _ModernItemMiniCard extends StatelessWidget {
   final Map<String, dynamic> item;
   const _ModernItemMiniCard({required this.item});
@@ -3597,7 +4145,11 @@ class _ModernItemMiniCard extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, c) {
         final h = c.maxHeight;
-        final imgH = min(140.0, h * 0.60);
+        final narrow = c.maxWidth < 168;
+        // Leave room for 3 text lines + padding; shorter image on tiny cells.
+        const minTextBlock = 76.0;
+        final maxImg = narrow ? 118.0 : 140.0;
+        final imgH = min(maxImg, max(h - minTextBlock, 56.0));
 
         return Container(
           decoration: BoxDecoration(
@@ -3611,41 +4163,60 @@ class _ModernItemMiniCard extends StatelessWidget {
               ClipRRect(
                 borderRadius:
                     const BorderRadius.vertical(top: Radius.circular(18)),
-                child: SizedBox(height: imgH, child: _ImageAny(item['image'])),
+                child: SizedBox(
+                    height: imgH,
+                    child: _ImageAny(_coverImageSourceFromItem(item))),
               ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                  padding: EdgeInsets.fromLTRB(
+                    narrow ? 8 : 12,
+                    narrow ? 6 : 8,
+                    narrow ? 8 : 12,
+                    narrow ? 8 : 10,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisAlignment: MainAxisAlignment.start,
                     children: [
                       Text(
                         (item['name'] ?? 'Unknown').toString(),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w900),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: narrow ? 12.5 : 14,
+                        ),
                       ),
-                      const SizedBox(height: 4),
+                      SizedBox(height: narrow ? 2 : 4),
                       Text(
                         mwk0(item['price']), // ✅ commas
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w900, color: Colors.green),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: Colors.green,
+                          fontSize: narrow ? 12 : 14,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 4),
+                      SizedBox(height: narrow ? 2 : 4),
                       Row(
                         children: [
                           Icon(Icons.circle,
-                              size: 10,
+                              size: narrow ? 8 : 10,
                               color: active ? Colors.green : Colors.red),
-                          const SizedBox(width: 6),
-                          Text(
-                            active ? 'Active' : 'Inactive',
-                            style: const TextStyle(
+                          SizedBox(width: narrow ? 4 : 6),
+                          Flexible(
+                            child: Text(
+                              active ? 'Active' : 'Inactive',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
                                 fontWeight: FontWeight.w800,
-                                color: Colors.black54),
+                                color: Colors.black54,
+                                fontSize: narrow ? 11 : 12,
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -3682,7 +4253,10 @@ class _ItemCard extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, c) {
         final h = c.maxHeight;
-        final imgH = min(150.0, h * 0.62);
+        final narrow = c.maxWidth < 168;
+        const minTextBlock = 82.0;
+        final maxImg = narrow ? 120.0 : 150.0;
+        final imgH = min(maxImg, max(h - minTextBlock, 58.0));
 
         return Material(
           color: Colors.white,
@@ -3700,38 +4274,49 @@ class _ItemCard extends StatelessWidget {
                           const BorderRadius.vertical(top: Radius.circular(18)),
                       child: SizedBox(
                         height: imgH,
-                        child: _ImageAny(item['image']),
+                        child: _ImageAny(_coverImageSourceFromItem(item)),
                       ),
                     ),
                     Expanded(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                        padding: EdgeInsets.fromLTRB(
+                          narrow ? 8 : 12,
+                          narrow ? 6 : 8,
+                          narrow ? 8 : 12,
+                          narrow ? 8 : 10,
+                        ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisAlignment: MainAxisAlignment.start,
                           children: [
                             Text(
                               (item['name'] ?? 'Unknown').toString(),
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w900, fontSize: 14),
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: narrow ? 12.5 : 14,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 4),
+                            SizedBox(height: narrow ? 2 : 4),
                             Text(
                               mwk0(item['price']), // ✅ commas
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  color: Colors.green),
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: Colors.green,
+                                fontSize: narrow ? 12 : 14,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 4),
+                            SizedBox(height: narrow ? 2 : 4),
                             Text(
                               (item['category'] ?? 'other').toString(),
-                              style: const TextStyle(
-                                  color: Colors.black54,
-                                  fontWeight: FontWeight.w800),
+                              style: TextStyle(
+                                color: Colors.black54,
+                                fontWeight: FontWeight.w800,
+                                fontSize: narrow ? 11 : 13,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -3810,30 +4395,47 @@ class _ItemCard extends StatelessWidget {
   }
 }
 
-// Image widget: supports http OR base64
+// Image widget: supports http(s), data:image, or raw base64 (same idea as MerchantProductsPage)
 class _ImageAny extends StatelessWidget {
   final dynamic imageData;
   const _ImageAny(this.imageData);
 
   @override
   Widget build(BuildContext context) {
-    if (imageData is! String || imageData.isEmpty) return _placeholder();
+    if (imageData == null) return _placeholder();
+    final raw = imageData.toString().trim();
+    if (raw.isEmpty) return _placeholder();
 
     try {
-      if (imageData.startsWith('http')) {
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
         return Image.network(
-          imageData,
+          raw,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _placeholder(),
-        );
-      } else {
-        final bytes = base64Decode(imageData);
-        return Image.memory(
-          bytes,
-          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
           errorBuilder: (_, __, ___) => _placeholder(),
         );
       }
+      if (raw.startsWith('data:image')) {
+        final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+        final bytes = base64Decode(base64Part);
+        return Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+          errorBuilder: (_, __, ___) => _placeholder(),
+        );
+      }
+      final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+      final bytes = base64Decode(base64Part);
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (_, __, ___) => _placeholder(),
+      );
     } catch (_) {
       return _placeholder();
     }

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'package:vero360_app/GeneralModels/order_model.dart';
+import 'package:vero360_app/GernalServices/buyer_phone_resolver.dart';
+import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -25,11 +27,44 @@ class _ToRefundPageState extends State<ToRefundPage> {
   final _date = DateFormat('dd MMM yyyy, HH:mm');
 
   late Future<List<OrderItem>> _future;
+  final Map<String, String> _buyerPhoneByOrder = {};
+  final Map<String, String> _merchantPhoneByOrder = {};
 
   @override
   void initState() {
     super.initState();
-    _future = _svc.getMyOrders();
+    _future = _loadOrdersWithMerchantPhones();
+  }
+
+  Future<List<OrderItem>> _loadOrdersWithMerchantPhones() async {
+    final list = await _svc.getMyOrders();
+    try {
+      final buyerPhones = await BuyerPhoneResolver.resolveForOrders(list);
+      final phones = await MerchantPhoneResolver.resolveForOrders(list);
+      if (mounted) {
+        setState(() {
+          _buyerPhoneByOrder
+            ..clear()
+            ..addAll(buyerPhones);
+          _merchantPhoneByOrder
+            ..clear()
+            ..addAll(phones);
+        });
+      }
+    } catch (_) {}
+    return list;
+  }
+
+  String _displayMerchantPhone(OrderItem o) {
+    final resolved = _merchantPhoneByOrder[o.id];
+    if (resolved != null && resolved.trim().isNotEmpty) return resolved;
+    return safeMerchantPhone(o.merchantPhone);
+  }
+
+  String _displayBuyerPhone(OrderItem o) {
+    final resolved = _buyerPhoneByOrder[o.id];
+    if (resolved != null && resolved.trim().isNotEmpty) return resolved;
+    return safeMerchantPhone(o.customerPhone);
   }
 
   /// You are the **seller** on this line only when your Firebase UID matches
@@ -45,7 +80,7 @@ class _ToRefundPageState extends State<ToRefundPage> {
   Future<void> _reload() async {
     if (!mounted) return;
     setState(() {
-      _future = _svc.getMyOrders();
+      _future = _loadOrdersWithMerchantPhones();
     });
     try {
       await _future;
@@ -311,6 +346,7 @@ class _ToRefundPageState extends State<ToRefundPage> {
     final addressDesc = o.addressDescription ?? '';
     final addressTxt =
         [addressCity, addressDesc].where((s) => s.trim().isNotEmpty).join(' • ');
+    final buyerName = (o.customerName ?? '').trim();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -373,11 +409,50 @@ class _ToRefundPageState extends State<ToRefundPage> {
           if (orderDate != null)
             _infoRow(Icons.schedule_outlined, _date.format(orderDate.toLocal())),
           const SizedBox(height: 6),
+          Text(
+            'Buyer',
+            style: TextStyle(
+              color: _brand.withValues(alpha: 0.95),
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _infoRow(
+            Icons.person_outline,
+            buyerName.isEmpty ? 'Name: —' : 'Name: $buyerName',
+          ),
+          const SizedBox(height: 6),
+          _infoRow(
+            Icons.phone_outlined,
+            _displayBuyerPhone(o) == 'No phone number'
+                ? 'Phone: —'
+                : 'Phone: ${_displayBuyerPhone(o)}',
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Delivery',
+            style: TextStyle(
+              color: _brand.withValues(alpha: 0.95),
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 6),
           _infoRow(Icons.place_outlined, addressTxt),
+          const SizedBox(height: 8),
+          Text(
+            'Seller',
+            style: TextStyle(
+              color: _brand.withValues(alpha: 0.95),
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
+          ),
           const SizedBox(height: 6),
           _infoRow(Icons.storefront_outlined, (o.merchantName ?? '').toString()),
           const SizedBox(height: 6),
-          _infoRow(Icons.phone_outlined, safeMerchantPhone(o.merchantPhone)),
+          _infoRow(Icons.phone_outlined, _displayMerchantPhone(o)),
           const SizedBox(height: 10),
           Row(
             children: [

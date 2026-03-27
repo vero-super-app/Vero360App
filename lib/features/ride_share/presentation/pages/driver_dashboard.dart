@@ -31,6 +31,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
   final DriverService _driverService = DriverService();
   bool _isOnline = false;
   Position? _lastPosition;
+  /// After [paused]/[detached], restore "Go Online" when user returns — not for [inactive].
+  bool _resumeLocationAfterForeground = false;
 
   @override
   void initState() {
@@ -38,6 +40,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
+        _ensureDriverActive();
         _startLocationBroadcasting();
         _startMapCentering();
       }
@@ -55,11 +58,40 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Do NOT stop on [inactive] — it fires during map gestures, permission sheets,
+    // and brief transitions, which incorrectly marked the taxi unavailable every few seconds.
     if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached ||
-        state == AppLifecycleState.inactive) {
-      // App going to background or being closed - ensure taxi is offline
+        state == AppLifecycleState.detached) {
+      if (_isOnline) {
+        _resumeLocationAfterForeground = true;
+      }
       _stopLocationBroadcasting();
+    } else if (state == AppLifecycleState.resumed &&
+        _resumeLocationAfterForeground) {
+      _resumeLocationAfterForeground = false;
+      Future.microtask(() {
+        if (mounted) {
+          _startLocationBroadcasting();
+        }
+      });
+    }
+  }
+
+  /// Ensure driver is marked as active in the backend while the app is open
+  /// This keeps the driver active for receiving ride requests regardless of online/offline state
+  Future<void> _ensureDriverActive() async {
+    try {
+      final driverProfile = await ref.read(myDriverProfileProvider.future);
+      if (driverProfile['id'] != null) {
+        await _driverService.activateDriver(int.parse(driverProfile['id'].toString()));
+        if (kDebugMode) {
+          print('[DriverDashboard] ✓ Driver activated successfully');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[DriverDashboard] ✗ Error activating driver: $e');
+      }
     }
   }
 
@@ -933,12 +965,43 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
               width: double.infinity,
               height: 48,
               child: ElevatedButton.icon(
-                onPressed: () {
+                onPressed: () async {
                   if (_isOnline) {
                     _stopLocationBroadcasting();
-                  } else {
-                    _startLocationBroadcasting();
+                    return;
                   }
+                  final driver = await ref.read(myDriverProfileProvider.future);
+                  if (!context.mounted) return;
+                  final hasTaxi = driver['taxis'] is List &&
+                      (driver['taxis'] as List).isNotEmpty;
+                  final isVerified = _getBoolValue(driver['isVerified']);
+                  if (!hasTaxi) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: const Text(
+                          'Register a vehicle first. Ride offers need your taxi on the map.',
+                        ),
+                        behavior: SnackBarBehavior.floating,
+                        margin: const EdgeInsets.all(16),
+                        backgroundColor: Colors.orange.shade800,
+                      ),
+                    );
+                    return;
+                  }
+                  if (!isVerified) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: const Text(
+                          'Complete driver verification before going online.',
+                        ),
+                        behavior: SnackBarBehavior.floating,
+                        margin: const EdgeInsets.all(16),
+                        backgroundColor: Colors.orange.shade800,
+                      ),
+                    );
+                    return;
+                  }
+                  _startLocationBroadcasting();
                 },
                 icon: Icon(_isOnline ? Icons.cloud_done : Icons.cloud_off),
                 label: Text(_isOnline ? 'Go Offline' : 'Go Online'),

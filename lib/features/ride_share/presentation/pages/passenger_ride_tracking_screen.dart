@@ -33,7 +33,11 @@ class _PassengerRideTrackingScreenState
   @override
   void initState() {
     super.initState();
+    // Must not call reset/subscribe synchronously during build; child's initState
+    // runs while the route's ConsumerWidget is still building.
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(rideLifecycleProvider.notifier).reset();
       ref.read(rideLifecycleProvider.notifier).subscribeToRide(widget.rideId);
     });
   }
@@ -77,38 +81,48 @@ class _PassengerRideTrackingScreenState
     };
 
     if (lifecycleState is RideCompleted && !_hasNavigatedAway) {
-      _hasNavigatedAway = true;
-      final r = lifecycleState.ride;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => RideCompletionScreen(
-                ride: r,
-                onDone: () => widget.onRideEnded?.call(),
+      final completedRide = lifecycleState.ride;
+      if (completedRide.id != widget.rideId) {
+        // Stale completion from another ride; wait for subscribeToRide.
+      } else {
+        _hasNavigatedAway = true;
+        final r = completedRide;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (_) => RideCompletionScreen(
+                  ride: r,
+                  onDone: () => widget.onRideEnded?.call(),
+                ),
               ),
-            ),
-          );
-        }
-      });
+            );
+          }
+        });
+      }
     }
 
     if (lifecycleState is RideCancelled && !_hasNavigatedAway) {
-      _hasNavigatedAway = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Ride cancelled: ${lifecycleState.reason}'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 2),
-            ),
-          );
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (mounted && context.mounted) Navigator.of(context).pop();
-          });
-        }
-      });
+      final cancelledRide = lifecycleState.ride;
+      if (cancelledRide.id != widget.rideId) {
+        // Stale cancel from another ride.
+      } else {
+        _hasNavigatedAway = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Ride cancelled: ${lifecycleState.reason}'),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (mounted && context.mounted) Navigator.of(context).pop();
+            });
+          }
+        });
+      }
     }
 
     final String title = switch (lifecycleState) {

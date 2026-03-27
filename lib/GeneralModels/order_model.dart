@@ -77,7 +77,9 @@ class OrderItem {
   final String? merchantName;
   final String? merchantPhone;
   final double? merchantAvgRating;
+  final String? customerUid;
   final String? customerName;
+  final String? customerPhone;
 
   // Address
   final String? addressCity;
@@ -105,7 +107,9 @@ class OrderItem {
     this.merchantName,
     this.merchantPhone,
     this.merchantAvgRating,
+    this.customerUid,
     this.customerName,
+    this.customerPhone,
     this.addressCity,
     this.addressDescription,
     this.orderDate,
@@ -171,7 +175,41 @@ class OrderItem {
     String? merchName;
     String? merchPhone;
     double? merchAvg;
+    String? customerUid = _first<String>(m, [
+      'customerUid',
+      'CustomerUid',
+      'buyerUid',
+      'BuyerUid',
+      'customer_id',
+      'buyer_id',
+    ]);
     String? customerName = _first<String>(m, ['customerName', 'CustomerName', 'buyerName', 'BuyerName']);
+    String? customerPhone = _first<String>(m, [
+      'customerPhone',
+      'CustomerPhone',
+      'buyerPhone',
+      'BuyerPhone',
+      'customer_phone',
+      'Customer_phone',
+      'buyer_phone',
+      'Buyer_phone',
+      'customerPhoneNumber',
+      'CustomerPhoneNumber',
+      'buyerPhoneNumber',
+      'BuyerPhoneNumber',
+      'customerMobile',
+      'CustomerMobile',
+      'buyerMobile',
+      'BuyerMobile',
+      'phoneNumber',
+      'PhoneNumber',
+      'phone_number',
+      'Phone_number',
+      'phone',
+      'Phone',
+      'mobile',
+      'Mobile',
+    ]);
 
     final merchRaw = _first<Map>(m, ['merchant','Merchant']);
     if (merchRaw != null) {
@@ -184,8 +222,27 @@ class OrderItem {
 
     final customerRaw = _first<Map>(m, ['customer', 'Customer', 'buyer', 'Buyer', 'user', 'User']);
     if (customerRaw != null) {
+      customerUid ??= _first<String>(customerRaw, [
+        'uid',
+        'buyerUid',
+        'customerUid',
+        'firebaseUid',
+        'userId',
+        'id',
+      ]);
       customerName ??= customerRaw['name']?.toString();
       customerName ??= customerRaw['fullName']?.toString();
+      customerPhone ??= customerRaw['phone']?.toString();
+      customerPhone ??= customerRaw['mobile']?.toString();
+      customerPhone ??= customerRaw['phoneNumber']?.toString();
+      customerPhone ??= customerRaw['phone_number']?.toString();
+      final contact = customerRaw['contact'];
+      if (contact is Map) {
+        customerPhone ??= contact['phone']?.toString();
+        customerPhone ??= contact['mobile']?.toString();
+        customerPhone ??= contact['phoneNumber']?.toString();
+        customerPhone ??= contact['phone_number']?.toString();
+      }
     }
 
     // address block
@@ -195,6 +252,11 @@ class OrderItem {
     if (addrRaw != null) {
       addrCity = addrRaw['city']?.toString();
       addrDesc = addrRaw['description']?.toString();
+      customerPhone ??= addrRaw['phone']?.toString();
+      customerPhone ??= addrRaw['mobile']?.toString();
+      customerPhone ??= addrRaw['phoneNumber']?.toString();
+      customerPhone ??= addrRaw['recipientPhone']?.toString();
+      customerPhone ??= addrRaw['recipient_phone']?.toString();
     }
 
     // dates
@@ -219,7 +281,9 @@ class OrderItem {
       merchantName: merchName,
       merchantPhone: merchPhone,
       merchantAvgRating: merchAvg,
+      customerUid: customerUid?.trim().isEmpty == true ? null : customerUid?.trim(),
       customerName: customerName,
+      customerPhone: customerPhone?.trim().isEmpty == true ? null : customerPhone?.trim(),
       addressCity: addrCity,
       addressDescription: addrDesc,
       orderDate: date,

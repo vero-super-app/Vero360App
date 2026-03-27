@@ -130,7 +130,7 @@ const List<DigitalProduct> kDigitalProducts = [
     name: 'Spotify Premium',
     subtitle: '1-month subscription',
     price: 'MWK 8,000',
-    logoAsset: 'assets/brands/Spotify.jpg', 
+    logoAsset: 'assets/brands/spotify.jpg',
     icon: Icons.music_note_rounded,
   ),
   DigitalProduct(
@@ -377,6 +377,20 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     }
   }
 
+  /// Keep only real profile phone numbers and drop Firebase placeholders.
+  String? _merchantProfilePhoneOrNull(String? raw) {
+    final t = (raw ?? '').trim();
+    if (t.isEmpty) return null;
+    final lower = t.toLowerCase();
+    if (lower.startsWith('+firebase_') || lower.contains('firebase_')) {
+      return null;
+    }
+    if (lower.contains('@phone.vero360.app') || lower.contains('@')) {
+      return null;
+    }
+    return t;
+  }
+
   Future<void> _openDigitalDetail(DigitalProduct p) async {
     // Pull name, phone, email from user (SharedPreferences like checkout_page)
     String? initialName;
@@ -385,7 +399,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       initialName = prefs.getString('name');
-      initialPhone = prefs.getString('phone');
+      // Use only merchant-profile phone set from merchant dashboard/profile sources.
+      // Do not fall back to generic login/Firebase phone if missing.
+      initialPhone =
+          _merchantProfilePhoneOrNull(prefs.getString('merchant_profile_phone'));
       if (initialEmail.trim().isEmpty) {
         initialEmail = prefs.getString('email') ?? '';
       }
@@ -1102,7 +1119,6 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
   @override
   Widget build(BuildContext context) {
     final items = const [
-      ['🚕', 'Vero Ride', '4.8'],
       ['🍔', 'Food & Restaurants', '4.6'],
       ['🏨', 'Accomodations', '4.7'],
       ['💼', 'Utility', '4.9'],
@@ -1123,34 +1139,52 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
           ),
         ),
       ),
-      child: Column(
-        children: [
-          CarouselSlider.builder(
-            itemCount: items.length,
-            options: CarouselOptions(
+      child: items.isEmpty
+          ? Container(
               height: 120,
-              viewportFraction: 0.82,
-              enlargeCenterPage: true,
-              enableInfiniteScroll: true,
-              autoPlay: true,
-              autoPlayInterval: const Duration(seconds: 4),
-              autoPlayAnimationDuration: const Duration(milliseconds: 600),
-              onPageChanged: (i, _) => setState(() => _index = i),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                color: Colors.white,
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: const Text(
+                'more nearby service coming soon',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.title,
+                ),
+              ),
+            )
+          : Column(
+              children: [
+                CarouselSlider.builder(
+                  itemCount: items.length,
+                  options: CarouselOptions(
+                    height: 120,
+                    viewportFraction: 0.82,
+                    enlargeCenterPage: true,
+                    enableInfiniteScroll: true,
+                    autoPlay: true,
+                    autoPlayInterval: const Duration(seconds: 4),
+                    autoPlayAnimationDuration: const Duration(milliseconds: 600),
+                    onPageChanged: (i, _) => setState(() => _index = i),
+                  ),
+                  itemBuilder: (_, i, __) {
+                    final it = items[i];
+                    return _ProviderCard(
+                      emoji: it[0],
+                      name: it[1],
+                      rating: it[2],
+                      onOpen: () => _openNearby(context, it[1]),
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                _Dots(count: items.length, index: _index),
+              ],
             ),
-            itemBuilder: (_, i, __) {
-              final it = items[i];
-              return _ProviderCard(
-                emoji: it[0],
-                name: it[1],
-                rating: it[2],
-                onOpen: () => _openNearby(context, it[1]),
-              );
-            },
-          ),
-          const SizedBox(height: 8),
-          _Dots(count: items.length, index: _index),
-        ],
-      ),
     );
   }
 }
@@ -1243,7 +1277,7 @@ class _DealsStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final deals = const [
-      ['🚕', 'Vero Ride: available 24/7'],
+      ['🗺️', 'more nearby service coming soon'],
       ['🍔', 'Food: order food on vero'],
       ['🏨', 'Stay: All nights, pay now'],
       ['💼', 'Utility: home cleaning deals'],

@@ -450,7 +450,6 @@ class _SettingsPageState extends State<SettingsPage> {
     final nameController = TextEditingController(text: _name);
     final phoneController = TextEditingController(
         text: _sanitizePhone(_phone).isEmpty ? '' : _phone);
-    final addressController = TextEditingController(text: _address);
 
     final saved = await showModalBottomSheet<bool>(
       context: context,
@@ -476,17 +475,40 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               const SizedBox(height: 12),
-              Text(
-                _t('Edit profile', 'Sinthani mbiri'),
-                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: kBrandOrange.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.person_rounded,
+                      color: kBrandOrange,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _t('Edit profile', 'Sinthani mbiri'),
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: nameController,
                 decoration: InputDecoration(
                   labelText: _t('Name', 'Dzina'),
-                  border: const OutlineInputBorder(),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  filled: true,
+                  fillColor: const Color(0xFFF6F7FB),
                   hintText: _t('Your name', 'Dzina lanu'),
+                  prefixIcon: const Icon(Icons.badge_outlined),
                 ),
                 textCapitalization: TextCapitalization.words,
               ),
@@ -495,20 +517,13 @@ class _SettingsPageState extends State<SettingsPage> {
                 controller: phoneController,
                 decoration: InputDecoration(
                   labelText: _t('Phone', 'Foni'),
-                  border: const OutlineInputBorder(),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  filled: true,
+                  fillColor: const Color(0xFFF6F7FB),
                   hintText: _t('Phone number', 'Nambala yafoni'),
+                  prefixIcon: const Icon(Icons.phone_outlined),
                 ),
                 keyboardType: TextInputType.phone,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: addressController,
-                decoration: InputDecoration(
-                  labelText: _t('Address', 'Adiresi'),
-                  border: const OutlineInputBorder(),
-                  hintText: _t('Your address', 'Adiresi yanu'),
-                ),
-                maxLines: 2,
               ),
               const SizedBox(height: 20),
               FilledButton(
@@ -532,7 +547,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
     final newName = nameController.text.trim();
     final newPhone = phoneController.text.trim();
-    final newAddress = addressController.text.trim();
 
     final u = _auth.currentUser;
     if (u == null) return;
@@ -543,7 +557,6 @@ class _SettingsPageState extends State<SettingsPage> {
         {
           'name': newName.isEmpty ? _name : newName,
           'phone': newPhone.isEmpty ? _phone : newPhone,
-          'address': newAddress.isEmpty ? _address : newAddress,
           'updatedAt': FieldValue.serverTimestamp(),
         },
         SetOptions(merge: true),
@@ -554,13 +567,11 @@ class _SettingsPageState extends State<SettingsPage> {
         _name = newName;
       }
       if (newPhone.isNotEmpty) _phone = newPhone;
-      if (newAddress.isNotEmpty) _address = newAddress;
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('fullName', _name);
       await prefs.setString('name', _name);
       await prefs.setString('phone', _phone);
-      await prefs.setString('address', _address);
 
       if (mounted) setState(() {});
       ToastHelper.showCustomToast(context, _t('Profile updated', 'Mbiri yasinthidwa'), isSuccess: true, errorMessage: '');
@@ -1028,19 +1039,37 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 12),
             Row(
               children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: kBrandOrange.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.support_agent_rounded,
+                    color: kBrandOrange,
+                  ),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     _t('Customer service', 'Thandizo la makasitomala'),
-                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             ListTile(
               leading: _roundIcon(Icons.call_outlined),
-              title: Text(_t('Call support', 'Imbani thandizo'),
-                  style: const TextStyle(fontWeight: FontWeight.w800)),
+              title: Text(
+                _t('Call support', 'Imbani thandizo'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
               subtitle: const Text(_supportPhone),
               onTap: () async {
                 Navigator.pop(context);
@@ -1048,9 +1077,22 @@ class _SettingsPageState extends State<SettingsPage> {
               },
             ),
             ListTile(
-              leading: _roundIcon(Icons.chat_bubble_outline),
-              title: Text(_t('WhatsApp', 'WhatsApp'),
-                  style: const TextStyle(fontWeight: FontWeight.w800)),
+              leading: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF25D366).withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.chat_bubble_outline,
+                  color: Color(0xFF25D366),
+                ),
+              ),
+              title: Text(
+                _t('WhatsApp', 'WhatsApp'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
               subtitle: const Text(_supportWhatsApp),
               onTap: () async {
                 Navigator.pop(context);
@@ -1060,19 +1102,20 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             ListTile(
               leading: _roundIcon(Icons.email_outlined),
-              title: Text(_t('Email', 'Imelo'),
-                  style: const TextStyle(fontWeight: FontWeight.w800)),
+              title: Text(
+                _t('Email', 'Imelo'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
               subtitle: const Text(_supportEmail),
               onTap: () async {
                 Navigator.pop(context);
-                await _launchEmail(_supportEmail,
-                    subject: _t('Support request', 'Kufuna thandizo'),
-                    body: _t('Hi, I need help with...', 'Moni, ndikufuna thandizo pa...'));
+                await _launchEmail(
+                  _supportEmail,
+                  subject: _t('Support request', 'Kufuna thandizo'),
+                  body: _t('Hi, I need help with...', 'Moni, ndikufuna thandizo pa...'),
+                );
               },
-              
             ),
-              
-            
             const SizedBox(height: 8),
           ],
         ),
@@ -1722,7 +1765,21 @@ class _SettingsPageState extends State<SettingsPage> {
         appBar: AppBar(
           backgroundColor: kBrandOrange,
           foregroundColor: Colors.white,
-          title: Text(_t('Settings', 'Zokonda')),
+          title: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.settings_rounded, size: 22, color: Colors.white),
+              const SizedBox(width: 8),
+              Text(
+                _t('Settings', 'Zokonda'),
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: _backPressed,
@@ -1760,7 +1817,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   compact: _compactMode,
                   icon: Icons.person_outline,
                   title: _t('Edit profile', 'Sinthani mbiri'),
-                  subtitle: _t('Name, phone, address', 'Dzina, foni, adiresi'),
+                  subtitle: _t('Name, phone', 'Dzina, foni'),
                   onTap: _openEditProfile,
                 ),
                 _SettingsTile(
@@ -2130,7 +2187,21 @@ class AboutUsPage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: kBrandOrange,
         foregroundColor: Colors.white,
-        title: const Text('About Us'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.info_outline, size: 22, color: Colors.white),
+            SizedBox(width: 8),
+            Text(
+              'About Us',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -2307,8 +2378,12 @@ class PolicyPage extends StatelessWidget {
       await file.writeAsBytes(bytes, flush: true);
 
       final uri = Uri.file(file.path);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
+      final canOpen = await canLaunchUrl(uri);
+      if (canOpen) {
+        await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
         return;
       }
       await Share.shareXFiles(
@@ -2364,7 +2439,21 @@ class PolicyPage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: kBrandOrange,
         foregroundColor: Colors.white,
-        title: const Text('Privacy & Terms'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.privacy_tip_rounded, size: 22, color: Colors.white),
+            SizedBox(width: 8),
+            Text(
+              'Privacy & Terms',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),

@@ -10,6 +10,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/latest_Services.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 // ===== Latest Arrivals (API + Firestore image + Cart + Bottomsheet) =====
 class LatestArrivalsSection extends StatefulWidget {
@@ -375,6 +376,13 @@ class _ProductCardFromApi extends StatelessWidget {
 
                     if (url.isEmpty) return const _ImgPlaceholder();
 
+                    if (url.startsWith('http://') ||
+                        url.startsWith('https://')) {
+                      return ResilientCachedNetworkImage(
+                        url: url,
+                        fit: BoxFit.cover,
+                      );
+                    }
                     return Image.network(
                       url,
                       fit: BoxFit.cover,
@@ -524,6 +532,13 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
 
                   if (url.isEmpty) return const _ImgPlaceholder();
 
+                  if (url.startsWith('http://') ||
+                      url.startsWith('https://')) {
+                    return ResilientCachedNetworkImage(
+                      url: url,
+                      fit: BoxFit.cover,
+                    );
+                  }
                   return Image.network(
                     url,
                     fit: BoxFit.cover,

@@ -10,6 +10,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -40,6 +41,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.s
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 // ─────────────────────────────────────────────
 // CONSTANTS & THEME
@@ -346,10 +348,44 @@ class MarketplaceDetailModel {
     final sqlId = parseInt(rawSql);
     final cat = (data['category'] ?? '').toString().toLowerCase();
 
-    List<String> gallery = const [];
-    final galleryRaw = data['gallery'];
-    if (galleryRaw is List) {
-      gallery = galleryRaw.map((e) => e.toString()).toList();
+    List<String> parseGalleryField(dynamic field) {
+      if (field is List) {
+        return field
+            .map((e) => e.toString().trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+      if (field is String) {
+        final raw = field.trim();
+        if (raw.isEmpty) return const [];
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is List) {
+            return decoded
+                .map((e) => e.toString().trim())
+                .where((s) => s.isNotEmpty)
+                .toList();
+          }
+        } catch (_) {}
+        return raw
+            .split(',')
+            .map((e) => e.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+      return const [];
+    }
+
+    // `gallery` (Post_On_Marketplace) vs `galleryUrls` (merchant dashboard upload flow)
+    final fromGallery = parseGalleryField(data['gallery']);
+    final fromGalleryUrls = parseGalleryField(data['galleryUrls']);
+    final seen = <String>{};
+    final gallery = <String>[];
+    for (final s in [...fromGallery, ...fromGalleryUrls]) {
+      final t = s.trim();
+      if (t.isEmpty || seen.contains(t)) continue;
+      seen.add(t);
+      gallery.add(t);
     }
 
     double? sellerRating;
@@ -533,91 +569,10 @@ Widget _statusChip(String? status) {
   );
 }
 
-// ─────────────────────────────────────────────
-// RESILIENT NETWORK IMAGE
-// ─────────────────────────────────────────────
-class _ResilientNetworkImage extends StatefulWidget {
-  const _ResilientNetworkImage({
-    required this.url,
-    this.fit = BoxFit.cover,
-    this.width,
-    this.height,
-  });
-  final String url;
-  final BoxFit fit;
-  final double? width;
-  final double? height;
-
-  @override
-  State<_ResilientNetworkImage> createState() => _ResilientNetworkImageState();
-}
-
-class _ResilientNetworkImageState extends State<_ResilientNetworkImage> {
-  late String _alternateUrl;
-  bool _tryAlternate = false;
-
-  String get _currentUrl => _tryAlternate ? _alternateUrl : widget.url;
-
-  @override
-  void initState() {
-    super.initState();
-    _alternateUrl = _flipScheme(widget.url);
-  }
-
-  static String _flipScheme(String url) {
-    final u = url.trim().toLowerCase();
-    if (u.startsWith('https://')) return 'http://${url.substring(8)}';
-    if (u.startsWith('http://')) return 'https://${url.substring(7)}';
-    return url;
-  }
-
-  Widget _buildImage(String url) {
-    return Image.network(
-      url,
-      fit: widget.fit,
-      width: widget.width,
-      height: widget.height,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) {
-        if (!_tryAlternate && _flipScheme(url) != url) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _tryAlternate = true);
-          });
-          return _shimmerPlaceholder();
-        }
-        return _errorPlaceholder();
-      },
-      loadingBuilder: (c, child, progress) {
-        if (progress == null) return child;
-        return _shimmerPlaceholder();
-      },
-    );
-  }
-
-  Widget _shimmerPlaceholder() => _Shimmer(
-        child: Container(
-          width: widget.width,
-          height: widget.height,
-          color: const Color(0xFFE2E5EA),
-        ),
-      );
-
-  Widget _errorPlaceholder() => Container(
-        width: widget.width,
-        height: widget.height,
-        color: const Color(0xFFF3F4F6),
-        alignment: Alignment.center,
-        child:
-            const Icon(Icons.image_not_supported_rounded, color: Colors.grey),
-      );
-
-  @override
-  Widget build(BuildContext context) => _buildImage(_currentUrl);
-}
-
-// ─────────────────────────────────────────────
-// MARKET PAGE
-// ─────────────────────────────────────────────
+/// Network image that on load error retries with the other scheme (http <-> https).
+/// --------------------
+/// Market Page
+/// --------------------
 class MarketPage extends StatefulWidget {
   final CartService cartService;
   const MarketPage({required this.cartService, super.key});
@@ -636,7 +591,28 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
   String _mwk(num v) => _mwkFmt.format(v);
 
-  static const List<String> _kCategories = [
+  Widget _smallBadge(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.65),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+
+  static const List<String> _kCategories = <String>[
     'food',
     'drinks',
     'electronics',
@@ -647,16 +623,342 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   String? _selectedCategory;
 
   Timer? _debounce;
+  Timer? _suggestionTimer;
   String _lastQuery = '';
   bool _loading = false;
   bool _photoMode = false;
-  bool _aiSearchMode = false;
-  bool _veroAiLoading = false;
+  bool _comfortableView = false;
+  bool _forYouMode = true;
+  int _suggestionIndex = 0;
+  static const List<String> _searchSuggestions = <String>[
+    'iphone 13 near me',
+    'nike shoes size 42',
+    'ps5 controller',
+    'laptop under 500k',
+    'kitchen blender',
+    'office chair',
+  ];
+
+  // Search suggestion carousel (interactive + auto-slides)
+  List<String> _activeSearchSuggestions = const <String>[];
+
+  /// AI Search mode: when true, shows AI summary, product highlights, and smarter search
+bool _aiSearchMode=false;
+
 
   late Future<List<MarketplaceDetailModel>> _future;
+
+  /// Merchant UIDs the signed-in user follows (`merchant_followers/{id}/followers/{uid}`).
+  /// Cached briefly to avoid extra reads on every scroll refresh.
+  Set<String> _followedMerchantIdsCache = {};
+  DateTime _followedMerchantIdsFetchedAt =
+      DateTime.fromMillisecondsSinceEpoch(0);
+  static const Duration _kFollowedMerchantsCacheTtl = Duration(minutes: 2);
+
+  /// AI summary text (generated from results). Empty when not in AI mode or no query.
   String _aiSummary = '';
 
   final Map<String, Future<String?>> _dlUrlCache = {};
+  static const String _prefsPersonalizationPrefix = 'marketplace_personalization_v1_';
+
+  List<String> _keywordsFromText(String text) {
+    final clean = text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+        .trim();
+    if (clean.isEmpty) return const [];
+    const stop = {
+      'the', 'and', 'for', 'with', 'this', 'that', 'from', 'you', 'your', 'item',
+      'items', 'new', 'used', 'very', 'good', 'best', 'all', 'are', 'was', 'were',
+      'has', 'have', 'had', 'not', 'but', 'can', 'will', 'its', 'our', 'their',
+    };
+    final words = clean
+        .split(RegExp(r'\s+'))
+        .where((w) => w.length >= 3 && !stop.contains(w))
+        .toList();
+    return words;
+  }
+
+  Future<String> _personalizationStorageKey() async {
+    final uid = await _getCurrentUserId();
+    final safe = (uid == null || uid.trim().isEmpty) ? 'guest' : uid.trim();
+    return '$_prefsPersonalizationPrefix$safe';
+  }
+
+  Future<Map<String, dynamic>> _readPersonalizationProfile() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final k = await _personalizationStorageKey();
+      final raw = prefs.getString(k);
+      if (raw == null || raw.isEmpty) {
+        return {
+          'cat': <String, num>{},
+          'merchant': <String, num>{},
+          'kw': <String, num>{},
+          'last': <String, int>{},
+        };
+      }
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return {
+          'cat': Map<String, num>.from(decoded['cat'] ?? const {}),
+          'merchant': Map<String, num>.from(decoded['merchant'] ?? const {}),
+          'kw': Map<String, num>.from(decoded['kw'] ?? const {}),
+          'last': Map<String, int>.from(decoded['last'] ?? const {}),
+        };
+      }
+    } catch (_) {}
+    return {
+      'cat': <String, num>{},
+      'merchant': <String, num>{},
+      'kw': <String, num>{},
+      'last': <String, int>{},
+    };
+  }
+
+  DateTime _lastSuggestionRefreshAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  Future<void> _writePersonalizationProfile(Map<String, dynamic> profile) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final k = await _personalizationStorageKey();
+      await prefs.setString(k, jsonEncode(profile));
+    } catch (_) {}
+  }
+
+  Future<void> _trackInteraction(
+    MarketplaceDetailModel item, {
+    double weight = 1.0,
+  }) async {
+    final profile = await _readPersonalizationProfile();
+    final cat = Map<String, num>.from(profile['cat'] ?? const {});
+    final merchant = Map<String, num>.from(profile['merchant'] ?? const {});
+    final kw = Map<String, num>.from(profile['kw'] ?? const {});
+    final last = Map<String, int>.from(profile['last'] ?? const {});
+
+    final c = item.category.trim().toLowerCase();
+    if (c.isNotEmpty) cat[c] = (cat[c] ?? 0) + weight;
+
+    final m = (item.merchantName ?? item.sellerBusinessName ?? '').trim().toLowerCase();
+    if (m.isNotEmpty) merchant[m] = (merchant[m] ?? 0) + (weight * 0.8);
+
+    final keywords = _keywordsFromText('${item.name} ${item.description ?? ''} ${item.location ?? ''}');
+    for (final w in keywords.take(8)) {
+      kw[w] = (kw[w] ?? 0) + (weight * 0.45);
+    }
+
+    last[item.id] = DateTime.now().millisecondsSinceEpoch;
+    if (last.length > 120) {
+      final sorted = last.entries.toList()..sort((a, b) => a.value.compareTo(b.value));
+      for (final e in sorted.take(last.length - 120)) {
+        last.remove(e.key);
+      }
+    }
+
+    profile['cat'] = cat;
+    profile['merchant'] = merchant;
+    profile['kw'] = kw;
+    profile['last'] = last;
+    await _writePersonalizationProfile(profile);
+  }
+
+  Future<void> _trackCategoryInterest(String? cat) async {
+    final c = (cat ?? '').trim().toLowerCase();
+    if (c.isEmpty) return;
+    final profile = await _readPersonalizationProfile();
+    final catMap = Map<String, num>.from(profile['cat'] ?? const {});
+    catMap[c] = (catMap[c] ?? 0) + 1.4;
+    profile['cat'] = catMap;
+    await _writePersonalizationProfile(profile);
+  }
+
+  Future<void> _trackSearchInterest(String raw) async {
+    final words = _keywordsFromText(raw);
+    if (words.isEmpty) return;
+    final profile = await _readPersonalizationProfile();
+    final kw = Map<String, num>.from(profile['kw'] ?? const {});
+    for (final w in words.take(8)) {
+      kw[w] = (kw[w] ?? 0) + 0.35;
+    }
+    profile['kw'] = kw;
+    await _writePersonalizationProfile(profile);
+  }
+
+  /// Resolves merchant IDs the current user follows (same paths as [MerchantProductsPage] follow).
+  Future<Set<String>> _fetchFollowedMerchantIds() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return {};
+    try {
+      final qs = await _firestore
+          .collectionGroup('followers')
+          .where(FieldPath.documentId, isEqualTo: uid)
+          .limit(300)
+          .get();
+      final out = <String>{};
+      for (final doc in qs.docs) {
+        final merchantRef = doc.reference.parent.parent;
+        if (merchantRef == null) continue;
+        final id = merchantRef.id.trim();
+        if (id.isNotEmpty) out.add(id);
+      }
+      return out;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('followed merchants query: $e');
+      }
+      return {};
+    }
+  }
+
+  Future<Set<String>> _getFollowedMerchantIdsCached() async {
+    final now = DateTime.now();
+    if (_followedMerchantIdsFetchedAt.millisecondsSinceEpoch > 0 &&
+        now.difference(_followedMerchantIdsFetchedAt) < _kFollowedMerchantsCacheTtl) {
+      return _followedMerchantIdsCache;
+    }
+    final fresh = await _fetchFollowedMerchantIds();
+    _followedMerchantIdsCache = fresh;
+    _followedMerchantIdsFetchedAt = now;
+    return fresh;
+  }
+
+  Future<void> _refreshSearchSuggestionsFromProfile() async {
+    try {
+      final profile = await _readPersonalizationProfile();
+      final kwMap = Map<String, num>.from(profile['kw'] ?? const {});
+      final catMap = Map<String, num>.from(profile['cat'] ?? const {});
+      final merchantMap = Map<String, num>.from(profile['merchant'] ?? const {});
+
+      final suggestions = <String>[];
+      void addSorted(Map<String, num> map, int take, String Function(String k) toText) {
+        final entries = map.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+        for (final e in entries.take(take)) {
+          final text = toText(e.key);
+          if (text.isNotEmpty) suggestions.add(text);
+        }
+      }
+
+      addSorted(kwMap, 4, (k) => k);
+      addSorted(catMap, 2, (k) => '${k} near me');
+      addSorted(merchantMap, 2, (k) => k);
+
+      final seen = <String>{};
+      final out = <String>[];
+      for (final s in suggestions) {
+        final t = s.trim();
+        if (t.isEmpty || seen.contains(t)) continue;
+        seen.add(t);
+        out.add(t);
+      }
+
+      if (out.isEmpty) {
+        out.addAll(_searchSuggestions);
+      }
+
+      // Keep it small + fast to render
+      final finalOut = out.take(6).toList();
+      if (!mounted) return;
+      setState(() {
+        _activeSearchSuggestions = finalOut;
+        _suggestionIndex = 0;
+      });
+    } catch (_) {}
+  }
+
+  Future<List<MarketplaceDetailModel>> _rankByPersonalization(
+    List<MarketplaceDetailModel> items,
+  ) async {
+    if (items.length < 2) return items;
+    final profile = await _readPersonalizationProfile();
+    final followedMerchants = await _getFollowedMerchantIdsCached();
+    final cat = Map<String, num>.from(profile['cat'] ?? const {});
+    final merchant = Map<String, num>.from(profile['merchant'] ?? const {});
+    final kw = Map<String, num>.from(profile['kw'] ?? const {});
+    final last = Map<String, int>.from(profile['last'] ?? const {});
+
+    bool _itemIsFromFollowedSeller(MarketplaceDetailModel i) {
+      if (followedMerchants.isEmpty) return false;
+      final mid = (i.merchantId ?? '').trim();
+      if (mid.isNotEmpty && followedMerchants.contains(mid)) return true;
+      final sid = (i.sellerUserId ?? '').trim();
+      if (sid.isNotEmpty && followedMerchants.contains(sid)) return true;
+      return false;
+    }
+
+    double score(MarketplaceDetailModel i) {
+      var s = 0.0;
+      final c = i.category.trim().toLowerCase();
+      if (c.isNotEmpty) s += (cat[c] ?? 0).toDouble() * 1.3;
+
+      final m = (i.merchantName ?? i.sellerBusinessName ?? '').trim().toLowerCase();
+      if (m.isNotEmpty) s += (merchant[m] ?? 0).toDouble() * 1.1;
+
+      final words = _keywordsFromText('${i.name} ${i.description ?? ''} ${i.location ?? ''}');
+      for (final w in words.take(10)) {
+        s += (kw[w] ?? 0).toDouble() * 0.45;
+      }
+
+      final t = last[i.id];
+      if (t != null) {
+        final days = DateTime.now()
+                .difference(DateTime.fromMillisecondsSinceEpoch(t))
+                .inHours /
+            24.0;
+        s += (days <= 7 ? 2.2 : 1.2 / (1 + days / 7));
+      }
+
+      // Strong boost for merchants you follow (same Firestore follow as merchant shop page).
+      if (_itemIsFromFollowedSeller(i)) {
+        s += 22.0;
+      }
+      return s;
+    }
+
+    final ranked = List<MarketplaceDetailModel>.from(items);
+    ranked.sort((a, b) {
+      final sb = score(b);
+      final sa = score(a);
+      final byScore = sb.compareTo(sa);
+      if (byScore != 0) return byScore;
+      final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return db.compareTo(da);
+    });
+    return ranked;
+  }
+
+  void _setSuggestionsFromItems(List<MarketplaceDetailModel> items) {
+    if (!mounted) return;
+    if (items.isEmpty) return;
+
+    final seen = <String>{};
+    final out = <String>[];
+    for (final it in items) {
+      final n = it.name.trim();
+      if (n.isEmpty) continue;
+      final k = n.toLowerCase();
+      if (seen.contains(k)) continue;
+      seen.add(k);
+      out.add(n);
+      if (out.length >= 6) break;
+    }
+
+    if (out.isEmpty) return;
+    setState(() {
+      _activeSearchSuggestions = out;
+      _suggestionIndex = 0;
+    });
+  }
+
+  Future<List<MarketplaceDetailModel>> _sortByNewest(List<MarketplaceDetailModel> items) async {
+    final copy = List<MarketplaceDetailModel>.from(items);
+    copy.sort((a, b) {
+      final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return db.compareTo(da);
+    });
+    return copy;
+  }
 
   // ── Animation controllers ──
   late AnimationController _fabCtrl;
@@ -782,7 +1084,12 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     }
 
     if (_isHttp(s)) {
-      return wrap(_ResilientNetworkImage(url: s, fit: fit, width: width, height: height));
+      return wrap(ResilientCachedNetworkImage(
+        url: s,
+        fit: fit,
+        width: width,
+        height: height,
+      ));
     }
 
     return FutureBuilder<String?>(
@@ -798,8 +1105,12 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             ),
           ));
         }
-        return wrap(
-            _ResilientNetworkImage(url: url, fit: fit, width: width, height: height));
+        return wrap(ResilientCachedNetworkImage(
+          url: url,
+          fit: fit,
+          width: width,
+          height: height,
+        ));
       },
     );
   }
@@ -839,9 +1150,173 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // DATA LOADING
-  // ─────────────────────────────────────────────
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadAll();
+    _searchCtrl.addListener(_onSearchChanged);
+    _startSuggestionTimer();
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _suggestionTimer?.cancel();
+    _searchCtrl.removeListener(_onSearchChanged);
+    _searchCtrl.dispose();
+    _askQuestionCtrl.dispose();
+    super.dispose();
+  }
+
+  void _startSuggestionTimer() {
+    _suggestionTimer?.cancel();
+    _suggestionTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted) return;
+      if (_aiSearchMode) return; // suggestions UI is hidden in AI mode anyway
+      if (_searchCtrl.text.trim().isNotEmpty) return; // pause while user types
+
+      final suggestions = _activeSearchSuggestions;
+      if (suggestions.length <= 1) return;
+
+      final current = _suggestionIndex % suggestions.length;
+      int next;
+      if (suggestions.length == 2) {
+        next = 1 - current;
+      } else {
+        final rng = Random();
+        next = current;
+        while (next == current) {
+          next = rng.nextInt(suggestions.length);
+        }
+      }
+
+      setState(() {
+        _suggestionIndex = next;
+      });
+    });
+  }
+
+  void _stopSuggestionTimer() {
+    _suggestionTimer?.cancel();
+    _suggestionTimer = null;
+  }
+
+  void _showLoadingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Loading...'),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<String?> _getCurrentUserId() async {
+    try {
+      final FirebaseAuth auth = FirebaseAuth.instance;
+      final User? user = auth.currentUser;
+      if (user != null) return user.uid;
+
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      return prefs.getString('uid');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _getAuthToken() async {
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+      // 1) backend JWT tokens first
+      final String? token =
+          prefs.getString('token') ?? prefs.getString('jwt_token');
+      if (token != null && token.isNotEmpty) return token;
+
+      // 2) Firebase token
+      final User? firebaseUser = FirebaseAuth.instance.currentUser;
+      if (firebaseUser != null) {
+        final String? firebaseToken = await firebaseUser.getIdToken();
+        if (firebaseToken != null && firebaseToken.isNotEmpty) {
+          await prefs.setString('firebase_token', firebaseToken);
+          return firebaseToken;
+        }
+      }
+
+      // 3) stored firebase token fallback
+      final String? storedFirebaseToken = prefs.getString('firebase_token');
+      if (storedFirebaseToken != null && storedFirebaseToken.isNotEmpty) {
+        return storedFirebaseToken;
+      }
+
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+  // Removed misplaced await Share.shareXFiles block which was syntactically incorrect here.
+  // If sharing functionality is needed, place it inside a function or event handler.
+
+
+  String _formatTimeAgo(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+
+    if (diff.inSeconds < 60) return 'Just now';
+
+    if (diff.inMinutes < 60) {
+      final m = diff.inMinutes;
+      final unit = m == 1 ? 'min' : 'mins';
+      return '$m $unit ago';
+    }
+
+    if (diff.inHours < 24) {
+      final h = diff.inHours;
+      final unit = h == 1 ? 'hr' : 'hrs';
+      return '$h $unit ago';
+    }
+
+    if (diff.inDays < 7) {
+      final d = diff.inDays;
+      final unit = d == 1 ? 'day' : 'days';
+      return '$d $unit ago';
+    }
+
+    final weeks = (diff.inDays / 7).floor();
+    if (weeks < 4) {
+      final unit = weeks == 1 ? 'week' : 'weeks';
+      return '$weeks $unit ago';
+    }
+
+    final months = (diff.inDays / 30).floor();
+    if (months < 12) {
+      final unit = months == 1 ? 'month' : 'months';
+      return '$months $unit ago';
+    }
+
+    final years = (diff.inDays / 365).floor();
+    final unit = years == 1 ? 'year' : 'years';
+    return '$years $unit ago';
+  }
+
+  int _stablePositiveIdFromString(String s) {
+    int hash = 0;
+    for (final code in s.codeUnits) {
+      hash = (hash * 31 + code) & 0x7fffffff;
+    }
+    if (hash == 0) hash = 1;
+    return hash;
+  }
+
   Future<List<MarketplaceDetailModel>> _loadAll({String? category}) async {
     setState(() {
       _loading = true;
@@ -860,9 +1335,22 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
               .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
               .where((item) => item.isActive)
               .toList();
-          if (category == null || category.isEmpty) return all;
+
+          if (category == null || category.isEmpty) {
+            final result = _forYouMode
+                ? await _rankByPersonalization(all)
+                : await _sortByNewest(all);
+            _setSuggestionsFromItems(result);
+            return result;
+          }
+
           final c = category.toLowerCase();
-          return all.where((item) => item.category.toLowerCase() == c).toList();
+          final filtered = all.where((item) => item.category.toLowerCase() == c).toList();
+          final result = _forYouMode
+              ? await _rankByPersonalization(filtered)
+              : await _sortByNewest(filtered);
+          _setSuggestionsFromItems(result);
+          return result;
         }
       } catch (_) {}
       try {
@@ -874,9 +1362,22 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
             .where((item) => item.isActive)
             .toList();
-        if (category == null || category.isEmpty) return all;
+
+        if (category == null || category.isEmpty) {
+          final result = _forYouMode
+              ? await _rankByPersonalization(all)
+              : await _sortByNewest(all);
+          _setSuggestionsFromItems(result);
+          return result;
+        }
+
         final c = category.toLowerCase();
-        return all.where((item) => item.category.toLowerCase() == c).toList();
+        final filtered = all.where((item) => item.category.toLowerCase() == c).toList();
+        final result = _forYouMode
+            ? await _rankByPersonalization(filtered)
+            : await _sortByNewest(filtered);
+        _setSuggestionsFromItems(result);
+        return result;
       } catch (serverError) {
         final errorStr = serverError.toString().toLowerCase();
         final isNetworkError = errorStr.contains('unavailable') ||
@@ -902,6 +1403,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
   Future<List<MarketplaceDetailModel>> _searchByName(String raw) async {
     final q = raw.trim();
+    unawaited(_trackSearchInterest(q));
     if (q.isEmpty || q.length < 2) {
       _aiSummary = '';
       return _loadAll(category: _selectedCategory);
@@ -936,7 +1438,11 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       } else {
         _aiSummary = '';
       }
-      return matches;
+      final result = _forYouMode
+          ? await _rankByPersonalization(matches)
+          : await _sortByNewest(matches);
+      _setSuggestionsFromItems(result);
+      return result;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -1008,6 +1514,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   }
 
   void _openDetailsPage(MarketplaceDetailModel item) {
+    unawaited(_trackInteraction(item, weight: 1.2));
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1056,7 +1563,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       _aiSummary = '';
     });
     try {
-      await ApiConfig.init();
       final Uint8List bytes;
       final String filename;
       if (imageSource is XFile) {
@@ -1079,14 +1585,16 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         throw StateError('Invalid image source');
       }
       final service = MarketplaceService();
-      final apiResults =
+      final firebaseResults =
           await service.searchByPhotoBytes(bytes, filename: filename);
-      final converted = apiResults.map(_fromCoreMarketplace).toList();
+      final converted = firebaseResults.map(_fromCoreMarketplace).toList();
       if (mounted && converted.isNotEmpty) {
+        _setSuggestionsFromItems(converted);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                'Found ${converted.length} visually similar product${converted.length == 1 ? '' : 's'}.'),
+              'Found ${converted.length} product${converted.length == 1 ? '' : 's'} from your photo search.',
+            ),
             backgroundColor: Colors.green.shade700,
             behavior: SnackBarBehavior.floating,
             shape:
@@ -1117,11 +1625,12 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             .first;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Photo search failed: ${msg.length > 60 ? '${msg.substring(0, 60)}...' : msg}'),
-            backgroundColor: Colors.red.shade700,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            content: Text(
+              isNetwork
+                  ? 'Cannot reach Firebase now.'
+                  : 'Photo search failed: ${msg.length > 60 ? '${msg.substring(0, 60)}...' : msg}',
+            ),
+            backgroundColor: Colors.red,
             duration: const Duration(seconds: 5),
           ),
         );
@@ -1240,6 +1749,68 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           ),
         ),
       ),
+    ),
+  );
+}
+
+
+
+Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
+  final isLoggedIn = await _requireLoginForCart();
+  if (!isLoggedIn) return;
+
+  if (!item.hasValidMerchantInfo) {
+    ToastHelper.showCustomToast(
+      context,
+      'This item cannot be added to cart: Missing merchant information.',
+      isSuccess: false,
+      errorMessage: 'Invalid merchant info',
+    );
+    return;
+  }
+
+  _showQuickLoading(context); // ✅ show loading immediately
+
+  try {
+    final userId = await _getCurrentUserId() ?? 'unknown';
+
+    final int numericItemId = item.hasValidSqlItemId
+        ? item.sqlItemId!
+        : _stablePositiveIdFromString(item.id);
+
+    final cartItem = CartModel(
+      userId: userId,
+      item: numericItemId,
+      quantity: 1,
+      image: item.image,
+      name: item.name,
+      price: item.price,
+      description: item.description ?? '',
+      merchantId: item.merchantId ?? 'unknown',
+      merchantName: item.merchantName ?? 'Unknown Merchant',
+      serviceType: item.serviceType ?? 'marketplace',
+      comment: note,
+    );
+
+    await widget.cartService.addToCart(cartItem); // Firestore first = fast
+    unawaited(_trackInteraction(item, weight: 3.0));
+
+    if (mounted) Navigator.of(context).pop(); // ✅ close loading
+
+    ToastHelper.showCustomToast(
+      context,
+      '${item.name} added to cart',
+      isSuccess: true,
+      errorMessage: 'OK',
+    );
+  } catch (e) {
+    if (mounted) Navigator.of(context).pop(); // close loading
+
+    ToastHelper.showCustomToast(
+      context,
+      'Failed to add item: $e',
+      isSuccess: false,
+      errorMessage: 'Add to cart failed',
     );
   }
 
@@ -1371,6 +1942,19 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   // ─────────────────────────────────────────────
   void _onSearchChanged() {
     _debounce?.cancel();
+
+    // If the user starts typing, immediately hide/stop suggestions.
+    final typingNow = _searchCtrl.text.trim().isNotEmpty;
+    if (typingNow) {
+      _stopSuggestionTimer();
+      setState(() {}); // trigger rebuild so the suggestion widget disappears right away
+    } else {
+      // Restart suggestions when the input is empty again (non-AI mode).
+      if (!_aiSearchMode && _suggestionTimer == null) {
+        _startSuggestionTimer();
+      }
+    }
+
     _debounce = Timer(const Duration(milliseconds: 350), () {
       final txt = _searchCtrl.text;
       if (txt == _lastQuery) return;
@@ -1385,6 +1969,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   }
 
   void _setCategory(String? cat) {
+    unawaited(_trackCategoryInterest(cat));
     _searchCtrl.clear();
     _lastQuery = '';
     _aiSummary = '';
@@ -1409,72 +1994,117 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(2)),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
-                child: Text('Search by Photo',
+        child: Builder(
+          builder: (sheetContext) {
+            const brandOrange = Color(0xFFFF8A00);
+            const brandBlue = Color(0xFF1E88E5);
+
+            Widget sheetAction({
+              required Color iconBg,
+              required IconData icon,
+              required String title,
+              required VoidCallback onTap,
+            }) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: iconBg,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(icon, color: Colors.white, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF222222),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Search by Photo',
                     style: TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 16)),
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF222222),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  sheetAction(
+                    iconBg: brandOrange,
+                    icon: Icons.camera_alt,
+                    title: 'Use Camera',
+                    onTap: () async {
+                      Navigator.pop(sheetContext);
+                      final XFile? picked = await _picker.pickImage(
+                        source: ImageSource.camera,
+                        imageQuality: 85,
+                        maxWidth: 1280,
+                      );
+                      if (picked != null) {
+                        final future = _searchByPhoto(picked);
+                        if (!mounted) return;
+                        setState(() => _future = future);
+                      }
+                    },
+                  ),
+                  sheetAction(
+                    iconBg: brandBlue,
+                    icon: Icons.photo_library,
+                    title: 'Choose from Gallery',
+                    onTap: () async {
+                      Navigator.pop(sheetContext);
+                      final XFile? picked = await _picker.pickImage(
+                        source: ImageSource.gallery,
+                        imageQuality: 85,
+                        maxWidth: 1280,
+                      );
+                      if (picked != null) {
+                        final future = _searchByPhoto(picked);
+                        if (!mounted) return;
+                        setState(() => _future = future);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 6),
+                ],
               ),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                      color: _kOrangeLight,
-                      borderRadius: BorderRadius.circular(10)),
-                  child: const Icon(Icons.camera_alt_rounded,
-                      color: _kOrange),
-                ),
-                title: const Text('Use Camera',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: const Text('Take a photo to search'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final XFile? picked = await _picker.pickImage(
-                      source: ImageSource.camera,
-                      imageQuality: 85,
-                      maxWidth: 1280);
-                  if (picked != null)
-                    setState(() => _future = _searchByPhoto(picked));
-                },
-              ),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                      color: _kBlueBg,
-                      borderRadius: BorderRadius.circular(10)),
-                  child: const Icon(Icons.photo_library_rounded,
-                      color: _kBlue),
-                ),
-                title: const Text('Choose from Gallery',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: const Text('Pick an existing photo'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final XFile? picked = await _picker.pickImage(
-                      source: ImageSource.gallery,
-                      imageQuality: 85,
-                      maxWidth: 1280);
-                  if (picked != null)
-                    setState(() => _future = _searchByPhoto(picked));
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -1484,13 +2114,830 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     _searchCtrl.clear();
     _lastQuery = '';
     _aiSummary = '';
+    _followedMerchantIdsFetchedAt =
+        DateTime.fromMillisecondsSinceEpoch(0); // pick up new follows after visiting a shop
     setState(() => _future = _loadAll(category: _selectedCategory));
     await _future;
   }
 
-  // ─────────────────────────────────────────────
-  // VERO AI Q&A
-  // ─────────────────────────────────────────────
+  // ✅ Grid image widget (supports base64 + http + firebase + gallery fallback)
+  Widget _buildItemImageWidget(MarketplaceDetailModel item) {
+    final mainImage = item.image.trim();
+    final sources = <String>[
+      if (mainImage.isNotEmpty) mainImage,
+      ...item.gallery.map((e) => e.toString().trim()),
+    ].where((s) => s.isNotEmpty).toList();
+
+    if (sources.isEmpty && item.imageBytes != null) {
+      return Image.memory(item.imageBytes!, fit: BoxFit.cover, width: double.infinity);
+    }
+
+    final deduped = <String>[];
+    final seen = <String>{};
+    for (final src in sources) {
+      if (seen.add(src)) deduped.add(src);
+    }
+
+    if (deduped.length <= 1) {
+      return _imageFromAnySource(
+        deduped.isEmpty ? '' : deduped.first,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    }
+
+    return _AutoSlideImageCarousel(
+      key: ValueKey('item-media-${item.id}-${deduped.length}'),
+      sources: deduped,
+      interval: const Duration(seconds: 3),
+      showIndicators: true,
+      itemBuilder: (src) => _imageFromAnySource(
+        src,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      ),
+    );
+  }
+
+  /// ✅ FULL Details Bottom Sheet
+  /// - Removes the left/right "bars" (no arrow overlays)
+  /// - Auto-slides photos every 3 seconds
+  /// - Still swipeable
+  /// - No scrollbars / no glow
+  Future<void> _showDetailsBottomSheet(MarketplaceDetailModel item) async {
+    if (!mounted) return;
+
+    final Future<_SellerInfo> sellerFuture = _loadSellerForItem(item);
+
+    final List<String> mediaSources = [];
+    if (item.image.trim().isNotEmpty) mediaSources.add(item.image.trim());
+    if (item.gallery.isNotEmpty) {
+      mediaSources.addAll(
+        item.gallery.map((e) => e.toString().trim()).where((u) => u.isNotEmpty),
+      );
+    }
+
+    final pageController = PageController();
+    Timer? autoTimer;
+    int currentPage = 0;
+    bool autoStarted = false;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) {
+        return FractionallySizedBox(
+          heightFactor: 0.9,
+          child: StatefulBuilder(
+            builder: (ctx, setModalState) {
+              // ✅ start auto-slide ONCE
+              if (!autoStarted && mediaSources.length > 1) {
+                autoStarted = true;
+                autoTimer?.cancel();
+                autoTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+                  if (!pageController.hasClients) return;
+                  final next = (currentPage + 1) % mediaSources.length;
+                  pageController.animateToPage(
+                    next,
+                    duration: const Duration(milliseconds: 420),
+                    curve: Curves.easeInOut,
+                  );
+                  setModalState(() => currentPage = next);
+                });
+              }
+
+              return ScrollConfiguration(
+                behavior: const _NoBarsScrollBehavior(),
+                child: SingleChildScrollView(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      left: 16,
+                      right: 16,
+                      top: 12,
+                      bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+                    ),
+                    child: FutureBuilder<_SellerInfo>(
+                      future: sellerFuture,
+                      builder: (ctx, snap) {
+                        final seller = snap.data;
+
+                        final openingHours = seller?.openingHours;
+                        final closing = _closingFromHours(openingHours);
+                        final status = seller?.status;
+                        final rating = seller?.rating;
+                        final businessDesc = seller?.description;
+                        final logo = seller?.logoUrl;
+
+                        final merchantName = (item.merchantName ?? '').trim();
+                        final displayMerchantName = merchantName.isNotEmpty
+                            ? merchantName
+                            : ((seller?.businessName ?? item.sellerBusinessName ?? '')
+                                    .trim()
+                                    .isNotEmpty
+                                ? (seller?.businessName ?? item.sellerBusinessName)!.trim()
+                                : 'Merchant');
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Center(
+                              child: Container(
+                                width: 40,
+                                height: 4,
+                                margin: const EdgeInsets.only(bottom: 12),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[300],
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ),
+
+                            // ✅ Media Area (NO BARS)
+                            AspectRatio(
+                              aspectRatio: 16 / 9,
+                              child: Stack(
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: mediaSources.isEmpty
+                                        ? _buildItemImageWidget(item)
+                                        : PageView.builder(
+                                            controller: pageController,
+                                            itemCount: mediaSources.length,
+                                            physics: mediaSources.length > 1
+                                                ? const PageScrollPhysics()
+                                                : const NeverScrollableScrollPhysics(),
+                                            onPageChanged: (i) => setModalState(() => currentPage = i),
+                                            itemBuilder: (_, i) {
+                                              return _imageFromAnySource(
+                                                mediaSources[i],
+                                                fit: BoxFit.cover,
+                                                width: double.infinity,
+                                                height: double.infinity,
+                                              );
+                                            },
+                                          ),
+                                  ),
+                                  if (mediaSources.length > 1)
+                                    Positioned(
+                                      right: 10,
+                                      bottom: 10,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.55),
+                                          borderRadius: BorderRadius.circular(999),
+                                        ),
+                                        child: Text(
+                                          '${currentPage + 1}/${mediaSources.length}',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+
+                            const SizedBox(height: 16),
+
+                            // Title + Price + Chat
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.name,
+                                        style: const TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Container(
+                                        padding:
+                                            const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFFFE8CC),
+                                          borderRadius: BorderRadius.circular(20),
+                                          border: Border.all(color: const Color(0xFFFF8A00)),
+                                        ),
+                                        child: Text(
+                                          _mwk(item.price),
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      if (item.location != null &&
+                                          item.location!.trim().isNotEmpty)
+                                        Row(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Icon(Icons.location_on,
+                                                size: 16, color: Colors.redAccent),
+                                            const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Text(
+                                                item.location!,
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  color: Colors.grey[700],
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      if (item.createdAt != null) ...[
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          "Posted by $displayMerchantName • ${_formatTimeAgo(item.createdAt!)}",
+                                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                FilledButton.icon(
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: const Color(0xFFFF8A00),
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  ),
+                                  onPressed: () => _openChatWithMerchant(item),
+                                  icon: const Icon(Icons.message_rounded),
+                                  label: const Text('Chat'),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 12),
+
+                            if ((item.description ?? '').trim().isNotEmpty)
+                              Text(
+                                item.description!.trim(),
+                                style: const TextStyle(fontSize: 14, height: 1.3),
+                              ),
+
+                            const SizedBox(height: 12),
+
+                            // Share / Copy link actions
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    icon: const Icon(Icons.link),
+                                    label: const Text('Copy link'),
+                                    onPressed: () => _copyProductLinkFromSheet(item),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    icon: const Icon(Icons.share),
+                                    label: const Text('Share'),
+                                    onPressed: () => _shareProductFromSheet(item),
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 16),
+
+                            // Seller Card
+                            Card(
+                              elevation: 4,
+                              shadowColor: Colors.black12,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      crossAxisAlignment: CrossAxisAlignment.center,
+                                      children: [
+                                        if ((logo ?? '').trim().isNotEmpty)
+                                          _circleAvatarFromAnySource(logo, radius: 18),
+                                        if ((logo ?? '').trim().isNotEmpty) const SizedBox(width: 10),
+                                        const Icon(Icons.storefront_rounded,
+                                            size: 20, color: Colors.black87),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            displayMerchantName,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 16,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        _ratingStars(rating),
+                                        const SizedBox(width: 8),
+                                        _statusChip(status),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 10),
+                                    _infoRow('Business name', displayMerchantName,
+                                        icon: Icons.badge_rounded),
+                                    _infoRow('Closing hours', closing,
+                                        icon: Icons.access_time_rounded),
+                                    _infoRow(
+                                      'Status',
+                                      (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
+                                      icon: Icons.info_outline_rounded,
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Text('Business description',
+                                        style: TextStyle(color: Colors.black54)),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      (businessDesc ?? '').isNotEmpty ? businessDesc! : '—',
+                                      style: const TextStyle(fontWeight: FontWeight.w600),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(height: 16),
+
+                            // View more from this merchant
+                            if ((item.merchantId ?? '').trim().isNotEmpty) ...[
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(
+                                    Icons.store_mall_directory_outlined,
+                                  ),
+                                  label: Text(
+                                    'View more from $displayMerchantName',
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  onPressed: () {
+                                    Navigator.pop(sheetCtx);
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => MerchantProductsPage(
+                                          merchantId: item.merchantId!.trim(),
+                                          merchantName: displayMerchantName,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+
+                            const SizedBox(height: 4),
+
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFFFF8A00),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                                onPressed: () {
+                                  Navigator.pop(sheetCtx);
+                                  _goToCheckoutFromBottomSheet(item);
+                                },
+                                icon: const Icon(Icons.shopping_bag_outlined),
+                                label: const Text("Continue to checkout"),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    ).whenComplete(() {
+      autoTimer?.cancel();
+      pageController.dispose();
+    });
+  }
+
+  Widget _buildSearchModeChip(String title, bool isAiMode) {
+    final selected = _aiSearchMode == isAiMode;
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () {
+        setState(() {
+          _aiSearchMode = isAiMode;
+          if (!isAiMode) _aiSummary = '';
+          _future = _lastQuery.isNotEmpty
+              ? _searchByName(_lastQuery)
+              : _loadAll(category: _selectedCategory);
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF1E88E5) : Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                color: selected ? Colors.white : Colors.black87,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFeedModeChip() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => setState(() {
+        _forYouMode = !_forYouMode;
+        _future = _lastQuery.trim().isNotEmpty
+            ? _searchByName(_lastQuery)
+            : _loadAll(category: _selectedCategory);
+      }),
+      child: Chip(
+        avatar: Icon(
+          _forYouMode ? Icons.auto_awesome_rounded : Icons.schedule_rounded,
+          size: 14,
+          color: _forYouMode ? Colors.white : Colors.black87,
+        ),
+        label: Text(
+          _forYouMode ? 'For You' : 'Newest',
+          style: TextStyle(
+            color: _forYouMode ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.w600,
+            fontSize: 12,
+          ),
+        ),
+        backgroundColor: _forYouMode ? const Color(0xFFFF8A00) : Colors.grey[300],
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+    );
+  }
+
+  Widget _buildCategoryChip(
+    String title, {
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: Chip(
+        label: Text(
+          title,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.w600,
+            fontSize: 12,
+          ),
+        ),
+        backgroundColor: isSelected ? Colors.orange : Colors.grey[300],
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+    );
+  }
+
+  Widget _buildViewModeChip() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => setState(() => _comfortableView = !_comfortableView),
+      child: Chip(
+        avatar: Icon(
+          _comfortableView ? Icons.view_agenda_rounded : Icons.grid_view_rounded,
+          size: 14,
+          color: _comfortableView ? Colors.white : Colors.black87,
+        ),
+        label: Text(
+          _comfortableView ? 'Comfortable' : 'Compact',
+          style: TextStyle(
+            color: _comfortableView ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.w600,
+            fontSize: 12,
+          ),
+        ),
+        backgroundColor: _comfortableView ? const Color(0xFFFF8A00) : Colors.grey[300],
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+    );
+  }
+
+  Widget _buildMarketItem(MarketplaceDetailModel item) {
+    final screenW = MediaQuery.of(context).size.width;
+    final isCompactPhone = screenW < 380;
+    final cat = item.category.trim();
+    final merchant = (item.merchantName ?? '').trim();
+    final showCat = cat.isNotEmpty;
+    final showMerchant = merchant.isNotEmpty && !isCompactPhone;
+    final isSold = !item.isActive;
+
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(isCompactPhone ? 14 : 16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.07),
+            blurRadius: isCompactPhone ? 10 : 14,
+            offset: Offset(0, isCompactPhone ? 4 : 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Photo
+          Expanded(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(isCompactPhone ? 14 : 16),
+                    ),
+                    child: ColorFiltered(
+                      colorFilter: isSold
+                          ? const ColorFilter.mode(Colors.black45, BlendMode.darken)
+                          : const ColorFilter.mode(Colors.transparent, BlendMode.srcOver),
+                      child: _buildItemImageWidget(item),
+                    ),
+                  ),
+                ),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withOpacity(0.06),
+                            Colors.black.withOpacity(0.24),
+                          ],
+                          stops: const [0.5, 0.78, 1.0],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                if (showCat || showMerchant || isSold)
+                  Positioned(
+                    left: isCompactPhone ? 6 : 8,
+                    right: isCompactPhone ? 6 : 8,
+                    top: isCompactPhone ? 6 : 8,
+                    child: Row(
+                      children: [
+                        if (showCat)
+                          Flexible(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: _smallBadge(_titleCase(cat)),
+                            ),
+                          ),
+                        if ((showCat && showMerchant) || (showCat && isSold) || (showMerchant && isSold))
+                          SizedBox(width: isCompactPhone ? 6 : 8),
+                        if (showMerchant)
+                          Flexible(
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: _smallBadge(merchant),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                if (isSold)
+                  Positioned(
+                    right: -30,
+                    top: 12,
+                    child: Transform.rotate(
+                      angle: -0.7, // diagonal ribbon
+                      child: Container(
+                        width: 120,
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Colors.redAccent, Colors.deepOrange],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'SOLD',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // Product info area (light orange/peach)
+          Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF4E6),
+              borderRadius: BorderRadius.vertical(
+                bottom: Radius.circular(isCompactPhone ? 14 : 16),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    isCompactPhone ? 9 : 12,
+                    isCompactPhone ? 8 : 10,
+                    isCompactPhone ? 9 : 12,
+                    isCompactPhone ? 4 : 6,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: isCompactPhone ? 14 : 15.5,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.black87,
+                          height: 1.15,
+                        ),
+                      ),
+                      if (_aiSearchMode && _lastQuery.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(Icons.auto_awesome, size: 12, color: Colors.orange.shade700),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                _getAiHighlight(item),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.orange.shade800,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      SizedBox(height: isCompactPhone ? 2 : 3),
+                      Text(
+                        _mwk(item.price),
+                        style: TextStyle(
+                          fontSize: isCompactPhone ? 13 : 14.5,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFFFF8A00),
+                        ),
+                      ),
+                      SizedBox(height: isCompactPhone ? 2 : 3),
+                      if (item.location != null && item.location!.trim().isNotEmpty)
+                        Row(
+                          children: [
+                            Icon(Icons.location_on, size: isCompactPhone ? 11 : 12, color: Colors.grey.shade600),
+                            SizedBox(width: isCompactPhone ? 3 : 4),
+                            Expanded(
+                              child: Text(
+                                item.location!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: isCompactPhone ? 10 : 11, color: Colors.grey[700]),
+                              ),
+                            ),
+                          ],
+                        ),
+                      if (item.createdAt != null)
+                        Text(
+                          _formatTimeAgo(item.createdAt!),
+                          style: TextStyle(fontSize: isCompactPhone ? 10 : 11, color: Colors.grey[500]),
+                        ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    isCompactPhone ? 9 : 12,
+                    0,
+                    isCompactPhone ? 9 : 12,
+                    isCompactPhone ? 9 : 11,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: isSold ? null : () => _addToCart(item),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFFF8A00),
+                            side: const BorderSide(color: Color(0xFFFF8A00)),
+                            padding: EdgeInsets.symmetric(vertical: isCompactPhone ? 9 : 10.5),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: Text("Add to Cart", style: TextStyle(fontSize: isCompactPhone ? 12 : 13)),
+                        ),
+                      ),
+                      SizedBox(width: isCompactPhone ? 8 : 10),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: isSold ? null : () => _openDetailsPage(item),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFF8A00),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: EdgeInsets.symmetric(vertical: isCompactPhone ? 9 : 10.5),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: Text(
+                            isSold ? 'Sold Out' : 'Buy Now',
+                            style: TextStyle(fontSize: isCompactPhone ? 12 : 13),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _titleCase(String s) =>
+      s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
+
+  final TextEditingController _askQuestionCtrl = TextEditingController();
+  bool _veroAiLoading = false;
+
   Future<void> _onAskQuestionSubmitted() async {
     final q = _askQuestionCtrl.text.trim();
     if (q.isEmpty) return;
@@ -1674,57 +3121,199 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // BOTTOM SHEET DETAILS
-  // ─────────────────────────────────────────────
-  Future<void> _showDetailsBottomSheet(MarketplaceDetailModel item) async {
-    if (!mounted) return;
-    final Future<_SellerInfo> sellerFuture = _loadSellerForItem(item);
-    final List<String> mediaSources = [];
-    if (item.image.trim().isNotEmpty) mediaSources.add(item.image.trim());
-    if (item.gallery.isNotEmpty) {
-      mediaSources.addAll(item.gallery
-          .map((e) => e.toString().trim())
-          .where((u) => u.isNotEmpty));
-    }
-    final pageController = PageController();
-    Timer? autoTimer;
-    int currentPage = 0;
-    bool autoStarted = false;
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[200],
+      appBar: AppBar(
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(
+              Icons.storefront_rounded,
+              color: Color(0xFFFF8A00),
+              size: 20,
+            ),
+            SizedBox(width: 8),
+            Text(
+              "Market Place",
+              style: TextStyle(
+                color: Colors.black,
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.white,
+        elevation: 2,
+        iconTheme: const IconThemeData(color: Colors.black),
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+            child: Stack(
+              children: [
+                TextField(
+                  controller: _searchCtrl,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: _onSubmit,
+                  decoration: InputDecoration(
+                    hintText: _aiSearchMode
+                        ? "Search with Vero AI... (e.g. canon camera, phones)"
+                        : '',
+                    prefixIcon: const Icon(Icons.search_rounded, color: Colors.black54),
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_searchCtrl.text.isNotEmpty)
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 20),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              _onSubmit('');
+                            },
+                          ),
+                        SizedBox(
+                          width: 38,
+                          height: 38,
+                          child: InkWell(
+                            onTap: _showPhotoPickerSheet,
+                            borderRadius: BorderRadius.circular(19),
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFFF8A00),
+                                shape: BoxShape.circle,
+                              ),
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.camera_alt_outlined,
+                                size: 18,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey.shade50,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(color: Color(0xFFFF8A00), width: 2),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+                  ),
+                ),
 
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (sheetCtx) {
-        return FractionallySizedBox(
-          heightFactor: 0.92,
-          child: StatefulBuilder(builder: (ctx, setModalState) {
-            if (!autoStarted && mediaSources.length > 1) {
-              autoStarted = true;
-              autoTimer?.cancel();
-              autoTimer =
-                  Timer.periodic(const Duration(seconds: 3), (_) {
-                if (!pageController.hasClients) return;
-                final next = (currentPage + 1) % mediaSources.length;
-                pageController.animateToPage(next,
-                    duration: const Duration(milliseconds: 420),
-                    curve: Curves.easeInOut);
-                setModalState(() => currentPage = next);
-              });
-            }
-            return ScrollConfiguration(
-              behavior: const _NoBarsScrollBehavior(),
-              child: SingleChildScrollView(
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    left: 16,
-                    right: 16,
-                    top: 12,
-                    bottom:
-                        MediaQuery.of(ctx).viewInsets.bottom + 24,
+                // In-input sliding suggestions (only when search is empty & not in AI mode)
+                if (!_aiSearchMode && _searchCtrl.text.trim().isEmpty)
+                  Positioned(
+                    left: 44,
+                    right: 54,
+                    top: 0,
+                    bottom: 0,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox(
+                        height: 46,
+                        child: Builder(
+                          builder: (_) {
+                            final suggestions = _activeSearchSuggestions;
+                            if (suggestions.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            final safeIndex = _suggestionIndex % suggestions.length;
+                            final s = suggestions[safeIndex];
+
+                            return AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 380),
+                              transitionBuilder: (child, anim) {
+                                final beginOffset = const Offset(0, 0.9);
+                                final tween = Tween<Offset>(begin: beginOffset, end: Offset.zero)
+                                    .chain(CurveTween(curve: Curves.easeOut));
+                                return SlideTransition(
+                                  position: anim.drive(tween),
+                                  child: child,
+                                );
+                              },
+                              child: InkWell(
+                                key: ValueKey<String>(s),
+                                onTap: () {
+                                  _debounce?.cancel();
+                                  _searchCtrl.text = s;
+                                  _searchCtrl.selection = TextSelection.fromPosition(
+                                    TextPosition(offset: s.length),
+                                  );
+                                  _onSubmit(s);
+                                },
+                                borderRadius: BorderRadius.circular(12),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    s,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 34,
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildSearchModeChip('All', false),
+                const SizedBox(width: 6),
+                _buildSearchModeChip('◆ VeroAI Search', true),
+                const SizedBox(width: 6),
+                _buildFeedModeChip(),
+                const SizedBox(width: 6),
+                _buildViewModeChip(),
+              ],
+            ),
+          ),
+          const SizedBox(height: 2),
+          SizedBox(
+            height: 36,
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildCategoryChip(
+                  "All Products",
+                  isSelected: _selectedCategory == null && !_photoMode,
+                  onTap: () => _setCategory(null),
+                ),
+                const SizedBox(width: 4),
+                for (final c in _kCategories) ...[
+                  _buildCategoryChip(
+                    _titleCase(c),
+                    isSelected: _selectedCategory == c,
+                    onTap: () => _setCategory(c),
                   ),
                   child: FutureBuilder<_SellerInfo>(
                     future: sellerFuture,
@@ -1765,29 +3354,54 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                                       BorderRadius.circular(2)),
                             ),
                           ),
-                          // Media
-                          AspectRatio(
-                            aspectRatio: 16 / 9,
-                            child: Stack(children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(20),
-                                child: mediaSources.isEmpty
-                                    ? _buildItemImageWidget(item)
-                                    : PageView.builder(
-                                        controller: pageController,
-                                        itemCount: mediaSources.length,
-                                        physics: mediaSources.length > 1
-                                            ? const PageScrollPhysics()
-                                            : const NeverScrollableScrollPhysics(),
-                                        onPageChanged: (i) =>
-                                            setModalState(
-                                                () => currentPage = i),
-                                        itemBuilder: (_, i) =>
-                                            _imageFromAnySource(
-                                          mediaSources[i],
-                                          fit: BoxFit.cover,
-                                          width: double.infinity,
-                                          height: double.infinity,
+                        ),
+                      ],
+                    );
+                  }
+
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      final maxW = constraints.maxWidth;
+                      final isWide = maxW >= 700;
+                      final isNarrowPhone = maxW < 380;
+                      final crossAxisCount = _comfortableView
+                          ? (isWide ? 2 : 1)
+                          : (isWide ? 3 : (isNarrowPhone ? 1 : 2));
+                      final childAspectRatio = _comfortableView
+                          ? (isWide ? 1.05 : 1.35)
+                          : (isWide ? 0.70 : (isNarrowPhone ? 1.45 : 0.72));
+                      final gridSpacing = isNarrowPhone ? 10.0 : 12.0;
+                      final gridPadH = isNarrowPhone ? 10.0 : 12.0;
+
+                      return CustomScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        slivers: [
+                          if (_aiSummary.isNotEmpty)
+                            SliverToBoxAdapter(
+                              child: Container(
+                                margin: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFE3F2FD),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.blue.shade200,
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(Icons.auto_awesome,
+                                        size: 20, color: Colors.blue.shade700),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        _aiSummary,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          height: 1.4,
+                                          color: Colors.blue.shade900,
                                         ),
                                       ),
                               ),
@@ -1874,169 +3488,29 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                                   ],
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              FilledButton.icon(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: _kOrange,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(14)),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 12),
-                                ),
-                                onPressed: () =>
-                                    _openChatWithMerchant(item),
-                                icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
-                                label: const Text('Chat'),
+                            ),
+                          SliverPadding(
+                            padding: EdgeInsets.fromLTRB(gridPadH, 0, gridPadH, 12),
+                            sliver: SliverGrid(
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: crossAxisCount,
+                                crossAxisSpacing: gridSpacing,
+                                mainAxisSpacing: gridSpacing,
+                                childAspectRatio: childAspectRatio,
                               ),
-                            ],
-                          ),
-                          if ((item.description ?? '').trim().isNotEmpty) ...[
-                            const SizedBox(height: 14),
-                            Text(item.description!.trim(),
-                                style: const TextStyle(
-                                    fontSize: 14,
-                                    height: 1.5,
-                                    color: _kTextSecondary)),
-                          ],
-                          const SizedBox(height: 14),
-                          // Share row
-                          Row(children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                icon: const Icon(Icons.link_rounded, size: 16),
-                                label: const Text('Copy link'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: _kTextPrimary,
-                                  side: BorderSide(
-                                      color: Colors.grey.shade300),
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(12)),
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 10),
-                                ),
-                                onPressed: () =>
-                                    _copyProductLinkFromSheet(item),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                icon: const Icon(Icons.share_rounded, size: 16),
-                                label: const Text('Share'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: _kTextPrimary,
-                                  side: BorderSide(
-                                      color: Colors.grey.shade300),
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(12)),
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 10),
-                                ),
-                                onPressed: () =>
-                                    _shareProductFromSheet(item),
-                              ),
-                            ),
-                          ]),
-                          const SizedBox(height: 18),
-                          // Seller Card
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(
-                                  color: Colors.grey.shade100, width: 1.5),
-                              boxShadow: const [
-                                BoxShadow(
-                                    color: _kShadow,
-                                    blurRadius: 16,
-                                    offset: Offset(0, 4)),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    _circleAvatarFromAnySource(logo, radius: 22),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(displayMerchantName,
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 15),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    _statusChip(status),
-                                  ],
-                                ),
-                                const SizedBox(height: 10),
-                                _ratingStars(rating),
-                                const Divider(height: 18),
-                                _infoRow('Business',
-                                    displayMerchantName,
-                                    icon: Icons.badge_rounded),
-                                _infoRow('Closes at', closing,
-                                    icon: Icons.access_time_rounded),
-                                _infoRow(
-                                    'Status',
-                                    (status ?? '').isEmpty
-                                        ? '—'
-                                        : status!.toUpperCase(),
-                                    icon: Icons.info_outline_rounded),
-                                const SizedBox(height: 6),
-                                const Text('About',
-                                    style: TextStyle(
-                                        color: _kTextSecondary, fontSize: 12)),
-                                const SizedBox(height: 4),
-                                Text(
-                                  (businessDesc ?? '').isNotEmpty
-                                      ? businessDesc!
-                                      : '—',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          if ((item.merchantId ?? '').trim().isNotEmpty) ...[
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                icon: const Icon(
-                                    Icons.store_mall_directory_rounded,
-                                    size: 16),
-                                label: Text(
-                                    'More from $displayMerchantName',
-                                    overflow: TextOverflow.ellipsis),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: _kOrange,
-                                  side: const BorderSide(color: _kOrange),
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(14)),
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 12),
-                                ),
-                                onPressed: () {
-                                  Navigator.pop(sheetCtx);
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => MerchantProductsPage(
-                                        merchantId:
-                                            item.merchantId!.trim(),
-                                        merchantName:
-                                            displayMerchantName,
-                                      ),
+                              delegate: SliverChildBuilderDelegate(
+                                (context, i) {
+                                  final item = items[i];
+                                  return Material(
+                                    color: Colors.transparent,
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(16),
+                                      splashColor: const Color(0x22FF8A00),
+                                      highlightColor: const Color(0x11FF8A00),
+                                      onTap: (!item.isActive) ? null : () => _openDetailsPage(item),
+                                      child: _buildMarketItem(item),
                                     ),
                                   );
                                 },
@@ -2341,519 +3815,92 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       ),
     );
   }
+}
 
-  Widget _badge(String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.62),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(text,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-              color: Colors.white,
-              fontSize: 9,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.2)),
-    );
+class _AutoSlideImageCarousel extends StatefulWidget {
+  const _AutoSlideImageCarousel({
+    super.key,
+    required this.sources,
+    required this.itemBuilder,
+    this.interval = const Duration(seconds: 3),
+    this.showIndicators = false,
+  });
+
+  final List<String> sources;
+  final Widget Function(String source) itemBuilder;
+  final Duration interval;
+  final bool showIndicators;
+
+  @override
+  State<_AutoSlideImageCarousel> createState() => _AutoSlideImageCarouselState();
+}
+
+class _AutoSlideImageCarouselState extends State<_AutoSlideImageCarousel> {
+  late final PageController _controller;
+  Timer? _timer;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController();
+    if (widget.sources.length > 1) {
+      _timer = Timer.periodic(widget.interval, (_) {
+        if (!mounted || !_controller.hasClients || widget.sources.length <= 1) return;
+        final next = (_index + 1) % widget.sources.length;
+        _controller.animateToPage(
+          next,
+          duration: const Duration(milliseconds: 420),
+          curve: Curves.easeInOut,
+        );
+      });
+    }
   }
 
-  // ─────────────────────────────────────────────
-  // BUILD
-  // ─────────────────────────────────────────────
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final mq = MediaQuery.of(context);
-    final screenWidth = mq.size.width;
-    final bottomPad = mq.padding.bottom;
-
-    return Scaffold(
-      backgroundColor: _kBg,
-      // ── AppBar ──
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(60),
-        child: Container(
-          decoration: const BoxDecoration(
-            color: _kSurface,
-            boxShadow: [
-              BoxShadow(color: _kShadow, blurRadius: 8, offset: Offset(0, 2)),
-            ],
-          ),
-          child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Row(children: [
-                const Icon(Icons.storefront_rounded,
-                    color: _kOrange, size: 26),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Text('Market Place',
-                      style: TextStyle(
-                          color: _kTextPrimary,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 20,
-                          letterSpacing: -0.3)),
-                ),
-              ]),
-            ),
-          ),
+    return Stack(
+      children: [
+        PageView.builder(
+          controller: _controller,
+          itemCount: widget.sources.length,
+          physics: widget.sources.length > 1
+              ? const BouncingScrollPhysics()
+              : const NeverScrollableScrollPhysics(),
+          onPageChanged: (i) => setState(() => _index = i),
+          itemBuilder: (_, i) => widget.itemBuilder(widget.sources[i]),
         ),
-      ),
-      body: Column(children: [
-        // ── Search bar ──
-        Container(
-          color: _kSurface,
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-          child: TextField(
-            controller: _searchCtrl,
-            textInputAction: TextInputAction.search,
-            onSubmitted: _onSubmit,
-            style: const TextStyle(fontSize: 14),
-            decoration: InputDecoration(
-              hintText: _aiSearchMode
-                  ? 'VeroAI Search... e.g. budget phone, leather shoes'
-                  : 'Search items...',
-              hintStyle:
-                  TextStyle(color: Colors.grey.shade400, fontSize: 13),
-              prefixIcon: const Icon(Icons.search_rounded,
-                  color: _kTextSecondary, size: 20),
-              suffixIcon: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_searchCtrl.text.isNotEmpty)
-                    GestureDetector(
-                      onTap: () {
-                        _searchCtrl.clear();
-                        _onSubmit('');
-                      },
-                      child: Container(
-                        margin: const EdgeInsets.only(right: 4),
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                            color: Colors.grey.shade200,
-                            shape: BoxShape.circle),
-                        child: const Icon(Icons.close,
-                            size: 14, color: _kTextSecondary),
-                      ),
-                    ),
-                  IconButton(
-                    icon: const Icon(Icons.camera_alt_rounded,
-                        size: 20, color: _kTextSecondary),
-                    onPressed: _showPhotoPickerSheet,
-                    tooltip: 'Search by Photo',
+        if (widget.showIndicators && widget.sources.length > 1)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 8,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(widget.sources.length, (i) {
+                final active = i == _index;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                  width: active ? 14 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: active ? const Color(0xFFFF8A00) : Colors.white70,
+                    borderRadius: BorderRadius.circular(99),
+                    border: Border.all(color: Colors.black26, width: 0.4),
                   ),
-                ],
-              ),
-              filled: true,
-              fillColor: const Color(0xFFF8F9FB),
-              contentPadding: const EdgeInsets.symmetric(
-                  vertical: 11, horizontal: 14),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide(color: Colors.grey.shade200),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide(color: Colors.grey.shade200),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: _kOrange, width: 1.8),
-              ),
-            ),
-          ),
-        ),
-
-        // ── Mode chips (All / VeroAI) ──
-        Container(
-          color: _kSurface,
-          padding: const EdgeInsets.only(bottom: 8),
-          child: SizedBox(
-            height: 32,
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              scrollDirection: Axis.horizontal,
-              children: [
-                _modeChip('All', false),
-                const SizedBox(width: 6),
-                _modeChip('◆ VeroAI Search', true),
-              ],
-            ),
-          ),
-        ),
-
-        // ── Category chips ──
-        Container(
-          color: _kSurface,
-          padding: const EdgeInsets.only(bottom: 10),
-          child: SizedBox(
-            height: 34,
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              scrollDirection: Axis.horizontal,
-              children: [
-                _categoryChip('All Products', isSelected: _selectedCategory == null && !_photoMode, onTap: () => _setCategory(null)),
-                const SizedBox(width: 5),
-                for (final c in _kCategories) ...[
-                  _categoryChip(_titleCase(c),
-                      isSelected: _selectedCategory == c,
-                      onTap: () => _setCategory(c)),
-                  const SizedBox(width: 5),
-                ],
-              ],
-            ),
-          ),
-        ),
-
-        // Photo mode banner
-        if (_photoMode)
-          Container(
-            width: double.infinity,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            color: _kBlueBg,
-            child: Row(children: [
-              const Icon(Icons.image_search_rounded,
-                  size: 15, color: _kBlue),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text('Showing results from photo search',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: _kBlue,
-                        fontWeight: FontWeight.w600)),
-              ),
-              GestureDetector(
-                onTap: _refresh,
-                child: const Text('Clear',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: _kBlue,
-                        fontWeight: FontWeight.w700,
-                        decoration: TextDecoration.underline)),
-              ),
-            ]),
-          ),
-
-        // ── Grid ──
-        Expanded(
-          child: RefreshIndicator(
-            color: _kOrange,
-            onRefresh: _refresh,
-            child: FutureBuilder<List<MarketplaceDetailModel>>(
-              future: _future,
-              builder: (context, snapshot) {
-                final isLoading = _loading &&
-                    snapshot.connectionState == ConnectionState.waiting;
-
-                if (snapshot.hasError) {
-                  return ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      const SizedBox(height: 120),
-                      Center(
-                        child: Column(children: [
-                          Icon(Icons.wifi_off_rounded,
-                              size: 56,
-                              color: Colors.grey.shade400),
-                          const SizedBox(height: 12),
-                          Text('Failed to load items',
-                              style: TextStyle(
-                                  color: Colors.grey.shade600,
-                                  fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 8),
-                          TextButton.icon(
-                            icon: const Icon(Icons.refresh_rounded,
-                                size: 16),
-                            label: const Text('Retry'),
-                            style: TextButton.styleFrom(
-                                foregroundColor: _kOrange),
-                            onPressed: _refresh,
-                          ),
-                        ]),
-                      ),
-                    ],
-                  );
-                }
-
-                final isWide = screenWidth >= 700;
-                final crossAxisCount = isWide ? 3 : 2;
-                // Fixed aspect ratio that works on all screen sizes
-                final childAspectRatio = isWide ? 0.68 : 0.63;
-
-                // Show skeleton while loading
-                if (isLoading) {
-                  return GridView.builder(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: crossAxisCount,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      childAspectRatio: childAspectRatio,
-                    ),
-                    itemCount: crossAxisCount * 4,
-                    itemBuilder: (_, __) => const _SkeletonCard(),
-                  );
-                }
-
-                final items =
-                    snapshot.data ?? const <MarketplaceDetailModel>[];
-
-                if (items.isEmpty) {
-                  return ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      const SizedBox(height: 100),
-                      Center(
-                        child: Column(children: [
-                          Icon(
-                            _photoMode
-                                ? Icons.image_search_rounded
-                                : Icons.inventory_2_outlined,
-                            size: 62,
-                            color: Colors.grey.shade300,
-                          ),
-                          const SizedBox(height: 14),
-                          Text(
-                            _photoMode
-                                ? 'No visually similar items found'
-                                : 'No items available',
-                            style: TextStyle(
-                                color: Colors.grey.shade500,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 15),
-                          ),
-                          const SizedBox(height: 8),
-                          TextButton.icon(
-                            icon: const Icon(Icons.refresh_rounded,
-                                size: 16),
-                            label: const Text('Refresh'),
-                            style: TextButton.styleFrom(
-                                foregroundColor: _kOrange),
-                            onPressed: _refresh,
-                          ),
-                        ]),
-                      ),
-                    ],
-                  );
-                }
-
-                return CustomScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  slivers: [
-                    // AI Summary banner
-                    if (_aiSummary.isNotEmpty)
-                      SliverToBoxAdapter(
-                        child: Container(
-                          margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: _kBlueBg,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                                color: Colors.blue.shade100, width: 1.5),
-                          ),
-                          child: Row(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment.start,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                      color: _kBlue,
-                                      borderRadius:
-                                          BorderRadius.circular(8)),
-                                  child: const Icon(Icons.auto_awesome,
-                                      size: 14,
-                                      color: Colors.white),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(_aiSummary,
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          height: 1.4,
-                                          color: Colors.blue.shade900)),
-                                ),
-                              ]),
-                        ),
-                      ),
-
-                    // Grid
-                    SliverPadding(
-                      padding:
-                          const EdgeInsets.fromLTRB(12, 8, 12, 24),
-                      sliver: SliverGrid(
-                        gridDelegate:
-                            SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: crossAxisCount,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                          childAspectRatio: childAspectRatio,
-                        ),
-                        delegate: SliverChildBuilderDelegate(
-                          (context, i) {
-                            final item = items[i];
-                            return GestureDetector(
-                              onTap: item.isActive
-                                  ? () => _openDetailsPage(item)
-                                  : null,
-                              child: _buildMarketItem(item),
-                            );
-                          },
-                          childCount: items.length,
-                        ),
-                      ),
-                    ),
-                  ],
                 );
-              },
+              }),
             ),
           ),
-        ),
-
-        // ── VeroAI Question Bar ──
-        if (_aiSearchMode)
-          Container(
-            padding: EdgeInsets.fromLTRB(
-                12, 10, 12, 10 + bottomPad),
-            decoration: const BoxDecoration(
-              color: _kSurface,
-              boxShadow: [
-                BoxShadow(
-                    color: _kShadow,
-                    blurRadius: 12,
-                    offset: Offset(0, -3)),
-              ],
-            ),
-            child: Row(children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [_kBlue, Color(0xFF1565C0)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(12)),
-                child: const Icon(Icons.auto_awesome,
-                    color: Colors.white, size: 16),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: TextField(
-                  controller: _askQuestionCtrl,
-                  onSubmitted: (_) => _onAskQuestionSubmitted(),
-                  enabled: !_veroAiLoading,
-                  style: const TextStyle(fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText:
-                        'Ask about your search results...',
-                    hintStyle: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade400),
-                    filled: true,
-                    fillColor: const Color(0xFFF8F9FB),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              _veroAiLoading
-                  ? const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2.2, color: _kBlue)),
-                    )
-                  : ScaleTransition(
-                      scale: _fabAnim,
-                      child: IconButton.filled(
-                        onPressed: _onAskQuestionSubmitted,
-                        icon: const Icon(Icons.send_rounded,
-                            size: 18),
-                        style: IconButton.styleFrom(
-                          backgroundColor: _kBlue,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.all(12),
-                        ),
-                      ),
-                    ),
-            ]),
-          ),
-      ]),
-    );
-  }
-
-  // ─────────────────────────────────────────────
-  // CHIP BUILDERS
-  // ─────────────────────────────────────────────
-  Widget _modeChip(String title, bool isAiMode) {
-    final selected = _aiSearchMode == isAiMode;
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _aiSearchMode = isAiMode;
-          if (!isAiMode) _aiSummary = '';
-          _future = _lastQuery.isNotEmpty
-              ? _searchByName(_lastQuery)
-              : _loadAll(category: _selectedCategory);
-        });
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected
-              ? (isAiMode ? _kBlue : _kOrange)
-              : Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: selected
-                ? Colors.transparent
-                : Colors.grey.shade200,
-          ),
-        ),
-        child: Text(title,
-            style: TextStyle(
-              color: selected ? Colors.white : _kTextSecondary,
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
-            )),
-      ),
-    );
-  }
-
-  Widget _categoryChip(String title,
-      {required bool isSelected, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          color: isSelected ? _kOrange : Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? _kOrange : Colors.grey.shade200,
-          ),
-        ),
-        child: Text(title,
-            style: TextStyle(
-              color: isSelected ? Colors.white : _kTextSecondary,
-              fontWeight: FontWeight.w600,
-              fontSize: 12,
-            )),
-      ),
+      ],
     );
   }
 }

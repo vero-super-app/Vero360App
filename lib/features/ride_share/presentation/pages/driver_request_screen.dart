@@ -23,7 +23,7 @@ class DriverRequestScreen extends StatefulWidget {
 }
 
 class _DriverRequestScreenState extends State<DriverRequestScreen> {
-  late Stream<List<DriverRideRequest>> _requestsStream;
+  late Stream<PendingRidesFetchResult> _requestsStream;
   static const Color primaryColor = Color(0xFFFF8A00);
 
   @override
@@ -31,7 +31,7 @@ class _DriverRequestScreenState extends State<DriverRequestScreen> {
     super.initState();
     _requestsStream = Stream.periodic(
       const Duration(seconds: 3),
-      (_) => DriverRequestService.getIncomingRequests(),
+      (_) => DriverRequestService.getIncomingRequestsDetailed(),
     ).asyncExpand((future) => Stream.fromFuture(future));
   }
 
@@ -77,7 +77,7 @@ class _DriverRequestScreenState extends State<DriverRequestScreen> {
         elevation: 0,
         centerTitle: false,
       ),
-      body: StreamBuilder<List<DriverRideRequest>>(
+      body: StreamBuilder<PendingRidesFetchResult>(
         stream: _requestsStream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -133,62 +133,104 @@ class _DriverRequestScreenState extends State<DriverRequestScreen> {
             );
           }
 
-          final requests = snapshot.data ?? [];
+          final fetch = snapshot.data;
+          final requests = fetch?.requests ?? [];
+          final pollError = fetch?.errorMessage;
 
           if (requests.isEmpty) {
             return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.inbox,
-                      size: 40,
-                      color: Colors.grey[400],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No available rides',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Check back soon for ride requests',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  ElevatedButton.icon(
-                    onPressed: () => setState(() {}),
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Refresh'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 12,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (pollError != null && pollError.isNotEmpty) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        margin: const EdgeInsets.only(bottom: 20),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.orange.shade200),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.warning_amber_rounded,
+                                color: Colors.orange.shade800, size: 22),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                pollError,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.orange.shade900,
+                                  fontWeight: FontWeight.w500,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                    ],
+                    Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.inbox,
+                        size: 40,
+                        color: Colors.grey[400],
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    Text(
+                      pollError != null && pollError.isNotEmpty
+                          ? 'Could not load requests'
+                          : 'No available rides',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black87,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      pollError == null || pollError.isEmpty
+                          ? 'Check back soon for ride requests'
+                          : 'Fix the issue above or pull to retry.',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 32),
+                    ElevatedButton.icon(
+                      onPressed: () => setState(() {}),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Refresh'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           }

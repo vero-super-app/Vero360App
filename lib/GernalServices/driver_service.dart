@@ -266,6 +266,15 @@ class DriverService {
     }
   }
 
+  Future<Map<String, dynamic>> activateDriver(int driverId) async {
+    try {
+      final response = await _dio.post('/vero/drivers/$driverId/activate');
+      return response.data as Map<String, dynamic>;
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
   // ==================== ERROR HANDLING ====================
   String _handleError(dynamic error) {
     final errorType = error.runtimeType.toString();

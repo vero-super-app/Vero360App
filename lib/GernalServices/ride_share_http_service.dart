@@ -17,6 +17,7 @@ class RideShareHttpService {
   late StreamController<Map<String, dynamic>> _rideStatusController;
   late StreamController<Ride> _rideUpdateController;
   Future<void>? _initializationFuture;
+  bool _globalSocketListenersRegistered = false;
 
   RideShareHttpService() {
     _initializeControllers();
@@ -111,6 +112,8 @@ class RideShareHttpService {
           .build(),
     );
 
+    _globalSocketListenersRegistered = false;
+
     socket.connect();
     socket.onConnect((_) {
       print('[RideShareHttpService] Socket connected with token');
@@ -125,6 +128,52 @@ class RideShareHttpService {
     socket.onError((error) {
       print('[RideShareHttpService] Socket error');
       _connectionStatusController.add('error');
+    });
+
+    _registerGlobalSocketListeners();
+  }
+
+  /// Single registration — [subscribeToRideTracking] used to add duplicate
+  /// `socket.on` handlers every time, causing spurious lifecycle updates.
+  void _registerGlobalSocketListeners() {
+    if (_globalSocketListenersRegistered) return;
+    _globalSocketListenersRegistered = true;
+
+    socket.on('driver:location:updated', (data) {
+      print('[RideShareHttpService] Driver location updated: $data');
+      _driverLocationController.add(Map<String, dynamic>.from(data));
+    });
+
+    socket.on('ride:status:updated', (data) {
+      print('[RideShareHttpService] 🎉 Ride status updated received: $data');
+      _rideStatusController.add(Map<String, dynamic>.from(data));
+      try {
+        final rideMap = Map<String, dynamic>.from(data);
+        if (rideMap['id'] == null && rideMap['rideId'] != null) {
+          rideMap['id'] = rideMap['rideId'];
+        }
+        final rideData = {
+          'id': rideMap['id'] ?? rideMap['rideId'] ?? 0,
+          'passengerId': rideMap['passengerId'] ?? 0,
+          'pickupLatitude': rideMap['pickupLatitude'] ?? 0.0,
+          'pickupLongitude': rideMap['pickupLongitude'] ?? 0.0,
+          'dropoffLatitude': rideMap['dropoffLatitude'] ?? 0.0,
+          'dropoffLongitude': rideMap['dropoffLongitude'] ?? 0.0,
+          'estimatedDistance': rideMap['estimatedDistance'] ?? 0.0,
+          'estimatedFare': rideMap['estimatedFare'] ?? 0.0,
+          'status': rideMap['status'] ?? 'REQUESTED',
+          'createdAt': rideMap['createdAt'] ?? DateTime.now().toIso8601String(),
+          'updatedAt': rideMap['updatedAt'] ?? DateTime.now().toIso8601String(),
+          ...rideMap,
+        };
+        final ride = Ride.fromJson(rideData);
+        print(
+            '[RideShareHttpService] Parsed ride: ${ride.id}, status: ${ride.status}, driverId: ${ride.driverId}');
+        _rideUpdateController.add(ride);
+      } catch (e) {
+        print('[RideShareHttpService] ❌ Error parsing ride update');
+        print('[RideShareHttpService] Data was: $data');
+      }
     });
   }
 
@@ -500,48 +549,10 @@ class RideShareHttpService {
     print('[RideShareHttpService] subscribeToRideTracking called for ride $rideId');
     await _ensureSocketInitialized();
     print('[RideShareHttpService] Socket initialized, connected: ${socket.connected}');
-    
+
     socket.emit('passenger:subscribe', {'rideId': rideId});
-    print('[RideShareHttpService] Emitted passenger:subscribe for ride $rideId');
-
-    // Listen for driver location updates
-    socket.on('driver:location:updated', (data) {
-      print('[RideShareHttpService] Driver location updated: $data');
-      _driverLocationController.add(Map<String, dynamic>.from(data));
-    });
-
-    // Listen for ride status updates
-    socket.on('ride:status:updated', (data) {
-      print('[RideShareHttpService] 🎉 Ride status updated received: $data');
-      _rideStatusController.add(Map<String, dynamic>.from(data));
-      try {
-        final rideMap = Map<String, dynamic>.from(data);
-        // Ensure all required fields have defaults for cancelled rides
-        final rideData = {
-          'id': rideMap['id'] ?? 0,
-          'passengerId': rideMap['passengerId'] ?? 0,
-          'pickupLatitude': rideMap['pickupLatitude'] ?? 0.0,
-          'pickupLongitude': rideMap['pickupLongitude'] ?? 0.0,
-          'dropoffLatitude': rideMap['dropoffLatitude'] ?? 0.0,
-          'dropoffLongitude': rideMap['dropoffLongitude'] ?? 0.0,
-          'estimatedDistance': rideMap['estimatedDistance'] ?? 0.0,
-          'estimatedFare': rideMap['estimatedFare'] ?? 0.0,
-          'status': rideMap['status'] ?? 'REQUESTED',
-          'createdAt': rideMap['createdAt'] ?? DateTime.now().toIso8601String(),
-          'updatedAt': rideMap['updatedAt'] ?? DateTime.now().toIso8601String(),
-          ...rideMap,
-        };
-        final ride = Ride.fromJson(rideData);
-        print('[RideShareHttpService] Parsed ride: ${ride.id}, status: ${ride.status}, driverId: ${ride.driverId}');
-        _rideUpdateController.add(ride);
-      } catch (e) {
-        print('[RideShareHttpService] ❌ Error parsing ride update');
-        print('[RideShareHttpService] Data was: $data');
-        // Don't crash - log and continue
-      }
-    });
-    
-    print('[RideShareHttpService] Listeners registered for ride $rideId');
+    print(
+        '[RideShareHttpService] Emitted passenger:subscribe for ride $rideId (global WS listeners already attached)');
   }
 
   /// Unsubscribe from ride tracking

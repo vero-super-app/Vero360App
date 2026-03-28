@@ -32,14 +32,9 @@ class CheckoutPage extends StatefulWidget {
 class _CheckoutPageState extends State<CheckoutPage> {
   // ► Brand (UI only)
   static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandNavy = Color(0xFF16284C);
   static const Color _brandSoft = Color(0xFFFFE8CC);
-
-  // ► Delivery fees (edit as you want)
-  static const double _feeSpeed = 0; // e.g. 2500
-  static const double _feeCts = 0; // e.g. 1500
-  static const double _feeAnkolo = 0;
-  static const double _feeSmart = 0;
-  static const double _feePickup = 0;
+  static const Color _pageBg = Color(0xFFF4F6FA);
 
   DeliveryType _deliveryType = DeliveryType.cts;
 
@@ -60,22 +55,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   double get _subtotal => widget.item.price * _qty;
 
-  double get _delivery {
-    switch (_deliveryType) {
-      case DeliveryType.speed:
-        return _feeSpeed;
-      case DeliveryType.cts:
-        return _feeCts;
-      case DeliveryType.ankolo:
-        return _feeAnkolo;
-      case DeliveryType.smart:
-        return _feeSmart;
-      case DeliveryType.pickup:
-        return _feePickup;
-    }
-  }
-
-  double get _total => _subtotal + _delivery;
+  double get _total => _subtotal;
 
   @override
   void initState() {
@@ -138,10 +118,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.black.withOpacity(0.10)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 8,
             offset: const Offset(0, 3),
           ),
@@ -194,7 +174,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             decoration: BoxDecoration(
               color: _brandSoft,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _brandOrange.withOpacity(0.25)),
+              border: Border.all(color: _brandOrange.withValues(alpha: 0.25)),
             ),
             child: Icon(icon, size: 18, color: Colors.black87),
           ),
@@ -239,7 +219,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
           decoration: BoxDecoration(
             color: _brandSoft,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: _brandOrange.withOpacity(0.25)),
+            border: Border.all(color: _brandOrange.withValues(alpha: 0.25)),
           ),
           child: Icon(icon, size: 18, color: Colors.black87),
         ),
@@ -253,54 +233,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
           ),
         ),
       ],
-    );
-  }
-
-  // ── Delivery cost note (courier fees are not fixed at checkout) ─────────────
-  static const Widget _deliveryPriceUnknownNote = Text(
-    'Delivery prices are not known until your parcel is weighed.',
-    style: TextStyle(
-      color: Colors.red,
-      fontSize: 12,
-      fontWeight: FontWeight.w600,
-      height: 1.25,
-    ),
-  );
-
-  Widget _deliverySummaryRow() {
-    if (_deliveryType == DeliveryType.pickup) {
-      return _rowLine('Delivery', 'Pickup (no courier fee)');
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Text(
-              'Delivery',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.normal,
-                color: Colors.grey[700],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Flexible(
-            flex: 2,
-            child: Text(
-              'Not known until parcel is weighed',
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                color: Colors.red,
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -666,12 +598,38 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return Theme(
       data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),
       child: Scaffold(
-        backgroundColor: const Color(0xFFF6F6F6),
+        backgroundColor: _pageBg,
         appBar: AppBar(
-          title: const Text('Checkout'),
+          elevation: 0,
+          scrolledUnderElevation: 0.5,
           backgroundColor: _brandOrange,
           foregroundColor: Colors.white,
-          elevation: 0,
+          centerTitle: false,
+          titleSpacing: 8,
+          title: const Row(
+            children: [
+              Icon(Icons.shopping_bag_rounded, size: 26),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Checkout',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 20,
+                    letterSpacing: -0.3,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded),
+            onPressed: () => Navigator.of(context).maybePop(),
+            tooltip: 'Back',
+          ),
         ),
         body: SafeArea(
           child: ListView(
@@ -683,13 +641,23 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 decoration: BoxDecoration(
                   color: _brandSoft,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: _brandOrange.withOpacity(0.35)),
+                  border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    Icon(Icons.lock, size: 18),
-                    SizedBox(width: 8),
-                    Expanded(child: Text('Secure checkout — review delivery and payment details.')),
+                    Icon(Icons.verified_user_rounded, size: 20, color: _brandNavy.withValues(alpha: 0.85)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Secure checkout — review delivery and payment details.',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade800,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -881,10 +849,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
                           ),
                         ],
                       ),
-                      if (_deliveryType != DeliveryType.pickup) ...[
-                        const SizedBox(height: 10),
-                        _deliveryPriceUnknownNote,
-                      ],
                     ],
                   ),
                 ),
@@ -912,12 +876,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   color: Colors.white,
+                  border: Border.all(color: Colors.grey.shade200),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 10,
-                      spreadRadius: 1,
-                      offset: const Offset(0, -2),
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 16,
+                      spreadRadius: 0,
+                      offset: const Offset(0, -4),
                     ),
                   ],
                   borderRadius: BorderRadius.circular(20),
@@ -925,14 +890,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'Order Summary',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: _brandNavy,
+                        letterSpacing: -0.2,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     _rowLine('Subtotal', _mwk(_subtotal)),
-                    const SizedBox(height: 6),
-                    _deliverySummaryRow(),
                     const SizedBox(height: 8),
                     const Divider(thickness: 1),
                     const SizedBox(height: 8),
@@ -969,7 +937,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                               _submitting ? 'Processing...' : 'Pay Now',
                               style: const TextStyle(
                                 fontSize: 18,
-                                fontWeight: FontWeight.bold,
+                                fontWeight: FontWeight.w900,
                                 color: Colors.white,
                               ),
                             ),

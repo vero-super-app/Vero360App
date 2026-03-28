@@ -826,9 +826,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                         ),
                       ),
                       IconButton(
-                        onPressed: () => Navigator.pop(dialogCtx, false),
+                        onPressed: () => Navigator.pop(dialogCtx),
                         icon: Icon(Icons.close_rounded,
                             color: Colors.grey.shade600),
+                        tooltip: 'Close',
                       ),
                     ],
                   ),
@@ -991,7 +992,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                     children: [
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: () => Navigator.pop(dialogCtx, false),
+                          onPressed: () => Navigator.pop(dialogCtx),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             side: BorderSide(color: Colors.grey.shade300),

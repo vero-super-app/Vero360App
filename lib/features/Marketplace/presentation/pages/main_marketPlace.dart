@@ -1613,7 +1613,9 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             err.contains('network') ||
             err.contains('failed host') ||
             err.contains('connection') ||
-            err.contains('timeout');
+            err.contains('timeout') ||
+            err.contains('unavailable') ||
+            err.contains('offline');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -2600,6 +2602,9 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     );
   }
 
+  String _titleCase(String s) =>
+      s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
+
   Widget _buildMarketItem(MarketplaceDetailModel item) {
     final screenW = MediaQuery.of(context).size.width;
     final isCompactPhone = screenW < 380;
@@ -2859,9 +2864,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       ),
     );
   }
-
-  String _titleCase(String s) =>
-      s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
 
   Future<void> _onAskQuestionSubmitted() async {
     final q = _askQuestionCtrl.text.trim();
@@ -3284,19 +3286,48 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting &&
                       !snapshot.hasData) {
-                    return const Center(child: CircularProgressIndicator());
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(24),
+                        child: CircularProgressIndicator(
+                            color: Color(0xFFFF8A00)),
+                      ),
+                    );
                   }
-                  final items = snapshot.data ?? [];
-                  if (items.isEmpty) {
+                  if (snapshot.hasError) {
                     return ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       children: [
                         SizedBox(
-                            height: MediaQuery.of(context).size.height * 0.2),
+                            height:
+                                MediaQuery.of(context).size.height * 0.25),
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              'Error: ${snapshot.error}',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+                  final items = snapshot.data ?? [];
+                  if (items.isEmpty && !_loading) {
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        SizedBox(
+                            height:
+                                MediaQuery.of(context).size.height * 0.2),
                         Center(
                           child: Text(
-                            _loading ? 'Loading…' : 'No products found',
+                            _photoMode
+                                ? 'No products found for this photo.'
+                                : 'No products found.',
                             style: const TextStyle(fontSize: 16),
+                            textAlign: TextAlign.center,
                           ),
                         ),
                       ],
@@ -3322,8 +3353,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                           if (_aiSummary.isNotEmpty)
                             SliverToBoxAdapter(
                               child: Container(
-                                margin:
-                                    const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                                margin: const EdgeInsets.fromLTRB(
+                                    12, 8, 12, 12),
                                 padding: const EdgeInsets.all(14),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFFE3F2FD),
@@ -3334,7 +3365,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                                   ),
                                 ),
                                 child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
                                   children: [
                                     Icon(Icons.auto_awesome,
                                         size: 20,

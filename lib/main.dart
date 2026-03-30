@@ -54,6 +54,7 @@ import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 
 final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
@@ -506,12 +507,7 @@ class _SelfHealPageState extends State<SelfHealPage>
                       style: const TextStyle(fontSize: 13),
                     ),
                     const SizedBox(height: 16),
-                    if (widget.showSpinner)
-                      const SizedBox(
-                        height: 26,
-                        width: 26,
-                        child: CircularProgressIndicator(strokeWidth: 3),
-                      ),
+                    if (widget.showSpinner) const AppSkeletonBootLines(),
                     if (!widget.showSpinner &&
                         widget.actionLabel != null &&
                         widget.onAction != null)

@@ -42,6 +42,7 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_pro
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/app_skeleton.dart';
 
 // ─────────────────────────────────────────────
 // CONSTANTS & THEME
@@ -56,6 +57,74 @@ const _kBg = Color(0xFFF5F6FA);
 const _kTextPrimary = Color(0xFF1A1A2E);
 const _kTextSecondary = Color(0xFF6B7280);
 const _kShadow = Color(0x14000000);
+
+/// [MarketPage] grid: Comfortable = fewer, larger tiles; Compact = more columns.
+/// Scales from narrow phones (~320dp) through tablets and large desktops.
+({
+  int crossAxisCount,
+  double childAspectRatio,
+  double gridSpacing,
+  double gridPadH,
+}) _marketplaceSliverGridLayout({
+  required bool comfortable,
+  required double width,
+}) {
+  final w = width.isFinite && width > 0 ? width : 360.0;
+  final tight = w < 400;
+  final gridSpacing = tight ? 8.0 : (w < 720 ? 10.0 : 12.0);
+  final gridPadH = gridSpacing;
+
+  if (comfortable) {
+    final cross = w >= 1000 ? 3 : (w >= 560 ? 2 : 1);
+    final aspect = cross == 1
+        ? 1.34
+        : cross == 2
+            ? (w >= 840 ? 1.02 : 1.10)
+            : 0.96;
+    return (
+      crossAxisCount: cross,
+      childAspectRatio: aspect,
+      gridSpacing: gridSpacing,
+      gridPadH: gridPadH,
+    );
+  }
+
+  var cross = w >= 1280
+      ? 6
+      : w >= 1100
+          ? 5
+          : w >= 840
+              ? 4
+              : w >= 600
+                  ? 3
+                  : 2;
+
+  double innerFor(int c) => w - gridPadH * 2 - gridSpacing * (c - 1);
+  var cellW = innerFor(cross) / cross;
+
+  // Split-screen / very narrow: drop columns until cells stay usable (~118dp min).
+  const minCell = 118.0;
+  while (cross > 1 && cellW < minCell) {
+    cross -= 1;
+    cellW = innerFor(cross) / cross;
+  }
+
+  final aspect = switch (cross) {
+    1 => 0.88,
+    2 => cellW < 150 ? 0.62 : (cellW < 172 ? 0.68 : 0.72),
+    3 => 0.70,
+    4 => 0.66,
+    5 => 0.64,
+    _ => 0.60,
+  };
+
+  return (
+    crossAxisCount: cross,
+    childAspectRatio: aspect,
+    gridSpacing: gridSpacing,
+    gridPadH: gridPadH,
+  );
+}
 
 // ─────────────────────────────────────────────
 // SKELETON SHIMMER WIDGET
@@ -3286,12 +3355,44 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting &&
                       !snapshot.hasData) {
-                    return const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(24),
-                        child: CircularProgressIndicator(
-                            color: Color(0xFFFF8A00)),
-                      ),
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        final layout = _marketplaceSliverGridLayout(
+                          comfortable: _comfortableView,
+                          width: constraints.maxWidth,
+                        );
+                        return AppSkeletonShimmer(
+                          child: CustomScrollView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            slivers: [
+                              SliverPadding(
+                                padding: EdgeInsets.fromLTRB(
+                                  layout.gridPadH,
+                                  12,
+                                  layout.gridPadH,
+                                  12,
+                                ),
+                                sliver: SliverGrid(
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: layout.crossAxisCount,
+                                    crossAxisSpacing: layout.gridSpacing,
+                                    mainAxisSpacing: layout.gridSpacing,
+                                    childAspectRatio: layout.childAspectRatio,
+                                  ),
+                                  delegate: SliverChildBuilderDelegate(
+                                    (_, __) =>
+                                        const AppSkeletonProductCardCore(
+                                      borderRadius: 14,
+                                    ),
+                                    childCount: layout.crossAxisCount * 5,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
                     );
                   }
                   if (snapshot.hasError) {
@@ -3335,17 +3436,14 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                   }
                   return LayoutBuilder(
                     builder: (context, constraints) {
-                      final maxW = constraints.maxWidth;
-                      final isWide = maxW >= 700;
-                      final isNarrowPhone = maxW < 380;
-                      final crossAxisCount = _comfortableView
-                          ? (isWide ? 2 : 1)
-                          : (isWide ? 3 : (isNarrowPhone ? 1 : 2));
-                      final childAspectRatio = _comfortableView
-                          ? (isWide ? 1.05 : 1.35)
-                          : (isWide ? 0.70 : (isNarrowPhone ? 1.45 : 0.72));
-                      final gridSpacing = isNarrowPhone ? 10.0 : 12.0;
-                      final gridPadH = isNarrowPhone ? 10.0 : 12.0;
+                      final layout = _marketplaceSliverGridLayout(
+                        comfortable: _comfortableView,
+                        width: constraints.maxWidth,
+                      );
+                      final crossAxisCount = layout.crossAxisCount;
+                      final childAspectRatio = layout.childAspectRatio;
+                      final gridSpacing = layout.gridSpacing;
+                      final gridPadH = layout.gridPadH;
 
                       return CustomScrollView(
                         physics: const AlwaysScrollableScrollPhysics(),

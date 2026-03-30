@@ -4,7 +4,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
-
+import 'package:vero360_app/widgets/app_skeleton.dart';
 
 class AccommodationMainPage extends StatefulWidget {
   const AccommodationMainPage({super.key});
@@ -270,24 +270,15 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
                   future: _future,
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
-                      return Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                      return AppSkeletonShimmer(
+                        child: ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                           children: [
-                            const CircularProgressIndicator(
-                              color: _brandOrange,
-                              strokeWidth: 2.5,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Loading stays…',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                color: isDark
-                                    ? Colors.white70
-                                    : Colors.grey.shade600,
-                              ),
-                            ),
+                            for (var i = 0; i < 5; i++) ...[
+                              AppSkeletonAccommodationCardCore(isDark: isDark),
+                              if (i < 4) const SizedBox(height: 12),
+                            ],
                           ],
                         ),
                       );

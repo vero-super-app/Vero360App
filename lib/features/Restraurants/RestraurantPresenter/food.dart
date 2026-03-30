@@ -12,6 +12,7 @@ import 'package:vero360_app/GernalServices/location_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_details.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
+import 'package:vero360_app/widgets/app_skeleton.dart';
 
 class FoodPage extends StatefulWidget {
   const FoodPage({super.key});
@@ -673,24 +674,34 @@ class _FoodPageState extends State<FoodPage> {
                 builder: (context, snapshot) {
                   if (_loading &&
                       snapshot.connectionState == ConnectionState.waiting) {
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const CircularProgressIndicator(
-                            color: _brandOrange,
-                            strokeWidth: 2.5,
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                      children: [
+                        AppSkeletonShimmer(
+                          child: LayoutBuilder(
+                            builder: (ctx, c) {
+                              final isWide = c.maxWidth >= 700;
+                              final cross = isWide ? 3 : 2;
+                              final ratio = isWide ? 0.72 : 0.70;
+                              return GridView.builder(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                gridDelegate:
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: cross,
+                                  crossAxisSpacing: 12,
+                                  mainAxisSpacing: 12,
+                                  childAspectRatio: ratio,
+                                ),
+                                itemCount: cross * 4,
+                                itemBuilder: (_, __) =>
+                                    const AppSkeletonProductCardCore(),
+                              );
+                            },
                           ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Loading…',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     );
                   }
                   if (snapshot.hasError) {

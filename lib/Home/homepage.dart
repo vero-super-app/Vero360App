@@ -63,6 +63,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/Home/story_section.dart';
+import 'package:vero360_app/widgets/app_skeleton.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -1767,8 +1768,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
             builder: (context, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
                 return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: CircularProgressIndicator()),
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: AppSkeletonLatestArrivalsGrid(),
                 );
               }
               if (snap.hasError) {

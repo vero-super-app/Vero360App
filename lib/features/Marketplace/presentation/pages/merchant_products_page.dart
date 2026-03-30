@@ -20,6 +20,7 @@ import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/app_skeleton.dart';
 
 class MerchantProductsPage extends StatefulWidget {
   final String merchantId;
@@ -1385,24 +1386,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(
-                    color: _brandOrange,
-                    strokeWidth: 2.5,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Loading products…',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
-                ],
-              ),
+            return const Padding(
+              padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
+              child: AppSkeletonLatestArrivalsGrid(),
             );
           }
           if (snapshot.hasError) {

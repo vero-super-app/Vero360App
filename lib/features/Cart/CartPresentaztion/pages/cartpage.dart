@@ -16,6 +16,7 @@ import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/app_skeleton.dart';
 
 // ✅ ONE global formatter (commas)
 // If you want decimals, change decimalDigits: 2
@@ -484,7 +485,7 @@ class _CartPageState extends State<CartPage> {
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting &&
                 _items.isEmpty) {
-              return const Center(child: CircularProgressIndicator());
+              return const AppSkeletonCartList(rows: 6);
             }
 
             if (_items.isEmpty) {

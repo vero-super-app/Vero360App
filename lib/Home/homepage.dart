@@ -1,7 +1,8 @@
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -16,7 +17,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/Quickservices/social.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
-//import 'package:vero360_app/features/Accomodation/Presentation/pages/Accomodation.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
 
@@ -26,9 +26,7 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 
 // Feature pages
-
 import 'package:vero360_app/Quickservices/ExchangeRate.dart';
-
 import 'package:vero360_app/features/AirportPickup/AirportPresenter/airportpickup.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
 import 'package:vero360_app/Quickservices/jobs.dart';
@@ -198,8 +196,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     _resolveGreetingName();
     _maybeShowServicesHint();
 
-    // Defer heavy latest-arrivals grid slightly so the first frame
-    // (brand bar, search, quick services) renders faster.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await Future.delayed(const Duration(milliseconds: 350));
       if (!mounted) return;
@@ -216,12 +212,14 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     setState(() => _showServicesHint = true);
   }
 
-  List<_ServiceGuideStep> get _guideSteps => kQuickServices
+  // ── Use the new ServiceGuideStep type ──────────────
+  List<ServiceGuideStep> get _guideSteps => kQuickServices
       .map(
-        (item) => _ServiceGuideStep(
+        (item) => ServiceGuideStep(
           keyId: item.keyId,
           title: item.label,
-          description: kQuickServiceGuideNotes[item.keyId] ?? 'Open this service.',
+          description:
+              kQuickServiceGuideNotes[item.keyId] ?? 'Open this service.',
         ),
       )
       .toList();
@@ -238,19 +236,19 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
 
   Future<void> _resolveGreetingName() async {
     if (widget.email.isNotEmpty) return;
-    // Prefer name from SharedPreferences (set at login) so "Hi, chawezi" not "Hi, Phone" for phone users.
     String? name;
     final prefs = await SharedPreferences.getInstance();
     name = prefs.getString('fullName') ?? prefs.getString('name');
     if (name != null && name.trim().isNotEmpty && !name.contains('@')) {
-      // Use prefs name (not an email)
+      // use prefs name
     } else {
       name = await AuthStorage.userNameFromToken();
-      // If token only has email (e.g. 0992695612@phone.vero360.app), don't use "Phone" from the local part.
       if (name != null && name.contains('@')) {
         final local = name.split('@').first.trim();
-        if (RegExp(r'^\d+$').hasMatch(local)) name = null; // all digits => don't use as display name
-        else name = local;
+        if (RegExp(r'^\d+$').hasMatch(local))
+          name = null;
+        else
+          name = local;
       }
     }
     if (!mounted) return;
@@ -277,7 +275,9 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   String _displayName() {
     if (widget.email.isNotEmpty) return _firstNameFromEmail(widget.email);
     if (_resolvedGreetingName != null && _resolvedGreetingName!.isNotEmpty) {
-      final cleaned = _resolvedGreetingName!.replaceAll(RegExp(r'[^a-zA-Z]'), ' ').trim();
+      final cleaned = _resolvedGreetingName!
+          .replaceAll(RegExp(r'[^a-zA-Z]'), ' ')
+          .trim();
       final parts = cleaned.split(RegExp(r'\s+'));
       final first = parts.isNotEmpty ? parts.first : 'there';
       if (first.isEmpty) return 'there';
@@ -339,68 +339,70 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
                       ),
                     ),
 
-                    // Merchant stories (24h) — replaced promo carousel
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(0, 12, 0, 0),
-                    child: StorySection(),
-                  ),
-                ),
-
-                const SliverToBoxAdapter(child: SizedBox(height: 22)),
-                const SliverToBoxAdapter(child: _QuickStrip()),
-                const SliverToBoxAdapter(child: SizedBox(height: 27)),
-
-                SliverToBoxAdapter(
-                  child: Padding(
-                    key: _servicesCardKey,
-                    padding: const EdgeInsets.symmetric(horizontal: 7),
-                    child: _SectionCard(
-                      title: 'Discover Our Quick Services',
-                      child: _MiniIconsGrid(
-                        items: kQuickServices,
-                        tileKeys: _serviceTileKeys,
-                        onOpen: (key) => key == 'taxi'
-                            ? _openService(key)
-                            : _openServiceStatic(context, key),
+                    // Merchant stories (24h)
+                    const SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(0, 12, 0, 0),
+                        child: StorySection(),
                       ),
                     ),
-                  ),
-                ),
 
-                const SliverToBoxAdapter(child: SizedBox(height: 22)),
-                const SliverToBoxAdapter(child: _NearYouCarousel()),
-                const SliverToBoxAdapter(child: SizedBox(height: 8)),
-                const SliverToBoxAdapter(child: _DealsStrip()),
-                const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                    const SliverToBoxAdapter(child: SizedBox(height: 22)),
+                    const SliverToBoxAdapter(child: _QuickStrip()),
+                    const SliverToBoxAdapter(child: SizedBox(height: 27)),
 
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(6, 4, 16, 0),
-                    child: DigitalServicesSection(onBuy: _openDigitalDetail),
-                  ),
-                ),
-
-                const SliverToBoxAdapter(child: SizedBox(height: 10)),
-
-                // ✅ Latest arrivals section (deferred slightly to reduce first-frame work)
-                SliverToBoxAdapter(
-                  child: Padding(
-                    // Symmetric horizontal padding so cards sit closer to the edges
-                    padding: const EdgeInsets.fromLTRB(6, 12, 6, 16),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 250),
-                      child: _showLatestArrivals
-                          ? const LatestArrivalsSection()
-                          : const SizedBox.shrink(),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        key: _servicesCardKey,
+                        padding: const EdgeInsets.symmetric(horizontal: 7),
+                        child: _SectionCard(
+                          title: 'Discover Our Quick Services',
+                          child: _MiniIconsGrid(
+                            items: kQuickServices,
+                            tileKeys: _serviceTileKeys,
+                            onOpen: (key) => key == 'taxi'
+                                ? _openService(key)
+                                : _openServiceStatic(context, key),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
+
+                    const SliverToBoxAdapter(child: SizedBox(height: 22)),
+                    const SliverToBoxAdapter(child: _NearYouCarousel()),
+                    const SliverToBoxAdapter(child: SizedBox(height: 8)),
+                    const SliverToBoxAdapter(child: _DealsStrip()),
+                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(6, 4, 16, 0),
+                        child: DigitalServicesSection(
+                            onBuy: _openDigitalDetail),
+                      ),
+                    ),
+
+                    const SliverToBoxAdapter(child: SizedBox(height: 10)),
+
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding:
+                            const EdgeInsets.fromLTRB(6, 12, 6, 16),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 250),
+                          child: _showLatestArrivals
+                              ? const LatestArrivalsSection()
+                              : const SizedBox.shrink(),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
+
+                // ── NEW modern guide overlay ──────────
                 if (_showServicesHint)
                   Builder(
-                    builder: (stackCtx) => _QuickServicesCoachOverlay(
+                    builder: (stackCtx) => QuickServicesCoachOverlay(
                       stackContext: stackCtx,
                       currentIndex: _guideIndex,
                       steps: _guideSteps,
@@ -436,38 +438,33 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     }
   }
 
-  /// Keep only real profile phone numbers and drop Firebase placeholders.
   String? _merchantProfilePhoneOrNull(String? raw) {
     final t = (raw ?? '').trim();
     if (t.isEmpty) return null;
     final lower = t.toLowerCase();
-    if (lower.startsWith('+firebase_') || lower.contains('firebase_')) {
+    if (lower.startsWith('+firebase_') || lower.contains('firebase_'))
       return null;
-    }
-    if (lower.contains('@phone.vero360.app') || lower.contains('@')) {
+    if (lower.contains('@phone.vero360.app') || lower.contains('@'))
       return null;
-    }
     return t;
   }
 
   Future<void> _openDigitalDetail(DigitalProduct p) async {
-    // Pull name, phone, email from user (SharedPreferences like checkout_page)
     String? initialName;
     String? initialPhone;
     String initialEmail = widget.email;
     try {
       final prefs = await SharedPreferences.getInstance();
       initialName = prefs.getString('name');
-      // Use only merchant-profile phone set from merchant dashboard/profile sources.
-      // Do not fall back to generic login/Firebase phone if missing.
-      initialPhone =
-          _merchantProfilePhoneOrNull(prefs.getString('merchant_profile_phone'));
+      initialPhone = _merchantProfilePhoneOrNull(
+          prefs.getString('merchant_profile_phone'));
       if (initialEmail.trim().isEmpty) {
         initialEmail = prefs.getString('email') ?? '';
       }
       final suggestedName = _displayName();
       if ((initialName == null || initialName.isEmpty) &&
-          suggestedName != 'there' && suggestedName != '...') {
+          suggestedName != 'there' &&
+          suggestedName != '...') {
         initialName = suggestedName;
       }
     } catch (_) {}
@@ -485,10 +482,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   }
 
   void _openService(String key) {
-    // Special handling for taxi service
     if (key == 'taxi' || key == 'car_hire') {
-      // ✅ Always open user/passenger mode when clicking ride share icon
-      // Drivers access DriverDashboard automatically on login
       Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => const RideShareMapScreen()),
       );
@@ -518,7 +512,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
       case 'courier':
         page = const VerocourierPage();
         break;
-
       case 'airport_pickup':
         page = const Airportpickuppage();
         break;
@@ -526,13 +519,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
       case 'car_hire':
         page = const RideShareMapScreen();
         break;
-         case 'Vero Chat':
+      case 'Vero Chat':
         page = const SocialPage();
         break;
-      // case 'hostels':
-      // case 'hotels':
       case 'accommodation':
-     page = const AccommodationMainPage();
+        page = const AccommodationMainPage();
         break;
       case 'fx':
         page = const ExchangeRateScreen();
@@ -543,6 +534,704 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }
 }
+
+/* ═══════════════════════════════════════════════════════
+   ✨  MODERN QUICK-SERVICES COACH OVERLAY
+   Drop-in replacement for the old _QuickServicesCoachOverlay
+═══════════════════════════════════════════════════════ */
+
+// ── Per-service accent colours ────────────────────────
+const Map<String, Color> _kServiceAccents = {
+  'taxi': Color(0xFFFF6B35),
+  'airport_pickup': Color(0xFF4ECDC4),
+  'courier': Color(0xFF45B7D1),
+  'vero_bike': Color(0xFF66BB6A),
+  'fx': Color(0xFFAB8BEB),
+  'food': Color(0xFFFF7C8A),
+  'jobs': Color(0xFF5B97C5),
+  'accommodation': Color(0xFFFFAD60),
+};
+
+// ── Data model (replaces _ServiceGuideStep) ───────────
+class ServiceGuideStep {
+  final String keyId;
+  final String title;
+  final String description;
+  const ServiceGuideStep({
+    required this.keyId,
+    required this.title,
+    required this.description,
+  });
+}
+
+class QuickServicesCoachOverlay extends StatefulWidget {
+  const QuickServicesCoachOverlay({
+    super.key,
+    required this.stackContext,
+    required this.currentIndex,
+    required this.steps,
+    required this.tileKeys,
+    required this.onSkip,
+    required this.onNext,
+  });
+
+  final BuildContext stackContext;
+  final List<ServiceGuideStep> steps;
+  final int currentIndex;
+  final Map<String, GlobalKey> tileKeys;
+  final Future<void> Function() onSkip;
+  final Future<void> Function() onNext;
+
+  @override
+  State<QuickServicesCoachOverlay> createState() =>
+      _QuickServicesCoachOverlayState();
+}
+
+class _QuickServicesCoachOverlayState
+    extends State<QuickServicesCoachOverlay>
+    with TickerProviderStateMixin {
+  // Entrance
+  late final AnimationController _entranceCtrl;
+  late final Animation<double> _backdropFade;
+  late final Animation<double> _cardScale;
+  late final Animation<double> _cardFade;
+  late final Animation<Offset> _cardSlide;
+
+  // Step-change card transition
+  late final AnimationController _stepCtrl;
+  late final Animation<double> _stepFade;
+  late final Animation<Offset> _stepSlide;
+
+  // Pulse for arrow + ring
+  late final AnimationController _pulseCtrl;
+  late final Animation<double> _pulseAnim;
+
+  // Floating orbs
+  late final AnimationController _orbCtrl;
+  late final Animation<double> _orbAnim;
+
+  Rect? _targetRect;
+  bool _transitioning = false;
+
+  ServiceGuideStep get _step => widget.steps[widget.currentIndex];
+
+  @override
+  void initState() {
+    super.initState();
+
+    // ── Entrance ──────────────────────────────────────
+    _entranceCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    _backdropFade = CurvedAnimation(
+      parent: _entranceCtrl,
+      curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+    );
+    _cardScale = Tween<double>(begin: 0.80, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _entranceCtrl,
+        curve: const Interval(0.25, 1.0, curve: Curves.elasticOut),
+      ),
+    );
+    _cardFade = CurvedAnimation(
+      parent: _entranceCtrl,
+      curve: const Interval(0.2, 0.7, curve: Curves.easeOut),
+    );
+    _cardSlide = Tween<Offset>(
+      begin: const Offset(0, 0.14),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _entranceCtrl,
+        curve: const Interval(0.2, 0.85, curve: Curves.easeOutCubic),
+      ),
+    );
+
+    // ── Step transition ────────────────────────────────
+    _stepCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _stepFade = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _stepCtrl, curve: Curves.easeIn),
+    );
+    _stepSlide = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(-0.07, 0.0),
+    ).animate(CurvedAnimation(parent: _stepCtrl, curve: Curves.easeIn));
+
+    // ── Pulse ─────────────────────────────────────────
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 0.6, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
+    );
+
+    // ── Orbs ──────────────────────────────────────────
+    _orbCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 4),
+    )..repeat(reverse: true);
+    _orbAnim = CurvedAnimation(parent: _orbCtrl, curve: Curves.easeInOut);
+
+    _entranceCtrl.forward();
+    _measure();
+  }
+
+  @override
+  void didUpdateWidget(covariant QuickServicesCoachOverlay old) {
+    super.didUpdateWidget(old);
+    if (old.currentIndex != widget.currentIndex) _animateStep();
+  }
+
+  Future<void> _animateStep() async {
+    if (_transitioning) return;
+    _transitioning = true;
+    await _stepCtrl.forward();
+    if (!mounted) return;
+    _measure();
+    await _stepCtrl.reverse();
+    _transitioning = false;
+  }
+
+  void _measure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final key = widget.tileKeys[_step.keyId];
+      final tileCtx = key?.currentContext;
+      final stackRb =
+          widget.stackContext.findRenderObject() as RenderBox?;
+      if (tileCtx == null || stackRb == null || !stackRb.hasSize) return;
+      final tileRb = tileCtx.findRenderObject() as RenderBox?;
+      if (tileRb == null || !tileRb.hasSize) return;
+      final tl = stackRb.globalToLocal(tileRb.localToGlobal(Offset.zero));
+      if (mounted) setState(() => _targetRect = tl & tileRb.size);
+    });
+  }
+
+  @override
+  void dispose() {
+    _entranceCtrl.dispose();
+    _stepCtrl.dispose();
+    _pulseCtrl.dispose();
+    _orbCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = _kServiceAccents[_step.keyId] ?? AppColors.brandOrange;
+    final total = widget.steps.length;
+    final idx = widget.currentIndex;
+    final isLast = idx == total - 1;
+    final screenW = MediaQuery.sizeOf(context).width;
+
+    return Positioned.fill(
+      child: AnimatedBuilder(
+        animation: Listenable.merge(
+            [_entranceCtrl, _stepCtrl, _pulseCtrl, _orbCtrl]),
+        builder: (ctx, _) {
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // ── Frosted backdrop ────────────────────
+              Opacity(
+                opacity: _backdropFade.value,
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 3, sigmaY: 3),
+                  child: Container(
+                    color: Colors.black.withOpacity(0.50),
+                  ),
+                ),
+              ),
+
+              // ── Floating orbs ───────────────────────
+              if (_targetRect != null) ...[
+                _Orb(
+                  anim: _orbAnim,
+                  left: _targetRect!.center.dx - 110,
+                  top: _targetRect!.top - 270,
+                  size: 190,
+                  color: accent.withOpacity(0.16),
+                  phase: 0.0,
+                ),
+                _Orb(
+                  anim: _orbAnim,
+                  left: _targetRect!.center.dx + 40,
+                  top: _targetRect!.top - 190,
+                  size: 90,
+                  color: Colors.white.withOpacity(0.07),
+                  phase: 0.55,
+                ),
+              ],
+
+              // ── Spotlight ring around target tile ───
+              if (_targetRect != null)
+                Positioned(
+                  left: _targetRect!.left - 7,
+                  top: _targetRect!.top - 7,
+                  child: _SpotlightRing(
+                    w: _targetRect!.width + 14,
+                    h: _targetRect!.height + 14,
+                    pulse: _pulseAnim.value,
+                    color: accent,
+                  ),
+                ),
+
+              // ── Animated downward arrow ─────────────
+              if (_targetRect != null)
+                Positioned(
+                  left: (_targetRect!.center.dx - 18)
+                      .clamp(8.0, screenW - 44),
+                  top: (_targetRect!.top - 58).clamp(8.0, 99999.0),
+                  child: _BobArrow(pulse: _pulseAnim.value, color: accent),
+                ),
+
+              // ── Guide card ──────────────────────────
+              Positioned(
+                left: 16,
+                right: 16,
+                top: _targetRect != null
+                    ? (_targetRect!.top - 236).clamp(8.0, 99999.0)
+                    : null,
+                bottom: _targetRect == null ? 40 : null,
+                child: FadeTransition(
+                  opacity: _stepFade,
+                  child: SlideTransition(
+                    position: _stepSlide,
+                    child: ScaleTransition(
+                      scale: _cardScale,
+                      child: FadeTransition(
+                        opacity: _cardFade,
+                        child: SlideTransition(
+                          position: _cardSlide,
+                          child: _GuideCard(
+                            step: _step,
+                            idx: idx,
+                            total: total,
+                            accent: accent,
+                            isLast: isLast,
+                            onSkip: widget.onSkip,
+                            onNext: widget.onNext,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────
+//  GUIDE CARD
+// ─────────────────────────────────────────────────────
+class _GuideCard extends StatelessWidget {
+  const _GuideCard({
+    required this.step,
+    required this.idx,
+    required this.total,
+    required this.accent,
+    required this.isLast,
+    required this.onSkip,
+    required this.onNext,
+  });
+
+  final ServiceGuideStep step;
+  final int idx;
+  final int total;
+  final Color accent;
+  final bool isLast;
+  final Future<void> Function() onSkip;
+  final Future<void> Function() onNext;
+
+  static const Map<String, IconData> _icons = {
+    'taxi': Icons.local_taxi_rounded,
+    'airport_pickup': Icons.flight_takeoff_rounded,
+    'courier': Icons.local_shipping_rounded,
+    'vero_bike': Icons.pedal_bike_rounded,
+    'fx': Icons.currency_exchange_rounded,
+    'food': Icons.fastfood_rounded,
+    'jobs': Icons.business_center_rounded,
+    'accommodation': Icons.hotel_rounded,
+  };
+
+  Color _darken(Color c, double amt) {
+    final h = HSLColor.fromColor(c);
+    return h.withLightness((h.lightness - amt).clamp(0.0, 1.0)).toColor();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = _icons[step.keyId] ?? Icons.star_rounded;
+    final progress = (idx + 1) / total;
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: accent.withOpacity(0.25),
+              blurRadius: 36,
+              spreadRadius: 2,
+              offset: const Offset(0, 10),
+            ),
+            const BoxShadow(
+              color: Color(0x1A000000),
+              blurRadius: 18,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Gradient header ─────────────────────
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [accent, accent.withOpacity(0.70)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    // Icon bubble
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.20),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.55),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Icon(icon, color: Colors.white, size: 22),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            step.title,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Step ${idx + 1} of $total',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.80),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // ── Animated progress bar ───────────────
+              LayoutBuilder(builder: (ctx, c) {
+                return Stack(
+                  children: [
+                    Container(height: 3, color: const Color(0xFFEEEEEE)),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 430),
+                      curve: Curves.easeOutCubic,
+                      height: 3,
+                      width: c.maxWidth * progress,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [accent, accent.withOpacity(0.5)],
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }),
+
+              // ── Body ────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      step.description,
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        height: 1.55,
+                        color: AppColors.body,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // ── Step dots ───────────────────────
+                    Row(
+                      children: List.generate(total, (i) {
+                        final active = i == idx;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 320),
+                          curve: Curves.easeOutCubic,
+                          margin: const EdgeInsets.only(right: 5),
+                          width: active ? 22 : 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: active
+                                ? accent
+                                : const Color(0xFFDDDDDD),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // ── Buttons ─────────────────────────
+                    Row(
+                      children: [
+                        // Skip
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: onSkip,
+                            child: Container(
+                              height: 46,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF5F5F5),
+                                borderRadius: BorderRadius.circular(13),
+                              ),
+                              child: const Text(
+                                'Skip tour',
+                                style: TextStyle(
+                                  color: AppColors.body,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+
+                        // Next / Finish
+                        Expanded(
+                          flex: 2,
+                          child: GestureDetector(
+                            onTap: onNext,
+                            child: Container(
+                              height: 46,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [accent, _darken(accent, 0.09)],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                borderRadius: BorderRadius.circular(13),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: accent.withOpacity(0.38),
+                                    blurRadius: 12,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    isLast ? 'Finish' : 'Next',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Icon(
+                                    isLast
+                                        ? Icons
+                                            .check_circle_outline_rounded
+                                        : Icons.arrow_forward_rounded,
+                                    color: Colors.white,
+                                    size: 17,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────
+//  SPOTLIGHT RING (custom painter)
+// ─────────────────────────────────────────────────────
+class _SpotlightRing extends StatelessWidget {
+  const _SpotlightRing({
+    required this.w,
+    required this.h,
+    required this.pulse,
+    required this.color,
+  });
+  final double w, h, pulse;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: w,
+        height: h,
+        child: CustomPaint(painter: _RingPainter(pulse: pulse, color: color)),
+      );
+}
+
+class _RingPainter extends CustomPainter {
+  const _RingPainter({required this.pulse, required this.color});
+  final double pulse;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rrect = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+          center: Offset(size.width / 2, size.height / 2),
+          width: size.width,
+          height: size.height),
+      const Radius.circular(14),
+    );
+
+    // Outer glow
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = color.withOpacity(0.28 * pulse)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 12
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 9),
+    );
+
+    // Crisp ring
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = color.withOpacity(0.50 + 0.50 * pulse)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_RingPainter o) =>
+      o.pulse != pulse || o.color != color;
+}
+
+// ─────────────────────────────────────────────────────
+//  BOBBING ARROW
+// ─────────────────────────────────────────────────────
+class _BobArrow extends StatelessWidget {
+  const _BobArrow({required this.pulse, required this.color});
+  final double pulse;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Transform.translate(
+        offset: Offset(0, -5 * pulse + 2.5),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: color.withOpacity(0.42 * pulse),
+                blurRadius: 18,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: Colors.white,
+            size: 22,
+          ),
+        ),
+      );
+}
+
+// ─────────────────────────────────────────────────────
+//  FLOATING ORB
+// ─────────────────────────────────────────────────────
+class _Orb extends StatelessWidget {
+  const _Orb({
+    required this.anim,
+    required this.left,
+    required this.top,
+    required this.size,
+    required this.color,
+    required this.phase,
+  });
+  final Animation<double> anim;
+  final double left, top, size, phase;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final dy = math.sin((anim.value + phase) * math.pi * 2) * 12;
+    return Positioned(
+      left: left,
+      top: top + dy,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+      ),
+    );
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
+   END OF GUIDE OVERLAY
+═══════════════════════════════════════════════════════ */
 
 /// BRAND BAR
 class _BrandBar extends StatelessWidget {
@@ -599,11 +1288,13 @@ class _BrandBar extends StatelessWidget {
               isLabelVisible: count > 0,
               backgroundColor: Colors.red,
               textColor: Colors.white,
-              alignment: Alignment(1.15, -0.6),
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              alignment: const Alignment(1.15, -0.6),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
               label: Text(
                 labelText,
-                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                    fontSize: 10, fontWeight: FontWeight.w600),
               ),
               child: IconButton(
                 visualDensity: VisualDensity.compact,
@@ -673,9 +1364,11 @@ class _TopSection extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: AppColors.brandOrangeSoft),
+                        border:
+                            Border.all(color: AppColors.brandOrangeSoft),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 12),
                       child: const Row(
                         children: [
                           Icon(Icons.search_rounded, color: Colors.grey),
@@ -691,7 +1384,8 @@ class _TopSection extends StatelessWidget {
                               ),
                             ),
                           ),
-                          Icon(Icons.expand_more_rounded, color: Colors.grey),
+                          Icon(Icons.expand_more_rounded,
+                              color: Colors.grey),
                         ],
                       ),
                     ),
@@ -703,10 +1397,14 @@ class _TopSection extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
                     height: 44,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                        colors: [AppColors.brandOrange, Color(0xFFFFB85C)],
+                        colors: [
+                          AppColors.brandOrange,
+                          Color(0xFFFFB85C)
+                        ],
                       ),
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: const [
@@ -765,7 +1463,9 @@ class _Dots extends StatelessWidget {
             height: 6,
             width: active ? 18 : 6,
             decoration: BoxDecoration(
-              color: active ? AppColors.brandOrange : const Color(0xFFE1E1E1),
+              color: active
+                  ? AppColors.brandOrange
+                  : const Color(0xFFE1E1E1),
               borderRadius: BorderRadius.circular(10),
             ),
           );
@@ -821,10 +1521,7 @@ class _QuickStrip extends StatelessWidget {
 class _SectionCard extends StatelessWidget {
   final String title;
   final Widget child;
-  const _SectionCard({
-    required this.title,
-    required this.child,
-  });
+  const _SectionCard({required this.title, required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -833,7 +1530,8 @@ class _SectionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.brandOrangeSoft.withOpacity(0.55)),
+        border: Border.all(
+            color: AppColors.brandOrangeSoft.withOpacity(0.55)),
         boxShadow: const [
           BoxShadow(
             color: Color(0x14000000),
@@ -860,226 +1558,6 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-class _ServiceGuideStep {
-  final String keyId;
-  final String title;
-  final String description;
-  const _ServiceGuideStep({
-    required this.keyId,
-    required this.title,
-    required this.description,
-  });
-}
-
-class _QuickServicesCoachOverlay extends StatefulWidget {
-  const _QuickServicesCoachOverlay({
-    required this.stackContext,
-    required this.steps,
-    required this.currentIndex,
-    required this.tileKeys,
-    required this.onSkip,
-    required this.onNext,
-  });
-
-  final BuildContext stackContext;
-  final List<_ServiceGuideStep> steps;
-  final int currentIndex;
-  final Map<String, GlobalKey> tileKeys;
-  final Future<void> Function() onSkip;
-  final Future<void> Function() onNext;
-
-  @override
-  State<_QuickServicesCoachOverlay> createState() =>
-      _QuickServicesCoachOverlayState();
-}
-
-class _QuickServicesCoachOverlayState extends State<_QuickServicesCoachOverlay>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _pulse;
-  Rect? _targetRect;
-
-  _ServiceGuideStep get _step => widget.steps[widget.currentIndex];
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    )..repeat(reverse: true);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _measure();
-      WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
-    });
-  }
-
-  @override
-  void didUpdateWidget(covariant _QuickServicesCoachOverlay oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.currentIndex != widget.currentIndex) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _measure();
-        WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
-      });
-    }
-  }
-
-  void _measure() {
-    final targetKey = widget.tileKeys[_step.keyId];
-    final targetCtx = targetKey?.currentContext;
-    final stackRb = widget.stackContext.findRenderObject() as RenderBox?;
-    if (targetCtx == null || stackRb == null || !stackRb.hasSize) return;
-    final targetRb = targetCtx.findRenderObject() as RenderBox?;
-    if (targetRb == null || !targetRb.hasSize) return;
-    final topLeft = stackRb.globalToLocal(targetRb.localToGlobal(Offset.zero));
-    if (!mounted) return;
-    setState(() => _targetRect = topLeft & targetRb.size);
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final stackW = MediaQuery.sizeOf(widget.stackContext).width;
-    final arrowRightBound = stackW > 56 ? stackW - 56 : 8.0;
-    final isLast = widget.currentIndex == widget.steps.length - 1;
-
-    return Positioned.fill(
-      child: ColoredBox(
-        color: Colors.black.withOpacity(0.42),
-        child: Stack(
-          children: [
-            if (_targetRect != null) ...[
-              Positioned(
-                left: (_targetRect!.center.dx - 24).clamp(8.0, arrowRightBound),
-                top: (_targetRect!.top - 72).clamp(8.0, 8000.0),
-                child: AnimatedBuilder(
-                  animation: _pulse,
-                  builder: (context, child) {
-                    final s = 0.88 + 0.12 * _pulse.value;
-                    final o = 0.65 + 0.35 * _pulse.value;
-                    return Opacity(
-                      opacity: o,
-                      child: Transform.scale(
-                        scale: s,
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: const Icon(
-                    Icons.arrow_downward_rounded,
-                    size: 48,
-                    color: AppColors.brandOrange,
-                    shadows: [
-                      Shadow(
-                        color: Colors.white,
-                        blurRadius: 6,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 16,
-                right: 16,
-                top: (_targetRect!.top - 182).clamp(8.0, 8000.0),
-                child: Material(
-                  color: Colors.white,
-                  elevation: 6,
-                  borderRadius: BorderRadius.circular(14),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _step.title,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 16,
-                            color: AppColors.title,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          _step.description,
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.35,
-                            color: AppColors.body.withOpacity(0.95),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          'Step ${widget.currentIndex + 1} of ${widget.steps.length}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.body,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            TextButton(
-                              onPressed: widget.onSkip,
-                              child: const Text('Skip'),
-                            ),
-                            const SizedBox(width: 8),
-                            FilledButton(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: AppColors.brandOrange,
-                                foregroundColor: Colors.white,
-                              ),
-                              onPressed: widget.onNext,
-                              child: Text(isLast ? 'Done' : 'Next'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            if (_targetRect == null)
-              Center(
-                child: Material(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        TextButton(
-                          onPressed: widget.onSkip,
-                          child: const Text('Skip'),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton(
-                          onPressed: widget.onNext,
-                          child: Text(isLast ? 'Done' : 'Next'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _MiniIconsGrid extends StatelessWidget {
   final List<Mini> items;
   final Map<String, GlobalKey> tileKeys;
@@ -1094,7 +1572,6 @@ class _MiniIconsGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (ctx, c) {
       final w = c.maxWidth;
-
       const crossSpacing = 8.0;
       const mainSpacing = 10.0;
       const minTileW = 92.0;
@@ -1107,20 +1584,21 @@ class _MiniIconsGrid extends StatelessWidget {
         tileW = (w - (cross - 1) * crossSpacing) / cross;
       }
 
-      final textScale = MediaQuery.textScaleFactorOf(context).clamp(1.0, 1.2);
+      final textScale =
+          MediaQuery.textScaleFactorOf(context).clamp(1.0, 1.2);
       const iconH = 48.0;
       const gapH = 6.0;
       const padH = 6.0;
       const font = 11.0;
       final twoLines = font * 1.25 * 2 * textScale;
       final minHeight = iconH + gapH + twoLines + padH;
-
       final ratio = (tileW / (minHeight + 2)).clamp(0.86, 1.10);
 
       return MediaQuery(
         data: MediaQuery.of(context).copyWith(
-          textScaler:
-              MediaQuery.of(context).textScaler.clamp(maxScaleFactor: 1.2),
+          textScaler: MediaQuery.of(context)
+              .textScaler
+              .clamp(maxScaleFactor: 1.2),
         ),
         child: GridView.builder(
           shrinkWrap: true,
@@ -1220,8 +1698,8 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
         ),
       ),
       inputDecorationTheme: base.inputDecorationTheme.copyWith(
-        hintStyle:
-            const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
+        hintStyle: const TextStyle(
+            color: Colors.white70, fontWeight: FontWeight.w600),
         border: InputBorder.none,
       ),
       textTheme: base.textTheme
@@ -1266,13 +1744,12 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
   Iterable<Mini> _filter(String q) {
     final t = q.trim().toLowerCase();
     if (t.isEmpty) return services;
-
     final aliasKey = _aliases[t];
     if (aliasKey != null) {
       return services.where((m) => m.keyId == aliasKey);
     }
-
-    final words = t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final words =
+        t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
     return services.where((m) {
       final l = m.label.toLowerCase();
       return l.contains(t) || words.any(l.contains);
@@ -1307,7 +1784,8 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
                 },
                 backgroundColor: AppColors.brandOrangePale,
                 shape: StadiumBorder(
-                    side: BorderSide(color: AppColors.brandOrangeSoft)),
+                    side:
+                        const BorderSide(color: AppColors.brandOrangeSoft)),
               ),
           ],
         ),
@@ -1349,10 +1827,11 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
               child: Icon(m.icon, color: AppColors.brandOrange),
             ),
             title: Text(m.label,
-                style: const TextStyle(fontWeight: FontWeight.w800)),
+                style:
+                    const TextStyle(fontWeight: FontWeight.w800)),
             subtitle: Text(m.keyId),
-            trailing:
-                const Icon(Icons.chevron_right_rounded, color: AppColors.body),
+            trailing: const Icon(Icons.chevron_right_rounded,
+                color: AppColors.body),
             onTap: () => close(context, m),
           ),
         );
@@ -1459,7 +1938,8 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
                     enableInfiniteScroll: true,
                     autoPlay: true,
                     autoPlayInterval: const Duration(seconds: 4),
-                    autoPlayAnimationDuration: const Duration(milliseconds: 600),
+                    autoPlayAnimationDuration:
+                        const Duration(milliseconds: 600),
                     onPageChanged: (i, _) => setState(() => _index = i),
                   ),
                   itemBuilder: (_, i, __) {
@@ -1582,8 +2062,8 @@ class _DealsStrip extends StatelessWidget {
         itemBuilder: (_, i) => Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            gradient:
-                const LinearGradient(colors: [Color(0xFFFFE2BF), Colors.white]),
+            gradient: const LinearGradient(
+                colors: [Color(0xFFFFE2BF), Colors.white]),
             border: Border.all(color: AppColors.brandOrangeSoft),
             borderRadius: BorderRadius.circular(14),
           ),
@@ -1593,7 +2073,7 @@ class _DealsStrip extends StatelessWidget {
               style: const TextStyle(
                 fontWeight: FontWeight.w800,
                 color: AppColors.title,
-              ),  
+              ),
             ),
           ),
         ),
@@ -1617,7 +2097,8 @@ class DigitalServicesSection extends StatelessWidget {
       title: 'Digital Services',
       action: TextButton(
         onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('more digital services coming soon')),
+          const SnackBar(
+              content: Text('more digital services coming soon')),
         ),
         child: const Text(
           'See all',
@@ -1640,12 +2121,12 @@ class DigitalServicesSection extends StatelessWidget {
           tileW = (w - (cross - 1) * spacing) / cross;
         }
 
-        final textScale = MediaQuery.textScaleFactorOf(ctx).clamp(1.0, 1.2);
+        final textScale =
+            MediaQuery.textScaleFactorOf(ctx).clamp(1.0, 1.2);
         const circle = 52.0;
         const gap = 4.0;
         final twoLines = 11.0 * 1.25 * 2 * textScale;
         final minHeight = circle + gap + twoLines + 6.0;
-
         final ratio = (tileW / minHeight).clamp(0.86, 1.15);
 
         return MediaQuery(
@@ -1666,10 +2147,7 @@ class DigitalServicesSection extends StatelessWidget {
             ),
             itemBuilder: (_, i) {
               final p = kDigitalProducts[i];
-              return _DigitalCircleTile(
-                p: p,
-                onTap: () => onBuy(p),
-              );
+              return _DigitalCircleTile(p: p, onTap: () => onBuy(p));
             },
           ),
         );
@@ -1738,24 +2216,19 @@ class _DigitalCircleTile extends StatelessWidget {
 
 /* ───────────────────────────────────────────
    ✅ LATEST ARRIVALS SECTION (FULL LOGIC)
-   - Tap card => details bottomsheet
-   - Bottomsheet: Add to Cart + Buy Now (goes to checkout)
-   - ✅ Feedback uses ToastHelper ON the sheet context
-   - Image resolver supports Firestore + Firebase Storage
 ─────────────────────────────────────────── */
 class LatestArrivalsSection extends StatefulWidget {
   const LatestArrivalsSection({super.key});
   @override
-  State<LatestArrivalsSection> createState() => _LatestArrivalsSectionState();
+  State<LatestArrivalsSection> createState() =>
+      _LatestArrivalsSectionState();
 }
 
 class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   final _service = LatestArrivalServices();
-
   late final CartService _cart =
       CartService('', apiPrefix: ApiConfig.apiPrefix);
   late Future<List<LatestArrivalModels>> _future;
-
   final Map<String, Future<String?>> _imgCache = {};
 
   @override
@@ -1766,7 +2239,6 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
 
   String _fmtKwacha(int n) {
     final s = n.toString();
-    // Insert commas every three digits from the right: 1000 -> 1,000
     return s.replaceAllMapped(
       RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
       (m) => '${m[1]},',
@@ -1793,7 +2265,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
         cleaned = cleaned.substring(commaIndex + 1);
       }
       final mod = cleaned.length % 4;
-      if (mod != 0) cleaned = cleaned.padRight(cleaned.length + (4 - mod), '=');
+      if (mod != 0)
+        cleaned = cleaned.padRight(cleaned.length + (4 - mod), '=');
       final bytes = base64Decode(cleaned);
       return bytes.isEmpty ? null : bytes;
     } catch (_) {
@@ -1804,36 +2277,34 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   Future<String?> _resolveImageString(String raw) async {
     final s = raw.trim();
     if (s.isEmpty) return null;
-
     if (s.startsWith('http://') || s.startsWith('https://')) return s;
     if (s.startsWith('data:image/')) return s;
-
     if (s.startsWith('gs://')) {
       try {
-        return await FirebaseStorage.instance.refFromURL(s).getDownloadURL();
+        return await FirebaseStorage.instance
+            .refFromURL(s)
+            .getDownloadURL();
       } catch (_) {}
     }
-
     if (s.contains('/') && !s.contains(' ')) {
       try {
         return await FirebaseStorage.instance.ref(s).getDownloadURL();
       } catch (_) {}
     }
-
     if (s.contains('.') && !s.contains(' ')) {
-      final guesses = <String>[
+      for (final path in [
         'latest/$s',
         'latest_arrivals/$s',
         'uploads/$s',
         'products/$s',
-      ];
-      for (final path in guesses) {
+      ]) {
         try {
-          return await FirebaseStorage.instance.ref(path).getDownloadURL();
+          return await FirebaseStorage.instance
+              .ref(path)
+              .getDownloadURL();
         } catch (_) {}
       }
     }
-
     return null;
   }
 
@@ -1843,8 +2314,10 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
 
     Future<String?> fromDoc(String col, String docId) async {
       try {
-        final doc =
-            await FirebaseFirestore.instance.collection(col).doc(docId).get();
+        final doc = await FirebaseFirestore.instance
+            .collection(col)
+            .doc(docId)
+            .get();
         if (!doc.exists) return null;
         final d = doc.data() ?? {};
         final candidate = (d['imageUrl'] ??
@@ -1893,12 +2366,10 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       final b = await fromDoc('latest_arrivals', id);
       if (b != null) return b;
     }
-
     final c = await fromNameQuery('latestarrivals');
     if (c != null) return c;
     final d = await fromNameQuery('latest_arrivals');
     if (d != null) return d;
-
     return null;
   }
 
@@ -1913,14 +2384,12 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     required int qty,
   }) {
     final parsed = int.tryParse(it.id.trim());
-    final itemId = parsed ?? _fnv1a32('latest:${it.id}:${it.name}');
-
+    final itemId =
+        parsed ?? _fnv1a32('latest:${it.id}:${it.name}');
     const merchantId = 'marketplace';
     const merchantName = 'Marketplace';
     const serviceType = 'marketplace';
-
     final userKey = FirebaseAuth.instance.currentUser?.uid ?? '';
-
     return CartModel(
       userId: userKey,
       item: itemId,
@@ -1939,11 +2408,9 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   Future<void> _addToCart(
     LatestArrivalModels it, {
     required int qty,
-    required BuildContext sheetCtx, // ✅ toast overlays the sheet
+    required BuildContext sheetCtx,
   }) async {
     if (qty <= 0) return;
-
-    // ✅ Require login before allowing add-to-cart from Latest Arrivals
     if (FirebaseAuth.instance.currentUser == null) {
       ToastHelper.showCustomToast(
         sheetCtx,
@@ -1953,13 +2420,10 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       );
       return;
     }
-
     try {
       final img = (await _resolveImage(it)) ?? it.imageUrl;
       final cartItem = _makeCartModel(it, img, qty: qty);
-
       await _cart.addToCart(cartItem);
-
       if (!mounted) return;
       ToastHelper.showCustomToast(
         sheetCtx,
@@ -1981,11 +2445,9 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   Future<void> _buyNow(
     LatestArrivalModels it, {
     required int qty,
-    required BuildContext sheetCtx, // ✅ close only the sheet
+    required BuildContext sheetCtx,
   }) async {
     if (qty <= 0) return;
-
-    // ✅ Require login before allowing Buy Now from Latest Arrivals
     if (FirebaseAuth.instance.currentUser == null) {
       ToastHelper.showCustomToast(
         sheetCtx,
@@ -1995,23 +2457,13 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       );
       return;
     }
-
     final img = (await _resolveImage(it)) ?? it.imageUrl;
     final cartItem = _makeCartModel(it, img, qty: qty);
-
-    // optional: keep offline-first truth
     try {
       await _cart.addToCart(cartItem);
     } catch (_) {}
-
     if (!mounted) return;
-
-    // ✅ close ONLY the bottomsheet
-    if (Navigator.of(sheetCtx).canPop()) {
-      Navigator.of(sheetCtx).pop();
-    }
-
-    // ✅ then navigate
+    if (Navigator.of(sheetCtx).canPop()) Navigator.of(sheetCtx).pop();
     if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -2026,9 +2478,9 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       isScrollControlled: true,
       useSafeArea: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        borderRadius:
+            BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      // ✅ IMPORTANT: use sheet context here (so toasts appear above the sheet)
       builder: (sheetCtx) => _LatestDetailsSheet(
         item: it,
         imageFuture: _imgFuture(it),
@@ -2036,7 +2488,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
         tryDecodeBase64: _tryDecodeBase64,
         onAddToCart: (qty) async =>
             _addToCart(it, qty: qty, sheetCtx: sheetCtx),
-        onBuyNow: (qty) async => _buyNow(it, qty: qty, sheetCtx: sheetCtx),
+        onBuyNow: (qty) async =>
+            _buyNow(it, qty: qty, sheetCtx: sheetCtx),
       ),
     );
   }
@@ -2050,7 +2503,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
         children: [
           const Text(
             "Today's Arrivals",
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            style:
+                TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 10),
           FutureBuilder<List<LatestArrivalModels>>(
@@ -2074,8 +2528,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                   ),
                 );
               }
-
-              final items = snap.data ?? const <LatestArrivalModels>[];
+              final items =
+                  snap.data ?? const <LatestArrivalModels>[];
               if (items.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
@@ -2087,7 +2541,6 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                   ),
                 );
               }
-
               final width = MediaQuery.of(context).size.width;
               final cols = width >= 1200
                   ? 4
@@ -2099,12 +2552,12 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                   : width >= 800
                       ? 0.85
                       : 0.72;
-
               return GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 padding: EdgeInsets.zero,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                gridDelegate:
+                    SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: cols,
                   crossAxisSpacing: 10,
                   mainAxisSpacing: 10,
@@ -2153,7 +2606,8 @@ class _ProductCardFromApi extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Card(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
         clipBehavior: Clip.antiAlias,
         elevation: 0.6,
         child: Column(
@@ -2165,14 +2619,13 @@ class _ProductCardFromApi extends StatelessWidget {
                 builder: (context, snap) {
                   final v = (snap.data ?? item.imageUrl).trim();
                   if (v.isEmpty) return _placeholder();
-
                   if (v.startsWith('data:image/')) {
                     final bytes = tryDecodeBase64(v);
                     if (bytes == null) return _placeholder();
                     return Image.memory(bytes, fit: BoxFit.cover);
                   }
-
-                  if (v.startsWith('http://') || v.startsWith('https://')) {
+                  if (v.startsWith('http://') ||
+                      v.startsWith('https://')) {
                     return Image.network(
                       v,
                       fit: BoxFit.cover,
@@ -2182,14 +2635,14 @@ class _ProductCardFromApi extends StatelessWidget {
                           child: SizedBox(
                             width: 20,
                             height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2),
                           ),
                         );
                       },
                       errorBuilder: (_, __, ___) => _placeholder(),
                     );
                   }
-
                   return _placeholder();
                 },
               ),
@@ -2249,7 +2702,8 @@ class _LatestDetailsSheet extends StatefulWidget {
   });
 
   @override
-  State<_LatestDetailsSheet> createState() => _LatestDetailsSheetState();
+  State<_LatestDetailsSheet> createState() =>
+      _LatestDetailsSheetState();
 }
 
 class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
@@ -2260,12 +2714,11 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
   @override
   Widget build(BuildContext context) {
     final it = widget.item;
-
     return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Column(
-        mainAxisSize: MainAxisSize.min, // ✅ keeps it compact (not huge)
+        mainAxisSize: MainAxisSize.min,
         children: [
           const SizedBox(height: 10),
           Container(
@@ -2287,7 +2740,6 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                   builder: (context, snap) {
                     final v = (snap.data ?? it.imageUrl).trim();
                     Widget img;
-
                     if (v.isEmpty) {
                       img = _placeholder();
                     } else if (v.startsWith('data:image/')) {
@@ -2305,7 +2757,6 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                     } else {
                       img = _placeholder();
                     }
-
                     return ClipRRect(
                       borderRadius: BorderRadius.circular(16),
                       child: SizedBox(
@@ -2340,7 +2791,8 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                         style: TextStyle(fontWeight: FontWeight.w800)),
                     const Spacer(),
                     IconButton(
-                      onPressed: qty <= 1 ? null : () => setState(() => qty--),
+                      onPressed:
+                          qty <= 1 ? null : () => setState(() => qty--),
                       icon: const Icon(Icons.remove_circle_outline),
                     ),
                     Text(
@@ -2351,7 +2803,8 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                       ),
                     ),
                     IconButton(
-                      onPressed: qty >= 99 ? null : () => setState(() => qty++),
+                      onPressed:
+                          qty >= 99 ? null : () => setState(() => qty++),
                       icon: const Icon(Icons.add_circle_outline),
                     ),
                   ],
@@ -2362,15 +2815,19 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () => widget.onAddToCart(qty),
-                        icon: const Icon(Icons.shopping_cart_outlined),
+                        icon: const Icon(
+                            Icons.shopping_cart_outlined),
                         label: const Text(
                           'Add to Cart',
-                          style: TextStyle(fontWeight: FontWeight.w900),
+                          style:
+                              TextStyle(fontWeight: FontWeight.w900),
                         ),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppColors.brandOrange,
-                          side: const BorderSide(color: AppColors.brandOrange),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          side: const BorderSide(
+                              color: AppColors.brandOrange),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 14),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -2385,14 +2842,16 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                           backgroundColor: AppColors.brandOrange,
                           foregroundColor: Colors.white,
                           elevation: 0,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 14),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
                         child: const Text(
                           'Buy Now',
-                          style: TextStyle(fontWeight: FontWeight.w900),
+                          style:
+                              TextStyle(fontWeight: FontWeight.w900),
                         ),
                       ),
                     ),
@@ -2414,7 +2873,8 @@ class _ImgPlaceholder extends StatelessWidget {
     return Container(
       color: const Color(0xFFEDEDED),
       child: const Center(
-        child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
+        child: Icon(Icons.image_not_supported_rounded,
+            color: Colors.black38),
       ),
     );
   }
@@ -2444,7 +2904,8 @@ class _Section extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: EdgeInsets.fromLTRB(16, tight ? 0 : 10, 16, 0),
+            padding:
+                EdgeInsets.fromLTRB(16, tight ? 0 : 10, 16, 0),
             child: Row(
               children: [
                 Expanded(
@@ -2506,7 +2967,8 @@ class DigitalProductDetailPage extends StatefulWidget {
       _DigitalProductDetailPageState();
 }
 
-class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
+class _DigitalProductDetailPageState
+    extends State<DigitalProductDetailPage> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameCtrl;
   late final TextEditingController _phoneCtrl;
@@ -2517,8 +2979,10 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   void initState() {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.initialName ?? '');
-    _phoneCtrl = TextEditingController(text: widget.initialPhone ?? '');
-    _emailCtrl = TextEditingController(text: widget.initialEmail ?? '');
+    _phoneCtrl =
+        TextEditingController(text: widget.initialPhone ?? '');
+    _emailCtrl =
+        TextEditingController(text: widget.initialEmail ?? '');
   }
 
   @override
@@ -2534,35 +2998,37 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
     return RegExp(r'^0[89]\d{8}$').hasMatch(digits);
   }
 
-  /// Parse price string like "MWK 8,000" or "MWK 12000" to number.
   static double _parsePrice(String priceStr) {
     final digits = priceStr.replaceAll(RegExp(r'[^\d.]'), '');
     return double.tryParse(digits) ?? 0;
   }
 
-  /// Normalize Malawi phone to E.164 (+265...) for Paychangu.
   static String _normalizePhone(String raw) {
     final digits = raw.replaceAll(RegExp(r'\D'), '');
-    if (digits.length >= 9 && (digits.startsWith('0') || digits.startsWith('265'))) {
-      final rest = digits.startsWith('265') ? digits.substring(3) : digits.substring(1);
+    if (digits.length >= 9 &&
+        (digits.startsWith('0') || digits.startsWith('265'))) {
+      final rest = digits.startsWith('265')
+          ? digits.substring(3)
+          : digits.substring(1);
       return '+265$rest';
     }
-    return raw.trim().isEmpty ? '+265888000000' : (raw.startsWith('+') ? raw : '+$raw');
+    return raw.trim().isEmpty
+        ? '+265888000000'
+        : (raw.startsWith('+') ? raw : '+$raw');
   }
 
   Future<void> _payNow() async {
     if (!_formKey.currentState!.validate()) return;
-
     setState(() => _submitting = true);
-
     try {
       final name = _nameCtrl.text.trim();
       final email = _emailCtrl.text.trim();
       final phone = _normalizePhone(_phoneCtrl.text.trim());
       final parts = name.split(' ');
-      final firstName = parts.isNotEmpty ? parts.first : 'Customer';
-      final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
-
+      final firstName =
+          parts.isNotEmpty ? parts.first : 'Customer';
+      final lastName =
+          parts.length > 1 ? parts.sublist(1).join(' ') : '';
       final amount = _parsePrice(widget.product.price);
       if (amount <= 0) {
         ToastHelper.showCustomToast(
@@ -2573,18 +3039,16 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
         );
         return;
       }
-
       try {
         await InternetAddress.lookup('api.paychangu.com');
       } on SocketException catch (_) {
         throw Exception(
             'Cannot connect to payment service. Please check your internet connection.');
       }
-
-      final txRef = 'vero-digital-${DateTime.now().millisecondsSinceEpoch}';
+      final txRef =
+          'vero-digital-${DateTime.now().millisecondsSinceEpoch}';
       final description =
           'Digital: ${widget.product.name} • ${widget.product.subtitle}';
-
       final response = await http
           .post(
             PayChanguConfig.paymentUri,
@@ -2607,7 +3071,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
             }),
           )
           .timeout(const Duration(seconds: 30));
-
       if (response.statusCode == 200 || response.statusCode == 201) {
         final Map<String, dynamic> responseJson =
             json.decode(response.body) as Map<String, dynamic>;
@@ -2633,7 +3096,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
               responseJson['message'] ?? 'Payment failed');
         }
       } else {
-        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+        throw Exception(
+            'HTTP ${response.statusCode}: ${response.body}');
       }
     } on SocketException catch (e) {
       ToastHelper.showCustomToast(
@@ -2664,7 +3128,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   @override
   Widget build(BuildContext context) {
     final p = widget.product;
-
     return Scaffold(
       appBar: AppBar(
         title: Text('Buy ${p.name}'),
@@ -2681,7 +3144,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                 width: double.infinity,
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  border: Border.all(color: AppColors.brandOrangeSoft),
+                  border:
+                      Border.all(color: AppColors.brandOrangeSoft),
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: const [
                     BoxShadow(
@@ -2700,7 +3164,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                       decoration: BoxDecoration(
                         color: AppColors.brandOrangePale,
                         shape: BoxShape.circle,
-                        border: Border.all(color: AppColors.brandOrange),
+                        border: Border.all(
+                            color: AppColors.brandOrange),
                       ),
                       child: ClipOval(
                         child: p.logoAsset != null
@@ -2712,8 +3177,10 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                                   color: AppColors.title,
                                 ),
                               )
-                            : Icon(p.icon ?? Icons.shopping_bag,
-                                size: 26, color: AppColors.title),
+                            : Icon(
+                                p.icon ?? Icons.shopping_bag,
+                                size: 26,
+                                color: AppColors.title),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -2790,7 +3257,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                       validator: (v) {
                         final t = v?.trim() ?? '';
                         if (t.isEmpty) return 'Enter your email';
-                        final ok = RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(t);
+                        final ok =
+                            RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(t);
                         if (!ok) return 'Enter a valid email';
                         return null;
                       },
@@ -2811,7 +3279,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                               strokeWidth: 2, color: Colors.white),
                         )
                       : const Icon(Icons.lock_outline_rounded),
-                  label: Text(_submitting ? 'Processing...' : 'Pay Now'),
+                  label: Text(
+                      _submitting ? 'Processing...' : 'Pay Now'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.brandOrange,
                     foregroundColor: Colors.white,
@@ -2879,11 +3348,12 @@ class _LabeledField extends StatelessWidget {
           validator: validator,
           decoration: InputDecoration(
             isDense: true,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 14),
             enabledBorder: border,
             focusedBorder: border.copyWith(
-              borderSide: const BorderSide(color: AppColors.brandOrange),
+              borderSide:
+                  const BorderSide(color: AppColors.brandOrange),
             ),
             errorBorder: border.copyWith(
               borderSide: const BorderSide(color: Colors.redAccent),

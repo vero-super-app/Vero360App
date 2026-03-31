@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
+import 'package:vero360_app/Home/driver_homepage.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -55,9 +56,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    FirebaseAuth.instance
-        .authStateChanges()
-        .listen((_) => _refreshAuthState());
+    FirebaseAuth.instance.authStateChanges().listen((_) => _refreshAuthState());
     _initialize();
   }
 
@@ -121,7 +120,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
               ? Map<String, dynamic>.from(decoded)
               : <String, dynamic>{});
       final prefs = await SharedPreferences.getInstance();
-      
+
       final backendRole = (user['role'] ?? '').toString().toLowerCase();
       final cachedRole = (prefs.getString('user_role') ?? '').toLowerCase();
 
@@ -129,8 +128,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
       if (cachedRole.isNotEmpty &&
           cachedRole != 'customer' &&
           backendRole == 'customer') {
-       // debugPrint(
-            //'⚠️ BottomNavbar: role mismatch! cached=$cachedRole, backend=$backendRole. Re-syncing…');
+        // debugPrint(
+        //'⚠️ BottomNavbar: role mismatch! cached=$cachedRole, backend=$backendRole. Re-syncing…');
         await _putRoleToBackend(token, cachedRole);
         return;
       }
@@ -141,8 +140,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
         if (firestoreRole != null &&
             firestoreRole != 'customer' &&
             firestoreRole != backendRole) {
-        //  debugPrint(
-            //  '⚠️ BottomNavbar: Firestore says "$firestoreRole", backend says "$backendRole". Re-syncing…');
+          //  debugPrint(
+          //  '⚠️ BottomNavbar: Firestore says "$firestoreRole", backend says "$backendRole". Re-syncing…');
           await prefs.setString('user_role', firestoreRole);
           await prefs.setString('role', firestoreRole);
           await _putRoleToBackend(token, firestoreRole);
@@ -156,17 +155,18 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
       final isMerchant = RoleHelper.isMerchant(user);
       final isDriver = !isMerchant && RoleHelper.isDriver(user);
-      
-      final newRole = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
-      
+
+      final newRole =
+          isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
+
       if (cachedRole != newRole) {
         await prefs.setString('user_role', newRole);
         await prefs.setString('role', newRole);
       }
-      
+
       //debugPrint(
-        //  'ℹ️ BottomNavbar: role from /users/me: $newRole (merchant=$isMerchant, driver=$isDriver)');
-      
+      //  'ℹ️ BottomNavbar: role from /users/me: $newRole (merchant=$isMerchant, driver=$isDriver)');
+
       if (mounted && (_isMerchant != isMerchant || _isDriver != isDriver)) {
         await _checkUserRoleAndSetup();
         if (mounted) setState(() {});
@@ -176,18 +176,20 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   Future<void> _putRoleToBackend(String token, String role) async {
     try {
-      await http.put(
-        ApiConfig.endpoint('/users/me'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: json.encode({'role': role}),
-      ).timeout(const Duration(seconds: 6));
-    //  debugPrint('✅ BottomNavbar: role re-synced to backend: $role');
+      await http
+          .put(
+            ApiConfig.endpoint('/users/me'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+            },
+            body: json.encode({'role': role}),
+          )
+          .timeout(const Duration(seconds: 6));
+      //  debugPrint('✅ BottomNavbar: role re-synced to backend: $role');
     } catch (e) {
-     // debugPrint('⚠️ BottomNavbar: role re-sync failed: $e');
+      // debugPrint('⚠️ BottomNavbar: role re-sync failed: $e');
     }
   }
 
@@ -207,69 +209,71 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 
   Future<void> _checkUserRoleAndSetup() async {
-     final prefs = await SharedPreferences.getInstance();
-     // Read role from persisted prefs. Default to customer if missing/invalid.
-     final raw = (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
-         .toLowerCase()
-         .trim();
-     // Only treat as merchant/driver when explicitly set; otherwise default to customer.
-     _isMerchant = raw == 'merchant';
-     _isDriver = raw == 'driver';
-     // (anything else → customer: _isMerchant and _isDriver both false)
-     
+    final prefs = await SharedPreferences.getInstance();
+    // Read role from persisted prefs. Default to customer if missing/invalid.
+    final raw = (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
+        .toLowerCase()
+        .trim();
+    // Only treat as merchant/driver when explicitly set; otherwise default to customer.
+    _isMerchant = raw == 'merchant';
+    _isDriver = raw == 'driver';
+    // (anything else → customer: _isMerchant and _isDriver both false)
+
     // debugPrint("ℹ️ BottomNavbar: role='$raw', _isMerchant=$_isMerchant, _isDriver=$_isDriver (default=customer)");
 
-     // Home page: DriverDashboard for drivers, Homepage for others
-     final homePage = _isDriver 
-         ? DriverDashboard()
-         : Vero360Homepage(email: widget.email);
+    // Home page: DriverDashboard for drivers, Homepage for others
+    final homePage = _isDriver
+        ? Vero360DriverHomepage(email: widget.email)
+        : Vero360Homepage(email: widget.email);
 
-     _pages = [
-       homePage,
-       MarketPage(cartService: cartService),
-       const AuthGuard(
-         featureName: 'Messages',
-         showChildBehindDialog: true,
-         child: ChatListPage(),
-       ),
-       AuthGuard(
-         featureName: 'Cart',
-         showChildBehindDialog: true,
-         child: CartPage(cartService: cartService),
-       ),
-       // Profile/Dashboard: merchants see dashboard, drivers see profile, customers see profile
-       AuthGuard(
-         featureName: _isMerchant ? 'Dashboard' : 'Profile',
-         showChildBehindDialog: true,
-         child: _isMerchant
-             ? MarketplaceMerchantDashboard(
-                 email: widget.email,
-                 onBackToHomeTab: () {
-                   setState(() => _selectedIndex = 0);
-                 },
-                 embeddedInMainNav: true,
-               )
-             : const ProfilePage(),
-       ),
-     ];
-  
-     if (_isMerchant && mounted) {
-       WidgetsBinding.instance.addPostFrameCallback((_) {
-         if (mounted) _redirectMerchant(prefs);
-       });
-     }
-   }
+    _pages = [
+      homePage,
+      MarketPage(cartService: cartService),
+      const AuthGuard(
+        featureName: 'Messages',
+        showChildBehindDialog: true,
+        child: ChatListPage(),
+      ),
+      AuthGuard(
+        featureName: 'Cart',
+        showChildBehindDialog: true,
+        child: CartPage(cartService: cartService),
+      ),
+      // Profile/Dashboard: merchants see dashboard, drivers see profile, customers see profile
+      AuthGuard(
+        featureName: _isMerchant ? 'Dashboard' : 'Profile',
+        showChildBehindDialog: true,
+        child: _isMerchant
+            ? MarketplaceMerchantDashboard(
+                email: widget.email,
+                onBackToHomeTab: () {
+                  setState(() => _selectedIndex = 0);
+                },
+                embeddedInMainNav: true,
+              )
+            : const ProfilePage(),
+      ),
+    ];
+
+    if (_isMerchant && mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _redirectMerchant(prefs);
+      });
+    }
+  }
 
   void _redirectMerchant(SharedPreferences prefs) {
-    final service =
-        (prefs.getString('merchant_service') ?? '').toLowerCase();
+    final service = (prefs.getString('merchant_service') ?? '').toLowerCase();
     final email = prefs.getString('email') ?? widget.email;
 
     Widget page = switch (service) {
       'food' => FoodMerchantDashboard(email: email),
       'accommodation' => AccommodationMerchantDashboard(email: email),
       'courier' => CourierMerchantDashboard(email: email),
-      _ => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {  },),
+      _ => MarketplaceMerchantDashboard(
+          email: email,
+          onBackToHomeTab: () {},
+        ),
     };
 
     Navigator.pushAndRemoveUntil(
@@ -315,7 +319,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
         title: const Text("Login Required"),
         content: const Text("Please login to access this feature."),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel")),
           TextButton(
               onPressed: () {
                 Navigator.pop(context);
@@ -348,10 +354,14 @@ class _BottomnavbarState extends State<Bottomnavbar>
             items: [
               const _NavItemData(icon: Icons.home_rounded, label: "Home"),
               const _NavItemData(icon: Icons.store_rounded, label: "Market"),
-              const _NavItemData(icon: Icons.message_rounded, label: "Messages"),
-              const _NavItemData(icon: Icons.shopping_cart_rounded, label: "Cart"),
+              const _NavItemData(
+                  icon: Icons.message_rounded, label: "Messages"),
+              const _NavItemData(
+                  icon: Icons.shopping_cart_rounded, label: "Cart"),
               _NavItemData(
-                icon: _isMerchant ? Icons.dashboard_rounded : Icons.person_rounded,
+                icon: _isMerchant
+                    ? Icons.dashboard_rounded
+                    : Icons.person_rounded,
                 label: _isMerchant ? "Dashboard" : "Profile",
               ),
             ],
@@ -403,7 +413,8 @@ class _GlassPillNavBar extends StatelessWidget {
         children: [
           BackdropFilter(
             filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-            child: Container(height: navHeight, color: Colors.white.withOpacity(0.55)),
+            child: Container(
+                height: navHeight, color: Colors.white.withOpacity(0.55)),
           ),
           Container(
             height: navHeight,

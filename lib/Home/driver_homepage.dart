@@ -1,18 +1,3 @@
-// lib/Pages/homepage.dart
-//
-// ✅ Full corrected Vero360 Homepage (single file)
-// - No duplicate imports
-// - Single LatestArrivalsSection
-// - Latest Arrivals:
-//    * loads from API (LatestArrivalServices)
-//    * resolves images from URL / base64 / gs:// / storage path / Firestore doc
-//    * tap product card/photo => details bottomsheet (compact, not full screen)
-//    * bottomsheet has Add to Cart + Buy Now (Buy Now -> CheckoutFromCartPage)
-//    * ✅ Uses ToastHelper for feedback ON TOP of bottomsheet (not behind)
-//
-// NOTE: Make sure toasthelper.dart is fixed/working. This file calls:
-// ToastHelper.showCustomToast(context, message, isSuccess: ..., errorMessage: ...)
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -32,7 +17,6 @@ import 'package:vero360_app/Quickservices/social.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 //import 'package:vero360_app/features/Accomodation/Presentation/pages/Accomodation.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
 
 // ✅ Cart + checkout
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
@@ -54,6 +38,8 @@ import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/latest_Services.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
 
 // ✅ Toast helper
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -159,15 +145,16 @@ const List<DigitalProduct> kDigitalProducts = [
   ),
 ];
 
-class Vero360Homepage extends ConsumerStatefulWidget {
+class Vero360DriverHomepage extends ConsumerStatefulWidget {
   final String email;
-  const Vero360Homepage({super.key, required this.email});
+  const Vero360DriverHomepage({super.key, required this.email});
 
   @override
-  ConsumerState<Vero360Homepage> createState() => _Vero360HomepageState();
+  ConsumerState<Vero360DriverHomepage> createState() =>
+      _Vero360DriverHomepageState();
 }
 
-class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
+class _Vero360DriverHomepageState extends ConsumerState<Vero360DriverHomepage> {
   final _search = TextEditingController();
   bool _animateIn = false;
   bool _showLatestArrivals = false;
@@ -229,7 +216,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   }
 
   @override
-  void didUpdateWidget(Vero360Homepage oldWidget) {
+  void didUpdateWidget(Vero360DriverHomepage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.email != widget.email && widget.email.isEmpty) {
       _resolveGreetingName();
@@ -418,7 +405,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
       // ✅ Always open user/passenger mode when clicking ride share icon
       // Drivers access DriverDashboard automatically on login
       Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const RideShareMapScreen()),
+        MaterialPageRoute(builder: (_) => const DriverDashboard()),
       );
     } else {
       _openServiceStatic(context, key);
@@ -1101,7 +1088,7 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
     } else {
       serviceKey = 'more';
     }
-    _Vero360HomepageState._openServiceStatic(context, serviceKey);
+    _Vero360DriverHomepageState._openServiceStatic(context, serviceKey);
   }
 
   @override
@@ -1119,7 +1106,7 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
       gapAfterTitle: kGapAfterNearby,
       action: TextButton(
         onPressed: () =>
-            _Vero360HomepageState._openServiceStatic(context, 'more'),
+            _Vero360DriverHomepageState._openServiceStatic(context, 'more'),
         child: const Text(
           'See all',
           style: TextStyle(

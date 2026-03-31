@@ -1,17 +1,3 @@
-// lib/Pages/homepage.dart
-//
-// ✅ Full corrected Vero360 Homepage (single file)
-// - No duplicate imports
-// - Single LatestArrivalsSection
-// - Latest Arrivals:
-//    * loads from API (LatestArrivalServices)
-//    * resolves images from URL / base64 / gs:// / storage path / Firestore doc
-//    * tap product card/photo => details bottomsheet (compact, not full screen)
-//    * bottomsheet has Add to Cart + Buy Now (Buy Now -> CheckoutFromCartPage)
-//    * ✅ Uses ToastHelper for feedback ON TOP of bottomsheet (not behind)
-//
-// NOTE: Make sure toasthelper.dart is fixed/working. This file calls:
-// ToastHelper.showCustomToast(context, message, isSuccess: ..., errorMessage: ...)
 
 import 'dart:async';
 import 'dart:convert';
@@ -104,6 +90,17 @@ const List<Mini> kQuickServices = [
   Mini('accommodation', 'Accomodation', Icons.hotel_rounded),
 ];
 
+const Map<String, String> kQuickServiceGuideNotes = {
+  'taxi': 'Use this to request a taxi ride in minutes.',
+  'airport_pickup': 'Schedule airport pickup or drop-off.',
+  'courier': 'Send parcels and track your courier delivery.',
+  'vero_bike': 'Book fast and affordable bike rides.',
+  'fx': 'Check current exchange rates quickly.',
+  'food': 'Browse restaurants and order food.',
+  'jobs': 'Find job opportunities and vacancies.',
+  'accommodation': 'Find hotels and places to stay.',
+};
+
 /* ───────────────────────────────────────────
    DIGITAL & VIRTUAL SERVICES — model & data
 ─────────────────────────────────────────── */
@@ -170,8 +167,14 @@ class Vero360Homepage extends ConsumerStatefulWidget {
 
 class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
   final _search = TextEditingController();
+  final GlobalKey _servicesCardKey = GlobalKey();
+  final Map<String, GlobalKey> _serviceTileKeys = {
+    for (final item in kQuickServices) item.keyId: GlobalKey()
+  };
   bool _animateIn = false;
   bool _showLatestArrivals = false;
+  bool _showServicesHint = false;
+  int _guideIndex = 0;
 
   String _firstNameFromEmail(String email) {
     final user = email.split('@').first;
@@ -193,6 +196,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
       if (mounted) setState(() => _animateIn = true);
     });
     _resolveGreetingName();
+    _maybeShowServicesHint();
 
     // Defer heavy latest-arrivals grid slightly so the first frame
     // (brand bar, search, quick services) renders faster.
@@ -200,6 +204,35 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
       await Future.delayed(const Duration(milliseconds: 350));
       if (!mounted) return;
       setState(() => _showLatestArrivals = true);
+    });
+  }
+
+  Future<void> _maybeShowServicesHint() async {
+    final prefs = await SharedPreferences.getInstance();
+    final seen = prefs.getBool('home_services_hint_v1') ?? false;
+    if (seen || !mounted) return;
+    await Future.delayed(const Duration(milliseconds: 900));
+    if (!mounted) return;
+    setState(() => _showServicesHint = true);
+  }
+
+  List<_ServiceGuideStep> get _guideSteps => kQuickServices
+      .map(
+        (item) => _ServiceGuideStep(
+          keyId: item.keyId,
+          title: item.label,
+          description: kQuickServiceGuideNotes[item.keyId] ?? 'Open this service.',
+        ),
+      )
+      .toList();
+
+  Future<void> _finishServicesGuide() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('home_services_hint_v1', true);
+    if (!mounted) return;
+    setState(() {
+      _showServicesHint = false;
+      _guideIndex = 0;
     });
   }
 
@@ -278,32 +311,35 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
                 end: Alignment.bottomCenter,
               ),
             ),
-            child: CustomScrollView(
-              physics: const BouncingScrollPhysics(),
-              slivers: [
-                // Top: brand + search
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                    child: Column(
-                      children: [
-                        const _BrandBar(
-                          appName: 'Vero360',
-                          logoPath: 'assets/logo_mark.png',
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                CustomScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  slivers: [
+                    // Top: brand + search
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                        child: Column(
+                          children: [
+                            const _BrandBar(
+                              appName: 'Vero360',
+                              logoPath: 'assets/logo_mark.png',
+                            ),
+                            const SizedBox(height: 12),
+                            _TopSection(
+                              animateIn: _animateIn,
+                              greeting: greeting,
+                              searchController: _search,
+                              onSearchTap: _onSearchTap,
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 12),
-                        _TopSection(
-                          animateIn: _animateIn,
-                          greeting: greeting,
-                          searchController: _search,
-                          onSearchTap: _onSearchTap,
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
 
-                // Merchant stories (24h) — replaced promo carousel
+                    // Merchant stories (24h) — replaced promo carousel
                 const SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.fromLTRB(0, 12, 0, 0),
@@ -317,11 +353,13 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
 
                 SliverToBoxAdapter(
                   child: Padding(
+                    key: _servicesCardKey,
                     padding: const EdgeInsets.symmetric(horizontal: 7),
                     child: _SectionCard(
                       title: 'Discover Our Quick Services',
                       child: _MiniIconsGrid(
                         items: kQuickServices,
+                        tileKeys: _serviceTileKeys,
                         onOpen: (key) => key == 'taxi'
                             ? _openService(key)
                             : _openServiceStatic(context, key),
@@ -358,6 +396,26 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage> {
                     ),
                   ),
                 ),
+                  ],
+                ),
+                if (_showServicesHint)
+                  Builder(
+                    builder: (stackCtx) => _QuickServicesCoachOverlay(
+                      stackContext: stackCtx,
+                      currentIndex: _guideIndex,
+                      steps: _guideSteps,
+                      tileKeys: _serviceTileKeys,
+                      onSkip: _finishServicesGuide,
+                      onNext: () async {
+                        if (_guideIndex >= _guideSteps.length - 1) {
+                          await _finishServicesGuide();
+                          return;
+                        }
+                        if (!mounted) return;
+                        setState(() => _guideIndex += 1);
+                      },
+                    ),
+                  ),
               ],
             ),
           ),
@@ -763,7 +821,10 @@ class _QuickStrip extends StatelessWidget {
 class _SectionCard extends StatelessWidget {
   final String title;
   final Widget child;
-  const _SectionCard({required this.title, required this.child});
+  const _SectionCard({
+    required this.title,
+    required this.child,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -799,10 +860,235 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
+class _ServiceGuideStep {
+  final String keyId;
+  final String title;
+  final String description;
+  const _ServiceGuideStep({
+    required this.keyId,
+    required this.title,
+    required this.description,
+  });
+}
+
+class _QuickServicesCoachOverlay extends StatefulWidget {
+  const _QuickServicesCoachOverlay({
+    required this.stackContext,
+    required this.steps,
+    required this.currentIndex,
+    required this.tileKeys,
+    required this.onSkip,
+    required this.onNext,
+  });
+
+  final BuildContext stackContext;
+  final List<_ServiceGuideStep> steps;
+  final int currentIndex;
+  final Map<String, GlobalKey> tileKeys;
+  final Future<void> Function() onSkip;
+  final Future<void> Function() onNext;
+
+  @override
+  State<_QuickServicesCoachOverlay> createState() =>
+      _QuickServicesCoachOverlayState();
+}
+
+class _QuickServicesCoachOverlayState extends State<_QuickServicesCoachOverlay>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulse;
+  Rect? _targetRect;
+
+  _ServiceGuideStep get _step => widget.steps[widget.currentIndex];
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    )..repeat(reverse: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measure();
+      WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _QuickServicesCoachOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentIndex != widget.currentIndex) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _measure();
+        WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+      });
+    }
+  }
+
+  void _measure() {
+    final targetKey = widget.tileKeys[_step.keyId];
+    final targetCtx = targetKey?.currentContext;
+    final stackRb = widget.stackContext.findRenderObject() as RenderBox?;
+    if (targetCtx == null || stackRb == null || !stackRb.hasSize) return;
+    final targetRb = targetCtx.findRenderObject() as RenderBox?;
+    if (targetRb == null || !targetRb.hasSize) return;
+    final topLeft = stackRb.globalToLocal(targetRb.localToGlobal(Offset.zero));
+    if (!mounted) return;
+    setState(() => _targetRect = topLeft & targetRb.size);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stackW = MediaQuery.sizeOf(widget.stackContext).width;
+    final arrowRightBound = stackW > 56 ? stackW - 56 : 8.0;
+    final isLast = widget.currentIndex == widget.steps.length - 1;
+
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withOpacity(0.42),
+        child: Stack(
+          children: [
+            if (_targetRect != null) ...[
+              Positioned(
+                left: (_targetRect!.center.dx - 24).clamp(8.0, arrowRightBound),
+                top: (_targetRect!.top - 72).clamp(8.0, 8000.0),
+                child: AnimatedBuilder(
+                  animation: _pulse,
+                  builder: (context, child) {
+                    final s = 0.88 + 0.12 * _pulse.value;
+                    final o = 0.65 + 0.35 * _pulse.value;
+                    return Opacity(
+                      opacity: o,
+                      child: Transform.scale(
+                        scale: s,
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: const Icon(
+                    Icons.arrow_downward_rounded,
+                    size: 48,
+                    color: AppColors.brandOrange,
+                    shadows: [
+                      Shadow(
+                        color: Colors.white,
+                        blurRadius: 6,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 16,
+                right: 16,
+                top: (_targetRect!.top - 182).clamp(8.0, 8000.0),
+                child: Material(
+                  color: Colors.white,
+                  elevation: 6,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _step.title,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                            color: AppColors.title,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _step.description,
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.35,
+                            color: AppColors.body.withOpacity(0.95),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Step ${widget.currentIndex + 1} of ${widget.steps.length}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.body,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: widget.onSkip,
+                              child: const Text('Skip'),
+                            ),
+                            const SizedBox(width: 8),
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.brandOrange,
+                                foregroundColor: Colors.white,
+                              ),
+                              onPressed: widget.onNext,
+                              child: Text(isLast ? 'Done' : 'Next'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            if (_targetRect == null)
+              Center(
+                child: Material(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton(
+                          onPressed: widget.onSkip,
+                          child: const Text('Skip'),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton(
+                          onPressed: widget.onNext,
+                          child: Text(isLast ? 'Done' : 'Next'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _MiniIconsGrid extends StatelessWidget {
   final List<Mini> items;
+  final Map<String, GlobalKey> tileKeys;
   final void Function(String key) onOpen;
-  const _MiniIconsGrid({required this.items, required this.onOpen});
+  const _MiniIconsGrid({
+    required this.items,
+    required this.tileKeys,
+    required this.onOpen,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -850,6 +1136,7 @@ class _MiniIconsGrid extends StatelessWidget {
           itemBuilder: (_, i) {
             final m = items[i];
             return _MiniIconTile(
+              tileKey: tileKeys[m.keyId],
               icon: m.icon,
               label: m.label,
               onTap: () => onOpen(m.keyId),
@@ -862,10 +1149,12 @@ class _MiniIconsGrid extends StatelessWidget {
 }
 
 class _MiniIconTile extends StatelessWidget {
+  final Key? tileKey;
   final IconData icon;
   final String label;
   final VoidCallback onTap;
   const _MiniIconTile({
+    this.tileKey,
     required this.icon,
     required this.label,
     required this.onTap,
@@ -874,6 +1163,7 @@ class _MiniIconTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
+      key: tileKey,
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Column(
@@ -1324,7 +1614,7 @@ class DigitalServicesSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _Section(
-      title: 'Digital Services ',
+      title: 'Digital Services',
       action: TextButton(
         onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('more digital services coming soon')),

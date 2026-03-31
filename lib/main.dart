@@ -28,6 +28,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // Pages
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
+import 'package:vero360_app/features/onboarding/presentation/widgets/onboarding_gate.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GeneralPages/profile_from_link_page.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
@@ -58,6 +59,9 @@ import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 
 final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
+
+/// Set in [MyApp] initState; used by [OnboardingGate] to re-run role-based shell redirect.
+void Function()? _onOnboardingGateCompletedHook;
 
 // ───────────────────────────────────────────────
 //  BACKGROUND MESSAGE HANDLER - must be top-level
@@ -615,6 +619,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _onOnboardingGateCompletedHook = () {
+      if (!mounted) return;
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        unawaited(_fastRedirectFromCache());
+      });
+    };
     WidgetsBinding.instance.addObserver(this);
     _initDeepLinks();
 
@@ -673,6 +683,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _onOnboardingGateCompletedHook = null;
     WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     super.dispose();
@@ -681,6 +692,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // ---------- Shell & role helpers ----------
   Future<void> _fastRedirectFromCache() async {
     final prefs = await SharedPreferences.getInstance();
+    final onboardingDone = prefs.getBool('onboarding_completed_v1') ?? false;
+    if (!onboardingDone) return;
     final role = (prefs.getString('user_role') ?? '').toLowerCase();
     final email = prefs.getString('email') ?? '';
 
@@ -963,8 +976,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           return content;
         },
 
-        // ✅ keep public home
-        home: const Bottomnavbar(email: ''),
+        // ✅ Onboarding is independent and runs before main shell
+        home: OnboardingGate(
+          onCompleted: () => _onOnboardingGateCompletedHook?.call(),
+          child: const Bottomnavbar(email: ''),
+        ),
 
         // ✅ restrict named routes too
         onGenerateRoute: (settings) {
@@ -977,7 +993,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
             case '/marketplace':
               return MaterialPageRoute(
-                  builder: (_) => const Bottomnavbar(email: ''));
+                builder: (_) => OnboardingGate(
+                  onCompleted: () => _onOnboardingGateCompletedHook?.call(),
+                  child: const Bottomnavbar(email: ''),
+                ),
+              );
 
             case '/cartpage':
               return MaterialPageRoute(

@@ -33,13 +33,9 @@ class CheckoutFromCartPage extends StatefulWidget {
 
 class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandSoft = Color(0xFFFFF3E0);
-
-  static const double _feeSpeed = 0;
-  static const double _feeCts = 0;
-  static const double _feeAnkolo = 0;
-  static const double _feeSmart = 0;
-  static const double _feePickup = 0;
+  static const Color _brandNavy = Color(0xFF16284C);
+  static const Color _brandSoft = Color(0xFFFFE8CC);
+  static const Color _pageBg = Color(0xFFF4F6FA);
 
   bool _paying = false;
   DeliveryType _deliveryType = DeliveryType.cts;
@@ -56,22 +52,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   double get _subtotal =>
       widget.items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
 
-  double get _delivery {
-    switch (_deliveryType) {
-      case DeliveryType.speed:
-        return _feeSpeed;
-      case DeliveryType.cts:
-        return _feeCts;
-      case DeliveryType.ankolo:
-        return _feeAnkolo;
-      case DeliveryType.smart:
-        return _feeSmart;
-      case DeliveryType.pickup:
-        return _feePickup;
-    }
-  }
-
-  double get _total => max(0.0, _subtotal + _delivery);
+  double get _total => max(0.0, _subtotal);
 
   String _deliveryLabel(DeliveryType d) {
     switch (d) {
@@ -86,53 +67,6 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       case DeliveryType.pickup:
         return 'Pickup';
     }
-  }
-
-  static const Widget _deliveryPriceUnknownNote = Text(
-    'Delivery prices are not known until your parcel is weighed.',
-    style: TextStyle(
-      color: Colors.red,
-      fontSize: 12,
-      fontWeight: FontWeight.w600,
-      height: 1.25,
-    ),
-  );
-
-  Widget _deliverySummaryRow() {
-    if (_deliveryType == DeliveryType.pickup) {
-      return _row('Delivery', 'Pickup (no courier fee)');
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Text(
-              'Delivery',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.normal,
-                color: Colors.grey[700],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Flexible(
-            flex: 2,
-            child: Text(
-              'Not known until parcel is weighed',
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                color: Colors.red,
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -451,35 +385,69 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _pageBg,
       appBar: AppBar(
-        title: const Text('Checkout'),
+        elevation: 0,
+        scrolledUnderElevation: 0.5,
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
-        elevation: 0,
+        centerTitle: false,
+        titleSpacing: 8,
+        title: const Row(
+          children: [
+            Icon(Icons.shopping_bag_rounded, size: 26),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Checkout',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                  letterSpacing: -0.3,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new),
-          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          onPressed: () => Navigator.of(context).maybePop(),
           tooltip: 'Back to cart',
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: _brandSoft,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: _brandOrange.withOpacity(0.35)),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: _brandSoft,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.verified_user_rounded,
+                      size: 20, color: _brandNavy.withValues(alpha: 0.85)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Secure checkout — review your address and payment details.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade800,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            child: const Row(
-              children: [
-                Icon(Icons.lock, size: 18),
-                SizedBox(width: 8),
-                Expanded(child: Text('Secure checkout — review your address and payment details.')),
-              ],
-            ),
-          ),
           const SizedBox(height: 12),
 
           Card(
@@ -492,8 +460,15 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Your Items',
-                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                  Text(
+                    'Your Items',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                      color: _brandNavy,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   ListView.separated(
                     itemCount: widget.items.length,
@@ -598,10 +573,6 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  if (_deliveryType != DeliveryType.pickup) ...[
-                    const SizedBox(height: 8),
-                    _deliveryPriceUnknownNote,
-                  ],
                 ],
               ),
             ),
@@ -628,29 +599,31 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: Colors.white,
+              border: Border.all(color: Colors.grey.shade200),
+              borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 10,
-                  spreadRadius: 1,
-                  offset: const Offset(0, -2),
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 16,
+                  spreadRadius: 0,
+                  offset: const Offset(0, 4),
                 ),
               ],
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
-              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Order Summary',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: _brandNavy,
+                    letterSpacing: -0.2,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 _row('Subtotal', _mwk(_subtotal)),
-                _deliverySummaryRow(),
                 const SizedBox(height: 8),
                 const Divider(thickness: 1),
                 const SizedBox(height: 8),
@@ -689,7 +662,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                           _paying ? 'Processing...' : 'Pay Now',
                           style: const TextStyle(
                             fontSize: 18,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w900,
                             color: Colors.white,
                           ),
                         ),
@@ -701,6 +674,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -1223,11 +1197,32 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Complete Payment'),
+          elevation: 0,
           backgroundColor: const Color(0xFFFF8A00),
           foregroundColor: Colors.white,
+          centerTitle: false,
+          titleSpacing: 8,
+          title: const Row(
+            children: [
+              Icon(Icons.payment_rounded, size: 26),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Complete Payment',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                    letterSpacing: -0.2,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new),
+            icon: const Icon(Icons.arrow_back_ios_new_rounded),
             onPressed: _onBackPressed,
             tooltip: 'Back to checkout',
           ),

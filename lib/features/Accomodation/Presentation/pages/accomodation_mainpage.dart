@@ -4,7 +4,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
-
+import 'package:vero360_app/widgets/app_skeleton.dart';
 
 class AccommodationMainPage extends StatefulWidget {
   const AccommodationMainPage({super.key});
@@ -14,6 +14,11 @@ class AccommodationMainPage extends StatefulWidget {
 }
 
 class _AccommodationMainPageState extends State<AccommodationMainPage> {
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandNavy = Color(0xFF16284C);
+  static const Color _pageBg = Color(0xFFF4F6FA);
+  static const Color _surfaceBorder = Color(0xFFE2E6EF);
+
   final AccommodationService _service = AccommodationService();
 
   final TextEditingController _searchController = TextEditingController();
@@ -116,6 +121,92 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
     );
   }
 
+  void _showDistrictPicker() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.55,
+        maxChildSize: 0.9,
+        minChildSize: 0.35,
+        builder: (_, scroll) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: _brandOrange.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.map_rounded,
+                        color: _brandOrange, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Pick a district',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: _brandNavy,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: Icon(Icons.close_rounded, color: Colors.grey.shade600),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                'Malawi districts — tap to fill location',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                controller: scroll,
+                itemCount: _malawiDistricts.length,
+                itemBuilder: (context, i) {
+                  final d = _malawiDistricts[i];
+                  return ListTile(
+                    leading: Icon(Icons.place_outlined,
+                        color: Colors.grey.shade600, size: 22),
+                    title: Text(
+                      d,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    onTap: () {
+                      _locationController.text = d;
+                      Navigator.pop(ctx);
+                      setState(() {
+                        _loadFromService();
+                      });
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   List<Accommodation> _applySearchFilter(List<Accommodation> list) {
     if (_searchQuery.isEmpty) return list;
     final q = _searchQuery.toLowerCase();
@@ -132,28 +223,43 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
     final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF7F8FA),
+      backgroundColor: isDark ? const Color(0xFF0F172A) : _pageBg,
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: isDark ? const Color(0xFF020617) : Colors.white,
+        scrolledUnderElevation: 0.5,
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
         centerTitle: false,
         titleSpacing: 16,
-        title: Text(
-          'Discover stays',
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
+        title: const Row(
+          children: [
+            Icon(Icons.hotel_rounded, size: 26),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Discover stays',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  letterSpacing: -0.2,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
       body: SafeArea(
         child: Column(
           children: [
-            _buildSearchAndLocationBar(context),
-            const SizedBox(height: 12),
-            _buildTypeChipsRow(context),
-            const SizedBox(height: 8),
+            _buildSearchAndLocationBar(context, isDark),
+            const SizedBox(height: 10),
+            _buildTypeChipsRow(context, isDark),
+            const SizedBox(height: 6),
             Expanded(
               child: RefreshIndicator(
+                color: _brandOrange,
                 onRefresh: () async {
                   setState(() {
                     _loadFromService();
@@ -164,19 +270,31 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
                   future: _future,
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
+                      return AppSkeletonShimmer(
+                        child: ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                          children: [
+                            for (var i = 0; i < 5; i++) ...[
+                              AppSkeletonAccommodationCardCore(isDark: isDark),
+                              if (i < 4) const SizedBox(height: 12),
+                            ],
+                          ],
+                        ),
+                      );
                     }
                     if (snapshot.hasError) {
                       return _buildErrorState(
                         context,
                         snapshot.error.toString(),
+                        isDark,
                       );
                     }
                     final raw = snapshot.data ?? [];
                     final data = _applySearchFilter(raw);
 
                     if (data.isEmpty) {
-                      return _buildEmptyState(context);
+                      return _buildEmptyState(context, isDark);
                     }
 
                     return ListView.separated(
@@ -184,7 +302,10 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                       itemBuilder: (context, index) {
                         final item = data[index];
-                        return _AccommodationCard(accommodation: item);
+                        return _AccommodationCard(
+                          accommodation: item,
+                          isDark: isDark,
+                        );
                       },
                       separatorBuilder: (_, __) => const SizedBox(height: 12),
                       itemCount: data.length,
@@ -199,105 +320,142 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
     );
   }
 
-  Widget _buildSearchAndLocationBar(BuildContext context) {
-    final theme = Theme.of(context);
+  Widget _buildSearchAndLocationBar(BuildContext context, bool isDark) {
+    final card = isDark ? const Color(0xFF1E293B) : Colors.white;
+    final hint = isDark ? Colors.white54 : Colors.grey.shade500;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Search
-          Container(
-            decoration: BoxDecoration(
-              color: theme.cardColor,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
-                  offset: const Offset(0, 6),
-                  blurRadius: 16,
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                const SizedBox(width: 12),
-                const Icon(Icons.search, color: Color(0xFF9CA3AF)),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: const InputDecoration(
-                      hintText: 'Search by name',
-                      border: InputBorder.none,
-                    ),
-                    textInputAction: TextInputAction.search,
-                  ),
-                ),
-                if (_searchQuery.isNotEmpty)
-                  IconButton(
-                    onPressed: () {
-                      _searchController.clear();
-                    },
-                    icon: const Icon(Icons.close, color: Colors.grey),
-                    tooltip: 'Clear search',
-                  ),
-              ],
+          Text(
+            'Find your stay',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: isDark ? Colors.white70 : Colors.grey.shade700,
             ),
           ),
-          const SizedBox(height: 10),
-          // Location – modern free-text bar (district / area)
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: card,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: isDark ? Colors.white12 : _surfaceBorder,
+              ),
+              boxShadow: isDark
+                  ? null
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+            ),
+            child: TextField(
+              controller: _searchController,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white : const Color(0xFF1A1D26),
+              ),
+              cursorColor: _brandOrange,
+              decoration: InputDecoration(
+                hintText: 'Search by property name…',
+                hintStyle: TextStyle(color: hint, fontWeight: FontWeight.w500),
+                prefixIcon:
+                    const Icon(Icons.search_rounded, color: _brandOrange, size: 26),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        onPressed: () => _searchController.clear(),
+                        icon: Icon(Icons.close_rounded,
+                            color: Colors.grey.shade600),
+                        tooltip: 'Clear',
+                      )
+                    : null,
+                border: InputBorder.none,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+              ),
+              textInputAction: TextInputAction.search,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Location',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: isDark ? Colors.white70 : Colors.grey.shade700,
+            ),
+          ),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
-                    color: theme.cardColor,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.03),
-                        offset: const Offset(0, 4),
-                        blurRadius: 10,
-                      ),
-                    ],
+                    color: card,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: isDark ? Colors.white12 : _surfaceBorder,
+                    ),
+                    boxShadow: isDark
+                        ? null
+                        : [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.03),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: TextField(
                     controller: _locationController,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.white : const Color(0xFF1A1D26),
+                    ),
+                    cursorColor: _brandOrange,
                     decoration: InputDecoration(
-                      hintText: 'Search by district or area',
-                      border: InputBorder.none,
+                      hintText: 'District or area',
+                      hintStyle:
+                          TextStyle(color: hint, fontWeight: FontWeight.w500),
                       prefixIcon: const Icon(
-                        Icons.location_on_outlined,
-                        color: Color(0xFFFB923C),
+                        Icons.location_on_rounded,
+                        color: _brandOrange,
+                        size: 22,
                       ),
                       suffixIcon: _locationQuery.isNotEmpty
                           ? IconButton(
-                              onPressed: () {
-                                _locationController.clear();
-                              },
-                              icon: const Icon(Icons.close, color: Colors.grey),
+                              onPressed: () => _locationController.clear(),
+                              icon: Icon(Icons.close_rounded,
+                                  color: Colors.grey.shade600),
                               tooltip: 'Clear location',
                             )
                           : null,
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 14),
                     ),
                     textInputAction: TextInputAction.search,
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Container(
-                height: 46,
-                width: 46,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF8A00),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: IconButton(
-                  onPressed: () {
-                    // reserved for advanced filters bottom sheet
-                  },
-                  icon: const Icon(Icons.tune, color: Colors.white),
+              const SizedBox(width: 10),
+              Material(
+                color: _brandOrange,
+                borderRadius: BorderRadius.circular(16),
+                child: InkWell(
+                  onTap: _showDistrictPicker,
+                  borderRadius: BorderRadius.circular(16),
+                  child: const SizedBox(
+                    width: 52,
+                    height: 52,
+                    child: Icon(Icons.map_rounded, color: Colors.white, size: 24),
+                  ),
                 ),
               ),
             ],
@@ -307,10 +465,10 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
     );
   }
 
-  Widget _buildTypeChipsRow(BuildContext context) {
-    final theme = Theme.of(context);
+  Widget _buildTypeChipsRow(BuildContext context, bool isDark) {
+    final card = isDark ? const Color(0xFF1E293B) : Colors.white;
     return SizedBox(
-      height: 42,
+      height: 44,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
@@ -319,25 +477,37 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
         itemBuilder: (context, index) {
           final type = _types[index];
           final isSelected = type == _selectedType;
-          return ChoiceChip(
-            label: Text(
-              type[0].toUpperCase() + type.substring(1),
-            ),
-            selected: isSelected,
-            onSelected: (_) => _onTypeSelected(type),
-            selectedColor: const Color(0xFFFF8A00),
-            labelStyle: TextStyle(
-              color: isSelected ? Colors.white : theme.textTheme.bodyMedium?.color,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-            ),
-            backgroundColor: theme.cardColor,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
+          final label = type == 'all'
+              ? 'All'
+              : type[0].toUpperCase() + type.substring(1);
+          return InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => _onTypeSelected(type),
+            child: Chip(
+              label: Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  color: isSelected
+                      ? Colors.white
+                      : (isDark ? Colors.white70 : Colors.black87),
+                ),
+              ),
+              backgroundColor: isSelected
+                  ? _brandOrange
+                  : (isDark ? card : Colors.grey.shade300),
               side: BorderSide(
                 color: isSelected
-                    ? const Color(0xFFFF8A00)
-                    : theme.dividerColor.withOpacity(0.4),
+                    ? _brandOrange
+                    : (isDark ? Colors.white24 : Colors.grey.shade300),
               ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
             ),
           );
         },
@@ -345,73 +515,95 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
     );
   }
 
-  Widget _buildErrorState(BuildContext context, String message) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, size: 40, color: Colors.redAccent),
-            const SizedBox(height: 12),
-            Text(
-              'Something went wrong',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-              textAlign: TextAlign.center,
+  Widget _buildErrorState(BuildContext context, String message, bool isDark) {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        SizedBox(height: MediaQuery.of(context).size.height * 0.15),
+        Icon(Icons.error_outline_rounded,
+            size: 52, color: Colors.grey.shade400),
+        const SizedBox(height: 16),
+        Center(
+          child: Text(
+            'Could not load stays',
+            style: TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 17,
+              color: isDark ? Colors.white : Colors.grey.shade800,
             ),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: () {
-                setState(() {
-                  _loadFromService();
-                });
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
-            ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(height: 10),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Text(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              color: isDark ? Colors.white54 : Colors.grey.shade600,
+              height: 1.35,
+            ),
+          ),
+        ),
+        const SizedBox(height: 22),
+        Center(
+          child: FilledButton.icon(
+            onPressed: () {
+              setState(() {
+                _loadFromService();
+              });
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: _brandOrange,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text(
+              'Retry',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildEmptyState(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.hotel_outlined, size: 40, color: Colors.grey),
-            const SizedBox(height: 12),
-            Text(
-              'No accommodations found',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-              textAlign: TextAlign.center,
+  Widget _buildEmptyState(BuildContext context, bool isDark) {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        SizedBox(height: MediaQuery.of(context).size.height * 0.15),
+        Icon(Icons.hotel_outlined, size: 56, color: Colors.grey.shade400),
+        const SizedBox(height: 16),
+        Center(
+          child: Text(
+            'No stays found',
+            style: TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 17,
+              color: isDark ? Colors.white : Colors.grey.shade800,
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Try changing type or location, or clear your search.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(height: 10),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Text(
+            'Try another type, location, or clear your search.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.35,
+              color: isDark ? Colors.white54 : Colors.grey.shade600,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -545,15 +737,20 @@ Widget accImageFromAnySource(
 // ====== Card widget using your Accommodation model ======
 
 class _AccommodationCard extends StatelessWidget {
-  final Accommodation accommodation;
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandNavy = Color(0xFF16284C);
+  static const Color _surfaceBorder = Color(0xFFE2E6EF);
 
-  const _AccommodationCard({super.key, required this.accommodation});
+  final Accommodation accommodation;
+  final bool isDark;
+
+  const _AccommodationCard({
+    required this.accommodation,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
     final name = accommodation.name ?? '';
     final location = accommodation.location ?? '';
     final type = (accommodation.accommodationType ?? '').toLowerCase();
@@ -566,185 +763,225 @@ class _AccommodationCard extends StatelessWidget {
     final imgBytes = accommodation.imageBytes;
     final rawImage = (accommodation.image ?? '').trim();
 
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.cardColor,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
-            offset: const Offset(0, 8),
-            blurRadius: 18,
-          ),
-        ],
-      ),
+    final cardBg = isDark ? const Color(0xFF1E293B) : Colors.white;
+
+    return Material(
+      color: cardBg,
+      elevation: 0,
+      borderRadius: BorderRadius.circular(20),
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (imgBytes != null)
-                  Ink.image(
-                    image: MemoryImage(imgBytes),
-                    fit: BoxFit.cover,
-                    child: InkWell(
-                      onTap: () {
-                        // navigate to details page if you have one
-                      },
-                    ),
-                  )
-                else if (rawImage.isNotEmpty)
-                  accImageFromAnySource(
-                    rawImage,
-                    fit: BoxFit.cover,
-                  )
-                else
-                  Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFFE5ECFF), Color(0xFFFDF2E9)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isDark ? Colors.white12 : _surfaceBorder,
+          ),
+          boxShadow: isDark
+              ? null
+              : [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 18,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+        ),
+        child: Column(
+          children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (imgBytes != null)
+                    Image.memory(imgBytes, fit: BoxFit.cover)
+                  else if (rawImage.isNotEmpty)
+                    accImageFromAnySource(
+                      rawImage,
+                      fit: BoxFit.cover,
+                    )
+                  else
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            _brandNavy.withValues(alpha: 0.12),
+                            _brandOrange.withValues(alpha: 0.15),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
                       ),
-                    ),
-                    child: const Center(
                       child: Icon(
                         Icons.photo_size_select_actual_outlined,
-                        size: 40,
-                        color: Color(0xFF9CA3AF),
+                        size: 44,
+                        color: Colors.grey.shade400,
+                      ),
+                    ),
+                  Positioned(
+                    top: 10,
+                    left: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.star_rounded,
+                              size: 16, color: Colors.amber),
+                          const SizedBox(width: 4),
+                          Text(
+                            rating.toStringAsFixed(1),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          if (reviewCount > 0) ...[
+                            const SizedBox(width: 4),
+                            Text(
+                              '($reviewCount)',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ),
-                Positioned(
-                  top: 10,
-                  left: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.55),
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.star_rounded, size: 16, color: Colors.amber),
-                        const SizedBox(width: 4),
-                        Text(
-                          rating.toStringAsFixed(1),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
+                  Positioned(
+                    bottom: 10,
+                    right: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: _brandOrange,
+                        borderRadius: BorderRadius.circular(30),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _brandOrange.withValues(alpha: 0.35),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
                           ),
-                        ),
-                        if (reviewCount > 0) ...[
-                          const SizedBox(width: 4),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
                           Text(
-                            '($reviewCount)',
+                            'MWK ${price.toStringAsFixed(0)}',
                             style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          const Text(
+                            '/ night',
+                            style: TextStyle(
                               color: Colors.white70,
                               fontSize: 11,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
-                Positioned(
-                  bottom: 10,
-                  right: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF8A00),
-                      borderRadius: BorderRadius.circular(30),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      color: isDark ? Colors.white : _brandNavy,
+                      letterSpacing: -0.2,
                     ),
-                    child: Row(
-                      children: [
-                        Text(
-                          '#${price.toStringAsFixed(0)}',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(width: 4),
-                        const Text(
-                          '/night',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(Icons.location_on_outlined,
+                          size: 16, color: Colors.grey.shade600),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          location.isEmpty ? '—' : location,
                           style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 11,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: isDark
+                                ? Colors.white70
+                                : Colors.grey.shade700,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: _brandOrange.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          _capitalize(type),
+                          style: const TextStyle(
+                            color: _brandOrange,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    const Icon(Icons.location_on_outlined, size: 16, color: Colors.grey),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        location,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: Colors.grey[600],
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: () {
+                          // book / details
+                        },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _brandOrange,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFE8CC),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        _capitalize(type),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFFFF8A00),
-                          fontWeight: FontWeight.w600,
+                        child: const Text(
+                          'View details',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: () {
-                        // book / details
-                      },
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      ),
-                      child: const Text('View details'),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -20,6 +20,7 @@ import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/app_skeleton.dart';
 
 class MerchantProductsPage extends StatefulWidget {
   final String merchantId;
@@ -55,6 +56,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
   // Brand color to match main marketplace UI
   static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandNavy = Color(0xFF16284C);
+  static const Color _pageBg = Color(0xFFF4F6FA);
+  static const Color _surfaceBorder = Color(0xFFE2E6EF);
 
   // Small cache for Firebase download URLs (gs:// or storage paths)
   final Map<String, Future<String?>> _dlUrlCache = {};
@@ -526,32 +530,241 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     Share.share(_shareMessage);
   }
 
+  Future<void> _showReportScreenshotPicker(
+    BuildContext sheetCtx,
+    void Function(XFile? file) onPicked,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: sheetCtx,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          12,
+          20,
+          16 + MediaQuery.of(ctx).viewPadding.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Add screenshot',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF1A1A1A),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Optional — helps us review faster',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey.shade600,
+                height: 1.3,
+              ),
+            ),
+            const SizedBox(height: 18),
+            InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () async {
+                Navigator.pop(ctx);
+                try {
+                  final img = await ImagePicker()
+                      .pickImage(source: ImageSource.camera);
+                  onPicked(img);
+                } catch (_) {}
+              },
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFFF8A00),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.photo_camera_outlined,
+                          color: Colors.white, size: 22),
+                    ),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Text(
+                        'Take photo',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right_rounded,
+                        color: Colors.grey.shade400),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () async {
+                Navigator.pop(ctx);
+                try {
+                  final img = await ImagePicker()
+                      .pickImage(source: ImageSource.gallery);
+                  onPicked(img);
+                } catch (_) {}
+              },
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF1E88E5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.photo_library_outlined,
+                          color: Colors.white, size: 22),
+                    ),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Text(
+                        'Choose from gallery',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right_rounded,
+                        color: Colors.grey.shade400),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _blockMerchant() async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Block merchant'),
-        content: const Text(
-          'You will stop seeing this merchant in recommendations and listings. You can undo this later in Settings.',
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.block_rounded,
+                    size: 30, color: Colors.red.shade700),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Block merchant?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF1A1A1A),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'You will stop seeing this merchant in recommendations and listings. You can change this later in Settings.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.45,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        side: BorderSide(color: Colors.grey.shade300),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: Text(
+                        'Cancel',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text(
+                        'Block',
+                        style: TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              'Block',
-              style: TextStyle(color: Colors.red, fontWeight: FontWeight.w800),
-            ),
-          ),
-        ],
       ),
     );
     if (ok != true || !mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Merchant blocked (coming soon to sync across devices).')),
+      const SnackBar(
+          content: Text(
+              'Merchant blocked (coming soon to sync across devices).')),
     );
   }
 
@@ -559,73 +772,306 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     final controller = TextEditingController();
     XFile? picked;
 
-    final sent = await showDialog<bool>(
+    final result = await showDialog<({String message, XFile? picked})?>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Report merchant'),
-        content: StatefulBuilder(
-          builder: (ctx, setLocal) => SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: controller,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    hintText:
-                        'Tell us what is wrong (fraud, fake products, abuse, etc.)',
-                    border: OutlineInputBorder(),
+      barrierDismissible: true,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (ctx, setLocal) => Dialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: _brandOrange.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: const Icon(Icons.flag_rounded,
+                            color: _brandOrange, size: 24),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Report merchant',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: _brandNavy,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              widget.merchantName.trim(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(dialogCtx),
+                        icon: Icon(Icons.close_rounded,
+                            color: Colors.grey.shade600),
+                        tooltip: 'Close',
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    try {
-                      final img = await ImagePicker()
-                          .pickImage(source: ImageSource.gallery);
-                      if (img != null) {
-                        setLocal(() => picked = img);
-                      }
-                    } catch (_) {}
-                  },
-                  icon: const Icon(Icons.attach_file),
-                  label: Text(
-                    picked == null
-                        ? 'Add screenshot (optional)'
-                        : 'Screenshot selected',
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    maxLines: 5,
+                    decoration: InputDecoration(
+                      hintText:
+                          'Tell us what is wrong (fraud, fake products, abuse, etc.)',
+                      filled: true,
+                      fillColor: const Color(0xFFF6F7FB),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide:
+                            const BorderSide(color: _brandOrange, width: 1.5),
+                      ),
+                      contentPadding: const EdgeInsets.all(16),
+                    ),
                   ),
-                ),
-                if (picked != null) ...[
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 18),
                   Text(
-                    picked!.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                    'Screenshot (optional)',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Material(
+                    color: const Color(0xFFF6F7FB),
+                    borderRadius: BorderRadius.circular(16),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () => _showReportScreenshotPicker(
+                        dialogCtx,
+                        (file) {
+                          if (file != null) {
+                            setLocal(() => picked = file);
+                          }
+                        },
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: picked == null
+                            ? Row(
+                                children: [
+                                  Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color: _brandOrange.withValues(alpha: 0.2),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Icon(
+                                        Icons.add_photo_alternate_outlined,
+                                        color: _brandOrange),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Add a screenshot',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 15,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Camera or gallery',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Icon(Icons.chevron_right_rounded,
+                                      color: Colors.grey.shade400),
+                                ],
+                              )
+                            : Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: SizedBox(
+                                      width: 72,
+                                      height: 72,
+                                      child: Image.file(
+                                        File(picked!.path),
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Screenshot attached',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            color: Colors.green.shade800,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          picked!.name,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey.shade700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextButton.icon(
+                                          onPressed: () =>
+                                              setLocal(() => picked = null),
+                                          style: TextButton.styleFrom(
+                                            foregroundColor:
+                                                Colors.red.shade700,
+                                            padding: EdgeInsets.zero,
+                                            minimumSize: Size.zero,
+                                            tapTargetSize:
+                                                MaterialTapTargetSize.shrinkWrap,
+                                          ),
+                                          icon: const Icon(Icons.delete_outline,
+                                              size: 18),
+                                          label: const Text(
+                                            'Remove',
+                                            style: TextStyle(
+                                                fontWeight: FontWeight.w800),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(dialogCtx),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            side: BorderSide(color: Colors.grey.shade300),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: Text(
+                            'Cancel',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Colors.grey.shade800,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () {
+                            final msg = controller.text.trim();
+                            if (msg.isEmpty && picked == null) {
+                              final messenger =
+                                  ScaffoldMessenger.maybeOf(dialogCtx);
+                              if (messenger != null) {
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: const Text(
+                                      'Please write a message or add a screenshot.',
+                                    ),
+                                    behavior: SnackBarBehavior.floating,
+                                    margin: const EdgeInsets.all(16),
+                                  ),
+                                );
+                              } else {
+                                ToastHelper.showCustomToast(
+                                  dialogCtx,
+                                  'Please write a message or add a screenshot.',
+                                  isSuccess: false,
+                                  errorMessage: '',
+                                );
+                              }
+                              return;
+                            }
+                            Navigator.pop(
+                              dialogCtx,
+                              (message: msg, picked: picked),
+                            );
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _brandOrange,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'Send report',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
-              ],
+              ),
             ),
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              'Send report',
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-        ],
       ),
     );
 
-    if (sent != true || !mounted) return;
+    // Let the route finish unmounting before disposing the controller the TextField used.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      controller.dispose();
+    });
+
+    if (result == null || !mounted) return;
 
     final user = _auth.currentUser;
     if (user == null) {
@@ -638,16 +1084,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       return;
     }
 
-    final message = controller.text.trim();
-    if (message.isEmpty && picked == null) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please write a report message or attach a screenshot.',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return;
-    }
+    final message = result.message;
+    final pickedFile = result.picked;
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Sending report…')),
@@ -655,13 +1093,13 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
     try {
       String? proofUrl;
-      if (picked != null) {
-        final ext = picked!.name.toLowerCase().split('.').last;
+      if (pickedFile != null) {
+        final ext = pickedFile.name.toLowerCase().split('.').last;
         final safeExt = (ext.length <= 5) ? ext : 'png';
         final ref = FirebaseStorage.instance.ref().child(
               'reports/merchant/${widget.merchantId.trim()}/${user.uid}/${DateTime.now().millisecondsSinceEpoch}.$safeExt',
             );
-        final file = File(picked!.path);
+        final file = File(pickedFile.path);
         final task = await ref.putFile(file);
         proofUrl = await task.ref.getDownloadURL();
       }
@@ -787,21 +1225,121 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     }
   }
 
+  Widget _buildModernSearchBar() {
+    final hasText = _searchController.text.isNotEmpty;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _surfaceBorder, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: _searchController,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF1A1D26),
+        ),
+        cursorColor: _brandOrange,
+        decoration: InputDecoration(
+          hintText:
+              'Search products from ${widget.merchantName}...',
+          hintStyle: TextStyle(
+            color: Colors.grey.shade500,
+            fontWeight: FontWeight.w500,
+          ),
+          filled: true,
+          fillColor: const Color(0xFFF6F7FB),
+          prefixIcon: Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Icon(Icons.search_rounded, color: _brandOrange, size: 26),
+          ),
+          prefixIconConstraints: const BoxConstraints(
+            minWidth: 48,
+            minHeight: 48,
+          ),
+          suffixIcon: hasText
+              ? IconButton(
+                  tooltip: 'Clear',
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() {});
+                  },
+                  icon: Icon(Icons.close_rounded, color: Colors.grey.shade600),
+                )
+              : null,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 8,
+            vertical: 14,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: _brandOrange, width: 1.5),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _pageBg,
       appBar: AppBar(
+        elevation: 0,
+        scrolledUnderElevation: 0.5,
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
-        title: Text('${widget.merchantName} Store'),
+        centerTitle: false,
+        titleSpacing: 16,
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.storefront_rounded, size: 22),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '${widget.merchantName} Store',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 17,
+                  letterSpacing: -0.2,
+                ),
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.link),
+            icon: const Icon(Icons.link_rounded),
             onPressed: _copyMerchantLink,
             tooltip: 'Copy merchant link',
           ),
           IconButton(
-            icon: const Icon(Icons.share),
+            icon: const Icon(Icons.share_rounded),
             onPressed: _shareMerchantShop,
             tooltip: 'Share merchant shop',
           ),
@@ -824,35 +1362,65 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             onReport: _reportMerchant,
             onViewProfile: _showMerchantProfileViewer,
           ),
-          const SizedBox(height: 8),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search products from ${widget.merchantName}...',
-                prefixIcon: const Icon(Icons.search_rounded),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Browse products',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.grey.shade700,
+                    letterSpacing: 0.2,
+                  ),
                 ),
-                contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 12),
-              ),
+                const SizedBox(height: 8),
+                _buildModernSearchBar(),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
           Expanded(
             child: FutureBuilder<List<MarketplaceDetailModel>>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const Padding(
+              padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
+              child: AppSkeletonLatestArrivalsGrid(),
+            );
           }
           if (snapshot.hasError) {
             return Center(
-              child: Text(
-                'Failed to load products\n${snapshot.error}',
-                textAlign: TextAlign.center,
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.error_outline_rounded,
+                        size: 48, color: Colors.grey.shade400),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Could not load products',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${snapshot.error}',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           }
@@ -867,11 +1435,44 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                   .toList();
           if (items.isEmpty) {
             return Center(
-              child: Text(
-                _searchQuery.isEmpty
-                    ? 'No products from this merchant yet.'
-                    : 'No products match "$_searchQuery".',
-                textAlign: TextAlign.center,
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _searchQuery.isEmpty
+                          ? Icons.inventory_2_outlined
+                          : Icons.search_off_rounded,
+                      size: 56,
+                      color: Colors.grey.shade400,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      _searchQuery.isEmpty
+                          ? 'No products yet'
+                          : 'No matching products',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 17,
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _searchQuery.isEmpty
+                          ? 'Check back later for new listings from this store.'
+                          : 'Try a different search term.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.35,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           }
@@ -889,7 +1490,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                   : 0.72;
 
               return GridView.builder(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: cols,
               crossAxisSpacing: 10,
@@ -975,9 +1576,14 @@ class _MerchantProductCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: Colors.grey.shade200, width: 1),
+      ),
       clipBehavior: Clip.antiAlias,
-      elevation: 0.6,
+      color: Colors.white,
+      shadowColor: Colors.black26,
       child: InkWell(
         onTap: onOpen,
         child: Column(
@@ -986,8 +1592,8 @@ class _MerchantProductCard extends StatelessWidget {
             Expanded(
               child: ClipRRect(
                 borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  topRight: Radius.circular(16),
+                  topLeft: Radius.circular(18),
+                  topRight: Radius.circular(18),
                 ),
                 child: imageBuilder(item),
               ),
@@ -1066,6 +1672,10 @@ class _MerchantProductCard extends StatelessWidget {
 }
 
 class _MerchantProfileCard extends StatelessWidget {
+  static const Color _kBrandOrange = Color(0xFFFF8A00);
+  static const Color _kBrandNavy = Color(0xFF16284C);
+  static const Color _kBorder = Color(0xFFE2E6EF);
+
   final String name;
   final String? email;
   final String? phone;
@@ -1144,15 +1754,16 @@ class _MerchantProfileCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: _kBorder, width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
@@ -1165,14 +1776,32 @@ class _MerchantProfileCard extends StatelessWidget {
               InkWell(
                 onTap: hasPhoto ? onViewProfile : null,
                 borderRadius: BorderRadius.circular(999),
-                child: CircleAvatar(
-                  radius: 32,
-                  backgroundColor: Colors.grey.shade200,
-                  backgroundImage: img,
-                  child: hasPhoto
-                      ? null
-                      : const Icon(Icons.storefront_rounded,
-                          color: Colors.grey, size: 32),
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [
+                        _kBrandOrange,
+                        _kBrandNavy.withValues(alpha: 0.85),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: CircleAvatar(
+                    radius: 34,
+                    backgroundColor: Colors.white,
+                    child: CircleAvatar(
+                      radius: 32,
+                      backgroundColor: Colors.grey.shade100,
+                      backgroundImage: img,
+                      child: hasPhoto
+                          ? null
+                          : const Icon(Icons.storefront_rounded,
+                              color: Colors.grey, size: 32),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(width: 14),
@@ -1185,9 +1814,10 @@ class _MerchantProfileCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.black87,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF1A1D26),
+                        letterSpacing: -0.3,
                       ),
                     ),
                     if (emailStr != null) ...[
@@ -1245,7 +1875,7 @@ class _MerchantProfileCard extends StatelessWidget {
                               horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
                             color: _statusColor(effectiveStatus)
-                                .withOpacity(0.15),
+                                .withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Row(
@@ -1291,8 +1921,15 @@ class _MerchantProfileCard extends StatelessWidget {
                 ),
               ),
               PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert),
+                tooltip: 'More',
+                icon: Icon(Icons.more_vert_rounded, color: Colors.grey.shade800),
                 padding: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                color: Colors.white,
+                elevation: 10,
+                offset: const Offset(0, 10),
                 onSelected: (value) {
                   if (value == 'block') {
                     onBlock();
@@ -1301,26 +1938,114 @@ class _MerchantProfileCard extends StatelessWidget {
                   }
                 },
                 itemBuilder: (_) => [
-                  const PopupMenuItem(
+                  PopupMenuItem<String>(
                     value: 'block',
-                    child: Text('block'),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(Icons.block_rounded,
+                              color: Colors.red.shade700, size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text(
+                                'Block',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              Text(
+                                'Hide this seller',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  const PopupMenuItem(
+                  PopupMenuItem<String>(
                     value: 'report',
-                    child: Text('Report'),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: _kBrandOrange.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.flag_rounded,
+                              color: _kBrandOrange, size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text(
+                                'Report',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              Text(
+                                'Tell us what happened',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
               if (!loading)
-                IconButton(
-                  onPressed: onToggleFollow,
-                  icon: Icon(
-                    following
-                        ? Icons.favorite_rounded
-                        : Icons.favorite_border_rounded,
-                    color: following ? Colors.red : Colors.grey.shade700,
+                Tooltip(
+                  message:
+                      following ? 'Unfollow seller' : 'Follow seller',
+                  child: Material(
+                    color: following
+                        ? Colors.red.shade50
+                        : const Color(0xFFF6F7FB),
+                    borderRadius: BorderRadius.circular(14),
+                    child: InkWell(
+                      onTap: onToggleFollow,
+                      borderRadius: BorderRadius.circular(14),
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Icon(
+                          following
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          color: following ? Colors.red : _kBrandNavy,
+                          size: 24,
+                        ),
+                      ),
+                    ),
                   ),
-                  tooltip: following ? 'Unfollow seller' : 'Follow seller',
                 )
               else
                 const Padding(

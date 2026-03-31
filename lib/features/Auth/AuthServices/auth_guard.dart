@@ -7,6 +7,7 @@ import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
+import 'package:vero360_app/widgets/app_skeleton.dart';
 
 class AuthGuard extends StatefulWidget {
   final Widget child;
@@ -139,7 +140,9 @@ class _AuthGuardState extends State<AuthGuard> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Scaffold(
+        body: AppSkeletonListPlaceholder(items: 10),
+      );
     }
 
     if (_isLoggedIn) return widget.child;
@@ -183,7 +186,7 @@ class _AuthGuardState extends State<AuthGuard> with WidgetsBindingObserver {
 
     // Do not show protected content — blocking screen; dialog is shown by _checkAuthStatus.
     return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
+      body: AppSkeletonListPlaceholder(items: 10),
     );
   }
 }

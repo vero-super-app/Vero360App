@@ -16,12 +16,15 @@ import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/app_skeleton.dart';
 
 // ✅ ONE global formatter (commas)
 // If you want decimals, change decimalDigits: 2
 final NumberFormat _mwkFmt =
     NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
 String mwk(num n) => _mwkFmt.format(n);
+
+const Color _kVeroOrange = Color(0xFFFF8A00);
 
 class CartPage extends StatefulWidget {
   final CartService cartService;
@@ -435,21 +438,43 @@ class _CartPageState extends State<CartPage> {
 
   @override
   Widget build(BuildContext context) {
-    final deliveryFee = _items.isEmpty ? 0.0 : 20.0;
     final discount = 0.0;
-    final total = _subtotal + deliveryFee + discount;
+    final total = _subtotal + discount;
 
     final merchantGroups = _itemsByMerchant;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('My Cart'),
-        centerTitle: true,
+        elevation: 0,
+        scrolledUnderElevation: 0.5,
+        backgroundColor: _kVeroOrange,
+        foregroundColor: Colors.white,
+        centerTitle: false,
+        titleSpacing: 16,
+        title: const Row(
+          children: [
+            Icon(Icons.shopping_cart_rounded, size: 26),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'My Cart',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                  letterSpacing: -0.3,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             tooltip: 'Refresh cart',
             onPressed: _refresh,
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
           ),
         ],
       ),
@@ -460,7 +485,7 @@ class _CartPageState extends State<CartPage> {
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting &&
                 _items.isEmpty) {
-              return const Center(child: CircularProgressIndicator());
+              return const AppSkeletonCartList(rows: 6);
             }
 
             if (_items.isEmpty) {
@@ -524,7 +549,6 @@ class _CartPageState extends State<CartPage> {
                 ),
                 _CartSummary(
                   subtotal: _subtotal,
-                  deliveryFee: deliveryFee,
                   discount: discount,
                   total: total,
                   loading: _loading,
@@ -800,7 +824,6 @@ class _IconBtn extends StatelessWidget {
 
 class _CartSummary extends StatelessWidget {
   final double subtotal;
-  final double deliveryFee;
   final double discount;
   final double total;
   final bool loading;
@@ -809,7 +832,6 @@ class _CartSummary extends StatelessWidget {
 
   const _CartSummary({
     required this.subtotal,
-    required this.deliveryFee,
     required this.discount,
     required this.total,
     required this.loading,
@@ -858,7 +880,6 @@ class _CartSummary extends StatelessWidget {
 
             // ✅ COMMAS everywhere
             _row('Subtotal', mwk(subtotal)),
-            _row('Delivery Fee', mwk(deliveryFee)),
             const Divider(height: 16),
             _row('Total', mwk(total), bold: true, green: true),
             const SizedBox(height: 12),
@@ -869,7 +890,7 @@ class _CartSummary extends StatelessWidget {
                 onPressed: loading ? null : onCheckout,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  backgroundColor: const Color(0xFFFF8A00),
+                  backgroundColor: _kVeroOrange,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),

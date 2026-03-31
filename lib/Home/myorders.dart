@@ -137,8 +137,10 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   String _searchQuery = '';
 
   late TabController _tab;
-  // Must match the visual tab order (Confirmed, Pending, Delivered, Cancelled)
-  final List<OrderStatus> _statuses = const [
+  // Must match the visual tab order (All, Confirmed, Pending, Delivered, Cancelled)
+  // `null` represents the "All" tab (no status filter).
+  final List<OrderStatus?> _statuses = const [
+    null,
     OrderStatus.confirmed,
     OrderStatus.pending,
     OrderStatus.delivered,
@@ -174,7 +176,10 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     _focusOrderId = widget.initialOrderId?.trim();
     _focusOrderNumber = widget.initialOrderNumber?.trim();
     final s = (widget.initialStatus ?? '').trim().toLowerCase();
-    final idx = _statuses.indexWhere((v) => _statusLabel(v).toLowerCase() == s);
+    // Try to select a specific status tab; default is "All" (index 0).
+    final idx = _statuses.indexWhere(
+      (v) => v != null && _statusLabel(v).toLowerCase() == s,
+    );
     if (idx >= 0) _tab.index = idx;
     _ordersFuture = _svc.getMyOrders();
     unawaited(_bootstrapOrders());
@@ -870,37 +875,90 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                 ),
 
                 const SizedBox(height: 8),
-                // Merchant
+                // Buyer
+                Text(
+                  'Buyer',
+                  style: TextStyle(
+                    color: _brand.withValues(alpha: 0.95),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 6),
                 _infoRow(
-                  icon: Icons.store_mall_directory_outlined,
-                  text:
-                      '${o.merchantName ?? 'Merchant'}  •  ${_displayMerchantPhone(o)}',
-                  trailing: (o.merchantAvgRating != null) ? '⭐ ${o.merchantAvgRating!.toStringAsFixed(1)}' : null,
+                  icon: Icons.person_outline,
+                  text: (o.customerName ?? '').toString().trim().isEmpty
+                      ? 'Name: —'
+                      : 'Name: ${(o.customerName ?? '').toString().trim()}',
+                ),
+                const SizedBox(height: 6),
+                _infoRow(
+                  icon: Icons.phone_outlined,
+                  text: safeMerchantPhone(o.customerPhone) == 'No phone number'
+                      ? 'Phone: —'
+                      : 'Phone: ${safeMerchantPhone(o.customerPhone)}',
                 ),
 
+                const SizedBox(height: 8),
+                // Delivery
+                Text(
+                  'Delivery',
+                  style: TextStyle(
+                    color: _brand.withValues(alpha: 0.95),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                  ),
+                ),
                 const SizedBox(height: 6),
-                // Address
                 _infoRow(
                   icon: Icons.location_on_outlined,
                   text: [
                     if ((o.addressCity ?? '').isNotEmpty) o.addressCity,
-                    if ((o.addressDescription ?? '').isNotEmpty) o.addressDescription,
-                  ].whereType<String>().join(' — ').trim().isEmpty
+                    if ((o.addressDescription ?? '').isNotEmpty)
+                      o.addressDescription,
+                  ].whereType<String>().join(' • ').trim().isEmpty
                       ? 'No address'
                       : [
                           if ((o.addressCity ?? '').isNotEmpty) o.addressCity,
-                          if ((o.addressDescription ?? '').isNotEmpty) o.addressDescription,
-                        ].whereType<String>().join(' — '),
+                          if ((o.addressDescription ?? '').isNotEmpty)
+                            o.addressDescription,
+                        ].whereType<String>().join(' • '),
                 ),
-
-                const SizedBox(height: 6),
-                if (o.orderDate != null)
+                if (o.orderDate != null) ...[
+                  const SizedBox(height: 6),
                   _infoRow(
                     icon: Icons.schedule_outlined,
                     text: _date.format(o.orderDate!.toLocal()),
                   ),
+                ],
 
                 const SizedBox(height: 8),
+                // Seller
+                Text(
+                  'Seller',
+                  style: TextStyle(
+                    color: _brand.withValues(alpha: 0.95),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                _infoRow(
+                  icon: Icons.storefront_outlined,
+                  text: (o.merchantName ?? '').toString().trim().isEmpty
+                      ? 'Merchant'
+                      : (o.merchantName ?? '').toString().trim(),
+                  trailing: (o.merchantAvgRating != null)
+                      ? '⭐ ${o.merchantAvgRating!.toStringAsFixed(1)}'
+                      : null,
+                ),
+                const SizedBox(height: 6),
+                _infoRow(
+                  icon: Icons.phone_outlined,
+                  text: _displayMerchantPhone(o),
+                ),
+
+                const SizedBox(height: 10),
                 Row(
                   children: [
                     Text(
@@ -1029,7 +1087,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     );
   }
 
-  Widget _tabBody(OrderStatus s) {
+  Widget _tabBody(OrderStatus? s) {
     return RefreshIndicator(
       onRefresh: _reloadCurrent,
       child: FutureBuilder<List<OrderItem>>(
@@ -1052,7 +1110,8 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
             );
           }
           final all = snap.data ?? const <OrderItem>[];
-          final byStatus = all.where((o) => o.status == s).toList();
+          final byStatus =
+              s == null ? all : all.where((o) => o.status == s).toList();
           final items = byStatus
               .where((o) => _orderMatchesSearch(o, _searchQuery))
               .toList();
@@ -1149,7 +1208,8 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
           unselectedLabelColor: const Color(0xFF6B778C),
           indicatorColor: _brand,
           tabs: const [
-             Tab(text: 'Confirmed'),
+            Tab(text: 'All'),
+            Tab(text: 'Confirmed'),
             Tab(text: 'Pending'),
             Tab(text: 'Delivered'),
             Tab(text: 'Cancelled'),

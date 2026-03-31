@@ -244,6 +244,86 @@ class _MarketplaceMerchantDashboardState
   // Brand
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
+  static const Color _dialogFieldFill = Color(0xFFF4F6FA);
+
+  InputDecoration _walletPinFieldDecoration(String hint) {
+    final r = BorderRadius.circular(14);
+    return InputDecoration(
+      hintText: hint,
+      counterText: '',
+      filled: true,
+      fillColor: _dialogFieldFill,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      border: OutlineInputBorder(borderRadius: r),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: r,
+        borderSide: BorderSide(color: Colors.grey.shade200),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: r,
+        borderSide: const BorderSide(color: _brandOrange, width: 2),
+      ),
+    );
+  }
+
+  Widget _walletPinDialogHeader({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFF8A00), Color(0xFFFFA64D)],
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.22),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(icon, color: Colors.white, size: 26),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 20,
+                    letterSpacing: -0.35,
+                    height: 1.15,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.92),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   // ----------------- Wallet lock (PIN) -----------------
   DateTime? _walletUnlockedUntil;
@@ -358,39 +438,191 @@ class _MarketplaceMerchantDashboardState
 
   Future<String?> _showEnterPinDialog() async {
     final controller = TextEditingController();
+    String? shortPinHint;
+
     return showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('Enter Your Password'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          obscureText: true,
-          keyboardType: TextInputType.number,
-          maxLength: 6,
-          decoration: const InputDecoration(
-            hintText: 'PIN (4–6 digits)',
-            counterText: '',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, null),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              final pin = controller.text.trim();
-              if (pin.length < 4) return;
-              Navigator.pop(context, pin);
-            },
-            child: const Text(
-              'Unlock',
-              style: TextStyle(fontWeight: FontWeight.w900),
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final kb = MediaQuery.viewInsetsOf(ctx).bottom;
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: Material(
+                color: Colors.white,
+                elevation: 18,
+                shadowColor: Colors.black.withValues(alpha: 0.2),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _walletPinDialogHeader(
+                      icon: Icons.account_balance_wallet_rounded,
+                      title: 'Unlock wallet',
+                      subtitle:
+                          'Enter your wallet PIN to view balance and manage payouts.',
+                    ),
+                    Padding(
+                      padding: EdgeInsets.only(bottom: kb),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                              child: Text(
+                                'PIN',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.grey.shade700,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                              child: TextField(
+                                controller: controller,
+                                autofocus: true,
+                                obscureText: true,
+                                keyboardType: TextInputType.number,
+                                maxLength: 6,
+                                onChanged: (_) {
+                                  if (shortPinHint != null) {
+                                    setLocal(() => shortPinHint = null);
+                                  }
+                                },
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 2,
+                                ),
+                                decoration:
+                                    _walletPinFieldDecoration('4–6 digits'),
+                              ),
+                            ),
+                            if (shortPinHint != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    20, 0, 20, 12),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: _brandOrange.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: _brandOrange
+                                          .withValues(alpha: 0.35),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.info_outline_rounded,
+                                        color: _brandNavy
+                                            .withValues(alpha: 0.9),
+                                        size: 22,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          shortPinHint!,
+                                          style: TextStyle(
+                                            color: Colors.grey.shade900,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                            height: 1.35,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1, thickness: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(null),
+                              style: OutlinedButton.styleFrom(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                side: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              child: Text(
+                                'Cancel',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.grey.shade800,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 2,
+                            child: FilledButton(
+                              onPressed: () {
+                                final pin = controller.text.trim();
+                                if (pin.length < 4) {
+                                  setLocal(() => shortPinHint =
+                                      'Enter at least 4 digits to unlock.');
+                                  return;
+                                }
+                                Navigator.of(dialogContext).pop(pin);
+                              },
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _brandOrange,
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                elevation: 0,
+                              ),
+                              child: const Text(
+                                'Unlock',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -403,73 +635,227 @@ class _MarketplaceMerchantDashboardState
     return showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Set Password'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Create a PIN to protect your wallet.'),
-              const SizedBox(height: 10),
-              TextField(
-                controller: p1,
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                decoration: const InputDecoration(
-                  hintText: 'New PIN (4–6 digits)',
-                  counterText: '',
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final kb = MediaQuery.viewInsetsOf(ctx).bottom;
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: Material(
+                color: Colors.white,
+                elevation: 18,
+                shadowColor: Colors.black.withValues(alpha: 0.2),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
                 ),
-              ),
-              TextField(
-                controller: p2,
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                decoration: const InputDecoration(
-                  hintText: 'Confirm PIN',
-                  counterText: '',
-                ),
-              ),
-              if (err != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  err!,
-                  style: const TextStyle(
-                    color: Colors.red,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, null),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                final a = p1.text.trim();
-                final b = p2.text.trim();
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _walletPinDialogHeader(
+                      icon: Icons.pin_rounded,
+                      title: 'Set wallet PIN',
+                      subtitle:
+                          'Choose a 4–6 digit PIN. You’ll need it to unlock your wallet.',
+                    ),
+                    Padding(
+                      padding: EdgeInsets.only(bottom: kb),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                              child: Text(
+                                'New PIN',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.grey.shade700,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                              child: TextField(
+                                controller: p1,
+                                autofocus: true,
+                                obscureText: true,
+                                keyboardType: TextInputType.number,
+                                maxLength: 6,
+                                onChanged: (_) {
+                                  if (err != null) {
+                                    setLocal(() => err = null);
+                                  }
+                                },
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 2,
+                                ),
+                                decoration:
+                                    _walletPinFieldDecoration('4–6 digits'),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                              child: Text(
+                                'Confirm PIN',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.grey.shade700,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                              child: TextField(
+                                controller: p2,
+                                obscureText: true,
+                                keyboardType: TextInputType.number,
+                                maxLength: 6,
+                                onChanged: (_) {
+                                  if (err != null) {
+                                    setLocal(() => err = null);
+                                  }
+                                },
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 2,
+                                ),
+                                decoration:
+                                    _walletPinFieldDecoration('Re-enter PIN'),
+                              ),
+                            ),
+                            if (err != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    20, 0, 20, 8),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFEBEE),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: const Color(0xFFEF9A9A)
+                                          .withValues(alpha: 0.6),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Icon(
+                                        Icons.error_outline_rounded,
+                                        color: Color(0xFFC62828),
+                                        size: 22,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          err!,
+                                          style: const TextStyle(
+                                            color: Color(0xFFB71C1C),
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                            height: 1.35,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1, thickness: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(null),
+                              style: OutlinedButton.styleFrom(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                side: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              child: Text(
+                                'Cancel',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.grey.shade800,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 2,
+                            child: FilledButton(
+                              onPressed: () {
+                                final a = p1.text.trim();
+                                final b = p2.text.trim();
 
-                if (a.length < 4) {
-                  setLocal(() => err = 'PIN must be at least 4 digits.');
-                  return;
-                }
-                if (a != b) {
-                  setLocal(() => err = 'PINs do not match.');
-                  return;
-                }
-                Navigator.pop(context, a);
-              },
-              child: const Text(
-                'Save',
-                style: TextStyle(fontWeight: FontWeight.w900),
+                                if (a.length < 4) {
+                                  setLocal(() =>
+                                      err = 'PIN must be at least 4 digits.');
+                                  return;
+                                }
+                                if (a != b) {
+                                  setLocal(() => err = 'PINs do not match.');
+                                  return;
+                                }
+                                Navigator.of(dialogContext).pop(a);
+                              },
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _brandOrange,
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                elevation: 0,
+                              ),
+                              child: const Text(
+                                'Save PIN',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -515,7 +901,8 @@ class _MarketplaceMerchantDashboardState
       await _ensureBusinessName();
       await _fetchCurrentUserMe();
       await _loadMerchantData();
-      await _loadItems();
+      // Silent refresh so "My Items" grid stays stable on screen.
+      await _loadItems(showLoading: false);
       await _loadOrderStats();
     });
   }
@@ -555,7 +942,10 @@ class _MarketplaceMerchantDashboardState
           .trim();
       if (phoneVal.isEmpty && picVal.isEmpty) return;
       final prefs = await SharedPreferences.getInstance();
-      if (phoneVal.isNotEmpty) await prefs.setString('phone', phoneVal);
+      if (phoneVal.isNotEmpty) {
+        await prefs.setString('phone', phoneVal);
+        await prefs.setString('merchant_profile_phone', phoneVal);
+      }
       if (picVal.isNotEmpty) await prefs.setString('profilepicture', picVal);
       if (!mounted) return;
       setState(() {
@@ -719,7 +1109,9 @@ class _MarketplaceMerchantDashboardState
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
 
-    final phone = _sanitizePhone(prefs.getString('phone') ?? '');
+    final phone = _sanitizePhone(
+      prefs.getString('merchant_profile_phone') ?? prefs.getString('phone') ?? '',
+    );
     setState(() {
       _merchantEmail = prefs.getString('email') ?? _merchantEmail;
       if (phone.isNotEmpty) _merchantPhone = phone;
@@ -784,7 +1176,10 @@ class _MarketplaceMerchantDashboardState
 
         final prefs = await SharedPreferences.getInstance();
         if (emailVal.isNotEmpty) await prefs.setString('email', emailVal);
-        if (phoneVal.isNotEmpty) await prefs.setString('phone', phoneVal);
+        if (phoneVal.isNotEmpty) {
+          await prefs.setString('phone', phoneVal);
+          await prefs.setString('merchant_profile_phone', phoneVal);
+        }
         if (picVal.isNotEmpty) await prefs.setString('profilepicture', picVal);
 
         if (!mounted) return;
@@ -849,7 +1244,10 @@ class _MarketplaceMerchantDashboardState
 
               final mp = _sanitizePhone(
                   (merchant['phone'] ?? '').toString().trim());
-              if (mp.isNotEmpty) _merchantPhone = mp;
+              if (mp.isNotEmpty) {
+                _merchantPhone = mp;
+                unawaited(prefs.setString('merchant_profile_phone', mp));
+              }
             }
           });
         }
@@ -979,8 +1377,10 @@ class _MarketplaceMerchantDashboardState
   }
 
   // ----------------- Items load + counts (total/active) -----------------
-  Future<void> _loadItems() async {
-    if (mounted) setState(() => _loadingItems = true);
+  /// When [showLoading] is false, keeps the current grid visible while refreshing
+  /// in the background (used by periodic updates so the UI stays stable).
+  Future<void> _loadItems({bool showLoading = true}) async {
+    if (showLoading && mounted) setState(() => _loadingItems = true);
 
     try {
       final nestSellerId = await _getNestUserId();
@@ -1012,14 +1412,16 @@ class _MarketplaceMerchantDashboardState
     } catch (e) {
       debugPrint('Error loading items: $e');
       if (!mounted) return;
-      setState(() {
-        _items = [];
-        _totalItems = 0;
-        _activeItems = 0;
-        // keep _soldItems from _loadOrderStats
-      });
+      if (showLoading) {
+        setState(() {
+          _items = [];
+          _totalItems = 0;
+          _activeItems = 0;
+          // keep _soldItems from _loadOrderStats
+        });
+      }
     } finally {
-      if (mounted) setState(() => _loadingItems = false);
+      if (showLoading && mounted) setState(() => _loadingItems = false);
     }
   }
 
@@ -1073,31 +1475,135 @@ class _MarketplaceMerchantDashboardState
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take a photo'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickAndUploadProfile(ImageSource.camera);
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: _brandOrange,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.photo_camera_outlined,
+                            color: Colors.white, size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Take a photo',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose from gallery'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickAndUploadProfile(ImageSource.gallery);
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF1E88E5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.photo_library_outlined,
+                            color: Colors.white, size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Choose from gallery',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
             if (_merchantProfileUrl.trim().isNotEmpty)
-              ListTile(
-                leading:
-                    const Icon(Icons.remove_circle_outline, color: Colors.red),
-                title: const Text('Remove current photo'),
+              InkWell(
                 onTap: () {
                   Navigator.pop(context);
                   _removeProfilePhoto();
                 },
+                borderRadius: BorderRadius.circular(16),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.remove_circle_outline,
+                              color: Colors.white, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'Remove current photo',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF222222),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
           ],
         ),
@@ -1138,6 +1644,57 @@ class _MarketplaceMerchantDashboardState
                   ),
                 ),
               ),
+              if (_merchantProfileUrl.trim().isNotEmpty)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 16,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.red.shade700,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 14,
+                        horizontal: 16,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    onPressed: () async {
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (_) => AlertDialog(
+                          title: const Text('Remove profile photo?'),
+                          content: const Text(
+                            'This will remove your current profile picture.',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(false),
+                              child: const Text('Cancel'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(true),
+                              child: const Text(
+                                'Remove',
+                                style: TextStyle(color: Colors.red),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed != true) return;
+                      await _removeProfilePhoto();
+                      if (!mounted) return;
+                      Navigator.of(context).pop();
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text(
+                      'Remove profile photo',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -1397,8 +1954,10 @@ class _MarketplaceMerchantDashboardState
         filename: _cover!.filename ?? 'cover.jpg',
         mimeType: _cover!.mime,
       );
+      final coverHash = await svc.computeVisualHash(_cover!.bytes);
 
       final galleryUrls = <String>[];
+      final galleryHashes = <String>[];
       for (final m in _gallery) {
         final url = await svc.uploadBytes(
           m.bytes,
@@ -1406,7 +1965,14 @@ class _MarketplaceMerchantDashboardState
           mimeType: m.mime,
         );
         galleryUrls.add(url);
+        final gHash = await svc.computeVisualHash(m.bytes);
+        if (gHash != null) galleryHashes.add(gHash);
       }
+
+      final imageHashes = <String>{
+        if (coverHash != null) coverHash,
+        ...galleryHashes,
+      }.toList();
 
       final data = {
         'name': _name.text.trim(),
@@ -1415,6 +1981,9 @@ class _MarketplaceMerchantDashboardState
         // ✅ store URLs only
         'imageUrl': coverUrl,
         'galleryUrls': galleryUrls,
+        'imageHash': coverHash,
+        'galleryHashes': galleryHashes,
+        'imageHashes': imageHashes,
 
         'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         'location': _location.text.trim(),
@@ -1563,21 +2132,97 @@ class _MarketplaceMerchantDashboardState
                 builder: (_) => SafeArea(
                   child: Wrap(
                     children: [
-                      ListTile(
-                        leading: const Icon(Icons.photo_camera_outlined),
-                        title: const Text('Take a photo'),
+                      InkWell(
                         onTap: () {
                           Navigator.pop(_);
                           pickNewCoverFrom(ImageSource.camera);
                         },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.grey.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFFF8A00),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.photo_camera_outlined,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                const Expanded(
+                                  child: Text(
+                                    'Take a photo',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w900,
+                                      color: Color(0xFF222222),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
-                      ListTile(
-                        leading: const Icon(Icons.photo_library_outlined),
-                        title: const Text('Choose from gallery'),
+                      InkWell(
                         onTap: () {
                           Navigator.pop(_);
                           pickNewCoverFrom(ImageSource.gallery);
                         },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.grey.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF1E88E5),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.photo_library_outlined,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                const Expanded(
+                                  child: Text(
+                                    'Choose from gallery',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w900,
+                                      color: Color(0xFF222222),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -1621,6 +2266,11 @@ class _MarketplaceMerchantDashboardState
 
                 if (newCover != null) {
                   patch['image'] = base64Encode(newCover!.bytes);
+                  final coverHash = await MarketplaceService().computeVisualHash(newCover!.bytes);
+                  if (coverHash != null) {
+                    patch['imageHash'] = coverHash;
+                    patch['imageHashes'] = FieldValue.arrayUnion([coverHash]);
+                  }
                 }
 
                 await _firestore.collection('marketplace_items').doc(id).update(
@@ -1968,7 +2618,25 @@ class _MarketplaceMerchantDashboardState
 
   AppBar _buildDashboardAppBar() {
     return AppBar(
-      title: const Text('Merchant Dashboard'),
+      title: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Icon(
+            Icons.storefront_rounded,
+            color: Colors.white,
+            size: 22,
+          ),
+          SizedBox(width: 8),
+          Text(
+            'Merchant Dashboard',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
+          ),
+        ],
+      ),
       backgroundColor: _brandOrange,
       actions: [
         Padding(
@@ -2097,7 +2765,25 @@ class _MarketplaceMerchantDashboardState
         _showMerchantGuide = true;
         _merchantGuideStep = 0;
       });
+      // Match the first card (Add Item) to the Add Item tab — not the previous tab.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_showMerchantGuide) return;
+        _syncMerchantGuideTab(_merchantGuideStep);
+      });
     } catch (_) {}
+  }
+
+  /// Tabs: 0 Dashboard, 1 Add Item, 2 My Items — align with [_merchantGuideSteps] copy.
+  void _syncMerchantGuideTab(int step) {
+    if (step < 0 || step >= _merchantGuideSteps.length) return;
+    final int tab = switch (step) {
+      0 => 1, // Add Item
+      1 => 2, // My Items
+      2 || 3 => 0, // Wallet + orders / recent sales on Dashboard
+      _ => 0,
+    };
+    if (_marketplaceTabs.index == tab) return;
+    _marketplaceTabs.animateTo(tab);
   }
 
   Future<void> _completeMerchantGuide() async {
@@ -2117,7 +2803,7 @@ class _MarketplaceMerchantDashboardState
     (title: 'ikani katundu wanu koyamba', body: 'Dinani "Add Item" kuti muike katundu wanu. kenako ikani  name, price, photo and category.', icon: Icons.add_box_rounded),
     (title: 'kulongosola katundu wanu', body: 'Yuzani "My Items"  kt mu wone, musithe,kuika ndikuchosa katundu wanu pa msika.', icon: Icons.inventory_2_rounded),
     (title: 'Tsegulani waleti yanu', body: 'tsegulani Waleti yanu pa dashboard kuti muthe kulandila ma payments and ikani PIN kuti muteteze waleti yanu.', icon: Icons.account_balance_wallet_rounded),
-    (title: 'Mukagulisa', body: 'chongani ma  orders as shipped or delivered. onani zomwe mwagulisa pa recent Sales  ndipo pangani makasitomala anu kukhala a tcheru.', icon: Icons.local_shipping_rounded),
+    (title: 'Mukagulisa', body: 'pitani ku dashboard dinani send parcels,ikani receipt ya courier tumizani katundu kenako dikililani ndalama zanu . onani zomwe mwagulisa pa recent Sales  ndipo pangani makasitomala anu kukhala a tcheru.', icon: Icons.local_shipping_rounded),
   ];
 
   Widget _buildMerchantGuideOverlay() {
@@ -2228,14 +2914,11 @@ class _MarketplaceMerchantDashboardState
                               _completeMerchantGuide();
                               return;
                             }
-                            if (_merchantGuideStep == 0) {
-                              _marketplaceTabs.animateTo(1);
-                            } else if (_merchantGuideStep == 1) {
-                              _marketplaceTabs.animateTo(2);
-                            } else if (_merchantGuideStep == 2) {
-                              _marketplaceTabs.animateTo(0);
-                            }
                             setState(() => _merchantGuideStep++);
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (!mounted) return;
+                              _syncMerchantGuideTab(_merchantGuideStep);
+                            });
                           },
                           child: Text(
                             isLast ? 'Ndamva!' : 'Next',
@@ -3268,21 +3951,103 @@ class _MarketplaceMerchantDashboardState
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take a photo'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickCover(ImageSource.camera);
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFFF8A00),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_camera_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Take a photo',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose from gallery'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickCover(ImageSource.gallery);
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF1E88E5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_library_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Choose from gallery',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -3316,21 +4081,103 @@ class _MarketplaceMerchantDashboardState
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take a photo'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickMorePhotosFromCamera();
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFFF8A00),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_camera_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Take a photo',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose from gallery'),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _pickMorePhotos();
               },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF1E88E5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_library_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Choose from gallery',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ],
         ),

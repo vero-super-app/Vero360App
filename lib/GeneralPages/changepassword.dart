@@ -106,9 +106,23 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
       backgroundColor: const Color(0xFFF6F7FB),
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF222222),
-        title: const Text('Change password'),
+        backgroundColor: _brand,
+        foregroundColor: Colors.white,
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.lock_reset_rounded, size: 22, color: Colors.white),
+            SizedBox(width: 8),
+            Text(
+              'Change password',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
         centerTitle: true,
       ),
       body: ListView(

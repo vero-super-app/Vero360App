@@ -194,11 +194,79 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     return '${first[0].toUpperCase()}${first.substring(1).toLowerCase()}';
   }
 
+<<<<<<< HEAD
   String _displayName() {
     if (widget.email.isNotEmpty) return _firstNameFromEmail(widget.email);
     if (_resolvedGreetingName != null && _resolvedGreetingName!.isNotEmpty) {
       final cleaned = _resolvedGreetingName!
           .replaceAll(RegExp(r'[^a-zA-Z]'), ' ').trim();
+=======
+  String? _resolvedGreetingName;
+  bool _greetingResolved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _animateIn = true);
+    });
+    _resolveGreetingName();
+
+    // Defer heavy latest-arrivals grid slightly so the first frame
+    // (brand bar, search, quick services) renders faster.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future.delayed(const Duration(milliseconds: 350));
+      if (!mounted) return;
+      setState(() => _showLatestArrivals = true);
+    });
+  }
+
+  Future<void> _resolveGreetingName() async {
+    if (widget.email.isNotEmpty) return;
+    // Prefer name from SharedPreferences (set at login) so "Hi, chawezi" not "Hi, Phone" for phone users.
+    String? name;
+    final prefs = await SharedPreferences.getInstance();
+    name = prefs.getString('fullName') ?? prefs.getString('name');
+    if (name != null && name.trim().isNotEmpty && !name.contains('@')) {
+      // Use prefs name (not an email)
+    } else {
+      name = await AuthStorage.userNameFromToken();
+      // If token only has email (e.g. 0992695612@phone.vero360.app), don't use "Phone" from the local part.
+      if (name != null && name.contains('@')) {
+        final local = name.split('@').first.trim();
+        if (RegExp(r'^\d+$').hasMatch(local))
+          name = null; // all digits => don't use as display name
+        else
+          name = local;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _resolvedGreetingName = name;
+      _greetingResolved = true;
+    });
+  }
+
+  @override
+  void didUpdateWidget(Vero360Homepage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.email != widget.email && widget.email.isEmpty) {
+      _resolveGreetingName();
+    }
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  String _displayName() {
+    if (widget.email.isNotEmpty) return _firstNameFromEmail(widget.email);
+    if (_resolvedGreetingName != null && _resolvedGreetingName!.isNotEmpty) {
+      final cleaned =
+          _resolvedGreetingName!.replaceAll(RegExp(r'[^a-zA-Z]'), ' ').trim();
+>>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
       final parts = cleaned.split(RegExp(r'\s+'));
       final first = parts.isNotEmpty ? parts.first : 'there';
       if (first.isEmpty) return 'there';
@@ -467,6 +535,58 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     }
   }
 
+<<<<<<< HEAD
+=======
+  /// Keep only real profile phone numbers and drop Firebase placeholders.
+  String? _merchantProfilePhoneOrNull(String? raw) {
+    final t = (raw ?? '').trim();
+    if (t.isEmpty) return null;
+    final lower = t.toLowerCase();
+    if (lower.startsWith('+firebase_') || lower.contains('firebase_')) {
+      return null;
+    }
+    if (lower.contains('@phone.vero360.app') || lower.contains('@')) {
+      return null;
+    }
+    return t;
+  }
+
+  Future<void> _openDigitalDetail(DigitalProduct p) async {
+    // Pull name, phone, email from user (SharedPreferences like checkout_page)
+    String? initialName;
+    String? initialPhone;
+    String initialEmail = widget.email;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      initialName = prefs.getString('name');
+      // Use only merchant-profile phone set from merchant dashboard/profile sources.
+      // Do not fall back to generic login/Firebase phone if missing.
+      initialPhone = _merchantProfilePhoneOrNull(
+          prefs.getString('merchant_profile_phone'));
+      if (initialEmail.trim().isEmpty) {
+        initialEmail = prefs.getString('email') ?? '';
+      }
+      final suggestedName = _displayName();
+      if ((initialName == null || initialName.isEmpty) &&
+          suggestedName != 'there' &&
+          suggestedName != '...') {
+        initialName = suggestedName;
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DigitalProductDetailPage(
+          product: p,
+          initialEmail: initialEmail,
+          initialPhone: initialPhone,
+          initialName: initialName,
+        ),
+      ),
+    );
+  }
+
+>>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
   void _openService(String key) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const RideShareMapScreen()),
@@ -584,6 +704,7 @@ class _HeroHeader extends StatelessWidget {
               ),
             ),
           ),
+<<<<<<< HEAD
           Positioned(
             bottom: 20, left: -40,
             child: Container(
@@ -591,6 +712,34 @@ class _HeroHeader extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Colors.white.withOpacity(0.07),
+=======
+        ),
+        const SizedBox(width: 10),
+        Text(
+          appName,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w900,
+            color: AppColors.title,
+          ),
+        ),
+        const Spacer(),
+        ListenableBuilder(
+          listenable: NotificationStore.instance,
+          builder: (_, __) {
+            final count = NotificationStore.instance.unreadCount;
+            final labelText = count > 99 ? '99+' : '$count';
+            return Badge(
+              isLabelVisible: count > 0,
+              backgroundColor: Colors.red,
+              textColor: Colors.white,
+              alignment: Alignment(1.15, -0.6),
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              label: Text(
+                labelText,
+                style:
+                    const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+>>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
               ),
             ),
           ),
@@ -1230,9 +1379,377 @@ class _NearbyCard extends StatelessWidget {
   }
 }
 
+<<<<<<< HEAD
 /* ═══════════════════════════════════════════════════
    DEALS STRIP
 ═══════════════════════════════════════════════════ */
+=======
+/// Search delegate for Quick Services
+class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
+  final List<Mini> services;
+  QuickServiceSearchDelegate({required this.services})
+      : super(searchFieldLabel: 'Search quick services');
+
+  @override
+  ThemeData appBarTheme(BuildContext context) {
+    final base = Theme.of(context);
+    return base.copyWith(
+      appBarTheme: base.appBarTheme.copyWith(
+        backgroundColor: AppColors.brandOrange,
+        foregroundColor: Colors.white,
+        iconTheme: const IconThemeData(color: Colors.white),
+        titleTextStyle: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+          fontSize: 18,
+        ),
+      ),
+      inputDecorationTheme: base.inputDecorationTheme.copyWith(
+        hintStyle:
+            const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
+        border: InputBorder.none,
+      ),
+      textTheme: base.textTheme
+          .apply(bodyColor: Colors.white, displayColor: Colors.white),
+    );
+  }
+
+  static final Map<String, String> _aliases = {
+    'taxi': 'taxi',
+    'vero ride': 'taxi',
+    'ride': 'taxi',
+    'cab': 'taxi',
+    'bike': 'vero_bike',
+    'bicycle': 'vero_bike',
+    'verobike': 'vero_bike',
+    'airport': 'airport_pickup',
+    'pickup': 'airport_pickup',
+    'courier': 'courier',
+    'parcel': 'courier',
+    'delivery': 'courier',
+    'car hire': 'car_hire',
+    'rent': 'car_hire',
+    'rental': 'car_hire',
+    'accommodation': 'accommodation',
+    'accomodation': 'accommodation',
+    'hotel': 'accommodation',
+    'hostel': 'accommodation',
+    'rooms': 'accommodation',
+    'fx': 'fx',
+    'forex': 'fx',
+    'exchange rate': 'fx',
+    'rates': 'fx',
+    'food': 'food',
+    'restaurant': 'food',
+    'order': 'food',
+    'jobs': 'jobs',
+    'work': 'jobs',
+    'vacancies': 'jobs',
+    'more': 'more'
+  };
+
+  Iterable<Mini> _filter(String q) {
+    final t = q.trim().toLowerCase();
+    if (t.isEmpty) return services;
+
+    final aliasKey = _aliases[t];
+    if (aliasKey != null) {
+      return services.where((m) => m.keyId == aliasKey);
+    }
+
+    final words = t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    return services.where((m) {
+      final l = m.label.toLowerCase();
+      return l.contains(t) || words.any(l.contains);
+    });
+  }
+
+  @override
+  Widget buildSuggestions(BuildContext context) {
+    if (query.trim().isEmpty) {
+      final popular = const [
+        'Taxi',
+        'Bike',
+        'Airport pickup',
+        'Food',
+        'Hotel',
+        'FX',
+        'Jobs',
+        'Courier'
+      ];
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final p in popular)
+              ActionChip(
+                label: Text(p),
+                onPressed: () {
+                  query = p.toLowerCase();
+                  showSuggestions(context);
+                },
+                backgroundColor: AppColors.brandOrangePale,
+                shape: StadiumBorder(
+                    side: BorderSide(color: AppColors.brandOrangeSoft)),
+              ),
+          ],
+        ),
+      );
+    }
+
+    final results = _filter(query).toList();
+    if (results.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'No matches. Try: taxi, bike, airport, hotel, forex, food, jobs...',
+            textAlign: TextAlign.center,
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: Colors.white),
+          ),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      itemCount: results.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 6),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      itemBuilder: (_, i) {
+        final m = results[i];
+        return Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: AppColors.brandOrangeSoft),
+          ),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: AppColors.brandOrangePale,
+              child: Icon(m.icon, color: AppColors.brandOrange),
+            ),
+            title: Text(m.label,
+                style: const TextStyle(fontWeight: FontWeight.w800)),
+            subtitle: Text(m.keyId),
+            trailing:
+                const Icon(Icons.chevron_right_rounded, color: AppColors.body),
+            onTap: () => close(context, m),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget buildResults(BuildContext context) => buildSuggestions(context);
+
+  @override
+  List<Widget>? buildActions(BuildContext context) => [
+        if (query.isNotEmpty)
+          IconButton(
+            icon: const Icon(Icons.clear),
+            onPressed: () {
+              query = '';
+              showSuggestions(context);
+            },
+          ),
+      ];
+
+  @override
+  Widget? buildLeading(BuildContext context) => IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () => close(context, null),
+      );
+}
+
+/// NEAR YOU
+class _NearYouCarousel extends StatefulWidget {
+  const _NearYouCarousel();
+  @override
+  State<_NearYouCarousel> createState() => _NearYouCarouselState();
+}
+
+class _NearYouCarouselState extends State<_NearYouCarousel> {
+  int _index = 0;
+
+  void _openNearby(BuildContext context, String name) {
+    final t = name.toLowerCase();
+    String serviceKey;
+    if (t.contains('ride')) {
+      serviceKey = 'taxi';
+    } else if (t.contains('food')) {
+      serviceKey = 'food';
+    } else if (t.contains('accom')) {
+      serviceKey = 'accommodation';
+    } else {
+      serviceKey = 'more';
+    }
+    _Vero360HomepageState._openServiceStatic(context, serviceKey);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = const [
+      ['🍔', 'Food & Restaurants', '4.6'],
+      ['🏨', 'Accomodations', '4.7'],
+      ['💼', 'Utility', '4.9'],
+    ];
+
+    return _Section(
+      title: 'Nearby Services',
+      tight: true,
+      gapAfterTitle: kGapAfterNearby,
+      action: TextButton(
+        onPressed: () =>
+            _Vero360HomepageState._openServiceStatic(context, 'more'),
+        child: const Text(
+          'See all',
+          style: TextStyle(
+            color: AppColors.brandOrange,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+      child: items.isEmpty
+          ? Container(
+              height: 120,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                color: Colors.white,
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: const Text(
+                'more nearby service coming soon',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.title,
+                ),
+              ),
+            )
+          : Column(
+              children: [
+                CarouselSlider.builder(
+                  itemCount: items.length,
+                  options: CarouselOptions(
+                    height: 120,
+                    viewportFraction: 0.82,
+                    enlargeCenterPage: true,
+                    enableInfiniteScroll: true,
+                    autoPlay: true,
+                    autoPlayInterval: const Duration(seconds: 4),
+                    autoPlayAnimationDuration:
+                        const Duration(milliseconds: 600),
+                    onPageChanged: (i, _) => setState(() => _index = i),
+                  ),
+                  itemBuilder: (_, i, __) {
+                    final it = items[i];
+                    return _ProviderCard(
+                      emoji: it[0],
+                      name: it[1],
+                      rating: it[2],
+                      onOpen: () => _openNearby(context, it[1]),
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                _Dots(count: items.length, index: _index),
+              ],
+            ),
+    );
+  }
+}
+
+class _ProviderCard extends StatelessWidget {
+  final String emoji, name, rating;
+  final VoidCallback onOpen;
+  const _ProviderCard({
+    required this.emoji,
+    required this.name,
+    required this.rating,
+    required this.onOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onOpen,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.brandOrangeSoft),
+        ),
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: AppColors.brandOrangePale,
+              child: Text(emoji, style: const TextStyle(fontSize: 18)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.star,
+                          size: 16, color: Color(0xFFFFC107)),
+                      const SizedBox(width: 4),
+                      Text(
+                        rating,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.body,
+                        ),
+                      )
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            OutlinedButton(
+              onPressed: onOpen,
+              style: OutlinedButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                side: const BorderSide(color: AppColors.brandOrange),
+              ),
+              child: const Text(
+                'Open',
+                style: TextStyle(
+                  color: AppColors.brandOrange,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// DEALS STRIP
+>>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
 class _DealsStrip extends StatelessWidget {
   const _DealsStrip();
 
@@ -1262,7 +1779,14 @@ class _DealsStrip extends StatelessWidget {
           child: Center(
             child: Text(
               '${deals[i][0]}  ${deals[i][1]}',
+<<<<<<< HEAD
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: AppColors.title),
+=======
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                color: AppColors.title,
+              ),
+>>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
             ),
           ),
         ),
@@ -2731,11 +3255,15 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
 
   static String _normalizePhone(String raw) {
     final digits = raw.replaceAll(RegExp(r'\D'), '');
-    if (digits.length >= 9 && (digits.startsWith('0') || digits.startsWith('265'))) {
-      final rest = digits.startsWith('265') ? digits.substring(3) : digits.substring(1);
+    if (digits.length >= 9 &&
+        (digits.startsWith('0') || digits.startsWith('265'))) {
+      final rest =
+          digits.startsWith('265') ? digits.substring(3) : digits.substring(1);
       return '+265$rest';
     }
-    return raw.trim().isEmpty ? '+265888000000' : (raw.startsWith('+') ? raw : '+$raw');
+    return raw.trim().isEmpty
+        ? '+265888000000'
+        : (raw.startsWith('+') ? raw : '+$raw');
   }
 
   Future<void> _payNow() async {
@@ -2778,9 +3306,17 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
       ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200 || response.statusCode == 201) {
+<<<<<<< HEAD
         final Map<String, dynamic> json2 = jsonDecode(response.body) as Map<String, dynamic>;
         if ((json2['status'] ?? '').toString().toLowerCase() == 'success') {
           final checkoutUrl = json2['data']['checkout_url'] as String;
+=======
+        final Map<String, dynamic> responseJson =
+            json.decode(response.body) as Map<String, dynamic>;
+        final status = (responseJson['status'] ?? '').toString().toLowerCase();
+        if (status == 'success') {
+          final checkoutUrl = responseJson['data']['checkout_url'] as String;
+>>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
           if (!mounted) return;
           await Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => InAppPaymentPage(
@@ -2792,7 +3328,11 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
             ),
           ));
         } else {
+<<<<<<< HEAD
           throw Exception(json2['message'] ?? 'Payment failed');
+=======
+          throw Exception(responseJson['message'] ?? 'Payment failed');
+>>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
         }
       } else {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');

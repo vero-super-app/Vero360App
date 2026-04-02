@@ -585,7 +585,8 @@ class _DriverStatusBootstrap extends ConsumerStatefulWidget {
       _DriverStatusBootstrapState();
 }
 
-class _DriverStatusBootstrapState extends ConsumerState<_DriverStatusBootstrap> {
+class _DriverStatusBootstrapState
+    extends ConsumerState<_DriverStatusBootstrap> {
   @override
   void initState() {
     super.initState();
@@ -700,19 +701,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (role == 'merchant') {
       _pushMerchant(email);
     } else if (role == 'driver') {
-      _pushDriver();
+      _pushDriver(email);
     } else if (role == 'customer') {
       _pushCustomer(email);
     }
-  }
-
-  void _pushDriver() {
-    if (!mounted) return;
-    _currentShell = 'driver';
-    navKey.currentState?.pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const DriverDashboard()),
-      (route) => false,
-    );
   }
 
   /// Fix emulator localhost:
@@ -783,11 +775,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
         final merchant = _isMerchant(user);
         final driver = _isDriver(user);
-        
+
         if (merchant && _currentShell != 'merchant') {
           _pushMerchant((user['email'] ?? '').toString());
         } else if (!merchant && driver && _currentShell != 'driver') {
-          _pushDriver();
+          _pushDriver((user['email'] ?? '').toString());
         } else if (!merchant && !driver && _currentShell != 'customer') {
           _pushCustomer((user['email'] ?? '').toString());
         }
@@ -821,15 +813,17 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       SharedPreferences prefs, String token, String correctRole) async {
     try {
       final body = json.encode({'role': correctRole});
-      final putResp = await http.put(
-        ApiConfig.endpoint('/users/me'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: body,
-      ).timeout(const Duration(seconds: 6));
+      final putResp = await http
+          .put(
+            ApiConfig.endpoint('/users/me'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+            },
+            body: body,
+          )
+          .timeout(const Duration(seconds: 6));
 
       if (putResp.statusCode >= 200 && putResp.statusCode < 300) {
         debugPrint('✅ Re-synced role to backend: $correctRole');
@@ -855,7 +849,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           if (merchant && _currentShell != 'merchant') {
             _pushMerchant((user['email'] ?? '').toString());
           } else if (!merchant && driver && _currentShell != 'driver') {
-            _pushDriver();
+            _pushDriver((user['email'] ?? '').toString());
           } else if (!merchant && !driver && _currentShell != 'customer') {
             _pushCustomer((user['email'] ?? '').toString());
           }
@@ -900,7 +894,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // Keep both 'role' and 'user_role' in sync so BottomNavbar and others stay correct after hot restart.
     bool isMerchant = _isMerchant(u);
     bool isDriver = !isMerchant && _isDriver(u);
-    
+
     if (isMerchant) {
       await prefs.setString('user_role', 'merchant');
       await prefs.setString('role', 'merchant');
@@ -943,6 +937,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
   }
 
+  void _pushDriver(String email) {
+    if (!mounted) return;
+    _currentShell = 'driver';
+    navKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
+      (route) => false,
+    );
+  }
+
   // ---------- App ----------
   @override
   Widget build(BuildContext context) {
@@ -952,26 +955,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     return ProviderScope(
       child: _DriverStatusBootstrap(
         child: MaterialApp(
-        navigatorKey: navKey,
-        debugShowCheckedModeBanner: false,
-        title: 'Vero360',
-        theme: ThemeData(
-          useMaterial3: true,
-          colorSchemeSeed: const Color(0xFFFF8A00),
-        ),
+          navigatorKey: navKey,
+          debugShowCheckedModeBanner: false,
+          title: 'Vero360',
+          theme: ThemeData(
+            useMaterial3: true,
+            colorSchemeSeed: const Color(0xFFFF8A00),
+          ),
 
-        // ✅ Wrap app shell with RideRequestOverlay; show biometric lock when enabled and returning to app
-        builder: (context, child) {
-          Widget content = RideRequestOverlay(
-            child: child ?? const SizedBox.shrink(),
-          );
-          if (_showBiometricLock) {
-            content = Stack(
-              children: [
-                content,
-                _BiometricLockOverlay(onUnlock: _onBiometricUnlockSuccess),
-              ],
+          // ✅ Wrap app shell with RideRequestOverlay; show biometric lock when enabled and returning to app
+          builder: (context, child) {
+            Widget content = RideRequestOverlay(
+              child: child ?? const SizedBox.shrink(),
             );
+<<<<<<< HEAD
           }
           return content;
         },
@@ -1005,29 +1002,65 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   featureName: 'Cart',
                   child: CartPage(cartService: cartSvc),
                 ),
+=======
+            if (_showBiometricLock) {
+              content = Stack(
+                children: [
+                  content,
+                  _BiometricLockOverlay(onUnlock: _onBiometricUnlockSuccess),
+                ],
+>>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
               );
+            }
+            return content;
+          },
 
-            case '/messages':
-              return MaterialPageRoute(
-                builder: (_) => const AuthGuard(
-                  featureName: 'Messages',
-                  child: ChatListPage(),
-                ),
-              );
+          // ✅ keep public home
+          home: const Bottomnavbar(email: ''),
 
-            case '/dashboard':
-              return MaterialPageRoute(
-                builder: (_) => const AuthGuard(
-                  featureName: 'Dashboard',
-                  child: ProfilePage(),
-                ),
-              );
+          // ✅ restrict named routes too
+          onGenerateRoute: (settings) {
+            switch (settings.name) {
+              case '/login':
+                return MaterialPageRoute(builder: (_) => const LoginScreen());
 
-            default:
-              return null;
-          }
-        },
-      ),
+              case '/signup':
+                return MaterialPageRoute(
+                    builder: (_) => const RegisterScreen());
+
+              case '/marketplace':
+                return MaterialPageRoute(
+                    builder: (_) => const Bottomnavbar(email: ''));
+
+              case '/cartpage':
+                return MaterialPageRoute(
+                  builder: (_) => AuthGuard(
+                    featureName: 'Cart',
+                    child: CartPage(cartService: cartSvc),
+                  ),
+                );
+
+              case '/messages':
+                return MaterialPageRoute(
+                  builder: (_) => const AuthGuard(
+                    featureName: 'Messages',
+                    child: ChatListPage(),
+                  ),
+                );
+
+              case '/dashboard':
+                return MaterialPageRoute(
+                  builder: (_) => const AuthGuard(
+                    featureName: 'Dashboard',
+                    child: ProfilePage(),
+                  ),
+                );
+
+              default:
+                return null;
+            }
+          },
+        ),
       ),
     );
   }
@@ -1147,7 +1180,8 @@ class AuthFlow {
       p.getString('authToken');
 
   // Extract common nav logic
-  static Future<void> _navigateByRole(String email, bool isMerchant, bool isDriver) async {
+  static Future<void> _navigateByRole(
+      String email, bool isMerchant, bool isDriver) async {
     if (isMerchant) {
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(
@@ -1159,7 +1193,7 @@ class AuthFlow {
       );
     } else if (isDriver) {
       navKey.currentState?.pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const DriverDashboard()),
+        MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
         (route) => false,
       );
     } else {
@@ -1263,5 +1297,4 @@ class AuthFlow {
     final fb = FirebaseAuth.instance.currentUser;
     return (t != null && t.trim().isNotEmpty) || fb != null;
   }
-
 }

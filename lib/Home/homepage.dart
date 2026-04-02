@@ -159,7 +159,6 @@ class Vero360Homepage extends ConsumerStatefulWidget {
 class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     with TickerProviderStateMixin {
 
-  final _search = TextEditingController();
   final GlobalKey _servicesCardKey = GlobalKey();
   final Map<String, GlobalKey> _serviceTileKeys = {
     for (final item in kQuickServices) item.keyId: GlobalKey()
@@ -256,7 +255,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
 
   @override
   void dispose() {
-    _search.dispose();
     _heroCtrl.dispose();
     super.dispose();
   }
@@ -622,10 +620,18 @@ class _HeroHeader extends StatelessWidget {
                           shape: BoxShape.circle,
                           color: Colors.white,
                         ),
-                        child: const CircleAvatar(
-                          radius: 18,
-                          backgroundColor: AppColors.brandOrangePale,
-                          child: Icon(Icons.eco, size: 18, color: AppColors.brandOrange),
+                        child: ClipOval(
+                          child: Image.asset(
+                            'assets/logo_mark.png',
+                            width: 34,
+                            height: 34,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const CircleAvatar(
+                              radius: 17,
+                              backgroundColor: AppColors.brandOrangePale,
+                              child: Icon(Icons.eco, size: 18, color: AppColors.brandOrange),
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -716,73 +722,34 @@ class _HeroHeader extends StatelessWidget {
                   const SizedBox(height: 18),
 
                   /* search row */
-                  Row(
-                    children: [
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: onSearchTap,
-                          child: Container(
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color:        Colors.white.withOpacity(0.96),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 14),
-                            child: const Row(
-                              children: [
-                                Icon(Icons.search_rounded, color: Color(0xFFBBBBBB), size: 20),
-                                SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'what are you looking for?',
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color:      Color(0xFF999999),
-                                      fontWeight: FontWeight.w600,
-                                      fontSize:   13,
-                                    ),
-                                  ),
-                                ),
-                              ],
+                  GestureDetector(
+                    onTap: onSearchTap,
+                    child: Container(
+                      height: 48,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color:        Colors.white.withOpacity(0.96),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.search_rounded, color: Color(0xFFBBBBBB), size: 20),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'what are you looking for?',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color:      Color(0xFF999999),
+                                fontWeight: FontWeight.w600,
+                                fontSize:   13,
+                              ),
                             ),
                           ),
-                        ),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      GestureDetector(
-                        onTap: onSearchTap,
-                        child: Container(
-                          height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 18),
-                          decoration: BoxDecoration(
-                            color:        Colors.white,
-                            borderRadius: BorderRadius.circular(14),
-                            boxShadow: [
-                              BoxShadow(
-                                color:      Colors.black.withOpacity(0.12),
-                                blurRadius: 8,
-                                offset:     const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.search_rounded, color: AppColors.brandOrange, size: 18),
-                              SizedBox(width: 6),
-                              Text(
-                                'Search',
-                                style: TextStyle(
-                                  color:      AppColors.brandOrange,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize:   13,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ],
               ),
@@ -808,6 +775,27 @@ class _CollapsedBar extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Row(
           children: [
+            Container(
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.95),
+              ),
+              child: ClipOval(
+                child: Image.asset(
+                  'assets/logo_mark.png',
+                  width: 22,
+                  height: 22,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(
+                    Icons.eco,
+                    size: 14,
+                    color: AppColors.brandOrange,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
             const Text(
               'Vero360',
               style: TextStyle(
@@ -1966,17 +1954,6 @@ class _ImgPlaceholder extends StatelessWidget {
 /* ═══════════════════════════════════════════════════
    COACH OVERLAY — SERVICE GUIDE
 ═══════════════════════════════════════════════════ */
-const Map<String, Color> _kServiceAccents = {
-  'taxi':          Color(0xFFFF6B35),
-  'airport_pickup':Color(0xFF4ECDC4),
-  'courier':       Color(0xFF45B7D1),
-  'vero_bike':     Color(0xFF66BB6A),
-  'fx':            Color(0xFFAB8BEB),
-  'food':          Color(0xFFFF7C8A),
-  'jobs':          Color(0xFF5B97C5),
-  'accommodation': Color(0xFFFFAD60),
-};
-
 class ServiceGuideStep {
   final String keyId;
   final String title;
@@ -2105,7 +2082,7 @@ class _QuickServicesCoachOverlayState extends State<QuickServicesCoachOverlay>
 
   @override
   Widget build(BuildContext context) {
-    final accent  = _kServiceAccents[_step.keyId] ?? AppColors.brandOrange;
+    final accent  = AppColors.brandOrange;
     final total   = widget.steps.length;
     final idx     = widget.currentIndex;
     final isLast  = idx == total - 1;
@@ -2134,7 +2111,7 @@ class _QuickServicesCoachOverlayState extends State<QuickServicesCoachOverlay>
                     color: accent.withOpacity(0.16), phase: 0.0),
                 _Orb(anim: _orbAnim, left: _targetRect!.center.dx + 40,
                     top: _targetRect!.top - 190, size: 90,
-                    color: Colors.white.withOpacity(0.07), phase: 0.55),
+                    color: accent.withOpacity(0.08), phase: 0.55),
               ],
 
               /* spotlight ring */
@@ -2361,11 +2338,11 @@ class _GuideCard extends StatelessWidget {
                               height: 46,
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
-                                color:        const Color(0xFFF5F5F5),
+                                color:        AppColors.brandOrange.withOpacity(0.10),
                                 borderRadius: BorderRadius.circular(13),
                               ),
                               child: const Text('Skip tour',
-                                style: TextStyle(color: AppColors.body,
+                                style: TextStyle(color: AppColors.brandOrange,
                                     fontWeight: FontWeight.w700, fontSize: 13),
                               ),
                             ),

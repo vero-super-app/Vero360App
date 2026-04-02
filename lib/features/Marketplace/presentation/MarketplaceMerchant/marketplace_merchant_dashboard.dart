@@ -2843,11 +2843,12 @@ class _MarketplaceMerchantDashboardState
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w900,
-                              color: _brandNavy,
+                              color: _brandOrange,
                             ),
                           ),
                           TextButton(
                             onPressed: () => _completeMerchantGuide(),
+                            style: TextButton.styleFrom(foregroundColor: _brandOrange),
                             child: const Text('Skip'),
                           ),
                         ],

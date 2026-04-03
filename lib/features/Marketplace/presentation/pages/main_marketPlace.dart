@@ -1017,16 +1017,30 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
     final deduped = <String>[];
     final seen = <String>{};
-    for (final src in sources) { if (seen.add(src)) deduped.add(src); }
+    for (final src in sources) {
+      if (seen.add(src)) deduped.add(src);
+    }
 
     if (deduped.length <= 1) {
-      return _imageFromAnySource(deduped.isEmpty ? '' : deduped.first, fit: BoxFit.cover, width: double.infinity, height: double.infinity);
+      return _imageFromAnySource(
+        deduped.isEmpty ? '' : deduped.first,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
     }
 
     return _AutoSlideImageCarousel(
       key: ValueKey('item-media-${item.id}-${deduped.length}'),
-      sources: deduped, interval: const Duration(seconds: 3), showIndicators: true,
-      itemBuilder: (src) => _imageFromAnySource(src, fit: BoxFit.cover, width: double.infinity, height: double.infinity),
+      sources: deduped,
+      interval: const Duration(seconds: 3),
+      showIndicators: true,
+      itemBuilder: (src) => _imageFromAnySource(
+        src,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      ),
     );
   }
 
@@ -1039,8 +1053,10 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     final isSold = !item.isActive;
     final catColor = _kCategoryColors[cat] ?? _kAmber;
     final catIcon = _kCategoryIcons[cat] ?? Icons.category_rounded;
+    final VoidCallback? onTapCard = isSold ? null : () => _openDetailsPage(item);
 
     return _AnimatedProductCard(
+      onTap: onTapCard,
       child: Container(
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
@@ -1573,10 +1589,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                               delegate: SliverChildBuilderDelegate(
                                 (context, i) {
                                   final item = items[i];
-                                  return GestureDetector(
-                                    onTap: (!item.isActive) ? null : () => _openDetailsPage(item),
-                                    child: _buildMarketItem(item),
-                                  );
+                                  return _buildMarketItem(item);
                                 },
                                 childCount: items.length,
                               ),
@@ -1903,7 +1916,12 @@ class _AiSummaryBanner extends StatelessWidget {
 // Beautiful animated product card entrance
 class _AnimatedProductCard extends StatefulWidget {
   final Widget child;
-  const _AnimatedProductCard({required this.child});
+  final VoidCallback? onTap;
+
+  const _AnimatedProductCard({
+    required this.child,
+    this.onTap,
+  });
   @override
   State<_AnimatedProductCard> createState() => _AnimatedProductCardState();
 }
@@ -1941,9 +1959,16 @@ class _AnimatedProductCardState extends State<_AnimatedProductCard> with SingleT
         child: ScaleTransition(
           scale: _scale,
           child: GestureDetector(
-            onTapDown: (_) => setState(() { _pressed = true; }),
-            onTapUp: (_) => setState(() { _pressed = false; }),
-            onTapCancel: () => setState(() { _pressed = false; }),
+            onTap: widget.onTap,
+            onTapDown: (_) => setState(() {
+              _pressed = true;
+            }),
+            onTapUp: (_) => setState(() {
+              _pressed = false;
+            }),
+            onTapCancel: () => setState(() {
+              _pressed = false;
+            }),
             child: AnimatedScale(
               scale: _pressed ? 0.97 : 1.0,
               duration: const Duration(milliseconds: 100),
@@ -2137,11 +2162,19 @@ class _PhotoPickerOption extends StatelessWidget {
 // AUTO SLIDE IMAGE CAROUSEL (unchanged logic)
 // ─────────────────────────────────────────────
 class _AutoSlideImageCarousel extends StatefulWidget {
-  const _AutoSlideImageCarousel({super.key, required this.sources, required this.itemBuilder, this.interval = const Duration(seconds: 3), this.showIndicators = false});
+  const _AutoSlideImageCarousel({
+    super.key,
+    required this.sources,
+    required this.itemBuilder,
+    this.interval = const Duration(seconds: 3),
+    this.showIndicators = false,
+    this.onTap,
+  });
   final List<String> sources;
   final Widget Function(String source) itemBuilder;
   final Duration interval;
   final bool showIndicators;
+  final VoidCallback? onTap;
 
   @override
   State<_AutoSlideImageCarousel> createState() => _AutoSlideImageCarouselState();
@@ -2176,7 +2209,11 @@ class _AutoSlideImageCarouselState extends State<_AutoSlideImageCarousel> {
         itemCount: widget.sources.length,
         physics: widget.sources.length > 1 ? const BouncingScrollPhysics() : const NeverScrollableScrollPhysics(),
         onPageChanged: (i) => setState(() => _index = i),
-        itemBuilder: (_, i) => widget.itemBuilder(widget.sources[i]),
+        itemBuilder: (_, i) => GestureDetector(
+          onTap: widget.onTap,
+          behavior: HitTestBehavior.translucent,
+          child: widget.itemBuilder(widget.sources[i]),
+        ),
       ),
       if (widget.showIndicators && widget.sources.length > 1)
         Positioned(left: 0, right: 0, bottom: 8, child: Row(

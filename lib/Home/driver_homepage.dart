@@ -25,7 +25,7 @@ import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_
 
 // Feature pages
 
-import 'package:vero360_app/Quickservices/ExchangeRate.dart';
+import 'package:vero360_app/utils/ExchangeRate.dart';
 
 import 'package:vero360_app/features/AirportPickup/AirportPresenter/airportpickup.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';

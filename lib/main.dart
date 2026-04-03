@@ -968,55 +968,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             Widget content = RideRequestOverlay(
               child: child ?? const SizedBox.shrink(),
             );
-<<<<<<< HEAD
-          }
-          return content;
-        },
-
-        // ✅ Onboarding is independent and runs before main shell
-        home: OnboardingGate(
-          onCompleted: () => _onOnboardingGateCompletedHook?.call(),
-          child: const Bottomnavbar(email: ''),
-        ),
-
-        // ✅ restrict named routes too
-        onGenerateRoute: (settings) {
-          switch (settings.name) {
-            case '/login':
-              return MaterialPageRoute(builder: (_) => const LoginScreen());
-
-            case '/signup':
-              return MaterialPageRoute(builder: (_) => const RegisterScreen());
-
-            case '/marketplace':
-              return MaterialPageRoute(
-                builder: (_) => OnboardingGate(
-                  onCompleted: () => _onOnboardingGateCompletedHook?.call(),
-                  child: const Bottomnavbar(email: ''),
-                ),
-              );
-
-            case '/cartpage':
-              return MaterialPageRoute(
-                builder: (_) => AuthGuard(
-                  featureName: 'Cart',
-                  child: CartPage(cartService: cartSvc),
-                ),
-=======
             if (_showBiometricLock) {
               content = Stack(
                 children: [
                   content,
                   _BiometricLockOverlay(onUnlock: _onBiometricUnlockSuccess),
                 ],
->>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
               );
             }
             return content;
           },
 
-          // ✅ keep public home
-          home: const Bottomnavbar(email: ''),
+          // ✅ Onboarding is independent and runs before main shell
+          home: OnboardingGate(
+            onCompleted: () => _onOnboardingGateCompletedHook?.call(),
+            child: const Bottomnavbar(email: ''),
+          ),
 
           // ✅ restrict named routes too
           onGenerateRoute: (settings) {
@@ -1026,11 +993,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
               case '/signup':
                 return MaterialPageRoute(
-                    builder: (_) => const RegisterScreen());
+                  builder: (_) => const RegisterScreen(),
+                );
 
               case '/marketplace':
                 return MaterialPageRoute(
-                    builder: (_) => const Bottomnavbar(email: ''));
+                  builder: (_) => OnboardingGate(
+                    onCompleted: () => _onOnboardingGateCompletedHook?.call(),
+                    child: const Bottomnavbar(email: ''),
+                  ),
+                );
 
               case '/cartpage':
                 return MaterialPageRoute(

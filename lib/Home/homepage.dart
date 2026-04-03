@@ -23,7 +23,7 @@ import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 
-import 'package:vero360_app/Quickservices/ExchangeRate.dart';
+import 'package:vero360_app/utils/ExchangeRate.dart';
 import 'package:vero360_app/features/AirportPickup/AirportPresenter/airportpickup.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
 import 'package:vero360_app/Quickservices/jobs.dart';
@@ -194,79 +194,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     return '${first[0].toUpperCase()}${first.substring(1).toLowerCase()}';
   }
 
-<<<<<<< HEAD
-  String _displayName() {
-    if (widget.email.isNotEmpty) return _firstNameFromEmail(widget.email);
-    if (_resolvedGreetingName != null && _resolvedGreetingName!.isNotEmpty) {
-      final cleaned = _resolvedGreetingName!
-          .replaceAll(RegExp(r'[^a-zA-Z]'), ' ').trim();
-=======
-  String? _resolvedGreetingName;
-  bool _greetingResolved = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _animateIn = true);
-    });
-    _resolveGreetingName();
-
-    // Defer heavy latest-arrivals grid slightly so the first frame
-    // (brand bar, search, quick services) renders faster.
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await Future.delayed(const Duration(milliseconds: 350));
-      if (!mounted) return;
-      setState(() => _showLatestArrivals = true);
-    });
-  }
-
-  Future<void> _resolveGreetingName() async {
-    if (widget.email.isNotEmpty) return;
-    // Prefer name from SharedPreferences (set at login) so "Hi, chawezi" not "Hi, Phone" for phone users.
-    String? name;
-    final prefs = await SharedPreferences.getInstance();
-    name = prefs.getString('fullName') ?? prefs.getString('name');
-    if (name != null && name.trim().isNotEmpty && !name.contains('@')) {
-      // Use prefs name (not an email)
-    } else {
-      name = await AuthStorage.userNameFromToken();
-      // If token only has email (e.g. 0992695612@phone.vero360.app), don't use "Phone" from the local part.
-      if (name != null && name.contains('@')) {
-        final local = name.split('@').first.trim();
-        if (RegExp(r'^\d+$').hasMatch(local))
-          name = null; // all digits => don't use as display name
-        else
-          name = local;
-      }
-    }
-    if (!mounted) return;
-    setState(() {
-      _resolvedGreetingName = name;
-      _greetingResolved = true;
-    });
-  }
-
-  @override
-  void didUpdateWidget(Vero360Homepage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.email != widget.email && widget.email.isEmpty) {
-      _resolveGreetingName();
-    }
-  }
-
-  @override
-  void dispose() {
-    _search.dispose();
-    super.dispose();
-  }
-
   String _displayName() {
     if (widget.email.isNotEmpty) return _firstNameFromEmail(widget.email);
     if (_resolvedGreetingName != null && _resolvedGreetingName!.isNotEmpty) {
       final cleaned =
           _resolvedGreetingName!.replaceAll(RegExp(r'[^a-zA-Z]'), ' ').trim();
->>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
       final parts = cleaned.split(RegExp(r'\s+'));
       final first = parts.isNotEmpty ? parts.first : 'there';
       if (first.isEmpty) return 'there';
@@ -388,7 +320,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
               slivers: [
                 /* ── Hero SliverAppBar ───────────────────── */
                 SliverAppBar(
-                  expandedHeight: 220,
+                  expandedHeight: 248,
                   floating:  false,
                   pinned:    true,
                   elevation: 0,
@@ -396,6 +328,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   automaticallyImplyLeading: false,
                   flexibleSpace: FlexibleSpaceBar(
                     collapseMode: CollapseMode.parallax,
+                    expandedTitleScale: 1.0,
                     background: _HeroHeader(
                       greeting:  _greeting(),
                       name:      _displayName(),
@@ -406,7 +339,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                       ),
                       onSearchTap: _onSearchTap,
                     ),
-                    title: _CollapsedBar(
+                    title: _HeroFlexibleTitle(
                       onSearchTap: _onSearchTap,
                       onNotifTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const NotificationsPage()),
@@ -535,58 +468,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     }
   }
 
-<<<<<<< HEAD
-=======
-  /// Keep only real profile phone numbers and drop Firebase placeholders.
-  String? _merchantProfilePhoneOrNull(String? raw) {
-    final t = (raw ?? '').trim();
-    if (t.isEmpty) return null;
-    final lower = t.toLowerCase();
-    if (lower.startsWith('+firebase_') || lower.contains('firebase_')) {
-      return null;
-    }
-    if (lower.contains('@phone.vero360.app') || lower.contains('@')) {
-      return null;
-    }
-    return t;
-  }
-
-  Future<void> _openDigitalDetail(DigitalProduct p) async {
-    // Pull name, phone, email from user (SharedPreferences like checkout_page)
-    String? initialName;
-    String? initialPhone;
-    String initialEmail = widget.email;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      initialName = prefs.getString('name');
-      // Use only merchant-profile phone set from merchant dashboard/profile sources.
-      // Do not fall back to generic login/Firebase phone if missing.
-      initialPhone = _merchantProfilePhoneOrNull(
-          prefs.getString('merchant_profile_phone'));
-      if (initialEmail.trim().isEmpty) {
-        initialEmail = prefs.getString('email') ?? '';
-      }
-      final suggestedName = _displayName();
-      if ((initialName == null || initialName.isEmpty) &&
-          suggestedName != 'there' &&
-          suggestedName != '...') {
-        initialName = suggestedName;
-      }
-    } catch (_) {}
-    if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DigitalProductDetailPage(
-          product: p,
-          initialEmail: initialEmail,
-          initialPhone: initialPhone,
-          initialName: initialName,
-        ),
-      ),
-    );
-  }
-
->>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
   void _openService(String key) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const RideShareMapScreen()),
@@ -704,7 +585,6 @@ class _HeroHeader extends StatelessWidget {
               ),
             ),
           ),
-<<<<<<< HEAD
           Positioned(
             bottom: 20, left: -40,
             child: Container(
@@ -712,34 +592,6 @@ class _HeroHeader extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Colors.white.withOpacity(0.07),
-=======
-        ),
-        const SizedBox(width: 10),
-        Text(
-          appName,
-          style: const TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w900,
-            color: AppColors.title,
-          ),
-        ),
-        const Spacer(),
-        ListenableBuilder(
-          listenable: NotificationStore.instance,
-          builder: (_, __) {
-            final count = NotificationStore.instance.unreadCount;
-            final labelText = count > 99 ? '99+' : '$count';
-            return Badge(
-              isLabelVisible: count > 0,
-              backgroundColor: Colors.red,
-              textColor: Colors.white,
-              alignment: Alignment(1.15, -0.6),
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-              label: Text(
-                labelText,
-                style:
-                    const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
->>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
               ),
             ),
           ),
@@ -868,31 +720,35 @@ class _HeroHeader extends StatelessWidget {
                     ),
                   ),
 
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 14),
 
-                  /* search row */
+                  /* search row — min height + padding so text scale / line height never clips */
                   GestureDetector(
                     onTap: onSearchTap,
                     child: Container(
-                      height: 48,
                       width: double.infinity,
+                      constraints: const BoxConstraints(minHeight: 52),
                       decoration: BoxDecoration(
                         color:        Colors.white.withOpacity(0.96),
                         borderRadius: BorderRadius.circular(14),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      child: const Row(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                      alignment: Alignment.centerLeft,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           Icon(Icons.search_rounded, color: Color(0xFFBBBBBB), size: 20),
-                          SizedBox(width: 8),
+                          const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               'what are you looking for?',
+                              maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 color:      Color(0xFF999999),
                                 fontWeight: FontWeight.w600,
                                 fontSize:   13,
+                                height:     1.2,
                               ),
                             ),
                           ),
@@ -905,6 +761,40 @@ class _HeroHeader extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// [FlexibleSpaceBar] draws `title` on top of `background` at the bottom of the expanded
+/// region — so the collapsed toolbar would sit on the hero search field. Fade it out while
+/// expanded and ignore hits so the hero UI stays visible and tappable.
+class _HeroFlexibleTitle extends StatelessWidget {
+  final VoidCallback onSearchTap;
+  final VoidCallback onNotifTap;
+
+  const _HeroFlexibleTitle({
+    required this.onSearchTap,
+    required this.onNotifTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final settings =
+        context.dependOnInheritedWidgetOfExactType<FlexibleSpaceBarSettings>();
+    if (settings == null) {
+      return _CollapsedBar(onSearchTap: onSearchTap, onNotifTap: onNotifTap);
+    }
+    final span = (settings.maxExtent - settings.minExtent).clamp(1e-6, double.infinity);
+    final expandT =
+        ((settings.currentExtent - settings.minExtent) / span).clamp(0.0, 1.0);
+    final collapsedVisible = 1.0 - expandT;
+
+    return IgnorePointer(
+      ignoring: collapsedVisible < 0.12,
+      child: Opacity(
+        opacity: collapsedVisible,
+        child: _CollapsedBar(onSearchTap: onSearchTap, onNotifTap: onNotifTap),
       ),
     );
   }
@@ -1379,11 +1269,6 @@ class _NearbyCard extends StatelessWidget {
   }
 }
 
-<<<<<<< HEAD
-/* ═══════════════════════════════════════════════════
-   DEALS STRIP
-═══════════════════════════════════════════════════ */
-=======
 /// Search delegate for Quick Services
 class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
   final List<Mini> services;
@@ -1567,6 +1452,58 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
       );
 }
 
+const double kGapAfterNearby = 6;
+
+class _Section extends StatelessWidget {
+  final String title;
+  final Widget child;
+  final Widget? action;
+  final bool tight;
+  final double gapAfterTitle;
+
+  const _Section({
+    required this.title,
+    required this.child,
+    this.action,
+    this.tight = false,
+    this.gapAfterTitle = 0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: tight ? 0 : 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: EdgeInsets.fromLTRB(16, tight ? 0 : 10, 16, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.title,
+                    ),
+                  ),
+                ),
+                if (action != null) action!,
+              ],
+            ),
+          ),
+          SizedBox(height: gapAfterTitle),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
 /// NEAR YOU
 class _NearYouCarousel extends StatefulWidget {
   const _NearYouCarousel();
@@ -1748,8 +1685,9 @@ class _ProviderCard extends StatelessWidget {
   }
 }
 
-/// DEALS STRIP
->>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
+/* ═══════════════════════════════════════════════════
+   DEALS STRIP
+═══════════════════════════════════════════════════ */
 class _DealsStrip extends StatelessWidget {
   const _DealsStrip();
 
@@ -1779,14 +1717,11 @@ class _DealsStrip extends StatelessWidget {
           child: Center(
             child: Text(
               '${deals[i][0]}  ${deals[i][1]}',
-<<<<<<< HEAD
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: AppColors.title),
-=======
               style: const TextStyle(
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
                 color: AppColors.title,
               ),
->>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
             ),
           ),
         ),
@@ -3010,133 +2945,6 @@ class _Orb extends StatelessWidget {
 }
 
 /* ═══════════════════════════════════════════════════
-   SEARCH DELEGATE
-═══════════════════════════════════════════════════ */
-class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
-  final List<Mini> services;
-  QuickServiceSearchDelegate({required this.services})
-      : super(searchFieldLabel: 'Search quick services');
-
-  @override
-  ThemeData appBarTheme(BuildContext context) {
-    final base = Theme.of(context);
-    return base.copyWith(
-      appBarTheme: base.appBarTheme.copyWith(
-        backgroundColor: AppColors.brandOrange,
-        foregroundColor: Colors.white,
-        iconTheme:       const IconThemeData(color: Colors.white),
-        titleTextStyle:  const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18),
-      ),
-      inputDecorationTheme: base.inputDecorationTheme.copyWith(
-        hintStyle: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
-        border:    InputBorder.none,
-      ),
-      textTheme: base.textTheme.apply(bodyColor: Colors.white, displayColor: Colors.white),
-    );
-  }
-
-  static const Map<String, String> _aliases = {
-    'taxi': 'taxi',       'vero ride': 'taxi',   'ride': 'taxi',    'cab': 'taxi',
-    'bike': 'vero_bike',  'bicycle': 'vero_bike', 'verobike': 'vero_bike',
-    'airport': 'airport_pickup', 'pickup': 'airport_pickup',
-    'courier': 'courier', 'parcel': 'courier',   'delivery': 'courier',
-    'accommodation': 'accommodation', 'accomodation': 'accommodation',
-    'hotel': 'accommodation', 'hostel': 'accommodation', 'rooms': 'accommodation',
-    'fx': 'fx',           'forex': 'fx',          'exchange rate': 'fx', 'rates': 'fx',
-    'food': 'food',       'restaurant': 'food',   'order': 'food',
-    'jobs': 'jobs',       'work': 'jobs',         'vacancies': 'jobs',
-  };
-
-  Iterable<Mini> _filter(String q) {
-    final t        = q.trim().toLowerCase();
-    if (t.isEmpty) return services;
-    final aliasKey = _aliases[t];
-    if (aliasKey != null) return services.where((m) => m.keyId == aliasKey);
-    final words = t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-    return services.where((m) {
-      final l = m.label.toLowerCase();
-      return l.contains(t) || words.any(l.contains);
-    });
-  }
-
-  @override
-  Widget buildSuggestions(BuildContext context) {
-    if (query.trim().isEmpty) {
-      final popular = ['Taxi', 'Bike', 'Airport pickup', 'Food', 'Hotel', 'FX', 'Jobs', 'Courier'];
-      return Padding(
-        padding: const EdgeInsets.all(16),
-        child: Wrap(
-          spacing: 8, runSpacing: 8,
-          children: [
-            for (final p in popular)
-              ActionChip(
-                label:           Text(p),
-                onPressed:       () { query = p.toLowerCase(); showSuggestions(context); },
-                backgroundColor: AppColors.brandOrangePale,
-                shape: StadiumBorder(side: const BorderSide(color: AppColors.brandOrangeSoft)),
-              ),
-          ],
-        ),
-      );
-    }
-    final results = _filter(query).toList();
-    if (results.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            'No matches. Try: taxi, bike, airport, hotel, forex, food, jobs...',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white),
-          ),
-        ),
-      );
-    }
-    return ListView.separated(
-      itemCount:       results.length,
-      separatorBuilder:(_, __) => const SizedBox(height: 6),
-      padding:         const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      itemBuilder: (_, i) {
-        final m = results[i];
-        return Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: const BorderSide(color: AppColors.brandOrangeSoft),
-          ),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: AppColors.brandOrangePale,
-              child: Icon(m.icon, color: AppColors.brandOrange),
-            ),
-            title:    Text(m.label, style: const TextStyle(fontWeight: FontWeight.w800)),
-            subtitle: Text(m.keyId),
-            trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.body),
-            onTap:    () => close(context, m),
-          ),
-        );
-      },
-    );
-  }
-
-  @override
-  Widget buildResults(BuildContext context) => buildSuggestions(context);
-
-  @override
-  List<Widget>? buildActions(BuildContext context) => [
-    if (query.isNotEmpty)
-      IconButton(
-        icon:      const Icon(Icons.clear),
-        onPressed: () { query = ''; showSuggestions(context); },
-      ),
-  ];
-
-  @override
-  Widget? buildLeading(BuildContext context) =>
-      IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => close(context, null));
-}
-
-/* ═══════════════════════════════════════════════════
    SHARED WIDGETS
 ═══════════════════════════════════════════════════ */
 class _Dots extends StatelessWidget {
@@ -3306,17 +3114,11 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
       ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-<<<<<<< HEAD
-        final Map<String, dynamic> json2 = jsonDecode(response.body) as Map<String, dynamic>;
-        if ((json2['status'] ?? '').toString().toLowerCase() == 'success') {
-          final checkoutUrl = json2['data']['checkout_url'] as String;
-=======
         final Map<String, dynamic> responseJson =
-            json.decode(response.body) as Map<String, dynamic>;
+            jsonDecode(response.body) as Map<String, dynamic>;
         final status = (responseJson['status'] ?? '').toString().toLowerCase();
         if (status == 'success') {
           final checkoutUrl = responseJson['data']['checkout_url'] as String;
->>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
           if (!mounted) return;
           await Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => InAppPaymentPage(
@@ -3328,11 +3130,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
             ),
           ));
         } else {
-<<<<<<< HEAD
-          throw Exception(json2['message'] ?? 'Payment failed');
-=======
           throw Exception(responseJson['message'] ?? 'Payment failed');
->>>>>>> c3039d1f1c03f21ef70abd1f02f2d8f3c994c351
         }
       } else {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');

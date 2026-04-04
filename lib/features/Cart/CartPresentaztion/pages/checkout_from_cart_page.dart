@@ -817,6 +817,13 @@ class InAppPaymentPage extends StatefulWidget {
   /// Use for airport pickup and other flows where caller handles post-payment UI.
   final bool popOnlyOnSuccess;
 
+  /// When set, runs after a successful payment (webview popped). Skips the default
+  /// navigation to [OrdersPage]. Use for accommodation: return guest to stays list.
+  final void Function(BuildContext rootContext)? onSuccessNavigate;
+
+  /// Optional Firestore escrow hold for the accommodation host (wallet / payouts).
+  final AccommodationEscrowParams? accommodationEscrow;
+
   const InAppPaymentPage({
     super.key,
     required this.checkoutUrl,
@@ -829,6 +836,8 @@ class InAppPaymentPage extends StatefulWidget {
     this.shippingAddress,
     this.deliveryType = DeliveryType.cts,
     this.popOnlyOnSuccess = false,
+    this.onSuccessNavigate,
+    this.accommodationEscrow,
   });
 
   @override
@@ -1053,6 +1062,14 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     if (items != null && items.isNotEmpty) {
       unawaited(_createConfirmedOrdersAndEscrow(items));
     }
+    final esc = widget.accommodationEscrow;
+    if (esc != null) {
+      unawaited(OrderEscrowService.createHoldForAccommodationBooking(
+        txRef: widget.txRef,
+        grossAmountMwk: widget.totalAmount,
+        params: esc,
+      ));
+    }
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
     final productName = widget.digitalProductName ?? 'your order';
 
@@ -1086,6 +1103,15 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
             ],
           ),
         );
+      }
+    } else if (widget.onSuccessNavigate != null) {
+      if (mounted) {
+        Navigator.of(context).pop(); // close webview
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (widget.rootContext.mounted) {
+            widget.onSuccessNavigate!(widget.rootContext);
+          }
+        });
       }
     } else if (widget.popOnlyOnSuccess) {
       if (mounted) Navigator.of(context).pop();

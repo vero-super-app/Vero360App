@@ -16,12 +16,12 @@ import '../../Home/homepage.dart';
 import '../Marketplace/presentation/pages/main_marketPlace.dart';
 import '../Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
+import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
 
 // Merchant dashboards
-import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
@@ -244,13 +244,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
         featureName: _isMerchant ? 'Dashboard' : 'Profile',
         showChildBehindDialog: true,
         child: _isMerchant
-            ? MarketplaceMerchantDashboard(
-                email: widget.email,
-                onBackToHomeTab: () {
-                  setState(() => _selectedIndex = 0);
-                },
-                embeddedInMainNav: true,
-              )
+            ? _merchantProfileTab(prefs)
             : const ProfilePage(),
       ),
     ];
@@ -262,11 +256,36 @@ class _BottomnavbarState extends State<Bottomnavbar>
     }
   }
 
+  /// Merchant dashboard embedded in the main bottom nav (correct service from prefs).
+  Widget _merchantProfileTab(SharedPreferences prefs) {
+    final email = prefs.getString('email') ?? widget.email;
+    final key =
+        normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
+            'marketplace';
+    return switch (key) {
+      'food' => FoodMerchantDashboard(email: email),
+      'accommodation' => AccommodationMerchantDashboard(email: email),
+      'courier' => CourierMerchantDashboard(email: email),
+      'marketplace' => MarketplaceMerchantDashboard(
+          email: email,
+          onBackToHomeTab: () => setState(() => _selectedIndex = 0),
+          embeddedInMainNav: true,
+        ),
+      _ => MarketplaceMerchantDashboard(
+          email: email,
+          onBackToHomeTab: () => setState(() => _selectedIndex = 0),
+          embeddedInMainNav: true,
+        ),
+    };
+  }
+
   void _redirectMerchant(SharedPreferences prefs) {
-    final service = (prefs.getString('merchant_service') ?? '').toLowerCase();
+    final key =
+        normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
+            'marketplace';
     final email = prefs.getString('email') ?? widget.email;
 
-    Widget page = switch (service) {
+    Widget page = switch (key) {
       'food' => FoodMerchantDashboard(email: email),
       'accommodation' => AccommodationMerchantDashboard(email: email),
       'courier' => CourierMerchantDashboard(email: email),

@@ -36,6 +36,10 @@ import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
+import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_request_overlay.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
@@ -59,6 +63,23 @@ import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 
 final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
+
+/// Root merchant shell: must match [Bottomnavbar] / auth screens (prefs `merchant_service`).
+Widget merchantDashboardFromPrefs(String email, SharedPreferences prefs) {
+  final displayEmail =
+      email.trim().isNotEmpty ? email : (prefs.getString('email') ?? '');
+  final key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
+      'marketplace';
+  return switch (key) {
+    'food' => FoodMerchantDashboard(email: displayEmail),
+    'accommodation' => AccommodationMerchantDashboard(email: displayEmail),
+    'courier' => CourierMerchantDashboard(email: displayEmail),
+    _ => MarketplaceMerchantDashboard(
+        email: displayEmail,
+        onBackToHomeTab: () {},
+      ),
+  };
+}
 
 /// Set in [MyApp] initState; used by [OnboardingGate] to re-run role-based shell redirect.
 void Function()? _onOnboardingGateCompletedHook;
@@ -699,7 +720,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final email = prefs.getString('email') ?? '';
 
     if (role == 'merchant') {
-      _pushMerchant(email);
+      await _pushMerchant(email);
     } else if (role == 'driver') {
       _pushDriver(email);
     } else if (role == 'customer') {
@@ -777,7 +798,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         final driver = _isDriver(user);
 
         if (merchant && _currentShell != 'merchant') {
-          _pushMerchant((user['email'] ?? '').toString());
+          await _pushMerchant((user['email'] ?? '').toString());
         } else if (!merchant && driver && _currentShell != 'driver') {
           _pushDriver((user['email'] ?? '').toString());
         } else if (!merchant && !driver && _currentShell != 'customer') {
@@ -847,7 +868,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           final merchant = _isMerchant(user);
           final driver = _isDriver(user);
           if (merchant && _currentShell != 'merchant') {
-            _pushMerchant((user['email'] ?? '').toString());
+            await _pushMerchant((user['email'] ?? '').toString());
           } else if (!merchant && driver && _currentShell != 'driver') {
             _pushDriver((user['email'] ?? '').toString());
           } else if (!merchant && !driver && _currentShell != 'customer') {
@@ -898,6 +919,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (isMerchant) {
       await prefs.setString('user_role', 'merchant');
       await prefs.setString('role', 'merchant');
+      await persistMerchantServiceFromApi(
+        prefs,
+        u['merchantService']?.toString() ??
+            u['serviceType']?.toString() ??
+            u['merchant_service']?.toString(),
+      );
     } else if (isDriver) {
       await prefs.setString('user_role', 'driver');
       await prefs.setString('role', 'driver');
@@ -915,15 +942,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     await prefs.remove('role');
   }
 
-  void _pushMerchant(String email) {
+  Future<void> _pushMerchant(String email) async {
+    if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    await hydrateMerchantServiceFromFirestore(prefs);
     if (!mounted) return;
     _currentShell = 'merchant';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(
-          builder: (_) => MarketplaceMerchantDashboard(
-                email: email,
-                onBackToHomeTab: () {},
-              )),
+        builder: (_) => merchantDashboardFromPrefs(email, prefs),
+      ),
       (route) => false,
     );
   }
@@ -1154,13 +1182,12 @@ class AuthFlow {
   // Extract common nav logic
   static Future<void> _navigateByRole(
       String email, bool isMerchant, bool isDriver) async {
+    final prefs = await SharedPreferences.getInstance();
     if (isMerchant) {
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(
-            builder: (_) => MarketplaceMerchantDashboard(
-                  email: email,
-                  onBackToHomeTab: () {},
-                )),
+          builder: (_) => merchantDashboardFromPrefs(email, prefs),
+        ),
         (route) => false,
       );
     } else if (isDriver) {
@@ -1217,6 +1244,12 @@ class AuthFlow {
         if (isMerchant) {
           await prefs.setString('user_role', 'merchant');
           await prefs.setString('role', 'merchant');
+          await persistMerchantServiceFromApi(
+            prefs,
+            user['merchantService']?.toString() ??
+                user['serviceType']?.toString() ??
+                user['merchant_service']?.toString(),
+          );
         } else if (isDriver) {
           await prefs.setString('user_role', 'driver');
           await prefs.setString('role', 'driver');

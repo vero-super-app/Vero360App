@@ -13,6 +13,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/Home/myorders.dart';
@@ -528,6 +529,13 @@ class NotificationService {
         ));
         break;
 
+      case 'accommodation_booking':
+        if (kDebugMode) debugPrint("→ Open notifications (stay booking)");
+        navigator.push(MaterialPageRoute(
+          builder: (_) => const NotificationsPage(),
+        ));
+        break;
+
       default:
         navigator.push(MaterialPageRoute(
           builder: (_) => const NotificationsPage(),
@@ -569,10 +577,12 @@ class NotificationService {
   }
 
   /// Sends a one-time welcome notification for a newly created account.
+  /// [merchantService] refines copy for merchants (e.g. `accommodation`).
   Future<void> sendWelcomeNotificationIfFirstTime({
     required String uid,
     required String name,
     String? role,
+    String? merchantService,
   }) async {
     final cleanUid = uid.trim();
     if (cleanUid.isEmpty) return;
@@ -583,23 +593,34 @@ class NotificationService {
 
     final safeName = name.trim().isEmpty ? 'there' : name.trim();
     final normalizedRole = (role ?? '').trim().toLowerCase();
-    final title = switch (normalizedRole) {
-      'merchant' => 'Welcome to Vero360 Merchant Account, $safeName!',
-      'driver' => 'Welcome to Vero360 Driver Account, $safeName!',
-      _ => 'Welcome to Vero360, $safeName!',
-    };
-    final body = switch (normalizedRole) {
-      'merchant' =>
-        'Start listing your products and services, manage orders, and grow your business in one app.',
-      'driver' =>
-        'Start accepting rides, manage trips, and track your earnings with the all-in-one Vero360 app.',
-      _ =>
-        'Vero360 is your all-in-one app for rides, marketplace, food, transport, accommodation, and more.',
-    };
+    final normalizedService = (merchantService ?? '').trim().toLowerCase();
+
+    late final String title;
+    late final String body;
+    if (normalizedRole == 'merchant' && normalizedService == 'accommodation') {
+      title = 'Welcome to Vero accommodation, $safeName!';
+      body =
+          'Your merchant account is ready. List your property, manage guest bookings, '
+          'handle payments, and grow your stay business — all from this app.';
+    } else if (normalizedRole == 'merchant') {
+      title = 'Welcome to Vero360 Merchant Account, $safeName!';
+      body =
+          'Start listing your products and services, manage orders, and grow your business in one app.';
+    } else if (normalizedRole == 'driver') {
+      title = 'Welcome to Vero360 Driver Account, $safeName!';
+      body =
+          'Start accepting rides, manage trips, and track your earnings with the all-in-one Vero360 app.';
+    } else {
+      title = 'Welcome to Vero360, $safeName!';
+      body =
+          'Vero360 is your all-in-one app for rides, marketplace, food, transport, accommodation, and more.';
+    }
+
     final payloadMap = <String, dynamic>{
       'type': 'welcome',
       'uid': cleanUid,
       'role': normalizedRole,
+      if (normalizedService.isNotEmpty) 'merchantService': normalizedService,
     };
 
     await showManualNotification(
@@ -609,5 +630,62 @@ class NotificationService {
     );
 
     await prefs.setBool(key, true);
+  }
+
+  /// After PayChangu success: notify the guest on this device and queue a Firestore
+  /// alert for the host (same [OrderPartyNotificationService] pipe as marketplace escrow).
+  Future<void> notifyAccommodationBookingForGuestAndHost({
+    required String propertyName,
+    required String bookingRef,
+    String? hostMerchantUid,
+    String? guestDisplayLine,
+    String? guestEmail,
+    String? checkInLabel,
+    int? nights,
+  }) async {
+    final prop =
+        propertyName.trim().isEmpty ? 'your stay' : propertyName.trim();
+    final ref = bookingRef.trim();
+    if (ref.isEmpty) return;
+    final displayRef = formatVeroAccommodationBookingRef(ref);
+
+    final cin = (checkInLabel ?? '').trim();
+    final n = nights ?? 0;
+    final stayBits = <String>[
+      if (cin.isNotEmpty) 'Check-in $cin',
+      if (n > 0) '$n night${n == 1 ? '' : 's'}',
+    ];
+    final staySeg = stayBits.isEmpty ? '' : ' ${stayBits.join(' · ')}.';
+
+    await showManualNotification(
+      title: 'Stay booked',
+      body: displayRef.isEmpty
+          ? 'Your booking at $prop is confirmed.$staySeg'
+          : 'Your booking at $prop is confirmed.$staySeg Ref $displayRef.',
+      payload: jsonEncode({
+        'type': 'accommodation_booking',
+        'bookingRef': displayRef.isEmpty ? ref : displayRef,
+        'role': 'guest',
+      }),
+    );
+
+    final host = hostMerchantUid?.trim() ?? '';
+    if (host.isNotEmpty) {
+      await OrderPartyNotificationService.publishAccommodationBookingToHost(
+        hostUid: host,
+        propertyName: prop,
+        bookingRef: displayRef.isEmpty ? ref : displayRef,
+        guestLine: guestDisplayLine,
+        guestEmail: guestEmail,
+        checkInLabel: checkInLabel,
+        nights: nights,
+        fromUid: FirebaseAuth.instance.currentUser?.uid,
+      );
+    } else if (kDebugMode) {
+      debugPrint(
+        '[NotificationService] No hostMerchantUid on listing — host will not get '
+        'Firestore booking alert. Expose host Firebase UID on GET /vero/accommodations.',
+      );
+    }
   }
 }

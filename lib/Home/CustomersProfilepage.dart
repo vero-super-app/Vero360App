@@ -1164,9 +1164,7 @@ class _ProfilePageState extends State<ProfilePage> {
           _orderAction('VeroRide', Icons.local_taxi_rounded, () {
             //_openBottomSheet(const MyBookingsPage());
           }),
-           _orderAction('My Stay', Icons.house, () {
-            //_openBottomSheet(const MyBookingsPage());
-          }),
+     
            _orderAction('My Food', Icons.restaurant, () {
             //_openBottomSheet(const MyBookingsPage());
           }),

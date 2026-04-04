@@ -10,8 +10,24 @@ import 'package:vero360_app/GernalServices/order_party_notification_service.dart
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 
-/// Firestore: `order_escrow/{orderId}` — holds marketplace funds until buyer confirms
-/// receipt or [escrowAutoReleaseDays] pass after delivery.
+/// Params for [OrderEscrowService.createHoldForAccommodationBooking] — ties PayChangu
+/// success to host escrow shown on [MerchantWalletPage].
+class AccommodationEscrowParams {
+  final String hostMerchantUid;
+  final String hostDisplayName;
+  final String bookingRef;
+  final String propertyName;
+
+  const AccommodationEscrowParams({
+    required this.hostMerchantUid,
+    required this.hostDisplayName,
+    required this.bookingRef,
+    required this.propertyName,
+  });
+}
+
+/// Firestore: `order_escrow/{orderId}` — holds marketplace (and accommodation) funds
+/// until release rules apply.
 ///
 /// **Security:** Release is enforced in app logic; production should use Cloud Functions
 /// + Firestore rules so funds cannot be released twice or by the wrong user.
@@ -73,6 +89,61 @@ class OrderEscrowService {
     }
 
     await batch.commit();
+  }
+
+  /// Escrow row for a paid accommodation booking (guest checkout via PayChangu).
+  /// Document id is derived from [params.bookingRef] so retries don’t duplicate.
+  static Future<void> createHoldForAccommodationBooking({
+    required String txRef,
+    required double grossAmountMwk,
+    required AccommodationEscrowParams params,
+  }) async {
+    final hostUid = params.hostMerchantUid.trim();
+    if (hostUid.isEmpty) return;
+
+    final buyerUid = FirebaseAuth.instance.currentUser?.uid;
+    if (buyerUid == null || buyerUid.isEmpty) {
+      debugPrint(
+          '[OrderEscrowService] Skip accommodation hold: buyer not signed in');
+      return;
+    }
+
+    final gross = grossAmountMwk;
+    if (gross <= 0) return;
+
+    const feeRate = FirebaseWalletService.serviceFeeRate;
+    final merchantAmount = gross * (1.0 - feeRate);
+    final feeAmount = gross * feeRate;
+
+    final safeId = params.bookingRef
+        .trim()
+        .replaceAll(RegExp(r'[/\s.#$[\]]'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
+    if (safeId.isEmpty) return;
+
+    final docId = 'acc_$safeId';
+
+    await _doc(docId).set(
+      {
+        'buyerUid': buyerUid,
+        'merchantUid': hostUid,
+        'merchantName': params.hostDisplayName.trim().isEmpty
+            ? 'Host'
+            : params.hostDisplayName.trim(),
+        'merchantAmount': merchantAmount,
+        'serviceFeeAmount': feeAmount,
+        'txRef': txRef,
+        'orderNumber': params.bookingRef,
+        'itemName': params.propertyName,
+        'status': 'held',
+        'serviceType': 'accommodation',
+        'deliveredAt': null,
+        'releaseDueAt': null,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
   }
 
   /// Call when the merchant marks the order as delivered (starts the 5-day window).

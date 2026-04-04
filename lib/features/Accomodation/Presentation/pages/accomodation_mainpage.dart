@@ -1,25 +1,46 @@
-import 'dart:convert';
+import 'dart:async';
+import 'dart:math' show min;
 
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accommodation_booking_page.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accommodation_my_bookings_tab.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_listing_image.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
 class AccommodationMainPage extends StatefulWidget {
-  const AccommodationMainPage({super.key});
+  /// After paying, open stays with this listing scrolled into view (if it appears in results).
+  final int? focusAccommodationId;
+
+  /// `0` = Discover, `1` = My bookings (e.g. after successful payment).
+  final int initialTabIndex;
+
+  const AccommodationMainPage({
+    super.key,
+    this.focusAccommodationId,
+    this.initialTabIndex = 0,
+  }) : assert(initialTabIndex >= 0 && initialTabIndex < 2);
 
   @override
   State<AccommodationMainPage> createState() => _AccommodationMainPageState();
 }
 
-class _AccommodationMainPageState extends State<AccommodationMainPage> {
+class _AccommodationMainPageState extends State<AccommodationMainPage>
+    with SingleTickerProviderStateMixin {
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
   static const Color _pageBg = Color(0xFFF4F6FA);
   static const Color _surfaceBorder = Color(0xFFE2E6EF);
 
   final AccommodationService _service = AccommodationService();
+  late final TabController _tabController;
 
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _locationController = TextEditingController();
@@ -27,13 +48,16 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
   /// Debounce: only fetch after user stops typing (avoids API call on every keystroke).
   int _locationDebounceStamp = 0;
 
+  /// Values must match backend `accommodationType` (singular), e.g. `apartment` not `apartments`.
   final List<String> _types = const [
     'all',
     'hostel',
+     'bnb',
     'hotel',
     'lodge',
-    'apartments',
-    'bnb',
+    'house',
+    'apartment',
+   
   ];
 
   String _selectedType = 'all';
@@ -53,6 +77,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
     'Dowa',
     'Kasungu',
     'Lilongwe City',
+    'Lilongwe',
     'Lilongwe Rural',
     'Mchinji',
     'Ntcheu',
@@ -74,16 +99,225 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
 
   Future<List<Accommodation>>? _future;
 
+  final GlobalKey _focusCardKey = GlobalKey();
+  bool _didScrollToFocus = false;
+
+  /// Discover list: drives “Book now” vs “Sign in to book” on cards.
+  bool _authReady = false;
+  bool _isLoggedIn = false;
+
+  /// Paid stays for the signed-in guest — used to disable “Book now” on check-in days.
+  List<BookingItem> _guestPaidStays = [];
+  final MyBookingService _myBookingService = MyBookingService();
+
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(
+      length: 2,
+      vsync: this,
+      initialIndex: widget.initialTabIndex.clamp(0, 1),
+    );
+    _tabController.addListener(_onAccommodationTabChanged);
     _loadFromService();
+    _refreshSession();
     _searchController.addListener(_onSearchChanged);
     _locationController.addListener(_onLocationChanged);
   }
 
+  Future<void> _refreshSession() async {
+    final ok = await AuthHandler.isAuthenticated();
+    if (!mounted) return;
+    setState(() {
+      _isLoggedIn = ok;
+      _authReady = true;
+    });
+    if (ok) {
+      await _loadGuestPaidStays();
+    } else if (mounted) {
+      setState(() => _guestPaidStays = []);
+    }
+  }
+
+  void _onAccommodationTabChanged() {
+    if (!mounted || _tabController.index != 0) return;
+    unawaited(_loadGuestPaidStays());
+  }
+
+  Future<void> _loadGuestPaidStays() async {
+    if (!await AuthHandler.isAuthenticated()) {
+      if (mounted) setState(() => _guestPaidStays = []);
+      return;
+    }
+    try {
+      final list = await _myBookingService.getGuestStaysForDiscoverOverlay();
+      if (mounted) setState(() => _guestPaidStays = list);
+    } catch (_) {
+      if (mounted) setState(() => _guestPaidStays = []);
+    }
+  }
+
+  bool _isBookedTodayForListing(int accommodationId) {
+    if (accommodationId <= 0) return false;
+    final n = DateTime.now();
+    final today = DateTime(n.year, n.month, n.day);
+    return _guestPaidStays
+        .any((b) => b.stayCoversCalendarDay(today, accommodationId));
+  }
+
+  Future<void> _openBookingFlow(Accommodation accommodation) async {
+    await _refreshSession();
+    if (!mounted) return;
+    if (!_isLoggedIn) {
+      await _showMembersOnlyBookSheet(context);
+      if (!mounted) return;
+      await _refreshSession();
+      if (!_isLoggedIn) return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => AccommodationBookingPage.fromAccommodation(
+          accommodation,
+          afterSuccessfulPayment: (bookingCtx, accId) {
+            if (!bookingCtx.mounted) return;
+            Navigator.of(bookingCtx).pop();
+            Navigator.of(bookingCtx).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => AccommodationMainPage(
+                  focusAccommodationId: accId,
+                  initialTabIndex: 1,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+    if (mounted) {
+      await _refreshSession();
+      await _loadGuestPaidStays();
+    }
+  }
+
+  Future<void> _showMembersOnlyBookSheet(BuildContext context) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(ctx).bottom,
+        ),
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 28,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 18),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: _brandOrange.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: const Icon(
+                  Icons.verified_user_rounded,
+                  color: _brandOrange,
+                  size: 36,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Members only',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  color: _brandNavy,
+                  letterSpacing: -0.4,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Booking and payment are available to signed-in guests only. '
+                'We’ll load your name, email, and phone into the booking form.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 15,
+                  height: 1.45,
+                  color: Colors.grey.shade700,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 22),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const LoginScreen(),
+                    ),
+                  );
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: _brandOrange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                child: const Text(
+                  'Sign in to book',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: Text(
+                  'Not now',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _tabController.removeListener(_onAccommodationTabChanged);
+    _tabController.dispose();
     _searchController.dispose();
     _locationController.dispose();
     super.dispose();
@@ -115,10 +349,66 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
   }
 
   void _loadFromService() {
-    _future = _service.fetch(
+    _future = _fetchDiscoverListWithPricing();
+  }
+
+  /// API listings often omit `pricingPeriod`; merge from `accommodation_rooms` when hosts saved it.
+  Future<List<Accommodation>> _fetchDiscoverListWithPricing() async {
+    final list = await _service.fetch(
       type: _selectedType,
       location: _locationQuery.isEmpty ? null : _locationQuery,
     );
+    return _mergePricingPeriodFromFirestore(list);
+  }
+
+  Future<List<Accommodation>> _mergePricingPeriodFromFirestore(
+    List<Accommodation> list,
+  ) async {
+    if (list.isEmpty) return list;
+    final ids = list.map((a) => a.id).where((id) => id > 0).toSet();
+    if (ids.isEmpty) return list;
+
+    final byApiId = <int, AccommodationPricePeriod>{};
+    try {
+      final idList = ids.toList();
+      for (var i = 0; i < idList.length; i += 10) {
+        final chunk = idList.sublist(i, min(i + 10, idList.length));
+        final snap = await FirebaseFirestore.instance
+            .collection('accommodation_rooms')
+            .where('apiAccommodationId', whereIn: chunk)
+            .get();
+        for (final doc in snap.docs) {
+          final d = doc.data();
+          if (!d.containsKey('pricingPeriod') && !d.containsKey('pricePeriod')) {
+            continue;
+          }
+          final rawId = d['apiAccommodationId'];
+          int? apiId;
+          if (rawId is int) {
+            apiId = rawId;
+          } else if (rawId is num) {
+            apiId = rawId.toInt();
+          } else {
+            apiId = int.tryParse(rawId?.toString() ?? '');
+          }
+          if (apiId == null || apiId <= 0) continue;
+          byApiId[apiId] = accommodationPricePeriodFromDynamic(
+            d['pricingPeriod'] ?? d['pricePeriod'],
+          );
+        }
+      }
+    } catch (_) {
+      return list;
+    }
+
+    if (byApiId.isEmpty) return list;
+    return list
+        .map((a) {
+          final p = byApiId[a.id];
+          if (p == null) return a;
+          return a.withPricingPeriod(p);
+        })
+        .toList();
   }
 
   void _showDistrictPicker() {
@@ -217,6 +507,110 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
     }).toList();
   }
 
+  Widget _buildDiscoverTab(BuildContext context, bool isDark) {
+    return Column(
+      children: [
+        _buildSearchAndLocationBar(context, isDark),
+        const SizedBox(height: 10),
+        _buildTypeChipsRow(context, isDark),
+        const SizedBox(height: 6),
+        Expanded(
+          child: RefreshIndicator(
+            color: _brandOrange,
+            onRefresh: () async {
+              setState(() {
+                _loadFromService();
+              });
+              await _future;
+              await _loadGuestPaidStays();
+            },
+            child: FutureBuilder<List<Accommodation>>(
+              future: _future,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return AppSkeletonShimmer(
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      children: [
+                        for (var i = 0; i < 5; i++) ...[
+                          AppSkeletonAccommodationCardCore(isDark: isDark),
+                          if (i < 4) const SizedBox(height: 12),
+                        ],
+                      ],
+                    ),
+                  );
+                }
+                if (snapshot.hasError) {
+                  return _buildErrorState(
+                    context,
+                    snapshot.error.toString(),
+                    isDark,
+                  );
+                }
+                final raw = snapshot.data ?? [];
+                final data = _applySearchFilter(raw);
+
+                if (data.isEmpty) {
+                  return _buildEmptyState(context, isDark);
+                }
+
+                final focusId = widget.focusAccommodationId;
+                if (focusId != null && !_didScrollToFocus) {
+                  final hit = data.any((e) => e.id == focusId);
+                  if (hit) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!mounted) return;
+                      final ctx = _focusCardKey.currentContext;
+                      if (ctx != null) {
+                        Scrollable.ensureVisible(
+                          ctx,
+                          alignment: 0.12,
+                          duration: const Duration(milliseconds: 420),
+                          curve: Curves.easeOutCubic,
+                        );
+                        setState(() => _didScrollToFocus = true);
+                      }
+                    });
+                  } else {
+                    _didScrollToFocus = true;
+                  }
+                }
+
+                return ListView.separated(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  itemBuilder: (context, index) {
+                    final item = data[index];
+                    final isFocus = focusId != null && item.id == focusId;
+                    Widget card = _AccommodationCard(
+                      accommodation: item,
+                      isDark: isDark,
+                      highlight: isFocus,
+                      authReady: _authReady,
+                      isLoggedIn: _isLoggedIn,
+                      bookedToday: _isBookedTodayForListing(item.id),
+                      onBookStay: _openBookingFlow,
+                    );
+                    if (isFocus) {
+                      card = KeyedSubtree(
+                        key: _focusCardKey,
+                        child: card,
+                      );
+                    }
+                    return card;
+                  },
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemCount: data.length,
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -237,7 +631,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
             SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Discover stays',
+                'Stays',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -249,71 +643,28 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
             ),
           ],
         ),
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.white,
+          indicatorWeight: 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          labelStyle: const TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 14,
+          ),
+          tabs: const [
+            Tab(text: 'Discover'),
+            Tab(text: 'My bookings'),
+          ],
+        ),
       ),
       body: SafeArea(
-        child: Column(
+        child: TabBarView(
+          controller: _tabController,
           children: [
-            _buildSearchAndLocationBar(context, isDark),
-            const SizedBox(height: 10),
-            _buildTypeChipsRow(context, isDark),
-            const SizedBox(height: 6),
-            Expanded(
-              child: RefreshIndicator(
-                color: _brandOrange,
-                onRefresh: () async {
-                  setState(() {
-                    _loadFromService();
-                  });
-                  await _future;
-                },
-                child: FutureBuilder<List<Accommodation>>(
-                  future: _future,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return AppSkeletonShimmer(
-                        child: ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                          children: [
-                            for (var i = 0; i < 5; i++) ...[
-                              AppSkeletonAccommodationCardCore(isDark: isDark),
-                              if (i < 4) const SizedBox(height: 12),
-                            ],
-                          ],
-                        ),
-                      );
-                    }
-                    if (snapshot.hasError) {
-                      return _buildErrorState(
-                        context,
-                        snapshot.error.toString(),
-                        isDark,
-                      );
-                    }
-                    final raw = snapshot.data ?? [];
-                    final data = _applySearchFilter(raw);
-
-                    if (data.isEmpty) {
-                      return _buildEmptyState(context, isDark);
-                    }
-
-                    return ListView.separated(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                      itemBuilder: (context, index) {
-                        final item = data[index];
-                        return _AccommodationCard(
-                          accommodation: item,
-                          isDark: isDark,
-                        );
-                      },
-                      separatorBuilder: (_, __) => const SizedBox(height: 12),
-                      itemCount: data.length,
-                    );
-                  },
-                ),
-              ),
-            ),
+            _buildDiscoverTab(context, isDark),
+            AccommodationMyBookingsTab(isDark: isDark),
           ],
         ),
       ),
@@ -335,6 +686,15 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
               fontSize: 13,
               fontWeight: FontWeight.w800,
               color: isDark ? Colors.white70 : Colors.grey.shade700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Booking is for signed-in guests only.',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white38 : Colors.grey.shade600,
             ),
           ),
           const SizedBox(height: 8),
@@ -363,7 +723,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
               ),
               cursorColor: _brandOrange,
               decoration: InputDecoration(
-                hintText: 'Search by property name…',
+                hintText: 'type bnb, hotel, house, hostel, etc...',
                 hintStyle: TextStyle(color: hint, fontWeight: FontWeight.w500),
                 prefixIcon:
                     const Icon(Icons.search_rounded, color: _brandOrange, size: 26),
@@ -479,7 +839,9 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
           final isSelected = type == _selectedType;
           final label = type == 'all'
               ? 'All'
-              : type[0].toUpperCase() + type.substring(1);
+              : type == 'apartment'
+                  ? 'Apartments'
+                  : type[0].toUpperCase() + type.substring(1);
           return InkWell(
             borderRadius: BorderRadius.circular(14),
             onTap: () => _onTypeSelected(type),
@@ -608,130 +970,98 @@ class _AccommodationMainPageState extends State<AccommodationMainPage> {
   }
 }
 
-// ---------- Shared image helpers (Firebase / http / base64) ----------
+String _formatPriceWhole(num value) =>
+    NumberFormat('#,##0').format(value.round());
 
-final Map<String, Future<String>> _accDlUrlCache = {};
+/// Auto-advancing gallery (same idea as [main_marketPlace] `_AutoSlideImageCarousel`).
+class _AccommodationSlideCarousel extends StatefulWidget {
+  const _AccommodationSlideCarousel({
+    super.key,
+    required this.sources,
+    required this.itemBuilder,
+    required this.accentColor,
+  });
 
-bool _accIsHttp(String s) => s.startsWith('http://') || s.startsWith('https://');
-bool _accIsGs(String s) => s.startsWith('gs://');
+  final List<String> sources;
+  final Widget Function(String source) itemBuilder;
+  final Color accentColor;
 
-bool _accLooksLikeBase64(String s) {
-  final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
-  if (x.length < 150) return false;
-  return RegExp(r'^[A-Za-z0-9+/=\\s]+$').hasMatch(x);
+  @override
+  State<_AccommodationSlideCarousel> createState() =>
+      _AccommodationSlideCarouselState();
 }
 
-Future<String?> _accToFirebaseDownloadUrl(String raw) async {
-  final s = raw.trim();
-  if (s.isEmpty) return null;
-  if (_accIsHttp(s)) return s;
+class _AccommodationSlideCarouselState extends State<_AccommodationSlideCarousel> {
+  late final PageController _controller;
+  Timer? _timer;
+  int _index = 0;
 
-  if (_accDlUrlCache.containsKey(s)) return _accDlUrlCache[s]!.then((v) => v);
-
-  Future<String> fut() async {
-    if (_accIsGs(s)) {
-      return FirebaseStorage.instance.refFromURL(s).getDownloadURL();
-    }
-    return FirebaseStorage.instance.ref(s).getDownloadURL();
-  }
-
-  _accDlUrlCache[s] = fut();
-  try {
-    return await _accDlUrlCache[s]!;
-  } catch (_) {
-    return null;
-  }
-}
-
-Widget accImageFromAnySource(
-  String raw, {
-  BoxFit fit = BoxFit.cover,
-  double? width,
-  double? height,
-  BorderRadius? radius,
-}) {
-  final s = raw.trim();
-
-  Widget wrap(Widget child) {
-    if (radius == null) return child;
-    return ClipRRect(borderRadius: radius, child: child);
-  }
-
-  if (s.isEmpty) {
-    return wrap(Container(
-      width: width,
-      height: height,
-      color: Colors.grey.shade200,
-      alignment: Alignment.center,
-      child: const Icon(Icons.image_not_supported_rounded),
-    ));
-  }
-
-  // base64 (fallback if not already decoded in model)
-  if (_accLooksLikeBase64(s)) {
-    try {
-      final base64Part = s.contains(',') ? s.split(',').last : s;
-      final bytes = base64Decode(base64Part);
-      return wrap(Image.memory(bytes, fit: fit, width: width, height: height));
-    } catch (_) {}
-  }
-
-  // http(s)
-  if (_accIsHttp(s)) {
-    return wrap(Image.network(
-      s,
-      fit: fit,
-      width: width,
-      height: height,
-      errorBuilder: (_, __, ___) => Container(
-        width: width,
-        height: height,
-        color: Colors.grey.shade200,
-        alignment: Alignment.center,
-        child: const Icon(Icons.image_not_supported_rounded),
-      ),
-      loadingBuilder: (c, child, progress) {
-        if (progress == null) return child;
-        return Container(
-          width: width,
-          height: height,
-          color: Colors.grey.shade100,
-          alignment: Alignment.center,
-          child: const CircularProgressIndicator(strokeWidth: 2),
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController();
+    if (widget.sources.length > 1) {
+      _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+        if (!mounted || !_controller.hasClients) return;
+        final next = (_index + 1) % widget.sources.length;
+        _controller.animateToPage(
+          next,
+          duration: const Duration(milliseconds: 420),
+          curve: Curves.easeInOut,
         );
-      },
-    ));
+      });
+    }
   }
 
-  // firebase gs:// or storage path
-  return FutureBuilder<String?>(
-    future: _accToFirebaseDownloadUrl(s),
-    builder: (context, snap) {
-      final url = snap.data;
-      if (url == null || url.isEmpty) {
-        return wrap(Container(
-          width: width,
-          height: height,
-          color: Colors.grey.shade200,
-          alignment: Alignment.center,
-          child: const Icon(Icons.image_not_supported_rounded),
-        ));
-      }
-      return wrap(Image.network(
-        url,
-        fit: fit,
-        width: width,
-        height: height,
-        errorBuilder: (_, __, ___) => Container(
-          width: width,
-          height: height,
-          color: Colors.grey.shade200,
-          alignment: Alignment.center,
-          child: const Icon(Icons.image_not_supported_rounded),
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        PageView.builder(
+          controller: _controller,
+          itemCount: widget.sources.length,
+          physics: widget.sources.length > 1
+              ? const BouncingScrollPhysics()
+              : const NeverScrollableScrollPhysics(),
+          onPageChanged: (i) => setState(() => _index = i),
+          itemBuilder: (_, i) => widget.itemBuilder(widget.sources[i]),
         ),
-      ));
-    },
-  );
+        if (widget.sources.length > 1)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 10,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(widget.sources.length, (i) {
+                final active = i == _index;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                  width: active ? 14 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: active
+                        ? widget.accentColor
+                        : Colors.white.withValues(alpha: 0.78),
+                    borderRadius: BorderRadius.circular(99),
+                    border: Border.all(color: Colors.black26, width: 0.4),
+                  ),
+                );
+              }),
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 // ====== Card widget using your Accommodation model ======
@@ -743,16 +1073,90 @@ class _AccommodationCard extends StatelessWidget {
 
   final Accommodation accommodation;
   final bool isDark;
+  final bool highlight;
+  final bool authReady;
+  final bool isLoggedIn;
+  /// Paid stay covers **today** for this listing — freeze Book now.
+  final bool bookedToday;
+  final Future<void> Function(Accommodation acc) onBookStay;
 
   const _AccommodationCard({
     required this.accommodation,
     required this.isDark,
+    this.highlight = false,
+    required this.authReady,
+    required this.isLoggedIn,
+    this.bookedToday = false,
+    required this.onBookStay,
   });
+
+  /// Cover + [Accommodation.gallery], deduped; multiple URLs → sliding carousel.
+  Widget _heroMedia() {
+    final rawImage = (accommodation.image ?? '').trim();
+    final imgBytes = accommodation.imageBytes;
+    final gallery = accommodation.gallery
+        .map((e) => e.toString().trim())
+        .where((s) => s.isNotEmpty);
+
+    final sources = <String>[
+      if (rawImage.isNotEmpty) rawImage,
+      ...gallery,
+    ];
+    final deduped = <String>[];
+    final seen = <String>{};
+    for (final s in sources) {
+      if (seen.add(s)) deduped.add(s);
+    }
+
+    if (deduped.isEmpty && imgBytes != null) {
+      return Image.memory(imgBytes, fit: BoxFit.cover);
+    }
+
+    if (deduped.length <= 1) {
+      if (deduped.isEmpty) {
+        return Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                _brandNavy.withValues(alpha: 0.12),
+                _brandOrange.withValues(alpha: 0.15),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          child: Icon(
+            Icons.photo_size_select_actual_outlined,
+            size: 44,
+            color: Colors.grey.shade400,
+          ),
+        );
+      }
+      final only = deduped.first;
+      if (imgBytes != null && accListingLooksLikeBase64(only)) {
+        return Image.memory(imgBytes, fit: BoxFit.cover);
+      }
+      return accImageFromAnySource(only, fit: BoxFit.cover);
+    }
+
+    return _AccommodationSlideCarousel(
+      key: ValueKey('acc-hero-${accommodation.id}-${deduped.length}'),
+      sources: deduped,
+      accentColor: _brandOrange,
+      itemBuilder: (src) => accImageFromAnySource(
+        src,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final name = accommodation.name ?? '';
     final location = accommodation.location ?? '';
+    final description = accommodation.description.trim();
     final type = (accommodation.accommodationType ?? '').toLowerCase();
 
     final owner = accommodation.owner;
@@ -760,21 +1164,21 @@ class _AccommodationCard extends StatelessWidget {
     final reviewCount = owner?.reviewCount ?? 0;
     final price = accommodation.price.toDouble();
 
-    final imgBytes = accommodation.imageBytes;
-    final rawImage = (accommodation.image ?? '').trim();
-
     final cardBg = isDark ? const Color(0xFF1E293B) : Colors.white;
 
     return Material(
       color: cardBg,
-      elevation: 0,
+      elevation: highlight ? 2 : 0,
       borderRadius: BorderRadius.circular(20),
       clipBehavior: Clip.antiAlias,
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isDark ? Colors.white12 : _surfaceBorder,
+            color: highlight
+                ? _brandOrange
+                : (isDark ? Colors.white12 : _surfaceBorder),
+            width: highlight ? 2.2 : 1,
           ),
           boxShadow: isDark
               ? null
@@ -793,31 +1197,7 @@ class _AccommodationCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (imgBytes != null)
-                    Image.memory(imgBytes, fit: BoxFit.cover)
-                  else if (rawImage.isNotEmpty)
-                    accImageFromAnySource(
-                      rawImage,
-                      fit: BoxFit.cover,
-                    )
-                  else
-                    Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            _brandNavy.withValues(alpha: 0.12),
-                            _brandOrange.withValues(alpha: 0.15),
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                      ),
-                      child: Icon(
-                        Icons.photo_size_select_actual_outlined,
-                        size: 44,
-                        color: Colors.grey.shade400,
-                      ),
-                    ),
+                  Positioned.fill(child: _heroMedia()),
                   Positioned(
                     top: 10,
                     left: 10,
@@ -854,6 +1234,44 @@ class _AccommodationCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (bookedToday)
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.teal.shade700.withValues(alpha: 0.92),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.25),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.event_busy_rounded,
+                                size: 15, color: Colors.teal.shade50),
+                            const SizedBox(width: 5),
+                            Text(
+                              'Booked today',
+                              style: TextStyle(
+                                color: Colors.teal.shade50,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   Positioned(
                     bottom: 10,
                     right: 10,
@@ -874,16 +1292,16 @@ class _AccommodationCard extends StatelessWidget {
                       child: Row(
                         children: [
                           Text(
-                            'MWK ${price.toStringAsFixed(0)}',
+                            'MWK ${_formatPriceWhole(price)}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
                           const SizedBox(width: 4),
-                          const Text(
-                            '/ night',
-                            style: TextStyle(
+                          Text(
+                            accommodation.pricePeriod.uiSuffix.trimLeft(),
+                            style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
@@ -934,6 +1352,22 @@ class _AccommodationCard extends StatelessWidget {
                       ),
                     ],
                   ),
+                  if (description.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.35,
+                        fontWeight: FontWeight.w500,
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.72)
+                            : Colors.grey.shade700,
+                      ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -954,27 +1388,82 @@ class _AccommodationCard extends StatelessWidget {
                         ),
                       ),
                       const Spacer(),
-                      FilledButton(
-                        onPressed: () {
-                          // book / details
-                        },
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _brandOrange,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                      if (authReady && !isLoggedIn)
+                        OutlinedButton.icon(
+                          onPressed: accommodation.id <= 0
+                              ? null
+                              : () => onBookStay(accommodation),
+                          icon: Icon(
+                            Icons.lock_outline_rounded,
+                            size: 17,
+                            color: _brandOrange.withValues(alpha: 0.95),
+                          ),
+                          label: const Text(
+                            'Sign in to book',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _brandNavy,
+                            side: BorderSide(
+                              color: _brandOrange.withValues(alpha: 0.85),
+                              width: 1.5,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        )
+                      else
+                        FilledButton.icon(
+                          onPressed: accommodation.id <= 0 ||
+                                  (authReady &&
+                                      isLoggedIn &&
+                                      bookedToday)
+                              ? null
+                              : () => onBookStay(accommodation),
+                          icon: Icon(
+                            bookedToday
+                                ? Icons.lock_clock_rounded
+                                : authReady && isLoggedIn
+                                    ? Icons.event_available_rounded
+                                    : Icons.hotel_rounded,
+                            size: 17,
+                            color: Colors.white,
+                          ),
+                          label: Text(
+                            bookedToday
+                                ? 'Booked today'
+                                : authReady
+                                    ? 'Book now'
+                                    : 'Book',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13,
+                            ),
+                          ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: bookedToday
+                                ? Colors.grey.shade500
+                                : _brandOrange,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: Colors.grey.shade400,
+                            disabledForegroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                         ),
-                        child: const Text(
-                          'View details',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
                     ],
                   ),
                 ],

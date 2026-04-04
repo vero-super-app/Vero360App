@@ -1,0 +1,21 @@
+rules_version = '2';
+// Paste into Firebase Console → Build → Storage → Rules (or deploy with Firebase CLI).
+// Accommodation uploads in the app use profile_photos/{uid}_acc_{timestamp}.ext by default
+// so they match common "profile_photos" rules. Optionally allow accommodation_photos below.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Typical profile / merchant image pattern (matches marketplace & accommodation property photos)
+    match /profile_photos/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && fileName.matches('^' + request.auth.uid + '_.*');
+    }
+
+    // Dedicated folder (if you switch the app back to accommodation_photos/{uid}/…)
+    match /accommodation_photos/{userId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}

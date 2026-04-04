@@ -75,6 +75,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     _setupEscrowHeldStream();
   }
 
+  /// Marketplace orders and paid accommodation stays both write `order_escrow`
+  /// so incoming stay payments appear in escrow here.
   void _setupEscrowHeldStream() {
     _escrowSubscription?.cancel();
     _escrowSubscription = _firestore

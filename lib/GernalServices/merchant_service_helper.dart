@@ -1,6 +1,58 @@
 // lib/services/merchant_service_helper.dart
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+
+/// Maps backend/Firestore spellings to the routing key (lowercase) used in the app.
+String? normalizeMerchantServiceKey(String? raw) {
+  final s = (raw ?? '').trim().toLowerCase();
+  if (s.isEmpty) return null;
+  if (s == 'accomodation') return 'accommodation';
+  return s;
+}
+
+/// Persists API `merchantService` without replacing a non-marketplace local value
+/// with the generic `marketplace` default many backends return.
+Future<void> persistMerchantServiceFromApi(
+  SharedPreferences prefs,
+  String? rawFromApi,
+) async {
+  final fromApi = normalizeMerchantServiceKey(rawFromApi);
+  if (fromApi == null || fromApi.isEmpty) return;
+  final existing = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
+  if (existing == null || existing.isEmpty) {
+    await prefs.setString('merchant_service', fromApi);
+    return;
+  }
+  if (fromApi == 'marketplace' && existing != 'marketplace') {
+    return;
+  }
+  await prefs.setString('merchant_service', fromApi);
+}
+
+/// Prefer `users/{uid}` merchant type when prefs are empty or wrongly `marketplace`.
+Future<void> hydrateMerchantServiceFromFirestore(SharedPreferences prefs) async {
+  try {
+    final fb = FirebaseAuth.instance.currentUser;
+    if (fb == null) return;
+    final doc =
+        await FirebaseFirestore.instance.collection('users').doc(fb.uid).get();
+    if (!doc.exists || doc.data() == null) return;
+    final data = doc.data()!;
+    final fromDoc = normalizeMerchantServiceKey(
+      data['merchantService']?.toString() ??
+          data['merchant_service']?.toString() ??
+          data['serviceType']?.toString(),
+    );
+    if (fromDoc == null || fromDoc.isEmpty) return;
+    final existing = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
+    if (existing == null ||
+        existing.isEmpty ||
+        (existing == 'marketplace' && fromDoc != 'marketplace')) {
+      await prefs.setString('merchant_service', fromDoc);
+    }
+  } catch (_) {}
+}
 
 class MerchantServiceHelper {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;

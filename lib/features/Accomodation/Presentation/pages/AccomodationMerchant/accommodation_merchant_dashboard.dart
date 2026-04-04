@@ -12,6 +12,7 @@ import 'package:http_parser/http_parser.dart' show MediaType;
 
 import 'package:vero360_app/config/api_config.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,10 +29,15 @@ import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
 import 'package:vero360_app/Home/homepage.dart';
 import 'package:vero360_app/settings/Settings.dart';
-// Add login screen import
-import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/widgets/booking_delete_confirm_dialog.dart';
+import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:intl/intl.dart';
 
 /// Local media for Add Property (cover + gallery) – like marketplace LocalMedia.
 class _PropertyMedia {
@@ -43,6 +49,697 @@ class _PropertyMedia {
     required this.filename,
     this.mime,
   });
+}
+
+/// Full-screen add listing — avoids bottom sheets closing when opening the image picker.
+class _AddPropertyPage extends StatefulWidget {
+  const _AddPropertyPage({
+    required this.accommodationApi,
+    required this.onUploadPhoto,
+    required this.showPhotoSourcePicker,
+  });
+
+  final AccommodationService accommodationApi;
+  final Future<String> Function(_PropertyMedia media) onUploadPhoto;
+  final void Function(
+    BuildContext anchorContext, {
+    required void Function(ImageSource source) onSource,
+  }) showPhotoSourcePicker;
+
+  @override
+  State<_AddPropertyPage> createState() => _AddPropertyPageState();
+}
+
+class _AddPropertyPageState extends State<_AddPropertyPage> {
+  static const List<String> _accommodationTypes = [
+    'hotel',
+    'lodge',
+    'bnb',
+    'house',
+    'hostel',
+    'apartment',
+  ];
+  static const int _maxGalleryPhotos = 5;
+
+  static const Color _orange = Color(0xFFFF8A00);
+  static const Color _navy = Color(0xFF16284C);
+
+  final ImagePicker _picker = ImagePicker();
+  late final TextEditingController _nameController;
+  late final TextEditingController _locationController;
+  late final TextEditingController _descriptionController;
+  late final TextEditingController _priceController;
+
+  String _selectedType = _accommodationTypes.first;
+  AccommodationPricePeriod _selectedPricePeriod =
+      AccommodationPricePeriod.night;
+  bool _submitting = false;
+  _PropertyMedia? _cover;
+  final List<_PropertyMedia> _gallery = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController();
+    _locationController = TextEditingController();
+    _descriptionController = TextEditingController();
+    _priceController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _locationController.dispose();
+    _descriptionController.dispose();
+    _priceController.dispose();
+    super.dispose();
+  }
+
+  InputDecoration _fieldDecoration({
+    String? label,
+    String? hint,
+    bool alignLabelWithHint = false,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      alignLabelWithHint: alignLabelWithHint,
+      filled: true,
+      fillColor: const Color(0xFFF8F9FC),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      enabledBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: _orange, width: 2),
+        borderRadius: BorderRadius.circular(14),
+      ),
+    );
+  }
+
+  Widget _sectionHeader(String title, IconData icon) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: _orange.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, size: 20, color: _orange),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color: Colors.grey.shade900,
+              letterSpacing: -0.2,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pickCover(ImageSource src) async {
+    final x = await _picker.pickImage(
+      source: src,
+      imageQuality: 75,
+      maxWidth: 1280,
+    );
+    if (x == null || !mounted) return;
+    final bytes = await x.readAsBytes();
+    if (!mounted) return;
+    final mime = lookupMimeType(x.name, headerBytes: bytes);
+    setState(() {
+      _cover = _PropertyMedia(bytes: bytes, filename: x.name, mime: mime);
+    });
+  }
+
+  Future<void> _pickMorePhotos() async {
+    if (_gallery.length >= _maxGalleryPhotos) return;
+    final files =
+        await _picker.pickMultiImage(imageQuality: 72, maxWidth: 1280);
+    if (!mounted || files.isEmpty) return;
+    final remaining = _maxGalleryPhotos - _gallery.length;
+    final batch = <_PropertyMedia>[];
+    for (final x in files.take(remaining)) {
+      final bytes = await x.readAsBytes();
+      batch.add(_PropertyMedia(
+        bytes: bytes,
+        filename: x.name,
+        mime: lookupMimeType(x.name, headerBytes: bytes),
+      ));
+    }
+    if (!mounted) return;
+    setState(() => _gallery.addAll(batch));
+  }
+
+  Future<void> _pickOneFromCamera() async {
+    try {
+      if (_gallery.length >= _maxGalleryPhotos) return;
+      final x = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 72,
+        maxWidth: 1280,
+      );
+      if (x == null || !mounted) return;
+      final bytes = await x.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _gallery.add(_PropertyMedia(
+          bytes: bytes,
+          filename: x.name,
+          mime: lookupMimeType(x.name, headerBytes: bytes),
+        ));
+      });
+    } catch (_) {
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Could not take photo. Please try again.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    return Scaffold(
+      backgroundColor: const Color(0xFFF3F4F7),
+      appBar: AppBar(
+        backgroundColor: _orange,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.maybePop(context),
+        ),
+        title: const Text(
+          'Add property',
+          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+        ),
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.only(bottom: bottomInset),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Photos, details, and price',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade600,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  _sectionHeader('Photos', Icons.photo_library_rounded),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Cover image *',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.grey.shade700,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: _cover == null
+                        ? Container(
+                            height: 168,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF3F4F7),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: Colors.grey.shade200,
+                              ),
+                            ),
+                            child: Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.image_outlined,
+                                    size: 44,
+                                    color: Colors.grey.shade400,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  FilledButton.icon(
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: _orange,
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 20,
+                                        vertical: 12,
+                                      ),
+                                    ),
+                                    onPressed: () {
+                                      widget.showPhotoSourcePicker(
+                                        context,
+                                        onSource: _pickCover,
+                                      );
+                                    },
+                                    icon: const Icon(
+                                      Icons.add_photo_alternate_rounded,
+                                    ),
+                                    label: const Text(
+                                      'Select image',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : Stack(
+                            children: [
+                              Image.memory(
+                                _cover!.bytes,
+                                height: 168,
+                                width: double.infinity,
+                                fit: BoxFit.cover,
+                              ),
+                              Positioned(
+                                top: 10,
+                                right: 10,
+                                child: Material(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(20),
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(20),
+                                    onTap: () => setState(() => _cover = null),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(8),
+                                      child: Icon(
+                                        Icons.close_rounded,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Gallery (optional)',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _navy.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          '${_gallery.length}/$_maxGalleryPhotos',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12,
+                            color: _navy,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _gallery.length >= _maxGalleryPhotos
+                              ? null
+                              : () {
+                                  widget.showPhotoSourcePicker(
+                                    context,
+                                    onSource: (src) async {
+                                      if (src == ImageSource.camera) {
+                                        await _pickOneFromCamera();
+                                      } else {
+                                        await _pickMorePhotos();
+                                      }
+                                    },
+                                  );
+                                },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.grey.shade900,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            side: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          icon: const Icon(Icons.collections_outlined),
+                          label: Text(
+                            _gallery.isEmpty ? 'Add photos' : 'Add more',
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ),
+                      if (_gallery.isNotEmpty) ...[
+                        const SizedBox(width: 10),
+                        OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red.shade700,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            side: BorderSide(color: Colors.red.shade200),
+                          ),
+                          onPressed: () => setState(_gallery.clear),
+                          child: const Text(
+                            'Clear',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (_gallery.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _gallery.length,
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                        childAspectRatio: 1,
+                      ),
+                      itemBuilder: (_, i) {
+                        final m = _gallery[i];
+                        return Stack(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.memory(
+                                m.bytes,
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                                height: double.infinity,
+                              ),
+                            ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: Material(
+                                color: Colors.black54,
+                                shape: const CircleBorder(),
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: () => setState(
+                                    () => _gallery.removeAt(i),
+                                  ),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(4),
+                                    child: Icon(
+                                      Icons.close_rounded,
+                                      size: 14,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    child: Divider(height: 1, color: Colors.grey.shade200),
+                  ),
+                  _sectionHeader('Property details', Icons.home_work_outlined),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    value: _selectedType,
+                    isExpanded: true,
+                    decoration: _fieldDecoration(label: 'Type *'),
+                    borderRadius: BorderRadius.circular(14),
+                    items: _accommodationTypes
+                        .map(
+                          (t) => DropdownMenuItem(
+                            value: t,
+                            child: Text(
+                              t[0].toUpperCase() + t.substring(1),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setState(
+                      () => _selectedType = v ?? _accommodationTypes.first,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _nameController,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: _fieldDecoration(
+                      label: 'Property name *',
+                      hint: 'e.g. Sunset Lodge',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _locationController,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: _fieldDecoration(
+                      label: 'Location *',
+                      hint: 'City, area,district',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _descriptionController,
+                    minLines: 3,
+                    maxLines: 5,
+                    decoration: _fieldDecoration(
+                      label: 'Description',
+                      hint:
+                          'Amenities, house rules, what makes it special…',
+                      alignLabelWithHint: true,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    child: Divider(height: 1, color: Colors.grey.shade200),
+                  ),
+                  _sectionHeader('Pricing', Icons.payments_outlined),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<AccommodationPricePeriod>(
+                    value: _selectedPricePeriod,
+                    isExpanded: true,
+                    decoration: _fieldDecoration(label: 'Price is charged *'),
+                    borderRadius: BorderRadius.circular(14),
+                    items: [
+                      for (final e in AccommodationPricePeriod.values)
+                        DropdownMenuItem(
+                          value: e,
+                          child: Text(labelForAccommodationPricePeriod(e)),
+                        ),
+                    ],
+                    onChanged: (v) => setState(
+                      () => _selectedPricePeriod =
+                          v ?? AccommodationPricePeriod.night,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _priceController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: _fieldDecoration(
+                      label: 'Amount (MWK) *',
+                      hint: 'e.g. 45000',
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: _submitting
+                          ? null
+                          : () async {
+                              if (_cover == null) {
+                                ToastHelper.showCustomToast(
+                                  context,
+                                  'Please add a cover photo',
+                                  isSuccess: false,
+                                  errorMessage: '',
+                                );
+                                return;
+                              }
+                              final name = _nameController.text.trim();
+                              final location = _locationController.text.trim();
+                              final price = double.tryParse(
+                                _priceController.text.trim(),
+                              );
+                              if (name.isEmpty || location.isEmpty) {
+                                ToastHelper.showCustomToast(
+                                  context,
+                                  'Name and location are required',
+                                  isSuccess: false,
+                                  errorMessage: '',
+                                );
+                                return;
+                              }
+                              if (price == null || price <= 0) {
+                                ToastHelper.showCustomToast(
+                                  context,
+                                  'Enter a valid amount',
+                                  isSuccess: false,
+                                  errorMessage: '',
+                                );
+                                return;
+                              }
+                              setState(() => _submitting = true);
+                              try {
+                                final coverUrl =
+                                    await widget.onUploadPhoto(_cover!);
+                                final galleryUrls = <String>[];
+                                for (final m in _gallery) {
+                                  galleryUrls
+                                      .add(await widget.onUploadPhoto(m));
+                                }
+                                final desc =
+                                    _descriptionController.text.trim();
+                                final created = await widget
+                                    .accommodationApi
+                                    .createAccommodation(
+                                  name: name,
+                                  location: location,
+                                  description: desc,
+                                  pricePerNight: price,
+                                  pricingPeriod: _selectedPricePeriod.apiValue,
+                                  accommodationType: _selectedType,
+                                  image: coverUrl,
+                                  gallery: galleryUrls,
+                                );
+                                if (!mounted) return;
+                                Navigator.pop(
+                                  context,
+                                  <String, dynamic>{
+                                    'created': created,
+                                    'name': name,
+                                    'location': location,
+                                    'description': desc,
+                                    'price': price,
+                                    'pricingPeriod':
+                                        _selectedPricePeriod.apiValue,
+                                    'selectedType': _selectedType,
+                                    'coverUrl': coverUrl,
+                                    'galleryUrls': galleryUrls,
+                                  },
+                                );
+                              } catch (e) {
+                                if (mounted) {
+                                  setState(() => _submitting = false);
+                                }
+                                final msg = e is ApiException
+                                    ? e.message
+                                    : 'Failed to add property';
+                                if (mounted) {
+                                  ToastHelper.showCustomToast(
+                                    context,
+                                    msg,
+                                    isSuccess: false,
+                                    errorMessage: '',
+                                  );
+                                }
+                              }
+                            },
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _orange,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: _submitting
+                          ? const SizedBox(
+                              height: 24,
+                              width: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text(
+                              'Publish property',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16,
+                              ),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class AccommodationMerchantDashboard extends StatefulWidget {
@@ -60,10 +757,128 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   final MerchantServiceHelper _helper = MerchantServiceHelper();
   // ✅ Use CartService singleton from provider
   final CartService _cartService = CartServiceProvider.getInstance();
+  final AccommodationService _accommodationApi = AccommodationService();
 
   // Brand (match Marketplace merchant)
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
+  static const Color _dialogFieldFill = Color(0xFFF4F6FA);
+  static const String _fallbackBusinessLabel = 'Accommodation Provider';
+
+  /// `accommodation_merchants` / `users` — keys backends use for listing name.
+  String? _businessNameFromFirestoreMap(Map<String, dynamic>? m) {
+    if (m == null) return null;
+    for (final k in [
+      'businessName',
+      'business_name',
+      'companyName',
+      'company_name',
+    ]) {
+      final v = m[k]?.toString().trim();
+      if (v != null && v.isNotEmpty) return v;
+    }
+    return null;
+  }
+
+  bool get _businessNameIsPlaceholder =>
+      _businessName.isEmpty || _businessName == _fallbackBusinessLabel;
+
+  void _toastOk(String msg) {
+    ToastHelper.showCustomToast(
+      context,
+      msg,
+      isSuccess: true,
+      errorMessage: '',
+    );
+  }
+
+  void _toastErr(String msg) {
+    ToastHelper.showCustomToast(
+      context,
+      msg,
+      isSuccess: false,
+      errorMessage: '',
+    );
+  }
+
+  InputDecoration _walletPinFieldDecoration(String hint) {
+    final r = BorderRadius.circular(14);
+    return InputDecoration(
+      hintText: hint,
+      counterText: '',
+      filled: true,
+      fillColor: _dialogFieldFill,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      border: OutlineInputBorder(borderRadius: r),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: r,
+        borderSide: BorderSide(color: Colors.grey.shade200),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: r,
+        borderSide: const BorderSide(color: _brandOrange, width: 2),
+      ),
+    );
+  }
+
+  Widget _walletPinDialogHeader({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFF8A00), Color(0xFFFFA64D)],
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.22),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(icon, color: Colors.white, size: 26),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 20,
+                    letterSpacing: -0.35,
+                    height: 1.15,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.92),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   // Wallet lock (PIN) – like marketplace
   DateTime? _walletUnlockedUntil;
@@ -77,6 +892,8 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
   Map<String, dynamic>? _merchantData;
   List<dynamic> _recentBookings = [];
+  final MyBookingService _myBookingService = MyBookingService();
+  List<BookingItem> _veroMerchantBookings = [];
 
   // Profile (editable)
   String _merchantEmail = 'No Email';
@@ -95,14 +912,35 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   String _businessName = '';
   double _walletBalance = 0;
   
-  // Stats
-  int _totalBookings = 0;
-  int _activeBookings = 0;
-  int _completedBookings = 0;
-  double _totalRevenue = 0;
+  // Stats (Business Overview uses Vero bookings getters below)
   double _rating = 0.0;
   String _status = 'pending';
   int _availableRooms = 0;
+
+  /// Business Overview — from Vero API (`_veroMerchantBookings`), not Firestore `bookings` capped at 20.
+  int get _overviewBookingCount => _veroMerchantBookings.length;
+
+  /// Sum of `price + bookingFee` for paid/settled stays ([BookingItem.countsTowardHostRevenue]).
+  double get _overviewRevenueMwk => _veroMerchantBookings
+      .where((b) => b.countsTowardHostRevenue)
+      .fold<double>(0, (s, b) => s + b.total.toDouble());
+
+  /// Distinct guests among pending + confirmed stays (email, else name, else booking id).
+  int get _overviewActiveGuestsCount {
+    final relevant = _veroMerchantBookings.where((b) =>
+        b.status == BookingStatus.pending ||
+        b.status == BookingStatus.confirmed);
+    if (relevant.isEmpty) return 0;
+    final keys = <String>{};
+    for (final b in relevant) {
+      final email = (b.guestEmail ?? '').trim().toLowerCase();
+      final name = (b.guestName ?? '').trim().toLowerCase();
+      keys.add(email.isNotEmpty
+          ? email
+          : (name.isNotEmpty ? name : b.id));
+    }
+    return keys.length;
+  }
 
   // Navigation State
   int _selectedIndex = 0;
@@ -124,77 +962,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     super.dispose();
   }
 
-  // ---------------- Logout Functionality ----------------
-  Future<void> _logout() async {
-    // Show confirmation dialog
-    final bool? confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              'Logout',
-              style: TextStyle(color: Colors.red),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    try {
-      // Show loading indicator
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
-
-      // Sign out from Firebase
-      await _auth.signOut();
-
-      // Clear SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.clear(); // Or clear specific keys if you want to keep some data
-
-      // Show success message
-      ToastHelper.showCustomToast(
-        context,
-        'Logged out successfully',
-        isSuccess: true,
-        errorMessage: 'Logged out',
-      );
-
-      // Navigate to login screen; keep root so back stays in app
-      if (mounted) {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => LoginScreen()),
-          (route) => route.isFirst,
-        );
-      }
-    } catch (e) {
-      print('Error during logout: $e');
-      
-      // Show error message
-      ToastHelper.showCustomToast(
-        context,
-        'Logout failed: $e',
-        isSuccess: false,
-        errorMessage: 'Logout failed',
-      );
-    }
-  }
+  
 
   Future<void> _loadMerchantData({bool showLoading = true}) async {
     if (!mounted) return;
@@ -203,65 +971,455 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     
     final prefs = await SharedPreferences.getInstance();
     _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? '';
-    _businessName = prefs.getString('business_name') ?? 'Accommodation Provider';
-    
+    _businessName = (prefs.getString('business_name') ?? '').trim();
+    if (_businessName.isEmpty) {
+      _businessName = _fallbackBusinessLabel;
+    }
+
     if (_uid.isNotEmpty) {
       try {
         final dashboardData = await _helper.getMerchantDashboardData(_uid, 'accommodation');
-        
+
         if (!dashboardData.containsKey('error')) {
+          final merchantMap =
+              dashboardData['merchant'] as Map<String, dynamic>?;
+          final fromMerchant = _businessNameFromFirestoreMap(merchantMap);
+          if (fromMerchant != null && fromMerchant.isNotEmpty) {
+            unawaited(prefs.setString('business_name', fromMerchant));
+          }
           setState(() {
-            _merchantData = dashboardData['merchant'];
+            _merchantData = merchantMap;
             _recentBookings = dashboardData['recentOrders'] ?? [];
-            _totalBookings = dashboardData['totalOrders'] ?? 0;
-            _completedBookings = dashboardData['completedOrders'] ?? 0;
-            _totalRevenue = dashboardData['totalRevenue'] ?? 0;
             _rating = dashboardData['merchant']?['rating'] ?? 0.0;
             _status = dashboardData['merchant']?['status'] ?? 'pending';
+            if (fromMerchant != null && fromMerchant.isNotEmpty) {
+              _businessName = fromMerchant;
+            }
           });
         }
 
-        await _loadRooms();
-        await _loadWalletBalance();
-        await _loadProfileFromAuthAndFirestore();
-        await _loadServicesOffered();
-        await _loadReviews();
-        await _calculateActiveBookings();
+        // Parallelize independent I/O; reviews/services refresh UI when ready (non-blocking).
+        await Future.wait<void>([
+          _loadRooms(),
+          _loadWalletBalance(),
+          _loadProfileFromAuthAndFirestore(),
+          _loadVeroMerchantBookings(),
+        ]);
         await _calculateAvailableRooms();
-
       } catch (e) {
         print('Error loading accommodation data: $e');
       }
     }
-    
+
     if (mounted) {
       setState(() {
         if (showLoading) _isLoading = false;
         _initialLoadComplete = true;
       });
     }
+
+    if (_uid.isNotEmpty && mounted) {
+      unawaited(_loadServicesOffered());
+      unawaited(_loadReviews());
+    }
   }
 
   Future<void> _loadRooms() async {
     try {
-      final snapshot = await _firestore
+      final email = (_auth.currentUser?.email ?? widget.email).trim();
+
+      final fsFuture = _firestore
           .collection('accommodation_rooms')
           .where('merchantId', isEqualTo: _uid)
           .get();
-      
+
+      final Future<List<Accommodation>> apiFuture = email.isNotEmpty
+          ? _accommodationApi.fetchOwnedByEmail(email).catchError((e, _) {
+              print('Error loading API properties: $e');
+              return <Accommodation>[];
+            })
+          : Future<List<Accommodation>>.value([]);
+
+      final results = await Future.wait<Object?>([fsFuture, apiFuture]);
+      final snapshot = results[0]! as QuerySnapshot<Map<String, dynamic>>;
+      final mine = results[1]! as List<Accommodation>;
+
+      final fsRooms = snapshot.docs.map((doc) {
+        final data = doc.data();
+        return <String, dynamic>{
+          'id': doc.id,
+          ...data,
+        };
+      }).toList();
+
+      final apiRows = mine.map(_accommodationRowFromApi).toList();
+
+      final apiIds = apiRows
+          .map((r) => r['apiAccommodationId'])
+          .whereType<int>()
+          .toSet();
+      final fsFiltered = fsRooms.where((r) {
+        final pid = _apiAccommodationId(r);
+        if (pid != null && apiIds.contains(pid)) return false;
+        return true;
+      }).toList();
+
       if (mounted) {
         setState(() {
-          _rooms = snapshot.docs.map((doc) {
-            final data = doc.data();
-            return {
-              'id': doc.id,
-              ...data,
-            };
-          }).toList();
+          _rooms = [...apiRows, ...fsFiltered];
         });
       }
     } catch (e) {
-      print('Error loading rooms: $e');
+      print('Error loading properties: $e');
+    }
+  }
+
+  int? _apiAccommodationId(Map<String, dynamic> room) {
+    final direct = room['apiAccommodationId'];
+    if (direct is int) return direct;
+    if (direct is num) return direct.toInt();
+    final id = room['id'];
+    if (id is int && id > 0) return id;
+    if (id is String) {
+      final parsed = int.tryParse(id);
+      if (parsed != null && parsed > 0) return parsed;
+      if (id.startsWith('api-')) {
+        final rest = int.tryParse(id.substring(4));
+        if (rest != null && rest > 0) return rest;
+      }
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _accommodationRowFromApi(Accommodation a) {
+    final img = (a.image ?? '').trim();
+    return {
+      'id': a.id.toString(),
+      'apiAccommodationId': a.id,
+      'name': a.name,
+      'location': a.location,
+      if (a.description.isNotEmpty) 'description': a.description,
+      'price': a.price.toDouble(),
+      'pricePerNight': a.price,
+      'pricingPeriod': a.pricePeriod.apiValue,
+      'accommodationType': a.accommodationType,
+      'type': a.accommodationType,
+      'merchantId': _uid,
+      'isAvailable': true,
+      'capacity': 1,
+      'image': img,
+      'imageUrl': img,
+      'galleryUrls': List<String>.from(a.gallery),
+      '_fromApi': true,
+    };
+  }
+
+  String _merchantPropertyCoverUrl(Map<String, dynamic> room) {
+    for (final k in ['imageUrl', 'image', 'photoUrl', 'coverImage']) {
+      final v = room[k]?.toString().trim() ?? '';
+      if (v.isNotEmpty &&
+          (v.startsWith('http://') || v.startsWith('https://'))) {
+        return v;
+      }
+    }
+    return '';
+  }
+
+  String _formatMerchantPriceWhole(num value) =>
+      NumberFormat('#,##0').format(value.round());
+
+  Widget _propertyThumbPlaceholder() {
+    return ColoredBox(
+      color: Colors.grey.shade200,
+      child: Center(
+        child: Icon(
+          Icons.apartment_rounded,
+          color: Colors.grey.shade500,
+          size: 40,
+        ),
+      ),
+    );
+  }
+
+  Widget _deletePropertyDialogBullet(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFEBEE),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.red.shade100),
+            ),
+            child: Icon(icon, size: 17, color: Colors.red.shade700),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                text,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  height: 1.4,
+                  color: Colors.grey.shade800,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteProperty(Map<String, dynamic> room) async {
+    final id = _apiAccommodationId(room);
+    if (id == null) {
+      _toastErr('Only your listings can be deleted from here.');
+      return;
+    }
+    final name = (room['name'] ?? 'This property').toString();
+    final location = (room['location'] ?? '').toString().trim();
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: Material(
+            color: Colors.white,
+            elevation: 24,
+            shadowColor: Colors.black.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(24),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(22, 26, 22, 22),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.red.shade400,
+                        Colors.red.shade700,
+                      ],
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.22),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.delete_forever_rounded,
+                          color: Colors.white,
+                          size: 34,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Delete this property?',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 21,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.4,
+                          height: 1.15,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'This cannot be undone.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.92),
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Listing',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.6,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF4F6FA),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: _brandOrange.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.apartment_rounded,
+                                color: _brandOrange,
+                                size: 22,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    name,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 15,
+                                      letterSpacing: -0.2,
+                                    ),
+                                  ),
+                                  if (location.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      location,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12.5,
+                                        color: Colors.grey.shade600,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        'WHAT HAPPENS NEXT',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.7,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      _deletePropertyDialogBullet(
+                        Icons.travel_explore_outlined,
+                        'This property disappears from search and guest listings.',
+                      ),
+                      _deletePropertyDialogBullet(
+                        Icons.event_busy_outlined,
+                        'Future availability for this listing is removed.',
+                      ),
+                      _deletePropertyDialogBullet(
+                        Icons.history_toggle_off_rounded,
+                        'You will not be able to restore it from the app.',
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _brandNavy,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            side: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          child: const Text(
+                            'Keep property',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFD32F2F),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'Delete',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await _accommodationApi.deleteAccommodation(id);
+      if (!mounted) return;
+      setState(() {
+        _rooms.removeWhere(
+          (r) => _apiAccommodationId(r as Map<String, dynamic>) == id,
+        );
+      });
+      await _calculateAvailableRooms();
+      _toastOk('Property deleted');
+    } catch (e) {
+      final msg = e is ApiException ? e.message : 'Could not delete property';
+      if (mounted) _toastErr(msg);
     }
   }
 
@@ -277,6 +1435,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
       final doc = await _firestore.collection('users').doc(user.uid).get();
       final data = doc.data();
+      String? nameFromUser;
       if (data != null && mounted) {
         final p = (data['phone'] ?? '').toString().trim();
         final e = (data['email'] ?? '').toString().trim();
@@ -286,13 +1445,26 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         if (p.isNotEmpty) phone = p;
         if (e.isNotEmpty) email = e;
         if (pic.isNotEmpty) photo = pic;
+        nameFromUser = _businessNameFromFirestoreMap(data);
       }
       if (mounted) {
+        var upgradedName = false;
         setState(() {
           _merchantEmail = email;
           _merchantPhone = phone;
           _merchantProfileUrl = photo;
+          if (nameFromUser != null &&
+              nameFromUser.isNotEmpty &&
+              _businessNameIsPlaceholder) {
+            _businessName = nameFromUser;
+            upgradedName = true;
+          }
         });
+        if (upgradedName) {
+          unawaited(SharedPreferences.getInstance().then(
+            (p) => p.setString('business_name', _businessName),
+          ));
+        }
       }
     } catch (_) {}
   }
@@ -305,10 +1477,27 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           .doc(_uid)
           .get();
       final data = doc.data();
-      if (data != null && data['servicesOffered'] != null && mounted) {
-        final list = data['servicesOffered'] as List<dynamic>?;
-        setState(() => _servicesOffered = list?.map((e) => e.toString()).toList() ?? []);
+      if (data == null || !mounted) return;
+      final list = data['servicesOffered'] as List<dynamic>?;
+      final resolvedBusinessName = _businessNameFromFirestoreMap(data);
+      final upgradeName = resolvedBusinessName != null &&
+          resolvedBusinessName.isNotEmpty &&
+          _businessNameIsPlaceholder;
+      if (list == null && !upgradeName) return;
+      if (upgradeName) {
+        unawaited(SharedPreferences.getInstance().then(
+          (p) => p.setString('business_name', resolvedBusinessName),
+        ));
       }
+      if (!mounted) return;
+      setState(() {
+        if (list != null) {
+          _servicesOffered = list.map((e) => e.toString()).toList();
+        }
+        if (upgradeName) {
+          _businessName = resolvedBusinessName;
+        }
+      });
     } catch (_) {}
   }
 
@@ -328,48 +1517,273 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     }
   }
 
- Future<String> _uploadAccommodationImage(
-    Uint8List bytes, {
-    required String filename,
-    String? mime,
-  }) async {
-    final ext = filename.contains('.') ? filename.split('.').last : 'jpg';
-    final safeExt = ext.isEmpty || ext.length > 4 ? 'jpg' : ext;
-    final path = 'accommodation_photos/$_uid/${DateTime.now().millisecondsSinceEpoch}.$safeExt';
-    final ref = FirebaseStorage.instance.ref().child(path);
-    final mimeType = mime ?? lookupMimeType(filename, headerBytes: bytes) ?? 'image/jpeg';
-    await ref.putData(bytes, SettableMetadata(contentType: mimeType));
-    return await ref.getDownloadURL();
+  /// Resize/compress before multipart upload (faster, smaller files).
+  Uint8List _bytesForAccommodationApiImage(Uint8List raw) {
+    try {
+      final decoded = img.decodeImage(raw);
+      if (decoded == null) return raw;
+      var im = decoded;
+      const maxSide = 1024;
+      if (im.width > maxSide || im.height > maxSide) {
+        if (im.width >= im.height) {
+          im = img.copyResize(
+            im,
+            width: maxSide,
+            interpolation: img.Interpolation.linear,
+          );
+        } else {
+          im = img.copyResize(
+            im,
+            height: maxSide,
+            interpolation: img.Interpolation.linear,
+          );
+        }
+      }
+      return Uint8List.fromList(img.encodeJpg(im, quality: 78));
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  /// Data URL helper kept for hot-reload / stale isolate compatibility (publish uses upload URLs).
+  // ignore: unused_element
+  String _propertyImageDataUrl(_PropertyMedia media) {
+    final jpegBytes = _bytesForAccommodationApiImage(media.bytes);
+    return 'data:image/jpeg;base64,${base64Encode(jpegBytes)}';
+  }
+
+  String _jpegUploadName(String filename) {
+    final trimmed = filename.trim();
+    if (trimmed.isEmpty) return 'accommodation.jpg';
+    final dot = trimmed.lastIndexOf('.');
+    final base = dot > 0 ? trimmed.substring(0, dot) : trimmed;
+    final safe = base.replaceAll(RegExp(r'[^\w\-]+'), '_');
+    return '${safe.isEmpty ? 'photo' : safe}.jpg';
+  }
+
+  /// Backend expects `image` / gallery entries as short https URLs from `/vero/uploads`.
+  Future<String> _uploadPropertyPhotoForApi(_PropertyMedia media) async {
+    final bytes = _bytesForAccommodationApiImage(media.bytes);
+    return _accommodationApi.uploadListingImage(
+      bytes,
+      filename: _jpegUploadName(media.filename),
+      mimeType: 'image/jpeg',
+    );
+  }
+
+  InputDecoration _propertyFormDecoration({
+    String? label,
+    String? hint,
+    bool alignLabelWithHint = false,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      alignLabelWithHint: alignLabelWithHint,
+      filled: true,
+      fillColor: const Color(0xFFF8F9FC),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      enabledBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: _brandOrange, width: 2),
+        borderRadius: BorderRadius.circular(14),
+      ),
+    );
+  }
+
+  Widget _addPropertySheetSectionHeader(String title, IconData icon) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: _brandOrange.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, size: 20, color: _brandOrange),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color: Colors.grey.shade900,
+              letterSpacing: -0.2,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   void _showAddPropertySheet() {
-    const accommodationTypes = ['hotel', 'lodge', 'bnb', 'house', 'hostel', 'apartment'];
+    Navigator.push<Map<String, dynamic>?>(
+      context,
+      MaterialPageRoute<Map<String, dynamic>?>(
+        builder: (ctx) => _AddPropertyPage(
+          accommodationApi: _accommodationApi,
+          onUploadPhoto: _uploadPropertyPhotoForApi,
+          showPhotoSourcePicker: _showAccommodationPhotoSourcePicker,
+        ),
+      ),
+    ).then((payload) {
+      if (payload == null || !mounted) return;
+      final created = payload['created'];
+      final name = payload['name'] as String? ?? '';
+      final location = payload['location'] as String? ?? '';
+      final desc = payload['description'] as String? ?? '';
+      final price = (payload['price'] as num?)?.toDouble() ?? 0.0;
+      final pricingPeriod =
+          (payload['pricingPeriod'] as String?)?.trim().toLowerCase() ??
+              'night';
+      final selectedType = payload['selectedType'] as String? ?? 'hotel';
+      final coverUrl = payload['coverUrl'] as String? ?? '';
+      final galleryUrls = (payload['galleryUrls'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          <String>[];
+      final newId = (created is Map && created['id'] != null)
+          ? created['id'].toString()
+          : 'api-${DateTime.now().millisecondsSinceEpoch}';
+      final roomMap = <String, dynamic>{
+        'id': newId,
+        'name': name,
+        'location': location,
+        if (desc.isNotEmpty) 'description': desc,
+        'price': price,
+        'pricePerNight': price,
+        'pricingPeriod': pricingPeriod,
+        'accommodationType': selectedType,
+        'type': selectedType,
+        'merchantId': _uid,
+        'isAvailable': true,
+        'capacity': 1,
+        'image': coverUrl,
+        'imageUrl': coverUrl,
+        'galleryUrls': galleryUrls,
+      };
+      final apiNumeric = created is Map
+          ? () {
+              final id = created['id'];
+              if (id is int) return id;
+              if (id is num) return id.toInt();
+              return int.tryParse(id?.toString() ?? '');
+            }()
+          : int.tryParse(newId);
+      if (apiNumeric != null && apiNumeric > 0 && _uid.isNotEmpty) {
+        unawaited(
+          _firestore
+              .collection('accommodation_rooms')
+              .doc('${_uid}_$apiNumeric')
+              .set(
+            {
+              'merchantId': _uid,
+              'apiAccommodationId': apiNumeric,
+              'pricingPeriod': pricingPeriod,
+            },
+            SetOptions(merge: true),
+          ),
+        );
+      }
+      setState(() {
+        _rooms = [roomMap, ..._rooms];
+      });
+      _calculateAvailableRooms();
+      _accommodationTabs?.animateTo(1);
+      ToastHelper.showCustomToast(
+        context,
+        'Property added successfully',
+        isSuccess: true,
+        errorMessage: '',
+      );
+    });
+  }
+
+  void _showEditPropertySheet(Map<String, dynamic> room) {
+    final apiId = _apiAccommodationId(room);
+    if (apiId == null) {
+      _toastErr(
+        'Only listings created on the server can be edited here. Legacy room records stay in Firestore only.',
+      );
+      return;
+    }
+
+    const accommodationTypes = [
+      'hotel',
+      'lodge',
+      'bnb',
+      'house',
+      'hostel',
+      'apartment',
+    ];
     const maxGalleryPhotos = 5;
-    String selectedType = accommodationTypes.first;
-    final nameController = TextEditingController();
-    final locationController = TextEditingController();
-    final descriptionController = TextEditingController();
-    final priceController = TextEditingController();
+    final rawType = (room['accommodationType'] ?? room['type'] ?? 'hotel')
+        .toString()
+        .toLowerCase()
+        .trim();
+    String selectedType = accommodationTypes.contains(rawType)
+        ? rawType
+        : accommodationTypes.first;
+
+    final nameController =
+        TextEditingController(text: (room['name'] ?? '').toString());
+    final locationController =
+        TextEditingController(text: (room['location'] ?? '').toString());
+    final descriptionController =
+        TextEditingController(text: (room['description'] ?? '').toString());
+    final priceVal = room['pricePerNight'] ?? room['price'] ?? 0;
+    final priceController =
+        TextEditingController(text: priceVal.toString());
+    var selectedPricePeriod = accommodationPricePeriodFromDynamic(
+      room['pricingPeriod'] ?? room['pricePeriod'],
+    );
+
+    String existingCoverUrl =
+        (room['image'] ?? room['imageUrl'] ?? '').toString().trim();
+    _PropertyMedia? newCover;
+    final keptGalleryUrls = <String>[];
+    final g1 = room['galleryUrls'];
+    if (g1 is List) {
+      keptGalleryUrls.addAll(
+        g1.map((e) => e.toString()).where((s) => s.isNotEmpty),
+      );
+    }
+    final g2 = room['gallery'];
+    if (g2 is List && keptGalleryUrls.isEmpty) {
+      keptGalleryUrls.addAll(
+        g2.map((e) => e.toString()).where((s) => s.isNotEmpty),
+      );
+    }
+    List<_PropertyMedia> newGallery = [];
     bool submitting = false;
-    _PropertyMedia? cover;
-    List<_PropertyMedia> gallery = [];
 
     Future<void> pickCover(ImageSource src) async {
-      final x = await _picker.pickImage(source: src, imageQuality: 90, maxWidth: 2048);
+      final x = await _picker.pickImage(
+        source: src,
+        imageQuality: 75,
+        maxWidth: 1280,
+      );
       if (x == null) return;
       final bytes = await x.readAsBytes();
       final mime = lookupMimeType(x.name, headerBytes: bytes);
-      cover = _PropertyMedia(bytes: bytes, filename: x.name, mime: mime);
+      newCover = _PropertyMedia(bytes: bytes, filename: x.name, mime: mime);
     }
 
     Future<void> pickMorePhotos() async {
-      if (gallery.length >= maxGalleryPhotos) return;
-      final files = await _picker.pickMultiImage(imageQuality: 88, maxWidth: 2048);
+      final total = keptGalleryUrls.length + newGallery.length;
+      if (total >= maxGalleryPhotos) return;
+      final files =
+          await _picker.pickMultiImage(imageQuality: 72, maxWidth: 1280);
       if (files.isEmpty) return;
-      final remaining = maxGalleryPhotos - gallery.length;
+      final remaining = maxGalleryPhotos - total;
       for (final x in files.take(remaining)) {
         final bytes = await x.readAsBytes();
-        gallery.add(_PropertyMedia(
+        newGallery.add(_PropertyMedia(
           bytes: bytes,
           filename: x.name,
           mime: lookupMimeType(x.name, headerBytes: bytes),
@@ -378,297 +1792,641 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     }
 
     Future<void> pickOneFromCamera() async {
-      if (gallery.length >= maxGalleryPhotos) return;
-      final x = await _picker.pickImage(source: ImageSource.camera, imageQuality: 88, maxWidth: 2048);
-      if (x == null) return;
-      final bytes = await x.readAsBytes();
-      gallery.add(_PropertyMedia(
-        bytes: bytes,
-        filename: x.name,
-        mime: lookupMimeType(x.name, headerBytes: bytes),
-      ));
+      try {
+        final total = keptGalleryUrls.length + newGallery.length;
+        if (total >= maxGalleryPhotos) return;
+        final x = await _picker.pickImage(
+          source: ImageSource.camera,
+          imageQuality: 72,
+          maxWidth: 1280,
+        );
+        if (x == null) return;
+        final bytes = await x.readAsBytes();
+        newGallery.add(_PropertyMedia(
+          bytes: bytes,
+          filename: x.name,
+          mime: lookupMimeType(x.name, headerBytes: bytes),
+        ));
+      } catch (e) {
+        if (mounted) {
+          _toastErr('Could not take photo. Please try again.');
+        }
+      }
     }
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF3F4F7),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
       builder: (ctx) => StatefulBuilder(
         builder: (_, setLocal) {
           final bottomInset = MediaQuery.of(ctx).viewInsets.bottom;
+          final galleryCount = keptGalleryUrls.length + newGallery.length;
           return Padding(
             padding: EdgeInsets.only(bottom: bottomInset),
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Add Accomodation', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-                      IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Cover Image – like marketplace Add Item
-                  const Text('Cover Image *', style: TextStyle(fontWeight: FontWeight.w900)),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: cover == null
-                        ? Container(
-                            height: 160,
-                            color: const Color(0xFFF3F4F7),
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.image, size: 40, color: Colors.black26),
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      FilledButton.icon(
-                                        style: FilledButton.styleFrom(backgroundColor: _brandOrange),
-                                        onPressed: () async {
-                                          await pickCover(ImageSource.gallery);
-                                          if (ctx.mounted) setLocal(() {});
-                                        },
-                                        icon: const Icon(Icons.photo_library),
-                                        label: const Text('Gallery'),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      FilledButton.icon(
-                                        style: FilledButton.styleFrom(backgroundColor: _brandNavy),
-                                        onPressed: () async {
-                                          await pickCover(ImageSource.camera);
-                                          if (ctx.mounted) setLocal(() {});
-                                        },
-                                        icon: const Icon(Icons.camera_alt),
-                                        label: const Text('Camera'),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                        : Stack(
-                            children: [
-                              Image.memory(
-                                cover!.bytes,
-                                height: 160,
-                                width: double.infinity,
-                                fit: BoxFit.cover,
-                              ),
-                              Positioned(
-                                top: 8,
-                                right: 8,
-                                child: InkWell(
-                                  onTap: () {
-                                    cover = null;
-                                    setLocal(() {});
-                                  },
-                                  child: const CircleAvatar(
-                                    radius: 16,
-                                    backgroundColor: Colors.black54,
-                                    child: Icon(Icons.close, color: Colors.white, size: 16),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                  ),
-                  const SizedBox(height: 14),
-                  // More Photos – like marketplace
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text('More Photos (optional)', style: TextStyle(fontWeight: FontWeight.w900)),
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2),
                       ),
-                      Text('${gallery.length}/$maxGalleryPhotos', style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.black54)),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: gallery.length >= maxGalleryPhotos ? null : () async {
-                            await pickMorePhotos();
-                            if (ctx.mounted) setLocal(() {});
-                          },
-                          icon: const Icon(Icons.collections_outlined),
-                         label: Text(gallery.isEmpty ? 'Gallery' : 'Add More', style: const TextStyle(fontWeight: FontWeight.w900)),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: gallery.length >= maxGalleryPhotos ? null : () async {
-                            await pickOneFromCamera();
-                            if (ctx.mounted) setLocal(() {});
-                          },
-                          icon: const Icon(Icons.camera_alt),
-                          label: const Text('Camera', style: TextStyle(fontWeight: FontWeight.w900)),
-                        ),
-                      ),
-                      if (gallery.isNotEmpty) ...[
-                        const SizedBox(width: 8),
-                        OutlinedButton(
-                          onPressed: () {
-                            gallery.clear();
-                            setLocal(() {});
-                          },
-                          child: const Text('Clear', style: TextStyle(fontWeight: FontWeight.w900)),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                          color: Colors.black.withValues(alpha: 0.06)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.04),
+                          blurRadius: 24,
+                          offset: const Offset(0, 8),
                         ),
                       ],
-                    ],
-                  ),
-                  if (gallery.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: gallery.length,
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 4,
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 10,
-                        childAspectRatio: 1,
-                      ),
-                      itemBuilder: (_, i) {
-                        final m = gallery[i];
-                        return Stack(
+                    ),
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
                           children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: Image.memory(m.bytes, fit: BoxFit.cover, width: double.infinity, height: double.infinity),
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    _brandNavy,
+                                    _brandNavy.withValues(alpha: 0.85),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: const Icon(
+                                Icons.home_work_rounded,
+                                color: Colors.white,
+                                size: 26,
+                              ),
                             ),
-                            Positioned(
-                              top: 6,
-                              right: 6,
+                            const SizedBox(width: 14),
+                            const Expanded(
+                              child: Text(
+                                'Edit property',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: -0.4,
+                                ),
+                              ),
+                            ),
+                            Material(
+                              color: Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(12),
                               child: InkWell(
-                                onTap: () {
-                                  gallery.removeAt(i);
-                                  setLocal(() {});
-                                },
-                                child: const CircleAvatar(
-                                  radius: 12,
-                                  backgroundColor: Colors.black54,
-                                  child: Icon(Icons.close, size: 14, color: Colors.white),
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: () => Navigator.pop(ctx),
+                                child: const Padding(
+                                  padding: EdgeInsets.all(10),
+                                  child: Icon(Icons.close_rounded, size: 22),
                                 ),
                               ),
                             ),
                           ],
-                        );
-                      },
+                        ),
+                        const SizedBox(height: 22),
+                        _addPropertySheetSectionHeader(
+                          'Photos',
+                          Icons.photo_library_rounded,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Cover image *',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: newCover != null
+                              ? Stack(
+                                  children: [
+                                    Image.memory(
+                                      newCover!.bytes,
+                                      height: 168,
+                                      width: double.infinity,
+                                      fit: BoxFit.cover,
+                                    ),
+                                    Positioned(
+                                      top: 10,
+                                      right: 10,
+                                      child: Material(
+                                        color: Colors.black54,
+                                        borderRadius: BorderRadius.circular(20),
+                                        child: InkWell(
+                                          borderRadius:
+                                              BorderRadius.circular(20),
+                                          onTap: () {
+                                            newCover = null;
+                                            setLocal(() {});
+                                          },
+                                          child: const Padding(
+                                            padding: EdgeInsets.all(8),
+                                            child: Icon(
+                                              Icons.close_rounded,
+                                              color: Colors.white,
+                                              size: 18,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : existingCoverUrl.isNotEmpty
+                                  ? Stack(
+                                      children: [
+                                        Image.network(
+                                          existingCoverUrl,
+                                          height: 168,
+                                          width: double.infinity,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                              Container(
+                                            height: 168,
+                                            color: Colors.grey.shade200,
+                                            child: const Icon(Icons.broken_image),
+                                          ),
+                                        ),
+                                        Positioned(
+                                          bottom: 10,
+                                          right: 10,
+                                          child: FilledButton.icon(
+                                            style: FilledButton.styleFrom(
+                                              backgroundColor: _brandOrange,
+                                              foregroundColor: Colors.white,
+                                            ),
+                                            onPressed: () {
+                                              _showAccommodationPhotoSourcePicker(
+                                                ctx,
+                                                onSource: (src) async {
+                                                  await pickCover(src);
+                                                  if (ctx.mounted) {
+                                                    setLocal(() {});
+                                                  }
+                                                },
+                                              );
+                                            },
+                                            icon: const Icon(
+                                                Icons.swap_horiz_rounded),
+                                            label: const Text('Replace'),
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : Container(
+                                      height: 168,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF3F4F7),
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                            color: Colors.grey.shade200),
+                                      ),
+                                      child: Center(
+                                        child: FilledButton.icon(
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor: _brandOrange,
+                                            foregroundColor: Colors.white,
+                                          ),
+                                          onPressed: () {
+                                            _showAccommodationPhotoSourcePicker(
+                                              ctx,
+                                              onSource: (src) async {
+                                                await pickCover(src);
+                                                if (ctx.mounted) {
+                                                  setLocal(() {});
+                                                }
+                                              },
+                                            );
+                                          },
+                                          icon: const Icon(
+                                              Icons.add_photo_alternate_rounded),
+                                          label: const Text('Select image'),
+                                        ),
+                                      ),
+                                    ),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Gallery',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 13,
+                                  color: Colors.grey.shade800,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '$galleryCount/$maxGalleryPhotos',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 12,
+                                color: _brandNavy,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        if (keptGalleryUrls.isNotEmpty) ...[
+                          SizedBox(
+                            height: 72,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: keptGalleryUrls.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(width: 8),
+                              itemBuilder: (_, i) {
+                                final url = keptGalleryUrls[i];
+                                return Stack(
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Image.network(
+                                        url,
+                                        width: 72,
+                                        height: 72,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) =>
+                                            Container(
+                                          width: 72,
+                                          height: 72,
+                                          color: Colors.grey.shade300,
+                                        ),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      top: 2,
+                                      right: 2,
+                                      child: Material(
+                                        color: Colors.black54,
+                                        shape: const CircleBorder(),
+                                        child: InkWell(
+                                          customBorder: const CircleBorder(),
+                                          onTap: () {
+                                            keptGalleryUrls.removeAt(i);
+                                            setLocal(() {});
+                                          },
+                                          child: const Padding(
+                                            padding: EdgeInsets.all(4),
+                                            child: Icon(
+                                              Icons.close_rounded,
+                                              size: 14,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+                        OutlinedButton.icon(
+                          onPressed: galleryCount >= maxGalleryPhotos
+                              ? null
+                              : () {
+                                  _showAccommodationPhotoSourcePicker(
+                                    ctx,
+                                    onSource: (src) async {
+                                      if (src == ImageSource.camera) {
+                                        await pickOneFromCamera();
+                                      } else {
+                                        await pickMorePhotos();
+                                      }
+                                      if (ctx.mounted) setLocal(() {});
+                                    },
+                                  );
+                                },
+                          icon: const Icon(Icons.collections_outlined),
+                          label: const Text('Add photos'),
+                        ),
+                        if (newGallery.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          GridView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: newGallery.length,
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 4,
+                              crossAxisSpacing: 10,
+                              mainAxisSpacing: 10,
+                              childAspectRatio: 1,
+                            ),
+                            itemBuilder: (_, i) {
+                              final m = newGallery[i];
+                              return Stack(
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: Image.memory(
+                                      m.bytes,
+                                      fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 4,
+                                    right: 4,
+                                    child: Material(
+                                      color: Colors.black54,
+                                      shape: const CircleBorder(),
+                                      child: InkWell(
+                                        customBorder: const CircleBorder(),
+                                        onTap: () {
+                                          newGallery.removeAt(i);
+                                          setLocal(() {});
+                                        },
+                                        child: const Padding(
+                                          padding: EdgeInsets.all(4),
+                                          child: Icon(
+                                            Icons.close_rounded,
+                                            size: 14,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ],
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 20),
+                          child: Divider(
+                            height: 1,
+                            color: Colors.grey.shade200,
+                          ),
+                        ),
+                        _addPropertySheetSectionHeader(
+                          'Property details',
+                          Icons.home_work_outlined,
+                        ),
+                        const SizedBox(height: 14),
+                        DropdownButtonFormField<String>(
+                          value: selectedType,
+                          isExpanded: true,
+                          decoration: _propertyFormDecoration(label: 'Type *'),
+                          borderRadius: BorderRadius.circular(14),
+                          items: accommodationTypes
+                              .map(
+                                (t) => DropdownMenuItem(
+                                  value: t,
+                                  child: Text(
+                                    t[0].toUpperCase() + t.substring(1),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (v) => setLocal(
+                            () => selectedType =
+                                v ?? accommodationTypes.first,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: nameController,
+                          textCapitalization: TextCapitalization.words,
+                          decoration: _propertyFormDecoration(
+                            label: 'Property name *',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: locationController,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: _propertyFormDecoration(
+                            label: 'Location *',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: descriptionController,
+                          minLines: 3,
+                          maxLines: 5,
+                          decoration: _propertyFormDecoration(
+                            label: 'Description',
+                            alignLabelWithHint: true,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 20),
+                          child: Divider(
+                            height: 1,
+                            color: Colors.grey.shade200,
+                          ),
+                        ),
+                        _addPropertySheetSectionHeader(
+                          'Pricing',
+                          Icons.payments_outlined,
+                        ),
+                        const SizedBox(height: 14),
+                        DropdownButtonFormField<AccommodationPricePeriod>(
+                          value: selectedPricePeriod,
+                          isExpanded: true,
+                          decoration:
+                              _propertyFormDecoration(label: 'Price is charged *'),
+                          borderRadius: BorderRadius.circular(14),
+                          items: [
+                            for (final e in AccommodationPricePeriod.values)
+                              DropdownMenuItem(
+                                value: e,
+                                child: Text(labelForAccommodationPricePeriod(e)),
+                              ),
+                          ],
+                          onChanged: (v) => setLocal(
+                            () => selectedPricePeriod =
+                                v ?? AccommodationPricePeriod.night,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: priceController,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: _propertyFormDecoration(
+                            label: 'Amount (MWK) *',
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            onPressed: submitting
+                                ? null
+                                : () async {
+                                    String coverUrl;
+                                    if (newCover != null) {
+                                      coverUrl = await _uploadPropertyPhotoForApi(
+                                          newCover!);
+                                    } else {
+                                      coverUrl = existingCoverUrl;
+                                    }
+                                    if (coverUrl.trim().isEmpty) {
+                                      _toastErr('Please add a cover photo');
+                                      return;
+                                    }
+                                    final name = nameController.text.trim();
+                                    final location =
+                                        locationController.text.trim();
+                                    final price = double.tryParse(
+                                      priceController.text.trim(),
+                                    );
+                                    if (name.isEmpty || location.isEmpty) {
+                                      _toastErr(
+                                          'Name and location are required');
+                                      return;
+                                    }
+                                    if (price == null || price <= 0) {
+                                      _toastErr('Enter a valid amount');
+                                      return;
+                                    }
+                                    setLocal(() => submitting = true);
+                                    try {
+                                      final galleryUrls =
+                                          List<String>.from(keptGalleryUrls);
+                                      for (final m in newGallery) {
+                                        galleryUrls.add(
+                                            await _uploadPropertyPhotoForApi(
+                                                m));
+                                      }
+                                      await _accommodationApi
+                                          .updateAccommodation(
+                                        id: apiId,
+                                        name: name,
+                                        location: location,
+                                        description: descriptionController.text
+                                            .trim(),
+                                        pricePerNight: price,
+                                        pricingPeriod:
+                                            selectedPricePeriod.apiValue,
+                                        accommodationType: selectedType,
+                                        image: coverUrl,
+                                        gallery: galleryUrls,
+                                      );
+                                      if (!ctx.mounted) return;
+                                      Navigator.pop(ctx);
+                                      if (_uid.isNotEmpty) {
+                                        unawaited(
+                                          _firestore
+                                              .collection('accommodation_rooms')
+                                              .doc('${_uid}_$apiId')
+                                              .set(
+                                            {
+                                              'merchantId': _uid,
+                                              'apiAccommodationId': apiId,
+                                              'pricingPeriod':
+                                                  selectedPricePeriod.apiValue,
+                                            },
+                                            SetOptions(merge: true),
+                                          ),
+                                        );
+                                      }
+                                      final updated =
+                                          Map<String, dynamic>.from(room);
+                                      updated['name'] = name;
+                                      updated['location'] = location;
+                                      updated['description'] =
+                                          descriptionController.text.trim();
+                                      updated['price'] = price;
+                                      updated['pricePerNight'] = price;
+                                      updated['pricingPeriod'] =
+                                          selectedPricePeriod.apiValue;
+                                      updated['accommodationType'] =
+                                          selectedType;
+                                      updated['type'] = selectedType;
+                                      updated['image'] = coverUrl;
+                                      updated['imageUrl'] = coverUrl;
+                                      updated['galleryUrls'] = galleryUrls;
+                                      if (mounted) {
+                                        setState(() {
+                                          final idx = _rooms.indexWhere((r) =>
+                                              _apiAccommodationId(
+                                                  r as Map<String, dynamic>) ==
+                                              apiId);
+                                          if (idx >= 0) {
+                                            _rooms[idx] = updated;
+                                          }
+                                        });
+                                        _calculateAvailableRooms();
+                                      }
+                                      _toastOk('Property updated');
+                                    } catch (e) {
+                                      if (ctx.mounted) {
+                                        setLocal(() => submitting = false);
+                                      }
+                                      final msg = e is ApiException
+                                          ? e.message
+                                          : 'Failed to update property';
+                                      _toastErr(msg);
+                                    }
+                                  },
+                            style: FilledButton.styleFrom(
+                              backgroundColor: _brandOrange,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: submitting
+                                ? const SizedBox(
+                                    height: 24,
+                                    width: 24,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text(
+                                    'Save changes',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                  const SizedBox(height: 14),
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(labelText: 'Accommodation Type *'),
-                    initialValue: selectedType,
-                    items: accommodationTypes
-                        .map((t) => DropdownMenuItem(value: t, child: Text(t[0].toUpperCase() + t.substring(1))))
-                        .toList(),
-                    onChanged: (v) => setLocal(() => selectedType = v ?? accommodationTypes.first),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(labelText: 'Accomodation Name *', hintText: 'e.g. Sunset Lodge'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: locationController,
-                    decoration: const InputDecoration(labelText: 'Location / Address *', hintText: 'e.g. Lilongwe, Area 47'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: descriptionController,
-                    decoration: const InputDecoration(labelText: 'Description', hintText: 'Describe your Accomodation', alignLabelWithHint: true),
-                    maxLines: 4,
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: priceController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Price per Night (MWK) *', hintText: 'e.g. mwk 40,000'),
-                  ),
-                  const SizedBox(height: 24),
-                  FilledButton(
-                    onPressed: submitting ? null : () async {
-                      if (cover == null) {
-                        ToastHelper.showCustomToast(context, 'Please pick a cover photo', isSuccess: false, errorMessage: '');
-                        return;
-                      }
-                      final name = nameController.text.trim();
-                      final location = locationController.text.trim();
-                      final price = double.tryParse(priceController.text.trim());
-                      if (name.isEmpty || location.isEmpty) {
-                        ToastHelper.showCustomToast(context, 'Name and Location are required', isSuccess: false, errorMessage: '');
-                        return;
-                      }
-                      if (price == null || price <= 0) {
-                        ToastHelper.showCustomToast(context, 'Enter a valid price per night', isSuccess: false, errorMessage: '');
-                        return;
-                      }
-                      setLocal(() => submitting = true);
-                      try {
-                        final coverUrl = await _uploadAccommodationImage(
-                          cover!.bytes,
-                          filename: cover!.filename,
-                          mime: cover!.mime,
-                        );
-                        final galleryUrls = <String>[];
-                        for (var i = 0; i < gallery.length; i++) {
-                          final m = gallery[i];
-                          final url = await _uploadAccommodationImage(m.bytes, filename: m.filename, mime: m.mime);
-                          galleryUrls.add(url);
-                        }
-                        await _firestore.collection('accommodation_rooms').add({
-                          'name': name,
-                          'location': location,
-                          'description': descriptionController.text.trim().isEmpty ? null : descriptionController.text.trim(),
-                          'pricePerNight': price,
-                          'price': price,
-                          'accommodationType': selectedType,
-                          'type': selectedType,
-                          'merchantId': _uid,
-                          'isAvailable': true,
-                          'capacity': 1,
-                          'imageUrl': coverUrl,
-                          'image': coverUrl,
-                          'galleryUrls': galleryUrls,
-                          'createdAt': FieldValue.serverTimestamp(),
-                        });
-                        if (!ctx.mounted) return;
-                        Navigator.pop(ctx);
-                        await _loadRooms();
-                        _accommodationTabs?.animateTo(1);
-                        ToastHelper.showCustomToast(context, 'Accomodation added successfully', isSuccess: true, errorMessage: '');
-                      } catch (e) {
-                        if (ctx.mounted) setLocal(() => submitting = false);
-                        final String msg = e is FirebaseException
-                            ? (e.message ?? '').contains('404') || (e.message ?? '').contains('Not Found')
-                                ? 'Photo upload failed. Enable Firebase Storage in Console (Build → Storage → Get started).'
-                                : 'Upload failed: ${e.message}'
-                            : 'Failed to add property';
-                        if (ctx.mounted) ToastHelper.showCustomToast(context, msg, isSuccess: false, errorMessage: '');
-                      }
-                    },
-                    style: FilledButton.styleFrom(backgroundColor: _brandOrange, padding: const EdgeInsets.symmetric(vertical: 14)),
-                    child: submitting
-                        ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('Add Accomodation'),
                   ),
                 ],
               ),
@@ -678,8 +2436,6 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       ),
     );
   }
-
- 
 
   Future<void> _loadWalletBalance() async {
     try {
@@ -717,24 +2473,6 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     }
   }
 
-  Future<void> _calculateActiveBookings() async {
-    try {
-      final snapshot = await _firestore
-          .collection('bookings')
-          .where('accommodationId', isEqualTo: _uid)
-          .where('status', whereIn: ['confirmed', 'checked_in'])
-          .get();
-      
-      if (mounted) {
-        setState(() {
-          _activeBookings = snapshot.size;
-        });
-      }
-    } catch (e) {
-      print('Error calculating active bookings: $e');
-    }
-  }
-
   Future<void> _calculateAvailableRooms() async {
     try {
       final availableRooms = _rooms.where((room) {
@@ -765,6 +2503,25 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       _loadMerchantData(showLoading: false);
     } catch (e) {
       print('Error updating booking: $e');
+    }
+  }
+
+  /// Guest stays booked via the Vero API (`GET /vero/bookings/merchant/me`).
+  Future<void> _loadVeroMerchantBookings() async {
+    try {
+      final list = await _myBookingService.getMerchantIncomingBookings();
+      list.sort((a, b) {
+        final da = a.bookingDate;
+        final db = b.bookingDate;
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return db.compareTo(da);
+      });
+      if (mounted) setState(() => _veroMerchantBookings = list);
+    } catch (e) {
+      if (mounted) setState(() => _veroMerchantBookings = []);
+      print('Vero merchant bookings: $e');
     }
   }
 
@@ -811,12 +2568,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     await sp.setString('app_pin_hash', hash);
 
     if (!mounted) return true;
-    ToastHelper.showCustomToast(
-      context,
-      'App password set',
-      isSuccess: true,
-      errorMessage: '',
-    );
+    _toastOk('Wallet password set');
     return true;
   }
 
@@ -839,12 +2591,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
     if (!ok) {
       if (!mounted) return false;
-      ToastHelper.showCustomToast(
-        context,
-        'Wrong password',
-        isSuccess: false,
-        errorMessage: '',
-      );
+      _toastErr('Wrong password');
       return false;
     }
 
@@ -857,39 +2604,191 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
   Future<String?> _showEnterPinDialog() async {
     final controller = TextEditingController();
+    String? shortPinHint;
+
     return showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('Enter Your Password'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          obscureText: true,
-          keyboardType: TextInputType.number,
-          maxLength: 6,
-          decoration: const InputDecoration(
-            hintText: 'PIN (4–6 digits)',
-            counterText: '',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, null),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              final pin = controller.text.trim();
-              if (pin.length < 4) return;
-              Navigator.pop(context, pin);
-            },
-            child: const Text(
-              'Unlock',
-              style: TextStyle(fontWeight: FontWeight.w900),
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final kb = MediaQuery.viewInsetsOf(ctx).bottom;
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: Material(
+                color: Colors.white,
+                elevation: 18,
+                shadowColor: Colors.black.withValues(alpha: 0.2),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _walletPinDialogHeader(
+                      icon: Icons.account_balance_wallet_rounded,
+                      title: 'Unlock wallet',
+                      subtitle:
+                          'Enter your wallet PIN to view balance and manage payouts.',
+                    ),
+                    Padding(
+                      padding: EdgeInsets.only(bottom: kb),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                              child: Text(
+                                'PIN',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.grey.shade700,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                              child: TextField(
+                                controller: controller,
+                                autofocus: true,
+                                obscureText: true,
+                                keyboardType: TextInputType.number,
+                                maxLength: 6,
+                                onChanged: (_) {
+                                  if (shortPinHint != null) {
+                                    setLocal(() => shortPinHint = null);
+                                  }
+                                },
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 2,
+                                ),
+                                decoration:
+                                    _walletPinFieldDecoration('4–6 digits'),
+                              ),
+                            ),
+                            if (shortPinHint != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    20, 0, 20, 12),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: _brandOrange.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: _brandOrange
+                                          .withValues(alpha: 0.35),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.info_outline_rounded,
+                                        color: _brandNavy
+                                            .withValues(alpha: 0.9),
+                                        size: 22,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          shortPinHint!,
+                                          style: TextStyle(
+                                            color: Colors.grey.shade900,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                            height: 1.35,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1, thickness: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(null),
+                              style: OutlinedButton.styleFrom(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                side: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              child: Text(
+                                'Cancel',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.grey.shade800,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 2,
+                            child: FilledButton(
+                              onPressed: () {
+                                final pin = controller.text.trim();
+                                if (pin.length < 4) {
+                                  setLocal(() => shortPinHint =
+                                      'Enter at least 4 digits to unlock.');
+                                  return;
+                                }
+                                Navigator.of(dialogContext).pop(pin);
+                              },
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _brandOrange,
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                elevation: 0,
+                              ),
+                              child: const Text(
+                                'Unlock',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -902,72 +2801,227 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     return showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Set Password'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Create a PIN to protect your wallet.'),
-              const SizedBox(height: 10),
-              TextField(
-                controller: p1,
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                decoration: const InputDecoration(
-                  hintText: 'New PIN (4–6 digits)',
-                  counterText: '',
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final kb = MediaQuery.viewInsetsOf(ctx).bottom;
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: Material(
+                color: Colors.white,
+                elevation: 18,
+                shadowColor: Colors.black.withValues(alpha: 0.2),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _walletPinDialogHeader(
+                      icon: Icons.pin_rounded,
+                      title: 'Set wallet PIN',
+                      subtitle:
+                          'Choose a 4–6 digit PIN. You’ll need it to unlock your wallet.',
+                    ),
+                    Padding(
+                      padding: EdgeInsets.only(bottom: kb),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                              child: Text(
+                                'New PIN',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.grey.shade700,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                              child: TextField(
+                                controller: p1,
+                                autofocus: true,
+                                obscureText: true,
+                                keyboardType: TextInputType.number,
+                                maxLength: 6,
+                                onChanged: (_) {
+                                  if (err != null) {
+                                    setLocal(() => err = null);
+                                  }
+                                },
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 2,
+                                ),
+                                decoration:
+                                    _walletPinFieldDecoration('4–6 digits'),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                              child: Text(
+                                'Confirm PIN',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.grey.shade700,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                              child: TextField(
+                                controller: p2,
+                                obscureText: true,
+                                keyboardType: TextInputType.number,
+                                maxLength: 6,
+                                onChanged: (_) {
+                                  if (err != null) {
+                                    setLocal(() => err = null);
+                                  }
+                                },
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 2,
+                                ),
+                                decoration:
+                                    _walletPinFieldDecoration('Re-enter PIN'),
+                              ),
+                            ),
+                            if (err != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    20, 0, 20, 8),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFEBEE),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: const Color(0xFFEF9A9A)
+                                          .withValues(alpha: 0.6),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Icon(
+                                        Icons.error_outline_rounded,
+                                        color: Color(0xFFC62828),
+                                        size: 22,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          err!,
+                                          style: const TextStyle(
+                                            color: Color(0xFFB71C1C),
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                            height: 1.35,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1, thickness: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () =>
+                                  Navigator.of(dialogContext).pop(null),
+                              style: OutlinedButton.styleFrom(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                side: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              child: Text(
+                                'Cancel',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.grey.shade800,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 2,
+                            child: FilledButton(
+                              onPressed: () {
+                                final a = p1.text.trim();
+                                final b = p2.text.trim();
+
+                                if (a.length < 4) {
+                                  setLocal(() =>
+                                      err = 'PIN must be at least 4 digits.');
+                                  return;
+                                }
+                                if (a != b) {
+                                  setLocal(() => err = 'PINs do not match.');
+                                  return;
+                                }
+                                Navigator.of(dialogContext).pop(a);
+                              },
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _brandOrange,
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                elevation: 0,
+                              ),
+                              child: const Text(
+                                'Save PIN',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              TextField(
-                controller: p2,
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                decoration: const InputDecoration(
-                  hintText: 'Confirm PIN',
-                  counterText: '',
-                ),
-              ),
-              if (err != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  err!,
-                  style: const TextStyle(
-                    color: Colors.red,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, null),
-              child: const Text('Cancel'),
             ),
-            TextButton(
-              onPressed: () {
-                final a = p1.text.trim();
-                final b = p2.text.trim();
-                if (a.length < 4) {
-                  setLocal(() => err = 'PIN must be at least 4 digits.');
-                  return;
-                }
-                if (a != b) {
-                  setLocal(() => err = 'PINs do not match.');
-                  return;
-                }
-                Navigator.pop(context, a);
-              },
-              child: const Text(
-                'Save',
-                style: TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -1048,39 +3102,113 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
   AppBar _buildDashboardAppBar() {
     return AppBar(
-      title: Text(
-        _initialLoadComplete ? 'Accommodation Dashboard' : 'Loading...',
+      title: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.hotel_rounded,
+            color: Colors.white,
+            size: 22,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _initialLoadComplete ? 'Accommodation Dashboard' : 'Loading…',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
+          ),
+        ],
       ),
       backgroundColor: _brandOrange,
       actions: [
-        IconButton(
-          icon: const Icon(Icons.auto_stories_rounded),
-          tooltip: 'Post story (24h)',
-          onPressed: () {
-            final uid = _auth.currentUser?.uid;
-            if (uid == null) {
-              ToastHelper.showCustomToast(
-                context,
-                'Please sign in to post a story',
-                isSuccess: false,
-                errorMessage: '',
-              );
-              return;
-            }
-            Navigator.push(
-              context,
-              MaterialPageRoute<bool>(
-                builder: (_) => PostStoryPage(
-                  merchantId: uid,
-                  merchantName: _businessName.isNotEmpty
-                      ? _businessName
-                      : (_auth.currentUser?.displayName ?? 'Accommodation'),
-                  merchantImageUrl: _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
-                  serviceType: 'accommodation',
-                ),
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: Tooltip(
+            message: 'Post story (24h)',
+            child: GestureDetector(
+              onTap: () {
+                final uid = _auth.currentUser?.uid;
+                if (uid == null) {
+                  _toastErr('Please sign in to post a story');
+                  return;
+                }
+                Navigator.push(
+                  context,
+                  MaterialPageRoute<bool>(
+                    builder: (_) => PostStoryPage(
+                      merchantId: uid,
+                      merchantName: _businessName.isNotEmpty
+                          ? _businessName
+                          : (_auth.currentUser?.displayName ?? 'Accommodation'),
+                      merchantImageUrl: _merchantProfileUrl.isNotEmpty
+                          ? _merchantProfileUrl
+                          : null,
+                      serviceType: 'accommodation',
+                    ),
+                  ),
+                );
+              },
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: const LinearGradient(
+                        colors: [
+                          Color(0xFFF58529),
+                          Color(0xFFDD2A7B),
+                          Color(0xFF8134AF),
+                          Color(0xFF515BD4),
+                        ],
+                      ),
+                    ),
+                    child: CircleAvatar(
+                      radius: 16,
+                      backgroundColor: Colors.grey.shade200,
+                      backgroundImage: _merchantProfileUrl.isNotEmpty
+                          ? NetworkImage(_merchantProfileUrl)
+                          : null,
+                      child: _merchantProfileUrl.isNotEmpty
+                          ? null
+                          : const Icon(
+                              Icons.person,
+                              size: 18,
+                              color: Colors.grey,
+                            ),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 0,
+                    right: 0,
+                    child: Container(
+                      width: 18,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Container(
+                        margin: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF25D366),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.add,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            );
-          },
+            ),
+          ),
         ),
         IconButton(
           icon: const Icon(Icons.settings),
@@ -1129,7 +3257,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       );
     }
 
-    // Mirror MarketplaceMerchantDashboard: tabs for dashboard / rooms / bookings
+    // Mirror MarketplaceMerchantDashboard: tabs for dashboard / properties / bookings
     if (_accommodationTabs == null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -1144,7 +3272,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
             indicatorColor: _brandOrange,
             tabs: const [
               Tab(text: 'Dashboard'),
-             // Tab(text: 'Rooms'),
+              Tab(text: 'My properties'),
               Tab(text: 'Bookings'),
             ],
           ),
@@ -1170,12 +3298,12 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                       const SizedBox(height: 12),
                       _buildWalletSummary(),
                       const SizedBox(height: 12),
-                      _buildRecentBookings(),
+                      _buildRecentBookings(compact: true),
                     ],
                   ),
                 ),
               ),
-              // Rooms tab (dedicated list of rooms)
+              // My properties tab
               SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                 child: _buildRoomsSection(),
@@ -1186,7 +3314,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildRecentBookings(),
+                    _buildRecentBookings(compact: false),
                     const SizedBox(height: 16),
                     _buildRecentReviews(),
                   ],
@@ -1212,40 +3340,139 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     }
   }
 
+  /// Marketplace-style row: grey card + colored circle icon.
+  Widget _accommodationPhotoSourceOption({
+    required VoidCallback onTap,
+    required Color circleColor,
+    required IconData icon,
+    required String label,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: circleColor,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF222222),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Opens camera / gallery sheet (same UX as [MarketplaceMerchantDashboard]).
+  void _showAccommodationPhotoSourcePicker(
+    BuildContext anchorContext, {
+    required void Function(ImageSource source) onSource,
+  }) {
+    showModalBottomSheet<void>(
+      context: anchorContext,
+      useRootNavigator: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _accommodationPhotoSourceOption(
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  Future<void>.microtask(() => onSource(ImageSource.camera));
+                },
+                circleColor: _brandOrange,
+                icon: Icons.photo_camera_outlined,
+                label: 'Take a photo',
+              ),
+              _accommodationPhotoSourceOption(
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  Future<void>.microtask(() => onSource(ImageSource.gallery));
+                },
+                circleColor: const Color(0xFF1E88E5),
+                icon: Icons.photo_library_outlined,
+                label: 'Choose from gallery',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showPhotoSheet() {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
       builder: (_) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take a photo'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickAndUploadProfile(ImageSource.camera);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose from gallery'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickAndUploadProfile(ImageSource.gallery);
-              },
-            ),
-            if (_merchantProfileUrl.trim().isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.remove_circle_outline, color: Colors.red),
-                title: const Text('Remove current photo'),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _accommodationPhotoSourceOption(
                 onTap: () {
                   Navigator.pop(context);
-                  _removeProfilePhoto();
+                  _pickAndUploadProfile(ImageSource.camera);
                 },
+                circleColor: _brandOrange,
+                icon: Icons.photo_camera_outlined,
+                label: 'Take a photo',
               ),
-          ],
+              _accommodationPhotoSourceOption(
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickAndUploadProfile(ImageSource.gallery);
+                },
+                circleColor: const Color(0xFF1E88E5),
+                icon: Icons.photo_library_outlined,
+                label: 'Choose from gallery',
+              ),
+              if (_merchantProfileUrl.trim().isNotEmpty)
+                _accommodationPhotoSourceOption(
+                  onTap: () {
+                    Navigator.pop(context);
+                    _removeProfilePhoto();
+                  },
+                  circleColor: Colors.red,
+                  icon: Icons.remove_circle_outline,
+                  label: 'Remove current photo',
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1434,7 +3661,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         debugPrint('Backend fallback failed: $fallbackErr');
       }
       if (e.code == 'object-not-found' || (e.message ?? '').contains('404')) {
-        ToastHelper.showCustomToast(context, 'Upload failed. Check network and that the server is running.', isSuccess: false, errorMessage: '');
+        ToastHelper.showCustomToast(context, 'Upload failed. Check network or try again later.', isSuccess: false, errorMessage: '');
       } else {
         ToastHelper.showCustomToast(context, 'Failed to upload photo. Please try again.', isSuccess: false, errorMessage: '');
       }
@@ -1717,6 +3944,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   }
 
   Widget _buildStatsSection() {
+    final revFmt = NumberFormat('#,##0', 'en');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1740,28 +3968,28 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               case 0:
                 return _compactStatTile(
                   title: 'Total Bookings',
-                  value: '$_totalBookings',
+                  value: '${_overviewBookingCount}',
                   icon: Icons.book_online,
                   color: _brandOrange,
                 );
               case 1:
                 return _compactStatTile(
                   title: 'Total Revenue',
-                  value: 'MWK ${_totalRevenue.toStringAsFixed(2)}',
+                  value: 'MWK ${revFmt.format(_overviewRevenueMwk.round())}',
                   icon: Icons.attach_money,
                   color: Colors.green,
                 );
               case 2:
                 return _compactStatTile(
                   title: 'Active Guests',
-                  value: '$_activeBookings',
+                  value: '${_overviewActiveGuestsCount}',
                   icon: Icons.people,
                   color: _brandNavy,
                 );
               default:
                 return _compactStatTile(
-                  title: 'Available Rooms',
-                  value: '$_availableRooms/${_rooms.length}',
+                  title: 'Available listings',
+                  value: '${_availableRooms}',
                   icon: Icons.bed,
                   color: Colors.orange,
                 );
@@ -1799,8 +4027,8 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               onTap: _showAddPropertySheet,
             ),
             _QuickActionTile(
-              title: 'Rooms',
-              icon: Icons.meeting_room_outlined,
+              title: 'My properties',
+              icon: Icons.apartment_outlined,
               color: _brandNavy,
               onTap: () => _accommodationTabs?.animateTo(1),
             ),
@@ -1818,7 +4046,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               icon: Icons.campaign_outlined,
               color: Colors.orange,
               onTap: () {
-                // Promotions for rooms
+                // Promotions for properties
               },
             ),
         
@@ -1922,7 +4150,16 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     );
   }
 
-  Widget _buildRecentBookings() {
+  Widget _buildRecentBookings({required bool compact}) {
+    final veroList = compact
+        ? _veroMerchantBookings.take(3).toList()
+        : _veroMerchantBookings.toList();
+    final fireList =
+        compact ? _recentBookings.take(3).toList() : _recentBookings.toList();
+
+    final hasVero = veroList.isNotEmpty;
+    final hasFirestore = fireList.isNotEmpty;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1930,62 +4167,646 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'Recent Bookings',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Text(
+              compact ? 'Recent bookings' : 'Bookings',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            TextButton(
-              onPressed: () {
-                // View all bookings
-              },
-              child: const Text('View All'),
-            ),
+            if (compact && _accommodationTabs != null)
+              TextButton(
+                onPressed: () => _accommodationTabs!.animateTo(2),
+                child: const Text('View all'),
+              ),
           ],
         ),
         const SizedBox(height: 10),
-        if (_recentBookings.isEmpty)
+        if (!hasVero && !hasFirestore)
           const Card(
             child: Padding(
               padding: EdgeInsets.all(20),
               child: Center(child: Text('No bookings yet')),
             ),
-          )
-        else
-          ..._recentBookings.take(3).map((booking) {
+          ),
+        if (!compact && hasVero && hasFirestore) ...[
+          Text(
+            'Guest bookings (app)',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: Colors.grey.shade700,
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+        ...veroList.map(_veroGuestBookingCard),
+        if (!compact && hasVero && hasFirestore) ...[
+          const SizedBox(height: 16),
+          Text(
+            'Recorded bookings',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: Colors.grey.shade700,
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+        if (hasFirestore)
+          ...fireList.map((booking) {
             final bookingMap = booking as Map<String, dynamic>;
-            return Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: ListTile(
-                leading: const Icon(Icons.hotel, color: _brandOrange),
-                title: Text('Booking #${bookingMap['bookingId']?.toString().substring(0, 8) ?? 'N/A'}'),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Guest: ${bookingMap['guestName'] ?? 'N/A'}'),
-                    Text('Room: ${bookingMap['roomType'] ?? 'N/A'}'),
-                    Text('Dates: ${bookingMap['checkIn'] ?? ''} - ${bookingMap['checkOut'] ?? ''}'),
-                    Text('Amount: MWK ${bookingMap['totalAmount'] ?? '0'}'),
-                  ],
+            final bidRaw = bookingMap['bookingId'] ?? bookingMap['id'] ?? 'N/A';
+            final bidStr = bidRaw.toString();
+            final shortBid =
+                bidStr.length > 8 ? bidStr.substring(0, 8) : bidStr;
+            final st = bookingMap['status']?.toString() ?? 'pending';
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Material(
+                color: Colors.grey.shade50,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  side: BorderSide(color: Colors.grey.shade200),
                 ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Chip(
-                      label: Text(bookingMap['status'] ?? 'pending'),
-                      backgroundColor: _getBookingStatusColor(bookingMap['status']),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.more_vert),
-                      onPressed: () {
-                        _showBookingActions(bookingMap);
-                      },
-                    ),
-                  ],
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: _brandOrange.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(Icons.hotel, color: _brandOrange),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Booking #$shortBid',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 16,
+                                    color: Color(0xFF1A1D26),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _getBookingStatusColor(st),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    st,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Actions',
+                            icon: Icon(Icons.more_vert, color: Colors.grey.shade700),
+                            onPressed: () => _showBookingActions(bookingMap),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _veroBookingInfoLine(
+                        Icons.person_outline,
+                        'Guest',
+                        '${bookingMap['guestName'] ?? 'N/A'}',
+                      ),
+                      _veroBookingInfoLine(
+                        Icons.meeting_room_outlined,
+                        'Room',
+                        '${bookingMap['roomType'] ?? 'N/A'}',
+                      ),
+                      _veroBookingInfoLine(
+                        Icons.date_range_outlined,
+                        'Dates',
+                        '${bookingMap['checkIn'] ?? ''} – ${bookingMap['checkOut'] ?? ''}',
+                      ),
+                      _veroBookingInfoLine(
+                        Icons.payments_outlined,
+                        'Amount',
+                        'MWK ${bookingMap['totalAmount'] ?? '0'}',
+                        emphasize: true,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
           }),
       ],
+    );
+  }
+
+  Widget _veroGuestBookingCard(BookingItem b) {
+    final name = (b.accommodationName ?? 'Property').trim();
+    final loc = (b.accommodationLocation ?? '').trim();
+    final dateStr = b.bookingDate != null
+        ? DateFormat.yMMMd().format(b.bookingDate!)
+        : '—';
+    final currency = NumberFormat('#,##0', 'en');
+    final statusLabel = _veroBookingStatusLabel(b.status);
+    final guestName = (b.guestName ?? '').trim();
+    final statusBg = _getBookingStatusColor(_veroStatusKeyForColor(b.status));
+    final statusFg = _veroBookingStatusForeground(b.status);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: _brandOrange.withValues(alpha: 0.06),
+        elevation: 0,
+        shadowColor: Colors.black26,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(
+            color: _brandOrange.withValues(alpha: 0.55),
+            width: 1.5,
+          ),
+        ),
+        child: InkWell(
+          onTap: () => _showVeroBookingDetailSheet(b),
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: _brandOrange.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(
+                        Icons.event_available_rounded,
+                        color: _brandOrange,
+                        size: 26,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              height: 1.25,
+                              color: Color(0xFF1A1D26),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: statusBg,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: Colors.black.withValues(alpha: 0.04),
+                                  ),
+                                ),
+                                child: Text(
+                                  statusLabel,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: statusFg,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Delete booking',
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
+                      padding: EdgeInsets.zero,
+                      icon: Icon(
+                        Icons.delete_outline_rounded,
+                        color: b.id.isEmpty ? Colors.grey : const Color(0xFFDC2626),
+                        size: 24,
+                      ),
+                      onPressed: b.id.isEmpty
+                          ? null
+                          : () => _confirmDeleteVeroBooking(b),
+                    ),
+                  ],
+                ),
+                if (guestName.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _brandOrange.withValues(alpha: 0.22),
+                        width: 1,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'GUEST',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.6,
+                            color: _brandOrange.withValues(alpha: 0.85),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          guestName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                            color: Color(0xFF1A1D26),
+                          ),
+                        ),
+                        if ((b.guestEmail ?? '').trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            b.guestEmail!.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey.shade700,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                        if ((b.guestPhone ?? '').trim().isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            b.guestPhone!.trim(),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey.shade700,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                if (loc.isNotEmpty)
+                  _veroBookingInfoLine(
+                    Icons.place_outlined,
+                    'Location',
+                    loc,
+                    iconColor: _brandOrange,
+                  ),
+                _veroBookingInfoLine(
+                  Icons.calendar_today_outlined,
+                  'Booking date',
+                  dateStr,
+                  iconColor: _brandOrange,
+                ),
+                _veroBookingInfoLine(
+                  Icons.payments_outlined,
+                  'Total',
+                  'MWK ${currency.format(b.total.round())}',
+                  emphasize: true,
+                  iconColor: _brandOrange,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Ref · ${b.displayBookingRef}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: _brandOrange,
+                    letterSpacing: 0.15,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Color _veroBookingStatusForeground(BookingStatus s) {
+    switch (s) {
+      case BookingStatus.pending:
+        return const Color(0xFFB45309);
+      case BookingStatus.confirmed:
+        return const Color(0xFFC2410C);
+      case BookingStatus.cancelled:
+        return const Color(0xFFB91C1C);
+      case BookingStatus.completed:
+        return const Color(0xFF15803D);
+      case BookingStatus.unknown:
+        return const Color(0xFF475569);
+    }
+  }
+
+  Widget _veroBookingInfoLine(
+    IconData icon,
+    String label,
+    String value, {
+    bool emphasize = false,
+    Color? iconColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: iconColor ?? Colors.grey.shade600),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: emphasize ? 15 : 14,
+                    fontWeight: emphasize ? FontWeight.w900 : FontWeight.w700,
+                    color: emphasize
+                        ? const Color(0xFF16284C)
+                        : const Color(0xFF334155),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _veroBookingStatusLabel(BookingStatus s) {
+    switch (s) {
+      case BookingStatus.pending:
+        return 'Pending';
+      case BookingStatus.confirmed:
+        return 'Confirmed';
+      case BookingStatus.cancelled:
+        return 'Cancelled';
+      case BookingStatus.completed:
+        return 'Paid';
+      case BookingStatus.unknown:
+        return 'Unknown';
+    }
+  }
+
+  /// Maps to strings understood by [_getBookingStatusColor].
+  String? _veroStatusKeyForColor(BookingStatus s) {
+    switch (s) {
+      case BookingStatus.pending:
+        return 'pending';
+      case BookingStatus.confirmed:
+        return 'confirmed';
+      case BookingStatus.cancelled:
+        return 'cancelled';
+      case BookingStatus.completed:
+        return 'checked_out';
+      case BookingStatus.unknown:
+        return null;
+    }
+  }
+
+  Future<void> _confirmDeleteVeroBooking(
+    BookingItem b, {
+    VoidCallback? onConfirmedBeforeRequest,
+  }) async {
+    if (b.id.isEmpty) return;
+    final ok = await showBookingDeleteConfirmDialog(
+      context,
+      bookingId: b.id,
+      bookingRefLabel: b.displayBookingRef,
+      title: 'Delete booking?',
+      body:
+          'This permanently removes this guest booking from your dashboard. This cannot be undone.',
+    );
+    if (ok != true || !mounted) return;
+    onConfirmedBeforeRequest?.call();
+    try {
+      await _myBookingService.deleteBooking(b.id);
+      if (mounted) _toastOk('Booking deleted');
+      await _loadVeroMerchantBookings();
+    } catch (e) {
+      if (mounted) _toastErr(e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  void _showVeroBookingDetailSheet(BookingItem b) {
+    final currency = NumberFormat('#,##0', 'en');
+    final dateStr = b.bookingDate != null
+        ? DateFormat.yMMMd().format(b.bookingDate!)
+        : '—';
+    final guestLines = <String>[
+      if ((b.guestName ?? '').trim().isNotEmpty) b.guestName!.trim(),
+      if ((b.guestEmail ?? '').trim().isNotEmpty) b.guestEmail!.trim(),
+      if ((b.guestPhone ?? '').trim().isNotEmpty) b.guestPhone!.trim(),
+    ];
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 4,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        color: _brandOrange,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        (b.accommodationName ?? 'Booking').trim(),
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: _brandNavy,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if ((b.accommodationLocation ?? '').trim().isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    b.accommodationLocation!.trim(),
+                    style: TextStyle(color: Colors.grey.shade700),
+                  ),
+                ],
+                const Divider(height: 24),
+                if (guestLines.isNotEmpty) ...[
+                  Text(
+                    'Guest / booker',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 13,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...guestLines.map(
+                    (line) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        line,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 24),
+                ],
+                _veroDetailRow('Status', _veroBookingStatusLabel(b.status)),
+                _veroDetailRow('Booking date', dateStr),
+                _veroDetailRow(
+                  'Price',
+                  'MWK ${currency.format(b.price.round())}',
+                ),
+                _veroDetailRow(
+                  'Booking fee',
+                  'MWK ${currency.format(b.bookingFee.round())}',
+                ),
+                _veroDetailRow(
+                  'Total',
+                  'MWK ${currency.format(b.total.round())}',
+                ),
+                _veroDetailRow('Reference', b.displayBookingRef,
+                    valueColor: _brandOrange),
+                if (b.accommodationId != null)
+                  _veroDetailRow('Property ID', '${b.accommodationId}'),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: b.id.isEmpty
+                      ? null
+                      : () => _confirmDeleteVeroBooking(
+                            b,
+                            onConfirmedBeforeRequest: () =>
+                                Navigator.pop(ctx),
+                          ),
+                  icon: Icon(Icons.delete_outline, color: Colors.red.shade700),
+                  label: Text(
+                    'Delete booking',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: Colors.red.shade700,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red.shade700,
+                    side: BorderSide(color: Colors.red.shade200),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _veroDetailRow(String k, String v, {Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              k,
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: Colors.grey.shade600,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              v,
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+                color: valueColor ?? const Color(0xFF334155),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1998,14 +4819,12 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
-              'Rooms',
+              'My properties',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             TextButton(
-              onPressed: () {
-                // Add room
-              },
-              child: const Text('Add Room'),
+              onPressed: _showAddPropertySheet,
+              child: const Text('Add property'),
             ),
           ],
         ),
@@ -2014,78 +4833,218 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           const Card(
             child: Padding(
               padding: EdgeInsets.all(20),
-              child: Center(child: Text('No rooms added yet')),
+              child: Center(child: Text('No properties yet')),
             ),
           )
         else
-          GridView.builder(
+          ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: 0.9,
-            ),
             itemCount: _rooms.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
               final room = _rooms[index] as Map<String, dynamic>;
+              final rawType = (room['accommodationType'] ?? room['type'] ?? '')
+                  .toString()
+                  .trim();
+              final typeKey =
+                  rawType.isEmpty ? 'property' : rawType.toLowerCase();
+              final typeTitle = typeKey.isEmpty
+                  ? 'Property'
+                  : (typeKey[0].toUpperCase() +
+                      (typeKey.length > 1 ? typeKey.substring(1) : ''));
+              final priceRaw = room['pricePerNight'] ?? room['price'] ?? 0;
+              final priceNum = priceRaw is num
+                  ? priceRaw.toDouble()
+                  : double.tryParse(priceRaw.toString()) ?? 0;
+              final listPricePeriod = accommodationPricePeriodFromDynamic(
+                room['pricingPeriod'] ?? room['pricePeriod'],
+              );
+              final apiId = _apiAccommodationId(room);
+              final canEditApi = apiId != null;
+              final coverUrl = _merchantPropertyCoverUrl(room);
+              final desc = (room['description'] ?? '').toString().trim();
+              final locationStr = (room['location'] ?? '').toString().trim();
+              final name = room['name']?.toString().isNotEmpty == true
+                  ? room['name'].toString()
+                  : 'Property ${index + 1}';
+              final cap = room['capacity'];
+       
+
               return Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        room['type'] == 'suite' ? Icons.king_bed : Icons.bed,
-                        size: 40,
-                        color: _brandOrange,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        room['name'] ?? 'Room ${index + 1}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      Text(
-                        '${room['type'] ?? 'Standard'} Room',
-                        style: const TextStyle(color: Colors.grey),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'MWK ${(room['price'] ?? 0).toStringAsFixed(2)}/night',
-                        style: const TextStyle(
-                          color: Colors.green,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Chip(
-                            label: Text(
-                              room['isAvailable'] == true ? 'Available' : 'Booked',
+                clipBehavior: Clip.antiAlias,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(color: Colors.grey.shade200),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 112,
+                      height: 124,
+                      child: coverUrl.isNotEmpty
+                          ? Image.network(
+                              coverUrl,
+                              fit: BoxFit.cover,
+                              width: 112,
+                              height: 124,
+                              errorBuilder: (_, __, ___) =>
+                                  _propertyThumbPlaceholder(),
+                            )
+                          : _propertyThumbPlaceholder(),
+                    ),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16,
+                                letterSpacing: -0.2,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (locationStr.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Icon(
+                                      Icons.place_outlined,
+                                      size: 15,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      locationStr,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey.shade700,
+                                        height: 1.25,
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Chip(
+                                  label: Text(
+                                    typeTitle,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  backgroundColor:
+                                      _brandOrange.withValues(alpha: 0.12),
+                                  padding: EdgeInsets.zero,
+                                  visualDensity: VisualDensity.compact,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                Chip(
+                                  label: Text(
+                                    room['isAvailable'] == true
+                                        ? 'Available'
+                                        : 'Booked',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: room['isAvailable'] == true
+                                          ? Colors.green.shade800
+                                          : Colors.red.shade800,
+                                    ),
+                                  ),
+                                  backgroundColor: room['isAvailable'] == true
+                                      ? Colors.green[50]
+                                      : Colors.red[50],
+                                  padding: EdgeInsets.zero,
+                                  visualDensity: VisualDensity.compact,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'MWK ${_formatMerchantPriceWhole(priceNum)}${listPricePeriod.uiSuffix}',
                               style: TextStyle(
-                                color: room['isAvailable'] == true 
-                                    ? Colors.green 
-                                    : Colors.red,
+                                color: Colors.green.shade800,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 14,
                               ),
                             ),
-                            backgroundColor: room['isAvailable'] == true 
-                                ? Colors.green[50] 
-                                : Colors.red[50],
-                          ),
-                          const Spacer(),
-                          Text(
-                            '${room['capacity'] ?? 1} guests',
-                            style: const TextStyle(color: Colors.grey),
-                          ),
-                        ],
+                            if (desc.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                desc,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade700,
+                                  height: 1.3,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          
+                            if (!canEditApi) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'Legacy listing (Firestore only)',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.grey.shade600,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
+                    ),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (canEditApi)
+                          IconButton(
+                            icon: Icon(
+                              Icons.edit_outlined,
+                              color: Colors.grey.shade800,
+                            ),
+                            tooltip: 'Edit property',
+                            onPressed: () => _showEditPropertySheet(room),
+                          ),
+                        if (canEditApi)
+                          IconButton(
+                            icon: Icon(
+                              Icons.delete_outline_rounded,
+                              color: Colors.red.shade700,
+                            ),
+                            tooltip: 'Delete property',
+                            onPressed: () => _confirmDeleteProperty(room),
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
               );
             },

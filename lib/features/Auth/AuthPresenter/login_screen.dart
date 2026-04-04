@@ -18,6 +18,7 @@ import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
+import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -64,7 +65,8 @@ class _LoginScreenState extends State<LoginScreen> {
   // -------------------- Merchant dashboard selection --------------------
 
   Widget _getMerchantDashboard(String serviceKey, String email) {
-    switch (serviceKey) {
+    final key = normalizeMerchantServiceKey(serviceKey) ?? serviceKey.trim().toLowerCase();
+    switch (key) {
       case 'marketplace':
         return MarketplaceMerchantDashboard(
           email: email,
@@ -135,6 +137,7 @@ class _LoginScreenState extends State<LoginScreen> {
         (user['role'] ?? user['userRole'] ?? 'customer').toString().toLowerCase();
     await prefs.setString('role', role);
     await prefs.setString('user_role', role);
+    await prefs.setBool('is_merchant', role == 'merchant');
     
     print('🔐 Login: user=$user');
     print('🔐 Login: role=$role');
@@ -171,8 +174,9 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       if (merchantService != null && merchantService.isNotEmpty) {
-        await prefs.setString('merchant_service', merchantService);
+        await persistMerchantServiceFromApi(prefs, merchantService);
       }
+      await hydrateMerchantServiceFromFirestore(prefs);
 
       final businessName = user['businessName']?.toString();
       if (businessName != null && businessName.isNotEmpty) {
@@ -184,8 +188,12 @@ class _LoginScreenState extends State<LoginScreen> {
         await prefs.setString('business_address', businessAddress);
       }
 
-      // Show merchant dashboard guide once when they next open the dashboard.
-      if (prefs.getBool('marketplace_merchant_guide_v1_done') != true) {
+      final savedService = normalizeMerchantServiceKey(
+            prefs.getString('merchant_service') ?? merchantService,
+          ) ??
+          '';
+      if (savedService == 'marketplace' &&
+          prefs.getBool('marketplace_merchant_guide_v1_done') != true) {
         await prefs.setBool('marketplace_merchant_guide_show_on_next_open', true);
       }
     }

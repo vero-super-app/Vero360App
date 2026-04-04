@@ -19,6 +19,7 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
+import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 
 class AppColors {
@@ -278,9 +279,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await prefs.setString('email', displayId);
     }
 
-    final merchantService = user['merchantService']?.toString() ??
-        user['serviceType']?.toString() ??
-        _selectedMerchantService?.key;
+    // Prefer the service the user picked on this screen. The API often sends a generic
+    // `serviceType` (e.g. "marketplace") that would wrongly override accommodation/food.
+    String? merchantService;
+    if (_role == UserRole.merchant) {
+      merchantService = _selectedMerchantService?.key ??
+          user['merchantService']?.toString() ??
+          user['serviceType']?.toString();
+    } else {
+      merchantService = user['merchantService']?.toString() ??
+          user['serviceType']?.toString() ??
+          _selectedMerchantService?.key;
+    }
+    merchantService = normalizeMerchantServiceKey(merchantService);
     if (merchantService != null && merchantService.isNotEmpty) {
       await prefs.setString('merchant_service', merchantService);
 
@@ -294,23 +305,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
         (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
     await prefs.setString('role', role);
     await prefs.setString('user_role', role);
+    await prefs.setBool('is_merchant', role == 'merchant');
 
     final uid = user['uid']?.toString() ?? user['firebaseUid']?.toString();
     if (uid != null && uid.isNotEmpty) {
       await prefs.setString('uid', uid);
     }
 
-    // Show merchant dashboard guide once when they next open the dashboard (after register).
-    if (role == 'merchant' && prefs.getBool('marketplace_merchant_guide_v1_done') != true) {
+    // Marketplace onboarding guide only for marketplace merchants.
+    if (role == 'merchant' &&
+        merchantService == 'marketplace' &&
+        prefs.getBool('marketplace_merchant_guide_v1_done') != true) {
       await prefs.setBool('marketplace_merchant_guide_show_on_next_open', true);
     }
 
     if (!mounted) return;
 
     if (role == 'merchant') {
-      final serviceKey = merchantService ?? _selectedMerchantService?.key;
+      await hydrateMerchantServiceFromFirestore(prefs);
+      final serviceKey = normalizeMerchantServiceKey(
+        merchantService ?? _selectedMerchantService?.key,
+      );
 
-      if (serviceKey != null) {
+      if (serviceKey != null && serviceKey.isNotEmpty) {
         final merchantDashboard =
             _getMerchantDashboard(serviceKey, displayId);
         Navigator.of(context).pushAndRemoveUntil(
@@ -344,7 +361,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Widget _getMerchantDashboard(String serviceKey, String email) {
-    switch (serviceKey) {
+    final key = normalizeMerchantServiceKey(serviceKey) ?? serviceKey;
+    switch (key) {
       case 'marketplace':
         return MarketplaceMerchantDashboard(
           email: email,
@@ -430,8 +448,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       } catch (_) {}
     }
 
-    final role =
+    final roleFromProfile =
         (profile['role'] ?? 'customer').toString().toLowerCase();
+    // Registration form is source of truth: stale Firestore must not downgrade to customer.
+    final role = (_role == UserRole.merchant || _role == UserRole.driver)
+        ? _roleString
+        : roleFromProfile;
     final token = await user.getIdToken();
     final re = user.email ?? _identifierEmail;
     final responseEmail = profile['email']?.toString() ??
@@ -701,6 +723,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
       await prefs.setString('role', role);
       await prefs.setString('user_role', role);
+      await prefs.setBool('is_merchant', role == 'merchant');
       await prefs.setString('auth_provider', 'firebase_only');
 
       if (_role == UserRole.merchant) {
@@ -729,6 +752,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         uid: user.uid,
         name: _name.text.trim(),
         role: _roleString,
+        merchantService: _role == UserRole.merchant
+            ? _selectedMerchantService?.key
+            : null,
       );
       await _handleAuthResult(firebaseResponse);
     } on FirebaseAuthException catch (e) {
@@ -835,6 +861,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         uid: user.uid,
         name: user.displayName ?? _name.text.trim(),
         role: _roleString,
+        merchantService: _role == UserRole.merchant
+            ? _selectedMerchantService?.key
+            : null,
       );
       await _handleAuthResult(result);
 
@@ -905,6 +934,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         uid: user.uid,
         name: user.displayName ?? _name.text.trim(),
         role: _roleString,
+        merchantService: _role == UserRole.merchant
+            ? _selectedMerchantService?.key
+            : null,
       );
       await _handleAuthResult(result);
 

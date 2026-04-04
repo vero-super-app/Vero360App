@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
+import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 
 /// Cross-user order alerts via Firestore. Each target device should subscribe in
@@ -85,6 +87,65 @@ class OrderPartyNotificationService {
       });
     } catch (e) {
       debugPrint('[OrderPartyNotification] publishFundsReleasedToMerchant: $e');
+    }
+  }
+
+  /// Host receives this on their signed-in device via [NotificationService] listener.
+  static Future<void> publishAccommodationBookingToHost({
+    required String hostUid,
+    required String propertyName,
+    required String bookingRef,
+    String? guestLine,
+    String? guestEmail,
+    String? checkInLabel,
+    int? nights,
+    String? fromUid,
+  }) async {
+    final uid = hostUid.trim();
+    final refRaw = bookingRef.trim();
+    if (uid.isEmpty || refRaw.isEmpty) return;
+    final ref = formatVeroAccommodationBookingRef(refRaw);
+    if (ref.isEmpty) return;
+    final sender =
+        (fromUid ?? FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+
+    final prop =
+        propertyName.trim().isEmpty ? 'Your listing' : propertyName.trim();
+    final name = (guestLine ?? '').trim();
+    final who = name.isEmpty ? 'A guest' : name;
+    final email = (guestEmail ?? '').trim();
+    final whoDetail = email.isNotEmpty && email != name ? '$who ($email)' : who;
+
+    final buf = StringBuffer("$whoDetail booked $prop");
+    final cin = (checkInLabel ?? '').trim();
+    if (cin.isNotEmpty) buf.write(' · Check-in $cin');
+    if (nights != null && nights > 0) {
+      buf.write(' · $nights night${nights == 1 ? '' : 's'}');
+    }
+    buf.write('. Ref $ref.');
+
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        if (sender.isNotEmpty) 'fromUid': sender,
+        'title': 'New stay booking',
+        'body': buf.toString(),
+        'payload': {
+          'type': 'accommodation_booking',
+          'bookingRef': ref,
+          'role': 'host',
+          'propertyName': prop,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+      });
+      if (kDebugMode) {
+        debugPrint(
+          '[OrderPartyNotification] accommodation alert queued toUid=$uid ref=$ref',
+        );
+      }
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishAccommodationBookingToHost: $e');
     }
   }
 }

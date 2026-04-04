@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 class AuthRequiredException implements Exception {
   final String message;
@@ -17,12 +18,26 @@ class AuthRequiredException implements Exception {
 class MyBookingService {
   /* --------------------- infra helpers --------------------- */
 
-  Future<String> _base() async {
-    final b = await ApiConfig.readBase();
-    return b.isNotEmpty ? b : (ApiConfig.prodBase);
+  Future<Uri> _uri(String path, [Map<String, String>? queryParameters]) async {
+    await ApiConfig.init();
+    final p = path.startsWith('/') ? path : '/$path';
+    var u = ApiConfig.endpoint(p);
+    if (queryParameters != null && queryParameters.isNotEmpty) {
+      u = u.replace(
+        queryParameters: {
+          ...u.queryParameters,
+          ...queryParameters,
+        },
+      );
+    }
+    return u;
   }
 
   Future<String> _token() async {
+    final firebase = await AuthHandler.getTokenForApi();
+    if (firebase != null && firebase.trim().isNotEmpty) {
+      return firebase.trim();
+    }
     final prefs = await SharedPreferences.getInstance();
     const keys = [
       'jwt_token',
@@ -131,12 +146,11 @@ class MyBookingService {
   // Customer:  GET /bookings/me
   // Merchant:  GET /bookings/merchant/me   (mirror of your orders pattern)
   Future<List<BookingItem>> getMyBookings({BookingStatus? status}) async {
-    final base = await _base();
     final isMerchant = await _isMerchant();
     final path = isMerchant ? '/bookings/merchant/me' : '/bookings/me';
 
     final qp = status != null ? {'status': bookingStatusToApi(status)} : null;
-    final u = Uri.parse('$base$path').replace(queryParameters: qp);
+    final u = await _uri(path, qp);
     final h = await _headers();
 
     final r = await _retry(() => http.get(u, headers: h));
@@ -149,7 +163,67 @@ class MyBookingService {
             ? decoded['data'] as List
             : (decoded is Map ? [decoded] : <dynamic>[]);
 
-    final all = list
+    var all = list
+        .whereType<Map<String, dynamic>>()
+        .map(BookingItem.fromJson)
+        .toList();
+
+    // Guests: only paid / settled stays (createBooking runs before PayChangu; unpaid rows stay hidden).
+    if (!isMerchant) {
+      all = all.where((b) => b.includeInGuestMyBookings).toList();
+    }
+
+    if (status != null) {
+      return all.where((b) => b.status == status).toList();
+    }
+    return all;
+  }
+
+  /// Stays the user **booked as a guest** (`GET /vero/bookings/me`), even when they are
+  /// also a merchant (merchant list uses `/bookings/merchant/me` elsewhere).
+  Future<List<BookingItem>> getGuestStaysForDiscoverOverlay() async {
+    final u = await _uri('/bookings/me');
+    final h = await _headers();
+
+    final r = await _retry(() => http.get(u, headers: h));
+    if (r.statusCode != 200) {
+      if (r.statusCode == 404) return [];
+      _bad(r);
+    }
+
+    final decoded = jsonDecode(r.body);
+    final List list = decoded is List
+        ? decoded
+        : (decoded is Map && decoded['data'] is List)
+            ? decoded['data'] as List
+            : (decoded is Map ? [decoded] : <dynamic>[]);
+
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map(BookingItem.fromJson)
+        .where((b) => b.includeInGuestMyBookings)
+        .toList();
+  }
+
+  /// Incoming stays for **this user as host** (`GET /vero/bookings/merchant/me`).
+  /// Use from the accommodation merchant dashboard — do not rely on [_isMerchant] prefs/JWT,
+  /// or hosts may incorrectly hit `/bookings/me` and see an empty list.
+  Future<List<BookingItem>> getMerchantIncomingBookings({BookingStatus? status}) async {
+    final qp = status != null ? {'status': bookingStatusToApi(status)} : null;
+    final u = await _uri('/bookings/merchant/me', qp);
+    final h = await _headers();
+
+    final r = await _retry(() => http.get(u, headers: h));
+    if (r.statusCode != 200) _bad(r);
+
+    final decoded = jsonDecode(r.body);
+    final List list = decoded is List
+        ? decoded
+        : (decoded is Map && decoded['data'] is List)
+            ? decoded['data'] as List
+            : (decoded is Map ? [decoded] : <dynamic>[]);
+
+    var all = list
         .whereType<Map<String, dynamic>>()
         .map(BookingItem.fromJson)
         .toList();
@@ -163,7 +237,7 @@ class MyBookingService {
   // Create, update, delete remain the same — role is typically enforced by the server.
   Future<BookingItem> createBooking(BookingCreatePayload payload,
       {String? overridePath}) async {
-    final u = Uri.parse('${await _base()}${overridePath ?? '/bookings'}');
+    final u = await _uri(overridePath ?? '/bookings');
     final h = await _headers();
     final r = await _retry(
         () => http.post(u, headers: h, body: jsonEncode(payload.toJson())));
@@ -179,18 +253,20 @@ class MyBookingService {
   }
 
   Future<void> updateStatus(String id, BookingStatus next) async {
-    final u = Uri.parse('${await _base()}/bookings/$id/status');
+    final u = await _uri('/bookings/$id/status');
     final h = await _headers();
     final body = jsonEncode({'status': bookingStatusToApi(next)});
     final r = await _retry(() => http.patch(u, headers: h, body: body));
     if (r.statusCode < 200 || r.statusCode >= 300) _bad(r);
   }
 
+  /// `DELETE /vero/bookings/:id` — server may return 204 No Content.
   Future<void> deleteBooking(String id) async {
-    final u = Uri.parse('${await _base()}/bookings/$id');
+    final u = await _uri('/bookings/$id');
     final h = await _headers();
     final r = await _retry(() => http.delete(u, headers: h));
-    if (r.statusCode < 200 || r.statusCode >= 300) _bad(r);
+    if (r.statusCode >= 200 && r.statusCode < 300) return;
+    _bad(r);
   }
 
   Future<bool> cancelOrDelete(String id) async {

@@ -15,12 +15,28 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_det
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as marketplaceModel;
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
+
+int? _stayListingApiId(Map<String, dynamic> d) {
+  final direct = d['apiAccommodationId'];
+  if (direct is int) return direct;
+  if (direct is num) return direct.toInt();
+  final id = d['id'];
+  if (id is int && id > 0) return id;
+  if (id is String) {
+    final p = int.tryParse(id);
+    if (p != null && p > 0) return p;
+  }
+  return null;
+}
 
 class MerchantProductsPage extends StatefulWidget {
   final String merchantId;
@@ -40,6 +56,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   final _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   late Future<List<MarketplaceDetailModel>> _future;
+  late Future<List<_MerchantStayPreview>> _staysFuture;
+  late Future<bool> _isAccommodationMerchantFuture;
   final CartService _cartService =
       CartService('unused', apiPrefix: ApiConfig.apiPrefix);
 
@@ -308,6 +326,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   void initState() {
     super.initState();
     _future = _loadMerchantItems();
+    _staysFuture = _loadMerchantStays();
+    _isAccommodationMerchantFuture = _detectAccommodationMerchant();
     _loadMerchantHeader();
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
@@ -318,6 +338,30 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// True for accommodation hosts: `accommodation_merchants` doc and/or `accommodation_rooms` rows.
+  Future<bool> _detectAccommodationMerchant() async {
+    final id = widget.merchantId.trim();
+    if (id.isEmpty) return false;
+    try {
+      final doc =
+          await _firestore.collection('accommodation_merchants').doc(id).get();
+      if (doc.exists) return true;
+    } catch (e) {
+      debugPrint('detect accommodation_merchants: $e');
+    }
+    try {
+      final rooms = await _firestore
+          .collection('accommodation_rooms')
+          .where('merchantId', isEqualTo: id)
+          .limit(1)
+          .get();
+      if (rooms.docs.isNotEmpty) return true;
+    } catch (e) {
+      debugPrint('detect accommodation_rooms: $e');
+    }
+    return false;
   }
 
   Future<List<MarketplaceDetailModel>> _loadMerchantItems() async {
@@ -363,6 +407,229 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       debugPrint('Error loading merchant items: $e');
       return [];
     }
+  }
+
+  Future<List<_MerchantStayPreview>> _loadMerchantStays() async {
+    final id = widget.merchantId.trim();
+    final merged = <_MerchantStayPreview>[];
+    final apiIds = <int>{};
+
+    var email = '';
+    try {
+      final uSnap = await _firestore.collection('users').doc(id).get();
+      email = (uSnap.data()?['email'] ?? '').toString().trim();
+    } catch (_) {}
+
+    if (email.isEmpty) {
+      try {
+        final m = await _firestore
+            .collection('marketplace_merchants')
+            .doc(id)
+            .get();
+        final md = m.data();
+        email = (md?['email'] ?? md?['userEmail'] ?? '').toString().trim();
+      } catch (_) {}
+    }
+    if (email.isEmpty) {
+      try {
+        final a = await _firestore
+            .collection('accommodation_merchants')
+            .doc(id)
+            .get();
+        email = (a.data()?['email'] ?? '').toString().trim();
+      } catch (_) {}
+    }
+
+    if (email.isNotEmpty) {
+      try {
+        final mine =
+            await AccommodationService().fetchOwnedByEmail(email);
+        for (final a in mine) {
+          apiIds.add(a.id);
+          merged.add(_MerchantStayPreview.fromAccommodation(a));
+        }
+      } catch (e) {
+        debugPrint('Merchant stays (API): $e');
+      }
+    }
+
+    try {
+      final fs = await _firestore
+          .collection('accommodation_rooms')
+          .where('merchantId', isEqualTo: id)
+          .get();
+      for (final doc in fs.docs) {
+        final d = doc.data();
+        final pid = _stayListingApiId(d);
+        if (pid != null && apiIds.contains(pid)) continue;
+        merged.add(_MerchantStayPreview.fromFirestore(doc.id, d));
+      }
+    } catch (e) {
+      debugPrint('Merchant stays (Firestore): $e');
+    }
+
+    merged.sort(
+      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    );
+    return merged;
+  }
+
+  void _showStayPreviewSheet(_MerchantStayPreview stay) {
+    final sources = stay.imageSources;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.72,
+        minChildSize: 0.45,
+        maxChildSize: 0.95,
+        builder: (_, scroll) => ListView(
+          controller: scroll,
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: AspectRatio(
+                aspectRatio: 16 / 9,
+                child: sources.length <= 1
+                    ? _imageFromAnySource(
+                        sources.isEmpty ? '' : sources.first,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: double.infinity,
+                      )
+                    : PageView.builder(
+                        itemCount: sources.length,
+                        itemBuilder: (_, i) => _imageFromAnySource(
+                          sources[i],
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              stay.name,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.3,
+              ),
+            ),
+            if (stay.location.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.place_outlined,
+                      size: 20, color: Colors.grey.shade700),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      stay.location,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey.shade800,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                Chip(
+                  label: Text(
+                    stay.typeLabel.isEmpty ? 'Stay' : stay.typeLabel,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                  backgroundColor: _brandOrange.withValues(alpha: 0.12),
+                  side: BorderSide.none,
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                ),
+                Chip(
+                  label: Text(
+                    'MWK ${NumberFormat('#,##0').format(stay.price)}${stay.pricePeriod.uiSuffix}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      color: Colors.green.shade800,
+                      fontSize: 12,
+                    ),
+                  ),
+                  backgroundColor: Colors.green.shade50,
+                  side: BorderSide.none,
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            if (stay.description.trim().isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Text(
+                stay.description.trim(),
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.45,
+                  color: Colors.grey.shade800,
+                ),
+              ),
+            ],
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AccommodationMainPage(),
+                  ),
+                );
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: _brandOrange,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              icon: const Icon(Icons.explore_rounded),
+              label: const Text(
+                'Browse all stays',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   int _fnv1a32(String input) {
@@ -1225,7 +1492,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     }
   }
 
-  Widget _buildModernSearchBar() {
+  Widget _buildModernSearchBar(String hintText) {
     final hasText = _searchController.text.isNotEmpty;
     return Container(
       decoration: BoxDecoration(
@@ -1249,8 +1516,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         ),
         cursorColor: _brandOrange,
         decoration: InputDecoration(
-          hintText:
-              'Search products from ${widget.merchantName}...',
+          hintText: hintText,
           hintStyle: TextStyle(
             color: Colors.grey.shade500,
             fontWeight: FontWeight.w500,
@@ -1296,6 +1562,121 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
+  Widget _buildStaysGridBody(
+    BuildContext context,
+    AsyncSnapshot<List<_MerchantStayPreview>> snap,
+  ) {
+    if (snap.connectionState == ConnectionState.waiting) {
+      return const Padding(
+        padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
+        child: AppSkeletonLatestArrivalsGrid(),
+      );
+    }
+    if (snap.hasError) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'Could not load listings',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: Colors.grey.shade800,
+            ),
+          ),
+        ),
+      );
+    }
+    final all = snap.data ?? const <_MerchantStayPreview>[];
+    final filtered = _searchQuery.isEmpty
+        ? all
+        : all
+            .where((s) {
+              final q = _searchQuery;
+              return s.name.toLowerCase().contains(q) ||
+                  s.location.toLowerCase().contains(q) ||
+                  s.description.toLowerCase().contains(q);
+            })
+            .toList();
+    if (filtered.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                _searchQuery.isEmpty
+                    ? Icons.hotel_class_outlined
+                    : Icons.search_off_rounded,
+                size: 56,
+                color: Colors.grey.shade400,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _searchQuery.isEmpty
+                    ? 'No listings yet'
+                    : 'No matching results',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 17,
+                  color: Colors.grey.shade800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _searchQuery.isEmpty
+                    ? 'Check back later for new listings from this host.'
+                    : 'Try a different search.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.35,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    final width = MediaQuery.of(context).size.width;
+    final cols = width >= 1200
+        ? 4
+        : width >= 800
+            ? 3
+            : 2;
+    final ratio = width >= 1200
+        ? 0.95
+        : width >= 800
+            ? 0.85
+            : 0.72;
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: cols,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+        childAspectRatio: ratio,
+      ),
+      itemCount: filtered.length,
+      itemBuilder: (context, index) {
+        final st = filtered[index];
+        return _MerchantStayCard(
+          stay: st,
+          onTap: () => _showStayPreviewSheet(st),
+          buildCover: (raw) => _imageFromAnySource(
+            raw,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1320,7 +1701,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                '${widget.merchantName} Store',
+                '${widget.merchantName.trim().isEmpty ? 'Merchant' : widget.merchantName.trim()} Store',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
@@ -1362,27 +1743,64 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             onReport: _reportMerchant,
             onViewProfile: _showMerchantProfileViewer,
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Browse products',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.grey.shade700,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _buildModernSearchBar(),
-              ],
-            ),
-          ),
           Expanded(
-            child: FutureBuilder<List<MarketplaceDetailModel>>(
+            child: FutureBuilder<bool>(
+              future: _isAccommodationMerchantFuture,
+              builder: (context, modeSnap) {
+                if (modeSnap.connectionState != ConnectionState.done) {
+                  return const Center(
+                    child: CircularProgressIndicator(
+                      color: _brandOrange,
+                    ),
+                  );
+                }
+                final isAccommodationHost = modeSnap.data ?? false;
+                if (isAccommodationHost) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        child: _buildModernSearchBar(
+                          'Search ${widget.merchantName.trim().isEmpty ? 'this host' : widget.merchantName.trim()}…',
+                        ),
+                      ),
+                      Expanded(
+                        child: FutureBuilder<List<_MerchantStayPreview>>(
+                          future: _staysFuture,
+                          builder: (context, snap) =>
+                              _buildStaysGridBody(context, snap),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Browse products',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.grey.shade700,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _buildModernSearchBar(
+                            'Search products from ${widget.merchantName}...',
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: FutureBuilder<List<MarketplaceDetailModel>>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -1549,8 +1967,224 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             },
               );
             },
-          )),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// Merged API + Firestore accommodation row for a merchant shop (Stays tab).
+class _MerchantStayPreview {
+  _MerchantStayPreview({
+    required this.stableId,
+    required this.name,
+    required this.location,
+    required this.description,
+    required this.price,
+    AccommodationPricePeriod? pricePeriod,
+    required this.coverUrl,
+    required this.gallery,
+    required this.typeLabel,
+    this.apiAccommodationId,
+  }) : _pricePeriod = pricePeriod;
+
+  final String stableId;
+  final String name;
+  final String location;
+  final String description;
+  final int price;
+  final AccommodationPricePeriod? _pricePeriod;
+
+  AccommodationPricePeriod get pricePeriod =>
+      _pricePeriod ?? AccommodationPricePeriod.night;
+  final String coverUrl;
+  final List<String> gallery;
+  final String typeLabel;
+  final int? apiAccommodationId;
+
+  List<String> get imageSources {
+    final out = <String>[];
+    final seen = <String>{};
+    final c = coverUrl.trim();
+    if (c.isNotEmpty && seen.add(c)) out.add(c);
+    for (final g in gallery) {
+      final t = g.trim();
+      if (t.isNotEmpty && seen.add(t)) out.add(t);
+    }
+    return out;
+  }
+
+  factory _MerchantStayPreview.fromAccommodation(Accommodation a) {
+    return _MerchantStayPreview(
+      stableId: 'api-${a.id}',
+      name: a.name,
+      location: a.location,
+      description: a.description,
+      price: a.price,
+      pricePeriod: a.pricePeriod,
+      coverUrl: (a.image ?? '').trim(),
+      gallery: List<String>.from(a.gallery),
+      typeLabel: a.accommodationType,
+      apiAccommodationId: a.id,
+    );
+  }
+
+  factory _MerchantStayPreview.fromFirestore(
+    String docId,
+    Map<String, dynamic> d,
+  ) {
+    final priceRaw = d['pricePerNight'] ?? d['price'] ?? 0;
+    final price = priceRaw is num
+        ? priceRaw.toInt()
+        : int.tryParse(priceRaw.toString()) ?? 0;
+    final cover = (d['imageUrl'] ?? d['image'] ?? '').toString().trim();
+    final gal = <String>[];
+    final g1 = d['galleryUrls'];
+    if (g1 is List) {
+      gal.addAll(
+        g1.map((e) => e.toString()).where((s) => s.trim().isNotEmpty),
+      );
+    }
+    final g2 = d['gallery'];
+    if (g2 is List) {
+      for (final e in g2) {
+        final s = e.toString().trim();
+        if (s.isNotEmpty) gal.add(s);
+      }
+    }
+    return _MerchantStayPreview(
+      stableId: docId,
+      name: (d['name'] ?? 'Stay').toString(),
+      location: (d['location'] ?? '').toString(),
+      description: (d['description'] ?? '').toString(),
+      price: price,
+      pricePeriod: accommodationPricePeriodFromDynamic(
+        d['pricingPeriod'] ?? d['pricePeriod'],
+      ),
+      coverUrl: cover,
+      gallery: gal,
+      typeLabel:
+          (d['accommodationType'] ?? d['type'] ?? '').toString().trim(),
+      apiAccommodationId: _stayListingApiId(d),
+    );
+  }
+}
+
+class _MerchantStayCard extends StatelessWidget {
+  const _MerchantStayCard({
+    required this.stay,
+    required this.onTap,
+    required this.buildCover,
+  });
+
+  final _MerchantStayPreview stay;
+  final VoidCallback onTap;
+  final Widget Function(String raw) buildCover;
+
+  static const Color _brandOrange = Color(0xFFFF8A00);
+
+  @override
+  Widget build(BuildContext context) {
+    final sources = stay.imageSources;
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: Colors.grey.shade200, width: 1),
+      ),
+      clipBehavior: Clip.antiAlias,
+      color: Colors.white,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: sources.isEmpty
+                  ? ColoredBox(
+                      color: Colors.grey.shade200,
+                      child: Icon(
+                        Icons.hotel_class_outlined,
+                        size: 40,
+                        color: Colors.grey.shade500,
+                      ),
+                    )
+                  : sources.length == 1
+                      ? buildCover(sources.first)
+                      : PageView.builder(
+                          itemCount: sources.length,
+                          itemBuilder: (_, i) => buildCover(sources[i]),
+                        ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    stay.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (stay.location.trim().isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      stay.location,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 4),
+                  Text(
+                    'MWK ${NumberFormat('#,##0').format(stay.price)}${stay.pricePeriod.uiSuffix}',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.green.shade800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: onTap,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _brandOrange,
+                        side: const BorderSide(color: _brandOrange),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: const Text(
+                        'View stay',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

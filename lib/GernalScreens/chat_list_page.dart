@@ -13,7 +13,7 @@ class ChatListPage extends StatefulWidget {
 
 class _ChatListPageState extends State<ChatListPage> {
   static const _brandOrange = Color(0xFFFF8A00);
-  static const _bg = Color;.(0xFFF6F6F6);
+  static const _bg = Color(0xFFF6F6F6);
 
   int? _myUserId;
   String? _error;
@@ -99,9 +99,9 @@ class _ChatListPageState extends State<ChatListPage> {
       );
 
       if (!mounted) return;
-      final msg = count == 0 
-        ? 'No active users found' 
-        : 'Test messages sent to $count users!';
+      final msg = count == 0
+          ? 'No active users found'
+          : 'Test messages sent to $count users!';
       scaffold.showSnackBar(
         SnackBar(
           content: Text(msg),

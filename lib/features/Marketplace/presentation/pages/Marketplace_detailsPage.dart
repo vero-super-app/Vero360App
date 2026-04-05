@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
@@ -499,39 +500,79 @@ class _DetailsPageState extends State<DetailsPage> {
     if (!await _requireLogin()) return;
 
     try {
-      // Get seller ID (must be numeric for backend chat service)
-      final sellerId = int.tryParse(
-        (item.serviceProviderId ?? item.sellerUserId ?? '').trim(),
-      );
-      if (sellerId == null) {
+      // Try multiple ID sources (serviceProviderId, sellerUserId, merchantId)
+      final idCandidates = [
+        item.serviceProviderId,
+        item.sellerUserId,
+        item.merchantId,
+      ];
+
+      if (kDebugMode) {
+        debugPrint('[_openChat] Available IDs - serviceProviderId: ${item.serviceProviderId}, sellerUserId: ${item.sellerUserId}, merchantId: ${item.merchantId}');
+      }
+
+      int? sellerId;
+      String? firebaseUidToLookup;
+
+      // First try numeric IDs
+      for (final candidate in idCandidates) {
+        if (candidate != null && candidate.isNotEmpty) {
+          sellerId = int.tryParse(candidate.trim());
+          if (sellerId != null && sellerId > 0) {
+            if (kDebugMode) debugPrint('[_openChat] Using numeric seller ID: $sellerId');
+            break;
+          }
+          // If not numeric, might be Firebase UID
+          if (firebaseUidToLookup == null) {
+            firebaseUidToLookup = candidate.trim();
+          }
+        }
+      }
+
+      // If no numeric ID found, try to fetch using Firebase UID
+      if ((sellerId == null || sellerId <= 0) && firebaseUidToLookup != null) {
+        if (kDebugMode) debugPrint('[_openChat] Trying to fetch numeric ID for Firebase UID: $firebaseUidToLookup');
+        sellerId = await BackendChatService.getUserIdByFirebaseUid(firebaseUidToLookup);
+        if (sellerId != null && sellerId > 0) {
+          if (kDebugMode) debugPrint('[_openChat] Got numeric seller ID from Firebase UID lookup: $sellerId');
+        }
+      }
+
+      if (sellerId == null || sellerId <= 0) {
+        if (kDebugMode) debugPrint('[_openChat] No valid seller ID found');
         _toast('Seller chat unavailable', Icons.info_outline, Colors.orange);
         return;
       }
 
-      // Get current user ID
+      // Get current user ID (checks SharedPreferences first, then JWT)
       final myId = await AuthStorage.userIdFromToken();
+      if (kDebugMode) {
+        debugPrint('[_openChat] Current user ID: $myId');
+      }
       if (myId == null) {
+        if (kDebugMode) debugPrint('[_openChat] User ID is null - user may not be logged in');
         _toast('Please log in to chat', Icons.info_outline, Colors.orange);
         return;
       }
 
-      final sellerName = item.sellerBusinessName ?? 'Seller';
+      final sellerName = item.sellerBusinessName ?? item.merchantName ?? 'Seller';
       final sellerAvatar = item.sellerLogoUrl ?? '';
 
       if (!mounted) return;
 
-      // Show chat modal
+      // Show chat modal (sellerId is guaranteed to be non-null and positive here)
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
         builder: (context) => _MarketplaceMessagingSheet(
-          sellerId: sellerId,
+          sellerId: sellerId!,
           sellerName: sellerName,
           sellerAvatar: sellerAvatar,
           myUserId: myId,
         ),
       );
     } catch (e) {
+      if (kDebugMode) debugPrint('[_openChat] Exception: $e');
       _toast('Error opening chat: ${e.toString()}', Icons.error, Colors.red);
     }
   }
@@ -945,17 +986,20 @@ class _MarketplaceMessagingSheetState extends State<_MarketplaceMessagingSheet> 
 
   Future<void> _initChat() async {
     try {
+      if (kDebugMode) debugPrint('[_initChat] Initializing chat with seller ${widget.sellerId}');
       final chat = await BackendChatService.ensureChat(
         peerUserId: widget.sellerId,
         peerName: widget.sellerName,
         peerAvatar: widget.sellerAvatar,
       );
       _chatId = chat.id;
+      if (kDebugMode) debugPrint('[_initChat] Chat initialized with ID: ${_chatId}');
       await _loadMessages();
     } catch (e) {
+      if (kDebugMode) debugPrint('[_initChat] Error: $e');
       if (mounted) {
         setState(() {
-          _error = 'Failed to initialize chat';
+          _error = 'Failed to initialize chat: $e';
           _isLoading = false;
         });
       }

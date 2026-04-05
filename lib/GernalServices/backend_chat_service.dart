@@ -232,6 +232,36 @@ class BackendChatService {
     return _userId!;
   }
 
+  /// Get numeric user ID by Firebase UID (for looking up seller/merchant IDs)
+  static Future<int?> getUserIdByFirebaseUid(String firebaseUid) async {
+    if (firebaseUid.isEmpty) return null;
+    await ensureAuth();
+
+    try {
+      // Try to get the user by their Firebase UID
+      final url = Uri.parse('${ApiConfig.prod}/vero/users?firebaseUid=$firebaseUid');
+      final response = await http.get(
+        url,
+        headers: {'Authorization': _authHeader},
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        final users = json['data'] as List?;
+        if (users != null && users.isNotEmpty) {
+          final user = users.first as Map<String, dynamic>;
+          final id = user['id'];
+          if (id != null) {
+            return id is int ? id : int.tryParse(id.toString());
+          }
+        }
+      }
+    } catch (e) {
+      print('[BackendChatService] Error fetching user by Firebase UID: $e');
+    }
+    return null;
+  }
+
   static String get _authHeader => 'Bearer $_authToken';
 
   /// Get user's chat threads

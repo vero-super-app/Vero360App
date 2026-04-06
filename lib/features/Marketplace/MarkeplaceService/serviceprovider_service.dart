@@ -13,12 +13,11 @@ import '../MarkeplaceModel/serviceprovider_model.dart';
 
 /// Legacy static-style service (kept for compatibility)
 class ServiceProviderServicess {
-  // Build a full URI from the configured base + path (handles slashes)
+  /// Resolves `/vero/...` like the rest of the app ([ApiConfig.endpoint]).
   static Future<Uri> _u(String path) async {
-    final base = await ApiConfig.readBase(); // e.g. http://10.0.2.2:3000
-    final b = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
+    await ApiConfig.readBase();
     final p = path.startsWith('/') ? path : '/$path';
-    return Uri.parse('$b$p');
+    return ApiConfig.endpoint(p);
   }
 
   static Future<String?> _getToken() async {
@@ -142,8 +141,9 @@ class ServiceProviderServicess {
     }
 
     debugPrint('create failed: ${res.statusCode} ${res.body}');
+    final snippet = res.body.length > 200 ? '${res.body.substring(0, 200)}…' : res.body;
     throw ApiException(
-      message: 'create service provider failed',
+      message: 'create service provider failed (${res.statusCode}): $snippet',
       statusCode: res.statusCode,
     );
   }

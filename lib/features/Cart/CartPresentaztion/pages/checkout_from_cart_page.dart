@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -797,6 +799,39 @@ class _DeliveryAddressCard extends StatelessWidget {
   }
 }
 
+// ────────────────────── FOOD CHECKOUT (single item, PayChangu → food_orders) ──────────────────────
+class FoodCheckoutContext {
+  const FoodCheckoutContext({
+    required this.merchantId,
+    required this.customerName,
+    required this.customerPhone,
+    required this.customerEmail,
+    required this.deliveryAddress,
+    required this.foodName,
+    required this.totalMwk,
+    this.deliveryLat,
+    this.deliveryLng,
+    this.customerNote,
+    this.foodImageUrl,
+    this.sqlListingId,
+    this.firestoreListingId,
+  });
+
+  final String merchantId;
+  final String customerName;
+  final String customerPhone;
+  final String customerEmail;
+  final String deliveryAddress;
+  final double? deliveryLat;
+  final double? deliveryLng;
+  final String foodName;
+  final double totalMwk;
+  final String? customerNote;
+  final String? foodImageUrl;
+  final String? sqlListingId;
+  final String? firestoreListingId;
+}
+
 // ────────────────────── IN-APP PAYMENT PAGE ──────────────────────
 class InAppPaymentPage extends StatefulWidget {
   final String checkoutUrl;
@@ -824,6 +859,9 @@ class InAppPaymentPage extends StatefulWidget {
   /// Optional Firestore escrow hold for the accommodation host (wallet / payouts).
   final AccommodationEscrowParams? accommodationEscrow;
 
+  /// Single-item food: after verified payment, writes `food_orders` for the merchant dashboard.
+  final FoodCheckoutContext? foodCheckout;
+
   const InAppPaymentPage({
     super.key,
     required this.checkoutUrl,
@@ -838,6 +876,7 @@ class InAppPaymentPage extends StatefulWidget {
     this.popOnlyOnSuccess = false,
     this.onSuccessNavigate,
     this.accommodationEscrow,
+    this.foodCheckout,
   });
 
   @override
@@ -1044,6 +1083,56 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
+  Future<void> _persistFoodOrderAfterPayment() async {
+    final fc = widget.foodCheckout;
+    if (fc == null) return;
+    try {
+      final ref = FirebaseFirestore.instance.collection('food_orders').doc();
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      await ref.set({
+        'orderId': ref.id,
+        'id': ref.id,
+        'merchantId': fc.merchantId,
+        'customerId': uid,
+        'customerName': fc.customerName,
+        'customerPhone': fc.customerPhone,
+        'customerEmail': fc.customerEmail,
+        'deliveryAddress': fc.deliveryAddress,
+        'deliveryLat': fc.deliveryLat,
+        'deliveryLng': fc.deliveryLng,
+        'items': [
+          {
+            'name': fc.foodName,
+            'price': fc.totalMwk,
+            'quantity': 1,
+            if (fc.foodImageUrl != null && fc.foodImageUrl!.isNotEmpty)
+              'image': fc.foodImageUrl,
+          },
+        ],
+        'totalAmount': fc.totalMwk,
+        'status': 'pending',
+        'paymentStatus': 'paid',
+        'paymentTxRef': widget.txRef,
+        if (fc.customerNote != null && fc.customerNote!.trim().isNotEmpty)
+          'customerNote': fc.customerNote!.trim(),
+        if (fc.sqlListingId != null) 'listingSqlId': fc.sqlListingId,
+        if (fc.firestoreListingId != null) 'firestoreListingId': fc.firestoreListingId,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('[InAppPaymentPage] food_orders write failed: $e');
+      if (widget.rootContext.mounted) {
+        ToastHelper.showCustomToast(
+          widget.rootContext,
+          'Payment OK but order sync failed. Contact support with ref ${widget.txRef}.',
+          isSuccess: false,
+          errorMessage: 'Sync failed',
+        );
+      }
+    }
+  }
+
   void _handlePaymentSuccess() {
     if (_resultHandled) return;
     _resultHandled = true;
@@ -1058,6 +1147,25 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         }
       }());
     }
+
+    final food = widget.foodCheckout;
+    if (food != null) {
+      unawaited(_persistFoodOrderAfterPayment());
+      ToastHelper.showCustomToast(
+        widget.rootContext,
+        'Payment successful — the kitchen has your order.',
+        isSuccess: true,
+        errorMessage: '',
+      );
+      if (mounted) Navigator.of(context).pop();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (widget.rootContext.mounted) {
+          Navigator.of(widget.rootContext).pop();
+        }
+      });
+      return;
+    }
+
     final items = widget.cartItemsForMerchantCredit;
     if (items != null && items.isNotEmpty) {
       unawaited(_createConfirmedOrdersAndEscrow(items));

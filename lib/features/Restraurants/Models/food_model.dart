@@ -13,9 +13,17 @@ class FoodModel {
   final double? latitude;
   final double? longitude;
 
+  /// Human-readable pickup / listing area when API or Firestore provides it.
+  final String? listingLocation;
+
   // ✅ New: gallery + videos like Marketplace
   final List<String> gallery;
   final List<String> videos;
+
+  /// Firebase merchant / kitchen id (from listing). Required for food_orders routing.
+  final String? merchantId;
+  /// Firestore `marketplace_items` document id when listing is from Firestore.
+  final String? firestoreListingId;
 
   FoodModel({
     required this.id,
@@ -27,8 +35,11 @@ class FoodModel {
     this.category,
     this.latitude,
     this.longitude,
+    this.listingLocation,
     this.gallery = const [],
     this.videos = const [],
+    this.merchantId,
+    this.firestoreListingId,
   });
 
   factory FoodModel.fromJson(Map<String, dynamic> json) {
@@ -51,6 +62,12 @@ class FoodModel {
 
     String str(dynamic v) => (v == null) ? '' : v.toString();
 
+    String? _optStr(dynamic v) {
+      final s = v?.toString().trim();
+      if (s == null || s.isEmpty) return null;
+      return s;
+    }
+
     // 🔁 same style as MarketplaceDetailModel
     List<String> arr(dynamic v) =>
         (v is List)
@@ -71,8 +88,11 @@ class FoodModel {
       category: json['category']?.toString(),
       latitude: optDouble(json['latitude'] ?? json['lat']),
       longitude: optDouble(json['longitude'] ?? json['lng']),
+      listingLocation: _optStr(json['listingLocation']),
       gallery: arr(json['gallery']),
       videos: arr(json['videos']),
+      merchantId: _optStr(json['merchantId']),
+      firestoreListingId: _optStr(json['firestoreListingId']),
     );
   }
 
@@ -86,7 +106,10 @@ class FoodModel {
         if (category != null) 'category': category,
         if (latitude != null) 'latitude': latitude,
         if (longitude != null) 'longitude': longitude,
+        if (listingLocation != null) 'listingLocation': listingLocation,
         if (gallery.isNotEmpty) 'gallery': gallery,
         if (videos.isNotEmpty) 'videos': videos,
+        if (merchantId != null) 'merchantId': merchantId,
+        if (firestoreListingId != null) 'firestoreListingId': firestoreListingId,
       };
 }

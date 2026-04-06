@@ -20,8 +20,17 @@ class AuthStorage {
     return false;
   }
 
-  /// Try to get numeric userId from the JWT: payload.sub | payload.id | payload.userId
+  /// Try to get numeric userId from JWT or SharedPreferences
+  /// Checks: SharedPreferences first, then JWT (payload.sub | payload.id | payload.userId)
   static Future<int?> userIdFromToken() async {
+    // First check SharedPreferences (set during login)
+    final sp = await SharedPreferences.getInstance();
+    final spId = sp.getInt('userId') ?? sp.getInt('user_id');
+    if (spId != null && spId > 0) {
+      return spId;
+    }
+
+    // Fallback to JWT token extraction
     final t = await readToken();
     if (t == null) return null;
     final payload = _decodeJwtPayload(t);

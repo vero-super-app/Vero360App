@@ -8,6 +8,8 @@ import 'package:vero360_app/features/ride_share/presentation/providers/ride_life
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_messaging_sheet.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 class PassengerRideTrackingScreen extends ConsumerStatefulWidget {
   final int rideId;
@@ -208,6 +210,30 @@ class _PassengerRideTrackingScreenState
     }
   }
 
+  Future<void> _openMessaging(
+      BuildContext context, RideActive state) async {
+    try {
+      final myId = await AuthStorage.userIdFromToken();
+      if (myId == null) throw Exception('User not authenticated');
+      final driverName = state.ride.driver?.fullName ?? 'Driver';
+      if (!context.mounted) return;
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => RideMessagingSheet(
+          otherUserId: state.ride.driverId!,
+          otherUserName: driverName,
+          myUserId: myId,
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}')),
+      );
+    }
+  }
+
   Widget _buildStateContent(BuildContext context, RideActive state) {
     return Container(
       decoration: BoxDecoration(
@@ -366,6 +392,28 @@ class _PassengerRideTrackingScreenState
     );
   }
 
+  Widget _buildMessageButton(BuildContext context, RideActive state) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: primaryColor,
+          side: const BorderSide(color: Color(0xFFFF8A00)),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        onPressed: () => _openMessaging(context, state),
+        icon: const Icon(Icons.message, size: 20),
+        label: const Text(
+          'Message Driver',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+  }
+
   Widget _buildCancelButton(RideActive state, {String label = 'Cancel Ride', String reason = 'Passenger cancelled'}) {
     return SizedBox(
       width: double.infinity,
@@ -412,6 +460,10 @@ class _PassengerRideTrackingScreenState
           style: const TextStyle(fontSize: 14),
         ),
         const SizedBox(height: 16),
+        if (state.ride.driverId != null) ...[
+          _buildMessageButton(context, state),
+          const SizedBox(height: 10),
+        ],
         _buildCancelButton(state),
       ],
     );
@@ -423,6 +475,10 @@ class _PassengerRideTrackingScreenState
         Text('On the way to dropoff...',
             style: TextStyle(color: Colors.grey[600])),
         const SizedBox(height: 16),
+        if (state.ride.driverId != null) ...[
+          _buildMessageButton(context, state),
+          const SizedBox(height: 10),
+        ],
         _buildCancelButton(state, label: 'End Ride', reason: 'Passenger requested stop'),
       ],
     );

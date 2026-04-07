@@ -332,23 +332,142 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 
   void _showAuthDialog() {
-    showDialog(
+    final theme = Theme.of(context);
+    final onSurface = theme.colorScheme.onSurface;
+
+    showDialog<void>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Login Required"),
-        content: const Text("Please login to access this feature."),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Cancel")),
-          TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pushNamed(context, '/login');
-              },
-              child: const Text("Login")),
-        ],
-      ),
+      barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (dialogContext) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(28),
+          ),
+          clipBehavior: Clip.antiAlias,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          _brandOrange.withValues(alpha: 0.18),
+                          _brandOrangeGlow.withValues(alpha: 0.65),
+                        ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _brandOrange.withValues(alpha: 0.22),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      Icons.lock_person_rounded,
+                      size: 36,
+                      color: _brandOrangeDark,
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  Text(
+                    'Sign in required',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.5,
+                          color: onSurface,
+                          height: 1.15,
+                        ) ??
+                        TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: onSurface,
+                        ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Sign in to use Messages, Cart, and your profile. '
+                    'It only takes a moment.',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                          height: 1.45,
+                          color: onSurface.withValues(alpha: 0.72),
+                          fontWeight: FontWeight.w500,
+                        ) ??
+                        TextStyle(
+                          fontSize: 15,
+                          height: 1.45,
+                          color: onSurface.withValues(alpha: 0.72),
+                          fontWeight: FontWeight.w500,
+                        ),
+                  ),
+                  const SizedBox(height: 28),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () =>
+                              Navigator.of(dialogContext).pop(),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: onSurface.withValues(alpha: 0.85),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            side: BorderSide(
+                              color: onSurface.withValues(alpha: 0.18),
+                            ),
+                          ),
+                          child: const Text(
+                            'Not now',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () {
+                            Navigator.of(dialogContext).pop();
+                            Navigator.pushNamed(context, '/login');
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _brandOrange,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor:
+                                _brandOrange.withValues(alpha: 0.38),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          child: const Text(
+                            'Sign in',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

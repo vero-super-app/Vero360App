@@ -16,6 +16,8 @@ class MarketplaceItem {
   final String? merchantId;
   final String? merchantName;
   final String? serviceType;
+  final double? latitude;
+  final double? longitude;
 
   MarketplaceItem({
     required this.name,
@@ -31,6 +33,8 @@ class MarketplaceItem {
     this.merchantId,
     this.merchantName,
     this.serviceType,
+    this.latitude,
+    this.longitude,
   });
 
   Map<String, dynamic> toJson() => {
@@ -47,6 +51,8 @@ class MarketplaceItem {
     if (merchantId != null) 'merchantId': merchantId,
     if (merchantName != null) 'merchantName': merchantName,
     if (serviceType != null) 'serviceType': serviceType,
+    if (latitude != null) 'latitude': latitude,
+    if (longitude != null) 'longitude': longitude,
   };
 
   bool get hasValidMerchantInfo => 
@@ -99,6 +105,8 @@ class MarketplaceDetailModel {
   final String? merchantName;
   final String? serviceType;
   final DateTime? createdAt;
+  final double? latitude;
+  final double? longitude;
 
   MarketplaceDetailModel({
     required this.id,
@@ -123,6 +131,8 @@ class MarketplaceDetailModel {
     this.merchantName,
     this.serviceType,
     this.createdAt,
+    this.latitude,
+    this.longitude,
   });
 
   factory MarketplaceDetailModel.fromJson(Map<String, dynamic> j) {
@@ -156,6 +166,11 @@ class MarketplaceDetailModel {
       return const <String>[];
     }
     double toDoubleVal(dynamic v) => (v is num) ? v.toDouble() : double.tryParse('$v') ?? 0.0;
+    double? optDouble(dynamic v) {
+      if (v == null) return null;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString());
+    }
 
     final String? sellerUserId =
         (j['sellerUserId'] ?? j['ownerId'])?.toString();
@@ -198,6 +213,8 @@ class MarketplaceDetailModel {
       merchantName: j['merchantName']?.toString(),
       serviceType: j['serviceType']?.toString() ?? 'marketplace',
       createdAt: j['createdAt'] != null ? DateTime.tryParse(j['createdAt'].toString()) : null,
+      latitude: optDouble(j['latitude'] ?? j['lat']),
+      longitude: optDouble(j['longitude'] ?? j['lng']),
     );
   }
 

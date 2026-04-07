@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
@@ -43,16 +44,129 @@ class FoodService {
               ? decoded
               : const [];
 
-      return list.map<FoodModel>((row) {
+      final fromApi = list.map<FoodModel>((row) {
         return FoodModel.fromJson(_adaptMarketplaceToFoodJson(
           Map<String, dynamic>.from(row as Map),
         ));
       }).toList();
+
+      final fromFs = await _fetchFirestoreFoodListings();
+      final merged = _mergeFoodLists(fromApi, fromFs);
+
+      return _applyRadiusFilter(
+        merged,
+        latitude: latitude,
+        longitude: longitude,
+        radiusKm: radiusKm,
+      );
     } catch (_) {
       throw const ApiException(
         message: 'Unable to load food items. Please try again.',
       );
     }
+  }
+
+  /// Extra food rows from Firestore (legacy / fallback postings).
+  Future<List<FoodModel>> _fetchFirestoreFoodListings() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('marketplace_items')
+          .where('category', isEqualTo: 'food')
+          .limit(80)
+          .get();
+
+      final out = <FoodModel>[];
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        if (data['isActive'] == false) continue;
+        final name = '${data['name'] ?? ''}'.trim();
+        if (name.isEmpty) continue;
+        final price = (data['price'] is num)
+            ? (data['price'] as num).toDouble()
+            : double.tryParse('${data['price']}') ?? 0.0;
+        final img = '${data['image'] ?? ''}';
+        final seller = '${data['merchantName'] ?? 'Local kitchen'}';
+        double? la;
+        double? lo;
+        final rawLa = data['latitude'];
+        final rawLo = data['longitude'];
+        if (rawLa is num) la = rawLa.toDouble();
+        if (rawLo is num) lo = rawLo.toDouble();
+        la ??= double.tryParse('$rawLa');
+        lo ??= double.tryParse('$rawLo');
+
+        final mid = data['merchantId']?.toString().trim();
+        final listingLoc = _listingLocationFromRaw(
+          Map<String, dynamic>.from(data),
+        );
+        out.add(FoodModel(
+          id: doc.id.hashCode.abs() % 2000000000,
+          FoodName: name,
+          FoodImage: img,
+          RestrauntName: seller,
+          price: price,
+          description: data['description']?.toString(),
+          category: 'food',
+          latitude: la,
+          longitude: lo,
+          listingLocation: listingLoc,
+          merchantId: (mid != null && mid.isNotEmpty) ? mid : null,
+          firestoreListingId: doc.id,
+        ));
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  List<FoodModel> _mergeFoodLists(List<FoodModel> a, List<FoodModel> b) {
+    final out = List<FoodModel>.from(a);
+    for (final f in b) {
+      final dup = out.any((x) =>
+          x.FoodName == f.FoodName &&
+          x.RestrauntName == f.RestrauntName &&
+          (x.price - f.price).abs() < 0.01);
+      if (!dup) out.add(f);
+    }
+    return out;
+  }
+
+  List<FoodModel> _applyRadiusFilter(
+    List<FoodModel> items, {
+    double? latitude,
+    double? longitude,
+    double radiusKm = 30,
+  }) {
+    if (latitude == null || longitude == null) return items;
+    final withCoords = items
+        .where((f) => f.latitude != null && f.longitude != null)
+        .toList();
+    if (withCoords.isEmpty) return items;
+
+    final r = radiusKm.clamp(1.0, 200.0);
+    final inRadius = <FoodModel>[];
+    final outRadius = <FoodModel>[];
+    for (final f in withCoords) {
+      final d = distanceKm(latitude, longitude, f.latitude!, f.longitude!);
+      if (d != null && d <= r) {
+        inRadius.add(f);
+      } else {
+        outRadius.add(f);
+      }
+    }
+    final noCoords = items
+        .where((f) => f.latitude == null || f.longitude == null)
+        .toList();
+
+    if (inRadius.isEmpty) return items;
+
+    inRadius.sort((a, b) {
+      final da = distanceKm(latitude, longitude, a.latitude!, a.longitude!)!;
+      final db = distanceKm(latitude, longitude, b.latitude!, b.longitude!)!;
+      return da.compareTo(db);
+    });
+    return [...inRadius, ...noCoords, ...outRadius];
   }
 
   /// Haversine distance in km (Earth radius 6371 km).
@@ -181,6 +295,27 @@ class FoodService {
     return double.tryParse(v.toString());
   }
 
+  String? _listingLocationFromRaw(Map<String, dynamic> raw) {
+    String? pick(String? s) {
+      final t = s?.trim();
+      if (t == null || t.isEmpty) return null;
+      return t;
+    }
+
+    final loc = raw['location'];
+    if (loc is String) return pick(loc);
+    if (loc is Map) {
+      final m = Map<String, dynamic>.from(loc);
+      for (final k in ['formattedAddress', 'address', 'name', 'label']) {
+        final v = pick(m[k]?.toString());
+        if (v != null) return v;
+      }
+    }
+    return pick(raw['address']?.toString()) ??
+        pick(raw['pickupAddress']?.toString()) ??
+        pick(raw['merchantAddress']?.toString());
+  }
+
   Map<String, dynamic> _adaptMarketplaceToFoodJson(Map<String, dynamic> raw) {
     String s(dynamic v) => v?.toString() ?? '';
 
@@ -209,6 +344,13 @@ class FoodService {
       pullFromMap(Map<String, dynamic>.from(sp));
     }
 
+    final mid = raw['merchantId']?.toString().trim();
+    final sid = raw['sellerUserId']?.toString().trim();
+    final merchantKey =
+        (mid != null && mid.isNotEmpty) ? mid : ((sid != null && sid.isNotEmpty) ? sid : null);
+
+    final listingLoc = _listingLocationFromRaw(raw);
+
     return {
       'id': int.tryParse(raw['id']?.toString() ?? '') ?? 0,
       'FoodName': s(raw['name']),
@@ -219,6 +361,8 @@ class FoodService {
       'category': raw['category']?.toString(),
       'latitude': lat,
       'longitude': lng,
+      if (listingLoc != null) 'listingLocation': listingLoc,
+      if (merchantKey != null) 'merchantId': merchantKey,
     };
   }
 }

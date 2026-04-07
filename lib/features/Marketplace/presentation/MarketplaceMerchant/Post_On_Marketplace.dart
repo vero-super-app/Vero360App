@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart';
@@ -17,6 +18,7 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/myshop.dart'
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 
 import '../../../../utils/toasthelper.dart';
 import 'marketplace_edit_page.dart';
@@ -35,7 +37,10 @@ class LocalMedia {
 }
 
 class MarketplaceCrudPage extends StatefulWidget {
-  const MarketplaceCrudPage({super.key});
+  const MarketplaceCrudPage({super.key, this.initialCategory});
+
+  /// When set (e.g. `food` from [FoodMerchantDashboard]), pre-selects listing category.
+  final String? initialCategory;
 
   @override
   State<MarketplaceCrudPage> createState() => _MarketplaceCrudPageState();
@@ -63,7 +68,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     'shoes',
     'other',
   ];
-  String? _category = 'other';
+  late String? _category;
 
   // media (create tab)
   LocalMedia? _cover;
@@ -85,11 +90,19 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   bool _hasShop = false;
   Map<String, dynamic>? _myShop; // NEW: Store shop details
 
+  /// GPS for listing (required for food — used by API + Firestore).
+  double? _listingLat;
+  double? _listingLng;
+
   // Firestore only (no Firebase Auth, no Storage)
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   // NestJS service provider client
   final _spService = ServiceproviderService();
+
+  /// Food listings skip "open shop" — merchant is identified by Firebase account + prefs.
+  bool get _postsFoodWithoutShop =>
+      (_category ?? '').toLowerCase() == 'food';
 
   // --- Brand look to match Airport/Vero Courier ---
   static const Color _brandOrange = Color(0xFFFF8A00);
@@ -98,6 +111,10 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   @override
   void initState() {
     super.initState();
+    final ic = widget.initialCategory?.trim().toLowerCase();
+    _category = (ic != null && ic.isNotEmpty && _kCategories.contains(ic))
+        ? ic
+        : 'other';
     _tabs = TabController(length: 2, vsync: this);
     _photoPc = PageController();
     _initData();
@@ -139,6 +156,15 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
   /// Try to read JWT from SharedPreferences, decode payload and return userId as string.
   /// We do NOT block if this fails – posting still works.
+  Future<String?> _firebaseUid() async {
+    final u = FirebaseAuth.instance.currentUser?.uid;
+    if (u != null && u.isNotEmpty) return u;
+    final sp = await SharedPreferences.getInstance();
+    final p = sp.getString('uid');
+    if (p != null && p.isNotEmpty) return p;
+    return null;
+  }
+
   Future<String?> _getNestUserId() async {
     try {
       final sp = await SharedPreferences.getInstance();
@@ -167,18 +193,28 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   Future<void> _checkShop() async {
     setState(() => _checkingShop = true);
     try {
-      // Use getMerchantInfo() instead of fetchMine() to get Map directly
+      if (_postsFoodWithoutShop) {
+        final uid = await _firebaseUid();
+        if (uid == null || uid.isEmpty) {
+          _hasShop = false;
+          _myShop = null;
+        } else {
+          final prefs = await SharedPreferences.getInstance();
+          final biz = prefs.getString('business_name')?.trim();
+          final dn = FirebaseAuth.instance.currentUser?.displayName?.trim();
+          final name = (biz != null && biz.isNotEmpty)
+              ? biz
+              : ((dn != null && dn.isNotEmpty) ? dn : 'Food seller');
+          _hasShop = true;
+          _myShop = {'id': uid, 'businessName': name};
+        }
+        return;
+      }
+
       final sp = await _spService.getMerchantInfo();
-      // if this works, backend already knows you're logged in
       if (sp != null) {
         _hasShop = true;
         _myShop = sp;
-        
-        // Debug: Print merchant info
-        print('Merchant Info Loaded:');
-        print('  Merchant ID: ${_myShop?['id']}');
-        print('  Business Name: ${_myShop?['businessName']}');
-        print('  Service Type: marketplace');
       } else {
         _hasShop = false;
         _myShop = null;
@@ -186,7 +222,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     } catch (e) {
       _hasShop = false;
       _myShop = null;
-      print('Error fetching shop: $e');
+      debugPrint('Error fetching shop: $e');
     } finally {
       if (mounted) setState(() => _checkingShop = false);
     }
@@ -197,13 +233,14 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     setState(() => _loadingItems = true);
     try {
       final sellerId = await _getNestUserId();
+      final fbUid = await _firebaseUid();
 
       Query<Map<String, dynamic>> query =
           _db.collection('marketplace_items');
 
-      // If we can identify user → show only their items.
-      // If not → show all items (no auth blocking).
-      if (sellerId != null) {
+      if (_postsFoodWithoutShop && fbUid != null && fbUid.isNotEmpty) {
+        query = query.where('merchantId', isEqualTo: fbUid);
+      } else if (sellerId != null) {
         query = query.where('sellerUserId', isEqualTo: sellerId);
       }
 
@@ -417,19 +454,28 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     return out;
   }
 
+  void _resetAfterCreate() {
+    _form.currentState?.reset();
+    _name.clear();
+    _price.clear();
+    _location.clear();
+    _desc.clear();
+    _cover = null;
+    _gallery.clear();
+    _videos.clear();
+    _isActive = true;
+    final ic = widget.initialCategory?.trim().toLowerCase();
+    _category = (ic != null && ic.isNotEmpty && _kCategories.contains(ic))
+        ? ic
+        : 'other';
+    _listingLat = null;
+    _listingLng = null;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
+  }
+
   // ---------------- create ----------------
   Future<void> _create() async {
-    // Must have shop guard (but no extra auth check here)
-    if (!_hasShop) {
-      ToastHelper.showCustomToast(
-        context,
-        'You need to open a shop before posting on Marketplace.',
-        isSuccess: false,
-        errorMessage: 'No shop',
-      );
-      return;
-    }
-
     if (!_form.currentState!.validate()) return;
     if (_cover == null) {
       ToastHelper.showCustomToast(
@@ -441,24 +487,109 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       return;
     }
 
-    // NEW: Validate merchant info
-    if (_myShop == null || _myShop!['id'] == null || _myShop!['businessName'] == null) {
-      ToastHelper.showCustomToast(
-        context,
-        'Unable to identify merchant information. Please check your shop profile.',
-        isSuccess: false,
-        errorMessage: 'Missing merchant info',
-      );
-      return;
+    if (_postsFoodWithoutShop) {
+      if (_myShop == null || _myShop!['id'] == null) {
+        ToastHelper.showCustomToast(
+          context,
+          'Please sign in to post food.',
+          isSuccess: false,
+          errorMessage: 'Not signed in',
+        );
+        return;
+      }
+      if (_listingLat == null || _listingLng == null) {
+        ToastHelper.showCustomToast(
+          context,
+          'Food listings need your current GPS location. Tap the pin icon on the location field.',
+          isSuccess: false,
+          errorMessage: 'Location required',
+        );
+        return;
+      }
+    } else {
+      if (!_hasShop) {
+        ToastHelper.showCustomToast(
+          context,
+          'You need to open a shop before posting on Marketplace.',
+          isSuccess: false,
+          errorMessage: 'No shop',
+        );
+        return;
+      }
+      if (_myShop == null ||
+          _myShop!['id'] == null ||
+          _myShop!['businessName'] == null) {
+        ToastHelper.showCustomToast(
+          context,
+          'Unable to identify merchant information. Please check your shop profile.',
+          isSuccess: false,
+          errorMessage: 'Missing merchant info',
+        );
+        return;
+      }
     }
 
     setState(() => _submitting = true);
 
     try {
-      // 1️⃣ Try to get NestJS user id, but DO NOT block if null
       final sellerId = await _getNestUserId();
+      final firebaseUid = await _firebaseUid();
+      final merchantId = _myShop!['id'].toString();
+      final merchantName =
+          (_myShop!['businessName'] ?? 'Food seller').toString();
+      final effectiveSellerId = _postsFoodWithoutShop
+          ? (firebaseUid ?? sellerId ?? merchantId)
+          : (sellerId ?? 'unknown');
+      const serviceType = 'marketplace';
 
-      // 2️⃣ Encode all media to base64
+      if ((_category ?? '') == 'food') {
+        try {
+          final nestSvc = MarketplaceService();
+          final coverUrl = await nestSvc.uploadBytes(
+            _cover!.bytes,
+            filename: _cover!.filename,
+          );
+          final galleryUrls = <String>[];
+          for (final g in _gallery.take(8)) {
+            galleryUrls.add(
+              await nestSvc.uploadBytes(g.bytes, filename: g.filename),
+            );
+          }
+          await nestSvc.createItem(
+            MarketplaceItem(
+              name: _name.text.trim(),
+              price: double.tryParse(_price.text.trim()) ?? 0,
+              image: coverUrl,
+              location: _location.text.trim(),
+              description:
+                  _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+              isActive: _isActive,
+              category: 'food',
+              gallery: galleryUrls.isEmpty ? null : galleryUrls,
+              sellerUserId: effectiveSellerId,
+              merchantId: merchantId,
+              merchantName: merchantName,
+              serviceType: serviceType,
+              latitude: _listingLat,
+              longitude: _listingLng,
+            ),
+          );
+          if (!mounted) return;
+          ToastHelper.showCustomToast(
+            context,
+            'Food item posted — customers nearby will see it.',
+            isSuccess: true,
+            errorMessage: 'Created',
+          );
+          _resetAfterCreate();
+          await _loadItems();
+          _tabs.animateTo(1);
+          return;
+        } catch (e) {
+          print('Food API post failed, using Firestore: $e');
+        }
+      }
+
       String coverBase64;
       List<String> galleryBase64 = [];
       List<String> videoBase64 = [];
@@ -477,41 +608,34 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         return;
       }
 
-      // 3️⃣ Get merchant information from shop
-      final merchantId = _myShop!['id'].toString();
-      final merchantName = _myShop!['businessName'].toString();
-      final serviceType = 'marketplace'; // Fixed for marketplace items
-
       print('Creating item with merchant info:');
       print('  Merchant ID: $merchantId');
       print('  Merchant Name: $merchantName');
       print('  Service Type: $serviceType');
 
-      // 4️⃣ Create marketplace item in Firestore WITH MERCHANT INFO
       final data = {
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? 0,
-        'image': coverBase64, // base64 string
+        'image': coverBase64,
         'description':
             _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         'location': _location.text.trim(),
         'isActive': _isActive,
         'category': _category ?? 'other',
-        'gallery': galleryBase64, // base64 strings
-        'videos': videoBase64, // base64 strings (careful: large)
+        'gallery': galleryBase64,
+        'videos': videoBase64,
         'createdAt': FieldValue.serverTimestamp(),
-        // if sellerId is null we still allow posting
-        'sellerUserId': sellerId ?? 'unknown',
-        // NEW: Merchant information for wallet payments
+        'sellerUserId': effectiveSellerId,
         'merchantId': merchantId,
         'merchantName': merchantName,
         'serviceType': serviceType,
+        if (_listingLat != null) 'latitude': _listingLat,
+        if (_listingLng != null) 'longitude': _listingLng,
       };
 
       final docRef = await _db.collection('marketplace_items').add(data);
-      
+
       print('Item created with ID: ${docRef.id}');
-      print('Full data: $data');
 
       ToastHelper.showCustomToast(
         context,
@@ -520,22 +644,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         errorMessage: 'Created',
       );
 
-      // Reset form and media
-      _form.currentState!.reset();
-      _name.clear();
-      _price.clear();
-      _location.clear();
-      _desc.clear();
-      _cover = null;
-      _gallery.clear();
-      _videos.clear();
-      _isActive = true;
-      _category = 'other';
+      _resetAfterCreate();
 
-      setState(() {});
-      WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
-
-      // Reload items and switch to manage tab
       await _loadItems();
       _tabs.animateTo(1);
     } catch (e) {
@@ -614,6 +724,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       ].where((e) => e != null && e.isNotEmpty).join(', ');
       setState(() {
         _location.text = address;
+        _listingLat = position.latitude;
+        _listingLng = position.longitude;
       });
     } catch (e) {
       ToastHelper.showCustomToast(
@@ -747,8 +859,47 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       return const Center(child: CircularProgressIndicator());
     }
 
-    // No shop -> show message and CTA to open a shop
     if (!_hasShop) {
+      if (_postsFoodWithoutShop) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Card(
+            elevation: 8,
+            shadowColor: Colors.black12,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20)),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _brandSoft,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _brandOrange.withOpacity(0.35),
+                      ),
+                    ),
+                    child: const Text(
+                      'Sign in with your food merchant account to post dishes. '
+                      'No separate shop setup is required.',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Icon(
+                    Icons.restaurant_rounded,
+                    size: 80,
+                    color: Colors.black38,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
       return SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Card(
@@ -804,7 +955,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     }
 
     // NEW: Show merchant info banner
-    final merchantInfo = _myShop != null 
+    final merchantInfo = _myShop != null
         ? Container(
             margin: const EdgeInsets.only(bottom: 16),
             padding: const EdgeInsets.all(12),
@@ -822,20 +973,24 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Merchant: ${_myShop!['businessName']}',
+                        _postsFoodWithoutShop
+                            ? 'Posting as: ${_myShop!['businessName']}'
+                            : 'Merchant: ${_myShop!['businessName']}',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Colors.green[800],
                         ),
                       ),
                       Text(
-                        'Service: Marketplace',
+                        _postsFoodWithoutShop
+                            ? 'Food listing (your account)'
+                            : 'Service: Marketplace',
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.green[600],
                         ),
                       ),
-                      if (_myShop?['id'] != null)
+                      if (_myShop?['id'] != null && !_postsFoodWithoutShop)
                         Text(
                           'ID: ${_myShop!['id']}',
                           style: TextStyle(
@@ -1093,13 +1248,50 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                         ),
                       )
                       .toList(),
-                  onChanged: (v) => setState(() => _category = v),
+                  onChanged: (v) {
+                    setState(() => _category = v);
+                    unawaited(_checkShop());
+                  },
                   decoration: _inputDecoration(label: 'Category'),
                   validator: (v) =>
                       (v == null || v.isEmpty)
                           ? 'Please select a category'
                           : null,
                 ),
+                if ((_category ?? '') == 'food') ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _brandSoft,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _brandOrange.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.place_rounded,
+                            color: _brandOrange, size: 22),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Food listings require your current location. '
+                            'Tap the pin on the location field — coordinates are sent with your listing so nearby customers can find you.',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              height: 1.35,
+                              color: Colors.grey.shade800,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
 
                 TextFormField(

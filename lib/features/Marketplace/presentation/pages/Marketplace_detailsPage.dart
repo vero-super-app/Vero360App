@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
@@ -18,9 +19,11 @@ import 'package:saver_gallery/saver_gallery.dart';
 import 'package:vero360_app/Home/Messages.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/GernalServices/chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -496,37 +499,82 @@ class _DetailsPageState extends State<DetailsPage> {
   Future<void> _openChat(MarketplaceDetailModel item) async {
     if (!await _requireLogin()) return;
 
-    final peerAppId =
-        (item.serviceProviderId ?? item.sellerUserId ?? '').trim();
-    if (peerAppId.isEmpty) {
-      _toast('Seller chat unavailable', Icons.info_outline, Colors.orange);
-      return;
-    }
+    try {
+      // Try multiple ID sources (serviceProviderId, sellerUserId, merchantId)
+      final idCandidates = [
+        item.serviceProviderId,
+        item.sellerUserId,
+        item.merchantId,
+      ];
 
-    final sellerName = item.sellerBusinessName ?? 'Seller';
-    final sellerAvatar = item.sellerLogoUrl ?? '';
+      if (kDebugMode) {
+        debugPrint('[_openChat] Available IDs - serviceProviderId: ${item.serviceProviderId}, sellerUserId: ${item.sellerUserId}, merchantId: ${item.merchantId}');
+      }
 
-    await ChatService.ensureFirebaseAuth();
-    final me = await ChatService.myAppUserId();
-    await ChatService.ensureThread(
-      myAppId: me,
-      peerAppId: peerAppId,
-      peerName: sellerName,
-      peerAvatar: sellerAvatar,
-    );
+      int? sellerId;
+      String? firebaseUidToLookup;
 
-    if (!mounted) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => MessagePage(
-          peerAppId: peerAppId,
-          peerName: sellerName,
-          peerAvatarUrl: sellerAvatar,
-          peerId: '',
+      // First try numeric IDs
+      for (final candidate in idCandidates) {
+        if (candidate != null && candidate.isNotEmpty) {
+          sellerId = int.tryParse(candidate.trim());
+          if (sellerId != null && sellerId > 0) {
+            if (kDebugMode) debugPrint('[_openChat] Using numeric seller ID: $sellerId');
+            break;
+          }
+          // If not numeric, might be Firebase UID
+          if (firebaseUidToLookup == null) {
+            firebaseUidToLookup = candidate.trim();
+          }
+        }
+      }
+
+      // If no numeric ID found, try to fetch using Firebase UID
+      if ((sellerId == null || sellerId <= 0) && firebaseUidToLookup != null) {
+        if (kDebugMode) debugPrint('[_openChat] Trying to fetch numeric ID for Firebase UID: $firebaseUidToLookup');
+        sellerId = await BackendChatService.getUserIdByFirebaseUid(firebaseUidToLookup);
+        if (sellerId != null && sellerId > 0) {
+          if (kDebugMode) debugPrint('[_openChat] Got numeric seller ID from Firebase UID lookup: $sellerId');
+        }
+      }
+
+      if (sellerId == null || sellerId <= 0) {
+        if (kDebugMode) debugPrint('[_openChat] No valid seller ID found');
+        _toast('Seller chat unavailable', Icons.info_outline, Colors.orange);
+        return;
+      }
+
+      // Get current user ID (checks SharedPreferences first, then JWT)
+      final myId = await AuthStorage.userIdFromToken();
+      if (kDebugMode) {
+        debugPrint('[_openChat] Current user ID: $myId');
+      }
+      if (myId == null) {
+        if (kDebugMode) debugPrint('[_openChat] User ID is null - user may not be logged in');
+        _toast('Please log in to chat', Icons.info_outline, Colors.orange);
+        return;
+      }
+
+      final sellerName = item.sellerBusinessName ?? item.merchantName ?? 'Seller';
+      final sellerAvatar = item.sellerLogoUrl ?? '';
+
+      if (!mounted) return;
+
+      // Show chat modal (sellerId is guaranteed to be non-null and positive here)
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => _MarketplaceMessagingSheet(
+          sellerId: sellerId!,
+          sellerName: sellerName,
+          sellerAvatar: sellerAvatar,
+          myUserId: myId,
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[_openChat] Exception: $e');
+      _toast('Error opening chat: ${e.toString()}', Icons.error, Colors.red);
+    }
   }
 
   /// Navigate to a page that shows all products from this merchant.
@@ -889,6 +937,353 @@ class _DetailsPageState extends State<DetailsPage> {
           );
         },
       ),
+    );
+  }
+}
+
+/// Marketplace messaging sheet for chatting with seller
+class _MarketplaceMessagingSheet extends StatefulWidget {
+  final int sellerId;
+  final String sellerName;
+  final String sellerAvatar;
+  final int myUserId;
+
+  const _MarketplaceMessagingSheet({
+    required this.sellerId,
+    required this.sellerName,
+    required this.sellerAvatar,
+    required this.myUserId,
+  });
+
+  @override
+  State<_MarketplaceMessagingSheet> createState() =>
+      _MarketplaceMessagingSheetState();
+}
+
+class _MarketplaceMessagingSheetState extends State<_MarketplaceMessagingSheet> {
+  static const Color _brandOrange = Color(0xFFFF8A00);
+
+  final TextEditingController _inputController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  List<BackendChatMessage> _messages = [];
+  String? _chatId;
+  bool _isLoading = true;
+  bool _isSending = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initChat();
+  }
+
+  @override
+  void dispose() {
+    _inputController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initChat() async {
+    try {
+      if (kDebugMode) debugPrint('[_initChat] Initializing chat with seller ${widget.sellerId}');
+      final chat = await BackendChatService.ensureChat(
+        peerUserId: widget.sellerId,
+        peerName: widget.sellerName,
+        peerAvatar: widget.sellerAvatar,
+      );
+      _chatId = chat.id;
+      if (kDebugMode) debugPrint('[_initChat] Chat initialized with ID: ${_chatId}');
+      await _loadMessages();
+    } catch (e) {
+      if (kDebugMode) debugPrint('[_initChat] Error: $e');
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to initialize chat: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMessages() async {
+    if (_chatId == null) return;
+    try {
+      final messages = await BackendChatService.getMessages(_chatId!);
+      if (mounted) {
+        setState(() {
+          _messages = messages;
+          _isLoading = false;
+        });
+        _scrollToBottom();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to load messages';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _sendMessage() async {
+    if (_inputController.text.isEmpty || _chatId == null) return;
+
+    final content = _inputController.text.trim();
+    _inputController.clear();
+
+    setState(() => _isSending = true);
+
+    try {
+      final msg = await BackendChatService.sendMessage(
+        chatId: _chatId!,
+        content: content,
+        type: 'text',
+      );
+
+      if (mounted) {
+        setState(() {
+          _messages.add(msg);
+          _isSending = false;
+        });
+        _scrollToBottom();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send: ${e.toString()}')),
+        );
+      }
+    }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.75,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // Header with seller info
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: Colors.grey[300],
+                  child: widget.sellerAvatar.isNotEmpty
+                      ? ClipOval(
+                          child: SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: _buildMarketplaceImage(
+                              widget.sellerAvatar,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        )
+                      : const Icon(
+                          Icons.store,
+                          color: Colors.grey,
+                          size: 24,
+                        ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.sellerName,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        'Seller',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          // Messages
+          Expanded(
+            child: _buildMessagesView(),
+          ),
+          // Input area
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(top: BorderSide(color: Colors.grey[200]!)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _inputController,
+                    decoration: InputDecoration(
+                      hintText: 'Ask about the product...',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: BorderSide(color: Colors.grey[300]!),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _sendMessage(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  decoration: const BoxDecoration(
+                    color: _brandOrange,
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: _isSending
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        : const Icon(Icons.send, color: Colors.white),
+                    onPressed: _isSending ? null : _sendMessage,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessagesView() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Text(
+          _error!,
+          style: TextStyle(color: Colors.red[700]),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    if (_messages.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.mail_outline, size: 48, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(
+              'No messages yet\nStart the conversation!',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      itemCount: _messages.length,
+      itemBuilder: (context, index) {
+        final msg = _messages[index];
+        final isMine = msg.isMine(widget.myUserId);
+        final time = DateFormat('HH:mm').format(msg.createdAt);
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            mainAxisAlignment:
+                isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+            children: [
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isMine ? _brandOrange : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: isMine
+                        ? CrossAxisAlignment.end
+                        : CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        msg.content ?? '',
+                        style: TextStyle(
+                          color: isMine ? Colors.white : Colors.black87,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        time,
+                        style: TextStyle(
+                          color: isMine ? Colors.white70 : Colors.grey[600],
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

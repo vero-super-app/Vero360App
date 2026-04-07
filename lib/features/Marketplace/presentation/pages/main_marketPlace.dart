@@ -68,7 +68,6 @@ const _kSuccessBg   = Color(0xFFE8F5E9);
 
 // Category icon map
 const Map<String, IconData> _kCategoryIcons = {
-  'food':        Icons.restaurant_rounded,
   'drinks':      Icons.local_bar_rounded,
   'electronics': Icons.devices_rounded,
   'clothes':     Icons.checkroom_rounded,
@@ -77,7 +76,6 @@ const Map<String, IconData> _kCategoryIcons = {
 };
 
 const Map<String, Color> _kCategoryColors = {
-  'food':        Color(0xFFFF7043),
   'drinks':      Color(0xFF7C4DFF),
   'electronics': Color(0xFF1E88E5),
   'clothes':     Color(0xFFE91E63),
@@ -433,7 +431,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   late final NumberFormat _mwkFmt = NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
   String _mwk(num v) => _mwkFmt.format(v);
 
-  static const List<String> _kCategories = ['food', 'drinks', 'electronics', 'clothes', 'shoes', 'other'];
+  /// Food listings use the Food flow only — not shown in general marketplace.
+  static const List<String> _kCategories = ['drinks', 'electronics', 'clothes', 'shoes', 'other'];
   String? _selectedCategory;
 
   Timer? _debounce;
@@ -758,6 +757,13 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     return hash;
   }
 
+  /// Food is sold via the Food service; keep marketplace catalog non-food only.
+  List<MarketplaceDetailModel> _excludeFood(List<MarketplaceDetailModel> items) {
+    return items
+        .where((e) => e.category.trim().toLowerCase() != 'food')
+        .toList();
+  }
+
   Future<List<MarketplaceDetailModel>> _loadAll({String? category}) async {
     setState(() { _loading = true; _photoMode = false; _selectedCategory = category; });
     try {
@@ -765,7 +771,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       try {
         snapshot = await _firestore.collection('marketplace_items').orderBy('createdAt', descending: true).get(const GetOptions(source: Source.cache));
         if (snapshot.docs.isNotEmpty) {
-          final all = snapshot.docs.map((doc) => MarketplaceDetailModel.fromFirestore(doc)).where((item) => item.isActive).toList();
+          final all = _excludeFood(snapshot.docs.map((doc) => MarketplaceDetailModel.fromFirestore(doc)).where((item) => item.isActive).toList());
           if (category == null || category.isEmpty) { final result = _forYouMode ? await _rankByPersonalization(all) : await _sortByNewest(all); _setSuggestionsFromItems(result); return result; }
           final c = category.toLowerCase();
           final filtered = all.where((item) => item.category.toLowerCase() == c).toList();
@@ -775,7 +781,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       } catch (_) {}
       try {
         snapshot = await _firestore.collection('marketplace_items').orderBy('createdAt', descending: true).get(const GetOptions(source: Source.server));
-        final all = snapshot.docs.map((doc) => MarketplaceDetailModel.fromFirestore(doc)).where((item) => item.isActive).toList();
+        final all = _excludeFood(snapshot.docs.map((doc) => MarketplaceDetailModel.fromFirestore(doc)).where((item) => item.isActive).toList());
         if (category == null || category.isEmpty) { final result = _forYouMode ? await _rankByPersonalization(all) : await _sortByNewest(all); _setSuggestionsFromItems(result); return result; }
         final c = category.toLowerCase();
         final filtered = all.where((item) => item.category.toLowerCase() == c).toList();
@@ -857,7 +863,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       else throw StateError('Invalid image source');
       final service = MarketplaceService();
       final firebaseResults = await service.searchByPhotoBytes(bytes, filename: filename);
-      final converted = firebaseResults.map(_fromCoreMarketplace).toList();
+      final converted = _excludeFood(firebaseResults.map(_fromCoreMarketplace).toList());
       if (mounted && converted.isNotEmpty) { _setSuggestionsFromItems(converted); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Found ${converted.length} product${converted.length == 1 ? '' : 's'} from photo.'), backgroundColor: _kSuccess, behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)))); }
       else if (mounted && converted.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('No similar products found. Showing all.'), backgroundColor: _kAmber, behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)))); return _loadAll(category: null); }
       return converted;

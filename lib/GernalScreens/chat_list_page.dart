@@ -99,9 +99,9 @@ class _ChatListPageState extends State<ChatListPage> {
       );
 
       if (!mounted) return;
-      final msg = count == 0 
-        ? 'No active users found' 
-        : 'Test messages sent to $count users!';
+      final msg = count == 0
+          ? 'No active users found'
+          : 'Test messages sent to $count users!';
       scaffold.showSnackBar(
         SnackBar(
           content: Text(msg),

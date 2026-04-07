@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:async/async.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -161,6 +162,15 @@ class BackendChatService {
   static String? _authToken;
   static int? _userId;
 
+  // Stream controller for threads refresh
+  static final _threadsRefreshController = StreamController<void>.broadcast();
+  static Stream<void> get _threadsRefresh => _threadsRefreshController.stream;
+
+  /// Notify all listeners to refresh threads (called after sending a message)
+  static void refreshThreads() {
+    _threadsRefreshController.add(null);
+  }
+
   static Future<void> ensureAuth() async {
     // Ensure ApiConfig is initialized
     await ApiConfig.init();
@@ -232,6 +242,36 @@ class BackendChatService {
     return _userId!;
   }
 
+  /// Get numeric user ID by Firebase UID (for looking up seller/merchant IDs)
+  static Future<int?> getUserIdByFirebaseUid(String firebaseUid) async {
+    if (firebaseUid.isEmpty) return null;
+    await ensureAuth();
+
+    try {
+      // Try to get the user by their Firebase UID
+      final url = Uri.parse('${ApiConfig.prod}/vero/users?firebaseUid=$firebaseUid');
+      final response = await http.get(
+        url,
+        headers: {'Authorization': _authHeader},
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        final users = json['data'] as List?;
+        if (users != null && users.isNotEmpty) {
+          final user = users.first as Map<String, dynamic>;
+          final id = user['id'];
+          if (id != null) {
+            return id is int ? id : int.tryParse(id.toString());
+          }
+        }
+      }
+    } catch (e) {
+      print('[BackendChatService] Error fetching user by Firebase UID: $e');
+    }
+    return null;
+  }
+
   static String get _authHeader => 'Bearer $_authToken';
 
   /// Get user's chat threads
@@ -264,13 +304,20 @@ class BackendChatService {
     }
   }
 
-  /// Stream of user's chat threads (polling-based)
+  /// Stream of user's chat threads (polling-based + manual refresh)
   static Stream<List<BackendChatThread>> threadsStream({
     Duration pollInterval = const Duration(seconds: 5),
   }) {
-    return Stream.periodic(pollInterval, (_) async {
-      return await getThreads();
-    }).asyncMap((future) => future).handleError((error) {
+    return StreamGroup.merge([
+      // Regular polling
+      Stream.periodic(pollInterval, (_) async {
+        return await getThreads();
+      }).asyncMap((future) => future),
+      // Manual refresh events
+      _threadsRefresh.asyncMap((_) async {
+        return await getThreads();
+      }),
+    ]).handleError((error) {
       print('[BackendChatService] Stream error: $error');
     });
   }
@@ -351,8 +398,11 @@ class BackendChatService {
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 201) {
-        return BackendChatMessage.fromJson(
+        final msg = BackendChatMessage.fromJson(
             jsonDecode(response.body) as Map<String, dynamic>);
+        // Notify all listeners to refresh threads list
+        refreshThreads();
+        return msg;
       } else {
         throw Exception('Failed to send message: ${response.statusCode}');
       }

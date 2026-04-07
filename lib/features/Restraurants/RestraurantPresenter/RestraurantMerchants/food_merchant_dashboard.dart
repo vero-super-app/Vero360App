@@ -1,17 +1,24 @@
 // lib/Pages/MerchantDashboards/food_merchant_dashboard.dart
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/Post_On_Marketplace.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
-// Add login screen import
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+
+final NumberFormat _mwk0Fmt =
+    NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
+
+String _mwk0(num v) => _mwk0Fmt.format(v);
 
 class FoodMerchantDashboard extends StatefulWidget {
   final String email;
@@ -21,11 +28,15 @@ class FoodMerchantDashboard extends StatefulWidget {
   State<FoodMerchantDashboard> createState() => _FoodMerchantDashboardState();
 }
 
-class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
+class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
+    with TickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final MerchantServiceHelper _helper = MerchantServiceHelper();
-  
+
+  late TabController _foodTabs;
+  Timer? _refreshTimer;
+
   Map<String, dynamic>? _merchantData;
   List<dynamic> _recentOrders = [];
   List<dynamic> _menuItems = [];
@@ -33,9 +44,10 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
   bool _isLoading = true;
   String _uid = '';
   String _businessName = '';
+  String _merchantEmail = '';
+  String _merchantPhone = '';
   double _walletBalance = 0;
-  
-  // Stats
+
   int _totalOrders = 0;
   int _completedOrders = 0;
   int _pendingOrders = 0;
@@ -43,25 +55,27 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
   double _rating = 0.0;
   String _status = 'pending';
 
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandNavy = Color(0xFF16284C);
+
   @override
   void initState() {
     super.initState();
+    _foodTabs = TabController(length: 3, vsync: this);
     _loadMerchantData();
-    _startPeriodicUpdates();
-  }
-
-  void _startPeriodicUpdates() {
-    // Refresh data every 30 seconds
-    Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (mounted) {
-        _loadMerchantData();
-      }
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) _loadMerchantData();
     });
   }
 
-  // ---------------- Logout Functionality ----------------
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _foodTabs.dispose();
+    super.dispose();
+  }
+
   Future<void> _logout() async {
-    // Show confirmation dialog
     final bool? confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -86,7 +100,6 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
     if (confirm != true) return;
 
     try {
-      // Show loading indicator
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -95,14 +108,12 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
         ),
       );
 
-      // Sign out from Firebase
       await _auth.signOut();
-
-      // Clear SharedPreferences
       final prefs = await SharedPreferences.getInstance();
-      await prefs.clear(); // Or clear specific keys if you want to keep some data
+      await prefs.clear();
 
-      // Show success message
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
       ToastHelper.showCustomToast(
         context,
         'Logged out successfully',
@@ -110,7 +121,6 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
         errorMessage: 'Logged out',
       );
 
-      // Navigate to login screen; keep root so back stays in app
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,
@@ -119,9 +129,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
         );
       }
     } catch (e) {
-      print('Error during logout: $e');
-      
-      // Show error message
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
       ToastHelper.showCustomToast(
         context,
         'Logout failed: $e',
@@ -133,46 +141,44 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
 
   Future<void> _loadMerchantData() async {
     setState(() => _isLoading = true);
-    
+
     final prefs = await SharedPreferences.getInstance();
     _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? '';
     _businessName = prefs.getString('business_name') ?? 'Food Business';
-    
+    _merchantEmail =
+        prefs.getString('email') ?? widget.email;
+    _merchantPhone = prefs.getString('phone') ?? '';
+
     if (_uid.isNotEmpty) {
       try {
-        // 1. Get merchant dashboard data
         final dashboardData = await _helper.getMerchantDashboardData(_uid, 'food');
-        
-        if (dashboardData.containsKey('error')) {
-          print('Error loading dashboard: ${dashboardData['error']}');
-        } else {
+
+        if (!dashboardData.containsKey('error')) {
           setState(() {
             _merchantData = dashboardData['merchant'];
             _recentOrders = dashboardData['recentOrders'] ?? [];
             _totalOrders = dashboardData['totalOrders'] ?? 0;
             _completedOrders = dashboardData['completedOrders'] ?? 0;
             _pendingOrders = dashboardData['pendingOrders'] ?? 0;
-            _totalRevenue = dashboardData['totalRevenue'] ?? 0;
-            _rating = dashboardData['merchant']?['rating'] ?? 0.0;
-            _status = dashboardData['merchant']?['status'] ?? 'pending';
+            _totalRevenue = (dashboardData['totalRevenue'] is num)
+                ? (dashboardData['totalRevenue'] as num).toDouble()
+                : double.tryParse('${dashboardData['totalRevenue']}') ?? 0;
+            _rating = _merchantData?['rating'] is num
+                ? (_merchantData!['rating'] as num).toDouble()
+                : double.tryParse('${_merchantData?['rating']}') ?? 0.0;
+            _status = _merchantData?['status']?.toString() ?? 'pending';
           });
         }
 
-        // 2. Load menu items
         await _loadMenuItems();
-
-        // 3. Load wallet balance
         await _loadWalletBalance();
-
-        // 4. Load reviews
         await _loadReviews();
-
       } catch (e) {
-        print('Error loading merchant data: $e');
+        debugPrint('Error loading merchant data: $e');
       }
     }
-    
-    setState(() => _isLoading = false);
+
+    if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _loadMenuItems() async {
@@ -181,37 +187,33 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
           .collection('food_menu_items')
           .where('merchantId', isEqualTo: _uid)
           .orderBy('createdAt', descending: true)
-          .limit(10)
+          .limit(50)
           .get();
-      
+
       _menuItems = snapshot.docs.map((doc) {
         final data = doc.data();
-        return {
-          'id': doc.id,
-          ...data,
-        };
+        return {'id': doc.id, ...data};
       }).toList();
-      
+
       if (mounted) setState(() {});
     } catch (e) {
-      print('Error loading menu items: $e');
+      debugPrint('Error loading menu items: $e');
     }
   }
 
   Future<void> _loadWalletBalance() async {
     try {
-      final walletDoc = await _firestore
-          .collection('merchant_wallets')
-          .doc(_uid)
-          .get();
-      
+      final walletDoc =
+          await _firestore.collection('merchant_wallets').doc(_uid).get();
+
       if (walletDoc.exists) {
+        final b = walletDoc.data()?['balance'];
         setState(() {
-          _walletBalance = (walletDoc.data()?['balance'] ?? 0).toDouble();
+          _walletBalance = b is num ? b.toDouble() : double.tryParse('$b') ?? 0;
         });
       }
     } catch (e) {
-      print('Error loading wallet: $e');
+      debugPrint('Error loading wallet: $e');
     }
   }
 
@@ -223,192 +225,312 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
           .orderBy('createdAt', descending: true)
           .limit(5)
           .get();
-      
+
       _reviews = snapshot.docs.map((doc) => doc.data()).toList();
       if (mounted) setState(() {});
     } catch (e) {
-      print('Error loading reviews: $e');
+      debugPrint('Error loading reviews: $e');
     }
   }
 
   Future<void> _updateOrderStatus(String orderId, String status) async {
     try {
-      await _firestore
-          .collection('food_orders')
-          .doc(orderId)
-          .update({
-            'status': status,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-      
-      // Refresh data
+      await _firestore.collection('food_orders').doc(orderId).update({
+        'status': status,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
       _loadMerchantData();
     } catch (e) {
-      print('Error updating order: $e');
+      debugPrint('Error updating order: $e');
     }
   }
 
-  Future<void> _addMenuItem() async {
-    // Navigate to add menu item page
-    // This would be a separate screen
+  Future<void> _openPostFood() async {
+    if (!mounted) return;
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => const MarketplaceCrudPage(initialCategory: 'food'),
+      ),
+    );
+    if (mounted) await _loadMerchantData();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Food Merchant Dashboard'),
-        backgroundColor: Colors.orange,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.auto_stories_rounded),
-            tooltip: 'Post story (24h)',
-            onPressed: () {
-              final uid = _auth.currentUser?.uid;
-              if (uid == null) {
-                ToastHelper.showCustomToast(
-                  context,
-                  'Please sign in to post a story',
-                  isSuccess: false,
-                  errorMessage: '',
-                );
-                return;
-              }
-              Navigator.push(
-                context,
-                MaterialPageRoute<bool>(
-                  builder: (_) => PostStoryPage(
-                    merchantId: uid,
-                    merchantName: _businessName.isNotEmpty
-                        ? _businessName
-                        : (_auth.currentUser?.displayName ?? 'Food Merchant'),
-                    serviceType: 'food',
-                  ),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.shopping_cart),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => Bottomnavbar(email: widget.email),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.account_balance_wallet),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => MerchantWalletPage(
-                    merchantId: _uid,
-                    merchantName: _businessName,
-                    serviceType: 'food', // Fixed: Added serviceType parameter
-                  ),
-                ),
-              );
-            },
-          ),
-          // Add logout button here
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: _logout,
+  AppBar _buildFoodAppBar() {
+    return AppBar(
+      title: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.restaurant_rounded, color: Colors.white, size: 22),
+          SizedBox(width: 8),
+          Text(
+            'Food Merchant',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Welcome Section
-                  _buildWelcomeSection(),
-                  
-                  // Stats Overview
-                  _buildStatsSection(),
-                  
-                  // Quick Actions
-                  _buildQuickActions(),
-                  
-                  // Wallet Summary
-                  _buildWalletSummary(),
-                  
-                  // Recent Orders
-                  _buildRecentOrders(),
-                  
-                  // Menu Items
-                  _buildMenuItems(),
-                  
-                  // Recent Reviews
-                  _buildRecentReviews(),
-                  
-                  // Add logout section
-                  _buildLogoutSection(),
-                ],
+      backgroundColor: _brandOrange,
+      foregroundColor: Colors.white,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.auto_stories_rounded),
+          tooltip: 'Post story (24h)',
+          onPressed: () {
+            final uid = _auth.currentUser?.uid;
+            if (uid == null) {
+              ToastHelper.showCustomToast(
+                context,
+                'Please sign in to post a story',
+                isSuccess: false,
+                errorMessage: '',
+              );
+              return;
+            }
+            Navigator.push(
+              context,
+              MaterialPageRoute<bool>(
+                builder: (_) => PostStoryPage(
+                  merchantId: uid,
+                  merchantName: _businessName.isNotEmpty
+                      ? _businessName
+                      : (_auth.currentUser?.displayName ?? 'Food Merchant'),
+                  serviceType: 'food',
+                ),
               ),
-            ),
+            );
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.shopping_cart_rounded),
+          tooltip: 'Browse app',
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => Bottomnavbar(email: widget.email),
+              ),
+            );
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.account_balance_wallet_rounded),
+          tooltip: 'Wallet',
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MerchantWalletPage(
+                  merchantId: _uid,
+                  merchantName: _businessName,
+                  serviceType: 'food',
+                ),
+              ),
+            );
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.logout_rounded),
+          tooltip: 'Logout',
+          onPressed: _logout,
+        ),
+      ],
     );
   }
 
-  Widget _buildWelcomeSection() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            const Icon(Icons.restaurant, size: 50, color: Colors.orange),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _businessName,
+  Widget _buildModernHeaderCard() {
+    final st = _status.trim().toLowerCase();
+    final statusText = st.isEmpty ? 'PENDING' : st.toUpperCase();
+
+    Color statusBg;
+    Color statusFg;
+    if (st == 'approved' || st == 'active') {
+      statusBg = const Color(0xFFE7F6EC);
+      statusFg = Colors.green.shade700;
+    } else if (st == 'pending' || st == 'under_review' || st == 'submitted') {
+      statusBg = const Color(0xFFFFF3E5);
+      statusFg = const Color(0xFFB86E00);
+    } else {
+      statusBg = const Color(0xFFFFEDEE);
+      statusFg = Colors.red.shade700;
+    }
+
+    final emailLine = _merchantEmail.isNotEmpty ? _merchantEmail : widget.email;
+    final phoneLine = _merchantPhone.isNotEmpty ? _merchantPhone : '—';
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          colors: [_brandNavy, _brandNavy.withValues(alpha: 0.86)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 28,
+            backgroundColor: Colors.white.withValues(alpha: 0.15),
+            child: const Icon(Icons.restaurant_rounded,
+                color: Colors.white, size: 28),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _businessName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  emailLine,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.85),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  phoneLine,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.85),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: statusBg,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        statusText,
+                        style: TextStyle(
+                          color: statusFg,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade100,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.star, size: 14),
+                          Text(
+                            ' ${_rating.toStringAsFixed(1)}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _compactStatTile({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black54,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
                     style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  Text(
-                    'Food Merchant Dashboard',
-                    style: TextStyle(color: Colors.grey[600]),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Chip(
-                        label: Text(_status.toUpperCase()),
-                        backgroundColor: _status == 'approved' 
-                            ? Colors.green[100] 
-                            : _status == 'pending'
-                              ? Colors.orange[100]
-                              : Colors.red[100],
-                      ),
-                      const SizedBox(width: 8),
-                      Chip(
-                        label: Row(
-                          children: [
-                            const Icon(Icons.star, size: 14),
-                            Text(' ${_rating.toStringAsFixed(1)}'),
-                          ],
-                        ),
-                        backgroundColor: Colors.amber[100],
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -417,108 +539,153 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
         const Text(
           'Business Overview',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 10),
-        GridView.count(
+        GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          children: [
-            _StatCard(
-              title: 'Total Orders',
-              value: '$_totalOrders',
-              icon: Icons.shopping_bag,
-              color: Colors.blue,
-            ),
-            _StatCard(
-              title: 'Total Revenue',
-              value: 'MWK ${_totalRevenue.toStringAsFixed(2)}',
-              icon: Icons.attach_money,
-              color: Colors.green,
-            ),
-            _StatCard(
-              title: 'Pending Orders',
-              value: '$_pendingOrders',
-              icon: Icons.pending_actions,
-              color: Colors.orange,
-            ),
-            _StatCard(
-              title: 'Completed',
-              value: '$_completedOrders',
-              icon: Icons.check_circle,
-              color: Colors.purple,
-            ),
-          ],
+          itemCount: 4,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            mainAxisExtent: 74,
+          ),
+          itemBuilder: (_, i) {
+            switch (i) {
+              case 0:
+                return _compactStatTile(
+                  title: 'Total orders',
+                  value: '$_totalOrders',
+                  icon: Icons.shopping_bag_rounded,
+                  color: _brandOrange,
+                );
+              case 1:
+                return _compactStatTile(
+                  title: 'Revenue',
+                  value: _mwk0(_totalRevenue),
+                  icon: Icons.payments_rounded,
+                  color: Colors.green,
+                );
+              case 2:
+                return _compactStatTile(
+                  title: 'Pending',
+                  value: '$_pendingOrders',
+                  icon: Icons.pending_actions_rounded,
+                  color: Colors.blue,
+                );
+              default:
+                return _compactStatTile(
+                  title: 'Completed',
+                  value: '$_completedOrders',
+                  icon: Icons.check_circle_rounded,
+                  color: Colors.purple,
+                );
+            }
+          },
         ),
       ],
     );
   }
 
-  Widget _buildQuickActions() {
+  Widget _buildQuickActionsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
         const Text(
           'Quick Actions',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 10),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
+        GridView(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisExtent: 74,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+          ),
           children: [
-            ActionChip(
-              avatar: const Icon(Icons.restaurant_menu, size: 20),
-              label: const Text('Manage Menu'),
-              onPressed: _addMenuItem,
+            _FoodQuickActionTile(
+              title: 'Post food',
+              icon: Icons.add_circle_outline_rounded,
+              color: _brandOrange,
+              onTap: _openPostFood,
             ),
-            ActionChip(
-              avatar: const Icon(Icons.inventory, size: 20),
-              label: const Text('Inventory'),
-              onPressed: () {
-                // Navigate to inventory
+            _FoodQuickActionTile(
+              title: 'My menu',
+              icon: Icons.restaurant_menu_rounded,
+              color: _brandNavy,
+              onTap: () => _foodTabs.animateTo(2),
+            ),
+            _FoodQuickActionTile(
+              title: 'Wallet',
+              icon: Icons.account_balance_wallet_outlined,
+              color: Colors.green,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => MerchantWalletPage(
+                      merchantId: _uid,
+                      merchantName: _businessName,
+                      serviceType: 'food',
+                    ),
+                  ),
+                );
               },
             ),
-            ActionChip(
-              avatar: const Icon(Icons.analytics, size: 20),
-              label: const Text('Analytics'),
-              onPressed: () {
-                // Navigate to analytics
+            _FoodQuickActionTile(
+              title: 'Browse app',
+              icon: Icons.storefront_outlined,
+              color: Colors.orange,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => Bottomnavbar(email: widget.email),
+                  ),
+                );
               },
             ),
-            ActionChip(
-              avatar: const Icon(Icons.discount, size: 20),
-              label: const Text('Promotions'),
-              onPressed: () {
-                // Navigate to promotions
+            _FoodQuickActionTile(
+              title: 'Post story',
+              icon: Icons.auto_stories_outlined,
+              color: const Color(0xFFDD2A7B),
+              onTap: () {
+                final uid = _auth.currentUser?.uid;
+                if (uid == null) {
+                  ToastHelper.showCustomToast(
+                    context,
+                    'Please sign in to post a story',
+                    isSuccess: false,
+                    errorMessage: '',
+                  );
+                  return;
+                }
+                Navigator.push(
+                  context,
+                  MaterialPageRoute<bool>(
+                    builder: (_) => PostStoryPage(
+                      merchantId: uid,
+                      merchantName: _businessName.isNotEmpty
+                          ? _businessName
+                          : (_auth.currentUser?.displayName ?? 'Food Merchant'),
+                      serviceType: 'food',
+                    ),
+                  ),
+                );
               },
             ),
-            ActionChip(
-              avatar: const Icon(Icons.settings, size: 20),
-              label: const Text('Settings'),
-              onPressed: () {
-                // Navigate to settings
-              },
-            ),
-            ActionChip(
-              avatar: const Icon(Icons.support_agent, size: 20),
-              label: const Text('Support'),
-              onPressed: () {
-                // Contact support
-              },
-            ),
-            // Add logout action chip
-            ActionChip(
-              avatar: const Icon(Icons.logout, size: 20),
-              label: const Text('Logout'),
-              onPressed: _logout,
+            _FoodQuickActionTile(
+              title: 'Logout',
+              icon: Icons.logout_rounded,
+              color: Colors.red,
+              onTap: _logout,
             ),
           ],
         ),
@@ -527,57 +694,79 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
   }
 
   Widget _buildWalletSummary() {
-    return Card(
-      margin: const EdgeInsets.only(top: 20),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Wallet Balance',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.green.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
             ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: const Icon(
+              Icons.account_balance_wallet_rounded,
+              color: Colors.green,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const Text(
+                  'Wallet balance',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 6),
                 Text(
-                  'MWK ${_walletBalance.toStringAsFixed(2)}',
+                  _mwk0(_walletBalance),
                   style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
                     color: Colors.green,
                   ),
                 ),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => MerchantWalletPage(
-                          merchantId: _uid,
-                          merchantName: _businessName,
-                          serviceType: 'food', // Fixed: Added serviceType parameter
-                        ),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.account_balance_wallet),
-                  label: const Text('View Wallet'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
+                Text(
+                  'Available for withdrawal',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            const Text(
-              'Available for withdrawal',
-              style: TextStyle(color: Colors.grey),
+          ),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => MerchantWalletPage(
+                    merchantId: _uid,
+                    merchantName: _businessName,
+                    serviceType: 'food',
+                  ),
+                ),
+              );
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: _brandOrange,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
             ),
-          ],
-        ),
+            icon: const Icon(Icons.open_in_new_rounded, size: 18),
+            label: const Text('Open'),
+          ),
+        ],
       ),
     );
   }
@@ -586,38 +775,48 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
-              'Recent Orders',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              'Recent orders',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
             ),
             TextButton(
-              onPressed: () {
-                // Navigate to all orders
-              },
-              child: const Text('View All'),
+              onPressed: () {},
+              child: const Text('View all'),
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         if (_recentOrders.isEmpty)
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: Text('No orders yet')),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.black12),
             ),
+            child: const Center(child: Text('No orders yet')),
           )
         else
           ..._recentOrders.take(3).map((order) {
             final orderMap = order as Map<String, dynamic>;
-            return Card(
+            final oid = orderMap['orderId']?.toString() ?? '';
+            final shortId =
+                oid.length > 8 ? oid.substring(0, 8) : (oid.isEmpty ? 'N/A' : oid);
+            return Container(
               margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.black12),
+              ),
               child: ListTile(
-                leading: const Icon(Icons.restaurant_menu, color: Colors.orange),
-                title: Text('Order #${orderMap['orderId']?.toString().substring(0, 8) ?? 'N/A'}'),
+                leading:
+                    const Icon(Icons.restaurant_menu_rounded, color: _brandOrange),
+                title: Text('Order #$shortId'),
                 subtitle: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -629,14 +828,12 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Chip(
-                      label: Text(orderMap['status'] ?? 'pending'),
+                      label: Text('${orderMap['status'] ?? 'pending'}'),
                       backgroundColor: _getStatusColor(orderMap['status']),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.more_vert),
-                      onPressed: () {
-                        _showOrderActions(orderMap);
-                      },
+                      icon: const Icon(Icons.more_vert_rounded),
+                      onPressed: () => _showOrderActions(orderMap),
                     ),
                   ],
                 ),
@@ -647,31 +844,35 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
     );
   }
 
-  Widget _buildMenuItems() {
+  Widget _buildMenuGrid() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
-              'Menu Items',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              'My menu',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
             ),
-            TextButton(
-              onPressed: _addMenuItem,
-              child: const Text('Add Item'),
+            TextButton.icon(
+              onPressed: _openPostFood,
+              icon: const Icon(Icons.add_circle_outline_rounded, size: 20),
+              label: const Text('Post food'),
             ),
           ],
         ),
         const SizedBox(height: 10),
         if (_menuItems.isEmpty)
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: Text('No menu items yet')),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.black12),
             ),
+            child: const Center(child: Text('No menu items yet — tap Post food')),
           )
         else
           GridView.builder(
@@ -679,59 +880,87 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: 0.8,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 0.78,
             ),
             itemCount: _menuItems.length,
             itemBuilder: (context, index) {
               final item = _menuItems[index] as Map<String, dynamic>;
-              return Card(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: item['imageUrl'] != null
-                          ? Image.network(
-                              item['imageUrl'],
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                            )
-                          : Container(
-                              color: Colors.grey[200],
-                              child: const Icon(Icons.fastfood, size: 40),
-                            ),
+              return Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () {},
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.black12),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item['name'] ?? 'Unnamed Item',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(15)),
+                            child: item['imageUrl'] != null
+                                ? Image.network(
+                                    item['imageUrl'] as String,
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                  )
+                                : Container(
+                                    color: Colors.grey.shade200,
+                                    child: const Icon(Icons.fastfood_rounded,
+                                        size: 40, color: Colors.grey),
+                                  ),
                           ),
-                          Text(
-                            'MWK ${(item['price'] ?? 0).toStringAsFixed(2)}',
-                            style: const TextStyle(color: Colors.green),
-                          ),
-                          Chip(
-                            label: Text(
-                              item['isAvailable'] == true ? 'Available' : 'Unavailable',
-                              style: TextStyle(
-                                color: item['isAvailable'] == true ? Colors.green : Colors.red,
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item['name']?.toString() ?? 'Unnamed',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800),
                               ),
-                            ),
-                            backgroundColor: item['isAvailable'] == true 
-                                ? Colors.green[50] 
-                                : Colors.red[50],
+                              Text(
+                                _mwk0((item['price'] is num)
+                                    ? (item['price'] as num)
+                                    : num.tryParse('${item['price']}') ?? 0),
+                                style: const TextStyle(
+                                    color: Colors.green,
+                                    fontWeight: FontWeight.w700),
+                              ),
+                              Chip(
+                                label: Text(
+                                  item['isAvailable'] == true
+                                      ? 'Available'
+                                      : 'Unavailable',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: item['isAvailable'] == true
+                                        ? Colors.green
+                                        : Colors.red,
+                                  ),
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                backgroundColor: item['isAvailable'] == true
+                                    ? Colors.green.shade50
+                                    : Colors.red.shade50,
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               );
             },
@@ -744,41 +973,51 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
         const Text(
-          'Recent Reviews',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          'Recent reviews',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 10),
         if (_reviews.isEmpty)
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: Text('No reviews yet')),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.black12),
             ),
+            child: const Center(child: Text('No reviews yet')),
           )
         else
           ..._reviews.map((review) {
             final reviewMap = review as Map<String, dynamic>;
-            return Card(
+            final name = reviewMap['customerName']?.toString() ?? 'Anonymous';
+            final initial =
+                name.isNotEmpty ? name.substring(0, 1).toUpperCase() : '?';
+            final rid = reviewMap['orderId']?.toString() ?? '';
+            final rshort =
+                rid.length > 8 ? rid.substring(0, 8) : (rid.isEmpty ? 'N/A' : rid);
+            return Container(
               margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.black12),
+              ),
               child: ListTile(
-                leading: CircleAvatar(
-                  child: Text(
-                    reviewMap['customerName']?.toString().substring(0, 1) ?? '?',
-                  ),
-                ),
+                leading: CircleAvatar(child: Text(initial)),
                 title: Row(
                   children: [
-                    Text(reviewMap['customerName'] ?? 'Anonymous'),
-                    const Spacer(),
+                    Expanded(child: Text(name)),
                     ...List.generate(5, (index) {
+                      final r = reviewMap['rating'] is num
+                          ? (reviewMap['rating'] as num).round()
+                          : int.tryParse('${reviewMap['rating']}') ?? 0;
                       return Icon(
-                        Icons.star,
+                        Icons.star_rounded,
                         size: 16,
-                        color: index < (reviewMap['rating'] ?? 0) 
-                            ? Colors.amber 
-                            : Colors.grey[300],
+                        color: index < r ? Colors.amber : Colors.grey.shade300,
                       );
                     }),
                   ],
@@ -786,11 +1025,12 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
                 subtitle: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(reviewMap['comment'] ?? ''),
+                    Text(reviewMap['comment']?.toString() ?? ''),
                     const SizedBox(height: 4),
                     Text(
-                      'Order: #${reviewMap['orderId']?.toString().substring(0, 8) ?? 'N/A'}',
-                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                      'Order: #$rshort',
+                      style: TextStyle(
+                          color: Colors.grey.shade600, fontSize: 12),
                     ),
                   ],
                 ),
@@ -801,46 +1041,221 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
     );
   }
 
-  // Add a logout section in the dashboard
-  Widget _buildLogoutSection() {
-    return Card(
-      margin: const EdgeInsets.only(top: 20),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+  Widget _buildAccountSection() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: Text(
+              'Account',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+            ),
+          ),
+          ListTile(
+            leading: Icon(Icons.person_rounded, color: _brandNavy),
+            title: const Text('Merchant profile'),
+            subtitle: Text(_businessName),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () {},
+          ),
+          ListTile(
+            leading: const Icon(Icons.settings_rounded, color: Colors.grey),
+            title: const Text('Settings'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () {},
+          ),
+          ListTile(
+            leading: const Icon(Icons.logout_rounded, color: Colors.red),
+            title: const Text('Logout'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: _logout,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPostFoodTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 8),
+          Text(
+            'Food listings',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: Colors.grey.shade800,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: _openPostFood,
+              child: Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: Colors.black12),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: _brandOrange.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.add_photo_alternate_rounded,
+                        color: _brandOrange,
+                        size: 28,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Post a dish',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Opens the listing form with category Food. Use the '
+                            'location pin so customers nearby can find your kitchen.',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey.shade700,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right_rounded,
+                        color: Colors.grey.shade500),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: _openPostFood,
+            style: FilledButton.styleFrom(
+              backgroundColor: _brandOrange,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            icon: const Icon(Icons.edit_note_rounded),
+            label: const Text(
+              'Open post form',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDashboardTab() {
+    return RefreshIndicator(
+      color: _brandOrange,
+      onRefresh: _loadMerchantData,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Account',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            ListTile(
-              leading: const Icon(Icons.person, color: Colors.blue),
-              title: const Text('Merchant Profile'),
-              subtitle: Text(_businessName),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                // Add profile navigation here if needed
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.settings, color: Colors.grey),
-              title: const Text('Settings'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                // Add settings navigation here if needed
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.logout, color: Colors.red),
-              title: const Text('Logout'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _logout,
-            ),
+            _buildModernHeaderCard(),
+            const SizedBox(height: 12),
+            _buildStatsSection(),
+            const SizedBox(height: 12),
+            _buildQuickActionsSection(),
+            const SizedBox(height: 12),
+            _buildWalletSummary(),
+            const SizedBox(height: 12),
+            _buildRecentOrders(),
+            const SizedBox(height: 12),
+            _buildRecentReviews(),
+            const SizedBox(height: 12),
+            _buildAccountSection(),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMenuTab() {
+    return RefreshIndicator(
+      color: _brandOrange,
+      onRefresh: _loadMerchantData,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        child: _buildMenuGrid(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF3F4F7),
+      appBar: _buildFoodAppBar(),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                Container(
+                  color: Colors.white,
+                  child: TabBar(
+                    controller: _foodTabs,
+                    labelColor: _brandOrange,
+                    unselectedLabelColor: Colors.grey,
+                    indicatorColor: _brandOrange,
+                    tabs: const [
+                      Tab(text: 'Dashboard'),
+                      Tab(text: 'Post food'),
+                      Tab(text: 'My menu'),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: TabBarView(
+                    controller: _foodTabs,
+                    children: [
+                      _buildDashboardTab(),
+                      _buildPostFoodTab(),
+                      _buildMenuTab(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
     );
   }
 
@@ -848,64 +1263,65 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
     switch (status?.toLowerCase()) {
       case 'completed':
       case 'delivered':
-        return Colors.green[100]!;
+        return Colors.green.shade100;
       case 'preparing':
-        return Colors.blue[100]!;
+        return Colors.blue.shade100;
       case 'pending':
-        return Colors.orange[100]!;
+        return Colors.orange.shade100;
       case 'cancelled':
-        return Colors.red[100]!;
+        return Colors.red.shade100;
       default:
-        return Colors.grey[100]!;
+        return Colors.grey.shade100;
     }
   }
 
   void _showOrderActions(Map<String, dynamic> order) {
+    final docId = order['id']?.toString() ?? order['orderId']?.toString() ?? '';
     showModalBottomSheet(
       context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (context) {
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: const Icon(Icons.visibility),
-                title: const Text('View Details'),
+                leading: const Icon(Icons.visibility_rounded),
+                title: const Text('View details'),
+                onTap: () => Navigator.pop(context),
+              ),
+              ListTile(
+                leading: const Icon(Icons.check_circle_outline_rounded),
+                title: const Text('Mark as preparing'),
                 onTap: () {
                   Navigator.pop(context);
-                  // Navigate to order details
+                  if (docId.isNotEmpty) _updateOrderStatus(docId, 'preparing');
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.check_circle),
-                title: const Text('Mark as Preparing'),
+                leading: const Icon(Icons.room_service_rounded),
+                title: const Text('Mark as ready'),
                 onTap: () {
                   Navigator.pop(context);
-                  _updateOrderStatus(order['id'], 'preparing');
+                  if (docId.isNotEmpty) _updateOrderStatus(docId, 'ready');
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.local_shipping),
-                title: const Text('Mark as Ready'),
+                leading: const Icon(Icons.done_all_rounded),
+                title: const Text('Mark as delivered'),
                 onTap: () {
                   Navigator.pop(context);
-                  _updateOrderStatus(order['id'], 'ready');
+                  if (docId.isNotEmpty) _updateOrderStatus(docId, 'delivered');
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.done_all),
-                title: const Text('Mark as Delivered'),
+                leading: const Icon(Icons.cancel_outlined),
+                title: const Text('Cancel order'),
                 onTap: () {
                   Navigator.pop(context);
-                  _updateOrderStatus(order['id'], 'delivered');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.cancel),
-                title: const Text('Cancel Order'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _updateOrderStatus(order['id'], 'cancelled');
+                  if (docId.isNotEmpty) _updateOrderStatus(docId, 'cancelled');
                 },
               ),
             ],
@@ -916,40 +1332,57 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard> {
   }
 }
 
-class _StatCard extends StatelessWidget {
+class _FoodQuickActionTile extends StatelessWidget {
   final String title;
-  final String value;
   final IconData icon;
+  final VoidCallback onTap;
   final Color color;
 
-  const _StatCard({
+  const _FoodQuickActionTile({
     required this.title,
-    required this.value,
     required this.icon,
+    required this.onTap,
     required this.color,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 30, color: color),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
-              textAlign: TextAlign.center,
-            ),
-          ],
+    return Material(
+      color: Colors.white,
+      elevation: 0,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: color),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: Colors.black38),
+            ],
+          ),
         ),
       ),
     );

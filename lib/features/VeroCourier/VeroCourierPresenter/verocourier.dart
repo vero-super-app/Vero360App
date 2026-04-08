@@ -333,6 +333,9 @@ class _VerocourierPageState extends State<VerocourierPage> {
       _recipientNameCtrl.clear();
       _recipientPhoneCtrl.clear();
       _recipientAddressCtrl.clear();
+      _trackCtrl.text = created.courierId.toString();
+      await _onServiceTabChanged(2);
+      await _trackDelivery();
       await _loadDeliveries();
     } on ApiException catch (e) {
       _toast(e.message, isError: true);
@@ -343,7 +346,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
     }
   }
 
-  void _saveSendingDetails() {
+  Future<void> _saveSendingDetails() async {
     if (!_citySupported) {
       _toast(
         'Sorry, Vero Courier is not available in your city. We are expanding soon.',
@@ -370,7 +373,8 @@ class _VerocourierPageState extends State<VerocourierPage> {
           ? _senderCity
           : _senderAddressCtrl.text.trim();
     });
-    _toast('Sending details saved for this session.');
+   // _toast('Sending details saved for this session.');
+    await _onServiceTabChanged(1);
   }
 
   Future<void> _updateStatus(CourierDelivery delivery, CourierStatus status) async {
@@ -700,7 +704,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
               onPressed: _saveSendingDetails,
               icon: const Icon(PhosphorIconsBold.checkCircle, size: 20),
               label: const Text(
-                'Save Sending Details',
+                'Next',
                 style: TextStyle(fontWeight: FontWeight.w700),
               ),
             ),

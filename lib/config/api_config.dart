@@ -114,7 +114,9 @@ class ApiConfig {
   /// - If you pass '/vero/cart' => http://root/vero/cart (no double prefix)
   static Uri endpoint(String path) {
     final clean = path.startsWith('/') ? path : '/$path';
-    final fullPath = clean.startsWith(apiPrefix) ? clean : '$apiPrefix$clean';
+    final hasPrefixedSegment =
+        clean == apiPrefix || clean.startsWith('$apiPrefix/');
+    final fullPath = hasPrefixedSegment ? clean : '$apiPrefix$clean';
 
     final u = Uri.parse(_baseRoot);
     return Uri(

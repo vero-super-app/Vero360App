@@ -687,7 +687,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                         margin: const EdgeInsets.symmetric(horizontal: 10),
                         color: Colors.white.withOpacity(0.30)),
 
-                    // ── Add to Cart ─────────────────────────────────────
+                    // ── Buy ─────────────────────────────────────────────
                     Expanded(
                       child: GestureDetector(
                         onTap: _payStarting ? null : _startCheckout,
@@ -699,7 +699,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                                       strokeWidth: 2.5,
                                       color: Colors.white))
                               : const Text(
-                                  'Add to Cart',
+                                  'Buy',
                                   style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.w800,

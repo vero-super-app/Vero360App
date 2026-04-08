@@ -22,7 +22,13 @@ String _mwk0(num v) => _mwk0Fmt.format(v);
 
 class FoodMerchantDashboard extends StatefulWidget {
   final String email;
-  const FoodMerchantDashboard({super.key, required this.email});
+  /// When [Bottomnavbar] already wraps this screen (tab 4), hide the bar to avoid duplicates.
+  final bool embeddedInMainNav;
+  const FoodMerchantDashboard({
+    super.key,
+    required this.email,
+    this.embeddedInMainNav = false,
+  });
 
   @override
   State<FoodMerchantDashboard> createState() => _FoodMerchantDashboardState();
@@ -1223,9 +1229,27 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final mainNav = widget.embeddedInMainNav
+        ? null
+        : VeroMainNavigationBar(
+            selectedIndex: 4,
+            isDark: isDark,
+            isMerchant: true,
+            onTap: (i) {
+              if (i == 4) return;
+              final em = _merchantEmail.isNotEmpty
+                  ? _merchantEmail
+                  : widget.email;
+              openVeroMainShell(context, email: em, tabIndex: i);
+            },
+          );
+
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F7),
+      extendBody: mainNav != null,
       appBar: _buildFoodAppBar(),
+      bottomNavigationBar: mainNav,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Column(

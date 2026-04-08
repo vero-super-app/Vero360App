@@ -574,45 +574,13 @@ class _FoodPageState extends State<FoodPage> {
         backgroundColor: _pageBg,
         foregroundColor: _ink,
         centerTitle: false,
-        titleSpacing: 20,
-        leadingWidth: 0,
-        leading: const SizedBox.shrink(),
-        title: Row(
-          children: [
-            // Avatar
-            Container(
-              width: 44, height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white,
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08),
-                    blurRadius: 10, offset: const Offset(0, 3))],
-              ),
-              child: const CircleAvatar(
-                radius: 22,
-                backgroundColor: Colors.white,
-                child: Icon(Icons.person_rounded,
-                    color: Color(0xFFC62828), size: 22),
-              ),
-            ),
-            const Spacer(),
-            // Notification bell
-            Container(
-              width: 44, height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white,
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08),
-                    blurRadius: 10, offset: const Offset(0, 3))],
-              ),
-              child: IconButton(
-                icon: Icon(Icons.notifications_none_rounded,
-                    color: Colors.grey.shade800, size: 22),
-                onPressed: () {},
-              ),
-            ),
-          ],
-        ),
+        titleSpacing: 0,
+        automaticallyImplyLeading: Navigator.of(context).canPop(),
+        leading: Navigator.of(context).canPop()
+            ? null
+            : const SizedBox.shrink(),
+        leadingWidth: Navigator.of(context).canPop() ? null : 0,
+        title: const SizedBox.shrink(),
       ),
 
       bottomNavigationBar: VeroMainNavigationBar(

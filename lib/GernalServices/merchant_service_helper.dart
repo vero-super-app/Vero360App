@@ -57,72 +57,87 @@ Future<void> hydrateMerchantServiceFromFirestore(SharedPreferences prefs) async 
 class MerchantServiceHelper {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  Future<QuerySnapshot<Map<String, dynamic>>> _recentOrdersForMerchant(
+    String serviceKey,
+    String uid,
+  ) {
+    switch (serviceKey) {
+      case 'food':
+        return _firestore
+            .collection('food_orders')
+            .where('merchantId', isEqualTo: uid)
+            .where('status',
+                whereIn: ['pending', 'preparing', 'ready', 'delivered'])
+            .orderBy('createdAt', descending: true)
+            .limit(20)
+            .get();
+      case 'taxi':
+        return _firestore
+            .collection('taxi_rides')
+            .where('driverId', isEqualTo: uid)
+            .where('status', whereIn: [
+              'requested',
+              'accepted',
+              'in_progress',
+              'completed',
+            ])
+            .orderBy('createdAt', descending: true)
+            .limit(20)
+            .get();
+      case 'accommodation':
+        return _firestore
+            .collection('bookings')
+            .where('accommodationId', isEqualTo: uid)
+            .where('status', whereIn: [
+              'pending',
+              'confirmed',
+              'checked_in',
+              'checked_out',
+            ])
+            .orderBy('createdAt', descending: true)
+            .limit(20)
+            .get();
+      case 'courier':
+        return _firestore
+            .collection('courier_orders')
+            .where('courierId', isEqualTo: uid)
+            .where('status',
+                whereIn: ['pending', 'accepted', 'in_transit', 'delivered'])
+            .orderBy('createdAt', descending: true)
+            .limit(20)
+            .get();
+      default:
+        return _firestore
+            .collection('orders')
+            .where('merchantId', isEqualTo: uid)
+            .where('status', whereIn: ['pending', 'processing', 'completed'])
+            .orderBy('createdAt', descending: true)
+            .limit(20)
+            .get();
+    }
+  }
+
   // Get merchant dashboard data
   Future<Map<String, dynamic>> getMerchantDashboardData(String uid, String serviceKey) async {
     try {
       final collectionName = '${serviceKey}_merchants';
-      final merchantDoc = await _firestore
-          .collection(collectionName)
-          .doc(uid)
-          .get();
-      
+      final merchantFuture =
+          _firestore.collection(collectionName).doc(uid).get();
+      final ordersFuture = _recentOrdersForMerchant(serviceKey, uid);
+
+      final results =
+          await Future.wait<dynamic>([merchantFuture, ordersFuture]);
+      final merchantDoc = results[0] as DocumentSnapshot<Map<String, dynamic>>;
+      final ordersSnapshot = results[1] as QuerySnapshot<Map<String, dynamic>>;
+
       if (!merchantDoc.exists) {
         return {'error': 'Merchant profile not found'};
       }
-      
+
       final merchantData = merchantDoc.data() as Map<String, dynamic>;
       
-      // Get orders for this merchant based on service type
-      QuerySnapshot ordersSnapshot;
-      switch (serviceKey) {
-        case 'food':
-          ordersSnapshot = await _firestore
-              .collection('food_orders')
-              .where('merchantId', isEqualTo: uid)
-              .where('status', whereIn: ['pending', 'preparing', 'ready', 'delivered'])
-              .orderBy('createdAt', descending: true)
-              .limit(20)
-              .get();
-          break;
-        case 'taxi':
-          ordersSnapshot = await _firestore
-              .collection('taxi_rides')
-              .where('driverId', isEqualTo: uid)
-              .where('status', whereIn: ['requested', 'accepted', 'in_progress', 'completed'])
-              .orderBy('createdAt', descending: true)
-              .limit(20)
-              .get();
-          break;
-        case 'accommodation':
-          ordersSnapshot = await _firestore
-              .collection('bookings')
-              .where('accommodationId', isEqualTo: uid)
-              .where('status', whereIn: ['pending', 'confirmed', 'checked_in', 'checked_out'])
-              .orderBy('createdAt', descending: true)
-              .limit(20)
-              .get();
-          break;
-        case 'courier':
-          ordersSnapshot = await _firestore
-              .collection('courier_orders')
-              .where('courierId', isEqualTo: uid)
-              .where('status', whereIn: ['pending', 'accepted', 'in_transit', 'delivered'])
-              .orderBy('createdAt', descending: true)
-              .limit(20)
-              .get();
-          break;
-        default:
-          ordersSnapshot = await _firestore
-              .collection('orders')
-              .where('merchantId', isEqualTo: uid)
-              .where('status', whereIn: ['pending', 'processing', 'completed'])
-              .orderBy('createdAt', descending: true)
-              .limit(20)
-              .get();
-      }
-      
       final orders = ordersSnapshot.docs.map((doc) {
-        final data = doc.data() as Map<String, dynamic>;
+        final data = doc.data();
         return {
           'id': doc.id,
           ...data,

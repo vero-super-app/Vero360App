@@ -12,6 +12,7 @@ import 'package:http_parser/http_parser.dart' show MediaType;
 
 import 'package:vero360_app/config/api_config.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
@@ -80,6 +81,8 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
     'apartment',
   ];
   static const int _maxGalleryPhotos = 5;
+  static const List<String> _hostelGenders = ['boys', 'girls', 'mixed'];
+  static const List<String> _hostelRoomTypes = ['single', 'double', 'hall'];
 
   static const Color _orange = Color(0xFFFF8A00);
   static const Color _navy = Color(0xFF16284C);
@@ -89,13 +92,21 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
   late final TextEditingController _locationController;
   late final TextEditingController _descriptionController;
   late final TextEditingController _priceController;
+  late final TextEditingController _roomsController;
 
   String _selectedType = _accommodationTypes.first;
+  String _hostelGender = _hostelGenders.first;
+  String _hostelRoomType = _hostelRoomTypes.first;
+  bool _hostelIsAvailable = true;
   AccommodationPricePeriod _selectedPricePeriod =
       AccommodationPricePeriod.night;
   bool _submitting = false;
   _PropertyMedia? _cover;
   final List<_PropertyMedia> _gallery = [];
+
+  bool get _isMultiRoomType =>
+      _selectedType == 'hotel' || _selectedType == 'lodge';
+  bool get _isHostelType => _selectedType == 'hostel';
 
   @override
   void initState() {
@@ -104,6 +115,7 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
     _locationController = TextEditingController();
     _descriptionController = TextEditingController();
     _priceController = TextEditingController();
+    _roomsController = TextEditingController(text: '1');
   }
 
   @override
@@ -112,6 +124,7 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
     _locationController.dispose();
     _descriptionController.dispose();
     _priceController.dispose();
+    _roomsController.dispose();
     super.dispose();
   }
 
@@ -542,10 +555,68 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                           ),
                         )
                         .toList(),
-                    onChanged: (v) => setState(
-                      () => _selectedType = v ?? _accommodationTypes.first,
-                    ),
+                    onChanged: (v) => setState(() {
+                      _selectedType = v ?? _accommodationTypes.first;
+                      if (!_isMultiRoomType) _roomsController.text = '1';
+                    }),
                   ),
+                  if (_isHostelType) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: _hostelGender,
+                      isExpanded: true,
+                      decoration: _fieldDecoration(label: 'Hostel category *'),
+                      borderRadius: BorderRadius.circular(14),
+                      items: _hostelGenders
+                          .map(
+                            (v) => DropdownMenuItem(
+                              value: v,
+                              child: Text(
+                                v[0].toUpperCase() + v.substring(1),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) => setState(
+                        () => _hostelGender = v ?? _hostelGenders.first,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: _hostelRoomType,
+                      isExpanded: true,
+                      decoration: _fieldDecoration(label: 'Room setup *'),
+                      borderRadius: BorderRadius.circular(14),
+                      items: _hostelRoomTypes
+                          .map(
+                            (v) => DropdownMenuItem(
+                              value: v,
+                              child: Text(
+                                v[0].toUpperCase() + v.substring(1),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) => setState(
+                        () => _hostelRoomType = v ?? _hostelRoomTypes.first,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile.adaptive(
+                      value: _hostelIsAvailable,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Currently available',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      subtitle: Text(
+                        _hostelIsAvailable ? 'Guests can book now' : 'Marked as booked/unavailable',
+                      ),
+                      onChanged: (v) => setState(() => _hostelIsAvailable = v),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   TextField(
                     controller: _nameController,
@@ -610,6 +681,17 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                       hint: 'e.g. 45000',
                     ),
                   ),
+                  if (_isMultiRoomType) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _roomsController,
+                      keyboardType: TextInputType.number,
+                      decoration: _fieldDecoration(
+                        label: 'Number of rooms available *',
+                        hint: 'e.g. 12',
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   SizedBox(
                     width: double.infinity,
@@ -631,6 +713,12 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                               final price = double.tryParse(
                                 _priceController.text.trim(),
                               );
+                              final parsedRooms = int.tryParse(
+                                _roomsController.text.trim(),
+                              );
+                              final roomsAvailable = _isMultiRoomType
+                                  ? (parsedRooms ?? 0)
+                                  : 1;
                               if (name.isEmpty || location.isEmpty) {
                                 ToastHelper.showCustomToast(
                                   context,
@@ -644,6 +732,15 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                 ToastHelper.showCustomToast(
                                   context,
                                   'Enter a valid amount',
+                                  isSuccess: false,
+                                  errorMessage: '',
+                                );
+                                return;
+                              }
+                              if (_isMultiRoomType && roomsAvailable < 1) {
+                                ToastHelper.showCustomToast(
+                                  context,
+                                  'Enter a valid number of rooms',
                                   isSuccess: false,
                                   errorMessage: '',
                                 );
@@ -667,8 +764,15 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                   location: location,
                                   description: desc,
                                   pricePerNight: price,
+                                  capacity: roomsAvailable,
                                   pricingPeriod: _selectedPricePeriod.apiValue,
                                   accommodationType: _selectedType,
+                                  hostelGender:
+                                      _isHostelType ? _hostelGender : null,
+                                  roomType:
+                                      _isHostelType ? _hostelRoomType : null,
+                                  isAvailable:
+                                      _isHostelType ? _hostelIsAvailable : true,
                                   image: coverUrl,
                                   gallery: galleryUrls,
                                 );
@@ -683,7 +787,14 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                     'price': price,
                                     'pricingPeriod':
                                         _selectedPricePeriod.apiValue,
+                                    'capacity': roomsAvailable,
                                     'selectedType': _selectedType,
+                                    if (_isHostelType)
+                                      'hostelGender': _hostelGender,
+                                    if (_isHostelType)
+                                      'roomType': _hostelRoomType,
+                                    'isAvailable':
+                                        _isHostelType ? _hostelIsAvailable : true,
                                     'coverUrl': coverUrl,
                                     'galleryUrls': galleryUrls,
                                   },
@@ -894,6 +1005,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   List<dynamic> _recentBookings = [];
   final MyBookingService _myBookingService = MyBookingService();
   List<BookingItem> _veroMerchantBookings = [];
+  String _bookingSearchQuery = '';
+  DateTime? _bookingSearchDate;
+  final TextEditingController _bookingSearchController =
+      TextEditingController();
 
   // Profile (editable)
   String _merchantEmail = 'No Email';
@@ -959,10 +1074,38 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   @override
   void dispose() {
     _accommodationTabs?.dispose();
+    _bookingSearchController.dispose();
     super.dispose();
   }
 
-  
+  /// Firestore dashboard snapshot (recent orders, merchant doc subset).
+  Future<void> _fetchAndApplyMerchantDashboard(SharedPreferences prefs) async {
+    try {
+      final dashboardData =
+          await _helper.getMerchantDashboardData(_uid, 'accommodation');
+      if (!mounted) return;
+      if (dashboardData.containsKey('error')) return;
+
+      final merchantMap =
+          dashboardData['merchant'] as Map<String, dynamic>?;
+      final fromMerchant = _businessNameFromFirestoreMap(merchantMap);
+      if (fromMerchant != null && fromMerchant.isNotEmpty) {
+        unawaited(prefs.setString('business_name', fromMerchant));
+      }
+      if (!mounted) return;
+      setState(() {
+        _merchantData = merchantMap;
+        _recentBookings = dashboardData['recentOrders'] ?? [];
+        _rating = dashboardData['merchant']?['rating'] ?? 0.0;
+        _status = dashboardData['merchant']?['status'] ?? 'pending';
+        if (fromMerchant != null && fromMerchant.isNotEmpty) {
+          _businessName = fromMerchant;
+        }
+      });
+    } catch (e) {
+      debugPrint('Error loading merchant dashboard: $e');
+    }
+  }
 
   Future<void> _loadMerchantData({bool showLoading = true}) async {
     if (!mounted) return;
@@ -978,36 +1121,31 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
     if (_uid.isNotEmpty) {
       try {
-        final dashboardData = await _helper.getMerchantDashboardData(_uid, 'accommodation');
-
-        if (!dashboardData.containsKey('error')) {
-          final merchantMap =
-              dashboardData['merchant'] as Map<String, dynamic>?;
-          final fromMerchant = _businessNameFromFirestoreMap(merchantMap);
-          if (fromMerchant != null && fromMerchant.isNotEmpty) {
-            unawaited(prefs.setString('business_name', fromMerchant));
-          }
-          setState(() {
-            _merchantData = merchantMap;
-            _recentBookings = dashboardData['recentOrders'] ?? [];
-            _rating = dashboardData['merchant']?['rating'] ?? 0.0;
-            _status = dashboardData['merchant']?['status'] ?? 'pending';
-            if (fromMerchant != null && fromMerchant.isNotEmpty) {
-              _businessName = fromMerchant;
-            }
-          });
-        }
-
-        // Parallelize independent I/O; reviews/services refresh UI when ready (non-blocking).
+        // Wave 1: Firestore + properties + wallet + profile (typically faster than HTTP API).
         await Future.wait<void>([
+          _fetchAndApplyMerchantDashboard(prefs),
           _loadRooms(),
           _loadWalletBalance(),
           _loadProfileFromAuthAndFirestore(),
-          _loadVeroMerchantBookings(),
         ]);
         await _calculateAvailableRooms();
       } catch (e) {
-        print('Error loading accommodation data: $e');
+        debugPrint('Error loading accommodation data: $e');
+      }
+
+      // Show the dashboard as soon as core data is in; don’t block on Vero API + extras.
+      if (mounted && showLoading) {
+        setState(() => _isLoading = false);
+      }
+
+      try {
+        await Future.wait<void>([
+          _loadVeroMerchantBookings(),
+          _loadServicesOffered(),
+          _loadReviews(),
+        ]);
+      } catch (e) {
+        debugPrint('Error loading secondary accommodation data: $e');
       }
     }
 
@@ -1016,11 +1154,6 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         if (showLoading) _isLoading = false;
         _initialLoadComplete = true;
       });
-    }
-
-    if (_uid.isNotEmpty && mounted) {
-      unawaited(_loadServicesOffered());
-      unawaited(_loadReviews());
     }
   }
 
@@ -1052,7 +1185,28 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         };
       }).toList();
 
-      final apiRows = mine.map(_accommodationRowFromApi).toList();
+      final fsByApiId = <int, Map<String, dynamic>>{};
+      for (final row in fsRooms) {
+        final id = _apiAccommodationId(row);
+        if (id != null && id > 0) {
+          fsByApiId[id] = row;
+        }
+      }
+
+      final apiRows = mine.map((a) {
+        final row = _accommodationRowFromApi(a);
+        final fsMeta = fsByApiId[a.id];
+        if (fsMeta != null) {
+          row['capacity'] = (fsMeta['capacity'] ?? row['capacity']);
+          row['pricingPeriod'] =
+              (fsMeta['pricingPeriod'] ?? row['pricingPeriod']);
+          row['isAvailable'] = (fsMeta['isAvailable'] ?? row['isAvailable']);
+          row['hostelGender'] =
+              (fsMeta['hostelGender'] ?? row['hostelGender']);
+          row['roomType'] = (fsMeta['roomType'] ?? row['roomType']);
+        }
+        return row;
+      }).toList();
 
       final apiIds = apiRows
           .map((r) => r['apiAccommodationId'])
@@ -1106,7 +1260,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       'type': a.accommodationType,
       'merchantId': _uid,
       'isAvailable': true,
-      'capacity': 1,
+      'capacity': a.roomsAvailable,
       'image': img,
       'imageUrl': img,
       'galleryUrls': List<String>.from(a.gallery),
@@ -1638,10 +1792,14 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       final location = payload['location'] as String? ?? '';
       final desc = payload['description'] as String? ?? '';
       final price = (payload['price'] as num?)?.toDouble() ?? 0.0;
+      final capacity = (payload['capacity'] as num?)?.toInt() ?? 1;
       final pricingPeriod =
           (payload['pricingPeriod'] as String?)?.trim().toLowerCase() ??
               'night';
       final selectedType = payload['selectedType'] as String? ?? 'hotel';
+      final hostelGender = (payload['hostelGender'] as String?)?.trim();
+      final roomType = (payload['roomType'] as String?)?.trim();
+      final isAvailable = (payload['isAvailable'] as bool?) ?? true;
       final coverUrl = payload['coverUrl'] as String? ?? '';
       final galleryUrls = (payload['galleryUrls'] as List<dynamic>?)
               ?.map((e) => e.toString())
@@ -1657,12 +1815,15 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         if (desc.isNotEmpty) 'description': desc,
         'price': price,
         'pricePerNight': price,
+        'capacity': capacity,
         'pricingPeriod': pricingPeriod,
         'accommodationType': selectedType,
         'type': selectedType,
         'merchantId': _uid,
-        'isAvailable': true,
-        'capacity': 1,
+        'isAvailable': isAvailable,
+        if (hostelGender != null && hostelGender.isNotEmpty)
+          'hostelGender': hostelGender,
+        if (roomType != null && roomType.isNotEmpty) 'roomType': roomType,
         'image': coverUrl,
         'imageUrl': coverUrl,
         'galleryUrls': galleryUrls,
@@ -1685,6 +1846,11 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               'merchantId': _uid,
               'apiAccommodationId': apiNumeric,
               'pricingPeriod': pricingPeriod,
+              'capacity': capacity,
+              if (hostelGender != null && hostelGender.isNotEmpty)
+                'hostelGender': hostelGender,
+              if (roomType != null && roomType.isNotEmpty) 'roomType': roomType,
+              'isAvailable': isAvailable,
             },
             SetOptions(merge: true),
           ),
@@ -1742,6 +1908,22 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     var selectedPricePeriod = accommodationPricePeriodFromDynamic(
       room['pricingPeriod'] ?? room['pricePeriod'],
     );
+    var roomsAvailable = (() {
+      final c = room['capacity'];
+      if (c is num) return c.toInt();
+      return int.tryParse(c?.toString() ?? '') ?? 1;
+    })();
+    var hostelGender =
+        (room['hostelGender'] ?? 'boys').toString().toLowerCase().trim();
+    if (!const ['boys', 'girls', 'mixed'].contains(hostelGender)) {
+      hostelGender = 'boys';
+    }
+    var roomType =
+        (room['roomType'] ?? 'single').toString().toLowerCase().trim();
+    if (!const ['single', 'double', 'hall'].contains(roomType)) {
+      roomType = 'single';
+    }
+    var isAvailable = (room['isAvailable'] as bool?) ?? true;
 
     String existingCoverUrl =
         (room['image'] ?? room['imageUrl'] ?? '').toString().trim();
@@ -2214,11 +2396,75 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                 ),
                               )
                               .toList(),
-                          onChanged: (v) => setLocal(
-                            () => selectedType =
-                                v ?? accommodationTypes.first,
-                          ),
+                          onChanged: (v) => setLocal(() {
+                            selectedType = v ?? accommodationTypes.first;
+                            if (selectedType != 'hotel' &&
+                                selectedType != 'lodge') {
+                              roomsAvailable = 1;
+                            }
+                          }),
                         ),
+                        if (selectedType == 'hostel') ...[
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<String>(
+                            value: hostelGender,
+                            isExpanded: true,
+                            decoration: _propertyFormDecoration(
+                              label: 'Hostel category *',
+                            ),
+                            borderRadius: BorderRadius.circular(14),
+                            items: const ['boys', 'girls', 'mixed']
+                                .map(
+                                  (v) => DropdownMenuItem(
+                                    value: v,
+                                    child: Text(
+                                      v[0].toUpperCase() + v.substring(1),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) => setLocal(
+                              () => hostelGender = v ?? 'boys',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<String>(
+                            value: roomType,
+                            isExpanded: true,
+                            decoration: _propertyFormDecoration(
+                              label: 'Room setup *',
+                            ),
+                            borderRadius: BorderRadius.circular(14),
+                            items: const ['single', 'double', 'hall']
+                                .map(
+                                  (v) => DropdownMenuItem(
+                                    value: v,
+                                    child: Text(
+                                      v[0].toUpperCase() + v.substring(1),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) => setLocal(
+                              () => roomType = v ?? 'single',
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          SwitchListTile.adaptive(
+                            value: isAvailable,
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text(
+                              'Currently available',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            subtitle: Text(
+                              isAvailable
+                                  ? 'Guests can book now'
+                                  : 'Marked as booked/unavailable',
+                            ),
+                            onChanged: (v) => setLocal(() => isAvailable = v),
+                          ),
+                        ],
                         const SizedBox(height: 12),
                         TextField(
                           controller: nameController,
@@ -2285,6 +2531,33 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                             label: 'Amount (MWK) *',
                           ),
                         ),
+                        if (selectedType == 'hotel' ||
+                            selectedType == 'lodge') ...[
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Rooms available: $roomsAvailable',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.grey.shade800,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: roomsAvailable > 1
+                                    ? () => setLocal(() => roomsAvailable--)
+                                    : null,
+                                icon: const Icon(Icons.remove_circle_outline),
+                              ),
+                              IconButton(
+                                onPressed: () => setLocal(() => roomsAvailable++),
+                                icon: const Icon(Icons.add_circle_outline),
+                              ),
+                            ],
+                          ),
+                        ],
                         const SizedBox(height: 24),
                         SizedBox(
                           width: double.infinity,
@@ -2309,6 +2582,11 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                     final price = double.tryParse(
                                       priceController.text.trim(),
                                     );
+                                    final normalizedRooms =
+                                        (selectedType == 'hotel' ||
+                                                selectedType == 'lodge')
+                                            ? roomsAvailable
+                                            : 1;
                                     if (name.isEmpty || location.isEmpty) {
                                       _toastErr(
                                           'Name and location are required');
@@ -2316,6 +2594,13 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                     }
                                     if (price == null || price <= 0) {
                                       _toastErr('Enter a valid amount');
+                                      return;
+                                    }
+                                    if ((selectedType == 'hotel' ||
+                                            selectedType == 'lodge') &&
+                                        normalizedRooms < 1) {
+                                      _toastErr(
+                                          'Enter a valid number of rooms');
                                       return;
                                     }
                                     setLocal(() => submitting = true);
@@ -2335,9 +2620,18 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                         description: descriptionController.text
                                             .trim(),
                                         pricePerNight: price,
+                                        capacity: normalizedRooms,
                                         pricingPeriod:
                                             selectedPricePeriod.apiValue,
                                         accommodationType: selectedType,
+                                        hostelGender: selectedType == 'hostel'
+                                            ? hostelGender
+                                            : null,
+                                        roomType:
+                                            selectedType == 'hostel' ? roomType : null,
+                                        isAvailable: selectedType == 'hostel'
+                                            ? isAvailable
+                                            : true,
                                         image: coverUrl,
                                         gallery: galleryUrls,
                                       );
@@ -2354,6 +2648,14 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                               'apiAccommodationId': apiId,
                                               'pricingPeriod':
                                                   selectedPricePeriod.apiValue,
+                                              'capacity': normalizedRooms,
+                                              if (selectedType == 'hostel')
+                                                'hostelGender': hostelGender,
+                                              if (selectedType == 'hostel')
+                                                'roomType': roomType,
+                                              'isAvailable': selectedType == 'hostel'
+                                                  ? isAvailable
+                                                  : true,
                                             },
                                             SetOptions(merge: true),
                                           ),
@@ -2367,11 +2669,19 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                           descriptionController.text.trim();
                                       updated['price'] = price;
                                       updated['pricePerNight'] = price;
+                                      updated['capacity'] = normalizedRooms;
                                       updated['pricingPeriod'] =
                                           selectedPricePeriod.apiValue;
                                       updated['accommodationType'] =
                                           selectedType;
                                       updated['type'] = selectedType;
+                                      if (selectedType == 'hostel') {
+                                        updated['hostelGender'] = hostelGender;
+                                        updated['roomType'] = roomType;
+                                      }
+                                      updated['isAvailable'] = selectedType == 'hostel'
+                                          ? isAvailable
+                                          : true;
                                       updated['image'] = coverUrl;
                                       updated['imageUrl'] = coverUrl;
                                       updated['galleryUrls'] = galleryUrls;
@@ -4151,11 +4461,20 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   }
 
   Widget _buildRecentBookings({required bool compact}) {
-    final veroList = compact
+    final allVero = compact
         ? _veroMerchantBookings.take(3).toList()
         : _veroMerchantBookings.toList();
-    final fireList =
+    final allFire =
         compact ? _recentBookings.take(3).toList() : _recentBookings.toList();
+    final veroList = compact
+        ? allVero
+        : allVero.where(_matchesBookingFiltersVero).toList();
+    final fireList = compact
+        ? allFire
+        : allFire
+            .whereType<Map<String, dynamic>>()
+            .where(_matchesBookingFiltersFirestore)
+            .toList();
 
     final hasVero = veroList.isNotEmpty;
     final hasFirestore = fireList.isNotEmpty;
@@ -4179,11 +4498,15 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           ],
         ),
         const SizedBox(height: 10),
+        if (!compact) ...[
+          _buildBookingSearchSection(),
+          const SizedBox(height: 12),
+        ],
         if (!hasVero && !hasFirestore)
           const Card(
             child: Padding(
               padding: EdgeInsets.all(20),
-              child: Center(child: Text('No bookings yet')),
+              child: Center(child: Text('No bookings match your search')),
             ),
           ),
         if (!compact && hasVero && hasFirestore) ...[
@@ -4212,7 +4535,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         ],
         if (hasFirestore)
           ...fireList.map((booking) {
-            final bookingMap = booking as Map<String, dynamic>;
+            final bookingMap = booking;
             final bidRaw = bookingMap['bookingId'] ?? bookingMap['id'] ?? 'N/A';
             final bidStr = bidRaw.toString();
             final shortBid =
@@ -4255,6 +4578,54 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                     fontSize: 16,
                                     color: Color(0xFF1A1D26),
                                   ),
+                                ),
+                                const SizedBox(height: 4),
+                                Wrap(
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  spacing: 8,
+                                  children: [
+                                    Text(
+                                      'Ref: $bidStr',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.grey.shade700,
+                                      ),
+                                    ),
+                                    InkWell(
+                                      onTap: () => _copyBookingRef(bidStr),
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: _brandOrange.withValues(alpha: 0.1),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.copy_rounded,
+                                              size: 14,
+                                              color: _brandOrange,
+                                            ),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              'Copy',
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w800,
+                                                color: _brandOrange,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                                 const SizedBox(height: 6),
                                 Container(
@@ -4526,6 +4897,21 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                     letterSpacing: 0.15,
                   ),
                 ),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => _copyBookingRef(b.displayBookingRef),
+                    icon: const Icon(Icons.copy_rounded, size: 16),
+                    label: const Text('Copy booking ref'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _brandOrange,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -4742,8 +5128,18 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                   'Total',
                   'MWK ${currency.format(b.total.round())}',
                 ),
-                _veroDetailRow('Reference', b.displayBookingRef,
-                    valueColor: _brandOrange),
+                _veroDetailRow(
+                  'Reference',
+                  b.displayBookingRef,
+                  valueColor: _brandOrange,
+                  trailing: IconButton(
+                    onPressed: () => _copyBookingRef(b.displayBookingRef),
+                    tooltip: 'Copy booking reference',
+                    icon: const Icon(Icons.copy_rounded, size: 18),
+                    color: _brandOrange,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
                 if (b.accommodationId != null)
                   _veroDetailRow('Property ID', '${b.accommodationId}'),
                 const SizedBox(height: 16),
@@ -4778,7 +5174,12 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     );
   }
 
-  Widget _veroDetailRow(String k, String v, {Color? valueColor}) {
+  Widget _veroDetailRow(
+    String k,
+    String v, {
+    Color? valueColor,
+    Widget? trailing,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -4796,13 +5197,20 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
             ),
           ),
           Expanded(
-            child: Text(
-              v,
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 14,
-                color: valueColor ?? const Color(0xFF334155),
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    v,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                      color: valueColor ?? const Color(0xFF334155),
+                    ),
+                  ),
+                ),
+                if (trailing != null) trailing,
+              ],
             ),
           ),
         ],
@@ -4810,7 +5218,174 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     );
   }
 
+  Widget _buildBookingSearchSection() {
+    final dateText = _bookingSearchDate == null
+        ? 'Filter by date'
+        : DateFormat.yMMMd().format(_bookingSearchDate!);
+    final hasFilter =
+        _bookingSearchQuery.trim().isNotEmpty || _bookingSearchDate != null;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Search bookings',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: _brandNavy,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _bookingSearchController,
+            onChanged: (v) => setState(() => _bookingSearchQuery = v),
+            decoration: InputDecoration(
+              hintText: 'Booking ref, name or booking date',
+              prefixIcon: const Icon(Icons.search_rounded),
+              isDense: true,
+              filled: true,
+              fillColor: const Color(0xFFF7F8FB),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.shade200),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.shade200),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed: _pickBookingSearchDate,
+                icon: const Icon(Icons.event_rounded, size: 18),
+                label: Text(dateText),
+              ),
+              if (hasFilter) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () {
+                    _bookingSearchController.clear();
+                    setState(() {
+                      _bookingSearchQuery = '';
+                      _bookingSearchDate = null;
+                    });
+                  },
+                  child: const Text('Clear'),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _matchesBookingFiltersVero(BookingItem b) {
+    final q = _bookingSearchQuery.trim().toLowerCase();
+    if (_bookingSearchDate != null) {
+      final d = b.bookingDate;
+      if (d == null) return false;
+      if (d.year != _bookingSearchDate!.year ||
+          d.month != _bookingSearchDate!.month ||
+          d.day != _bookingSearchDate!.day) {
+        return false;
+      }
+    }
+    if (q.isEmpty) return true;
+    final dateFmt = DateFormat.yMMMd();
+    final haystack = <String>[
+      b.displayBookingRef,
+      b.id,
+      b.guestName ?? '',
+      b.guestEmail ?? '',
+      b.guestPhone ?? '',
+      b.accommodationName ?? '',
+      if (b.bookingDate != null) dateFmt.format(b.bookingDate!),
+    ].join(' ').toLowerCase();
+    if (!haystack.contains(q)) return false;
+    return true;
+  }
+
+  bool _matchesBookingFiltersFirestore(Map<String, dynamic> booking) {
+    final q = _bookingSearchQuery.trim().toLowerCase();
+    if (_bookingSearchDate != null) {
+      final d = _bookingDateFromFirestore(booking);
+      if (d == null) return false;
+      if (d.year != _bookingSearchDate!.year ||
+          d.month != _bookingSearchDate!.month ||
+          d.day != _bookingSearchDate!.day) {
+        return false;
+      }
+    }
+    if (q.isEmpty) return true;
+    final dateFmt = DateFormat.yMMMd();
+    final d = _bookingDateFromFirestore(booking);
+    final haystack = <String>[
+      (booking['bookingId'] ?? booking['id'] ?? '').toString(),
+      (booking['guestName'] ?? '').toString(),
+      (booking['guestEmail'] ?? '').toString(),
+      (booking['guestPhone'] ?? '').toString(),
+      (booking['roomType'] ?? '').toString(),
+      if (d != null) dateFmt.format(d),
+    ].join(' ').toLowerCase();
+    if (!haystack.contains(q)) return false;
+    return true;
+  }
+
+  DateTime? _bookingDateFromFirestore(Map<String, dynamic> booking) {
+    final candidates = <dynamic>[
+      booking['bookingDate'],
+      booking['checkIn'],
+      booking['date'],
+      booking['createdAt'],
+    ];
+    for (final raw in candidates) {
+      if (raw == null) continue;
+      if (raw is Timestamp) return raw.toDate();
+      if (raw is DateTime) return raw;
+      final parsed = DateTime.tryParse(raw.toString());
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  Future<void> _pickBookingSearchDate() async {
+    final now = DateTime.now();
+    final selected = await showDatePicker(
+      context: context,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 5),
+      initialDate: _bookingSearchDate ?? now,
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _bookingSearchDate = selected);
+  }
+
+  Future<void> _copyBookingRef(String ref) async {
+    final value = ref.trim();
+    if (value.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    _toastOk('Booking reference copied');
+  }
+
   Widget _buildRoomsSection() {
+    final displayRooms = _rooms.where((room) {
+      final map = room as Map<String, dynamic>;
+      return (map['name'] ?? '').toString().trim().isNotEmpty;
+    }).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -4829,21 +5404,21 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           ],
         ),
         const SizedBox(height: 10),
-        if (_rooms.isEmpty)
+        if (displayRooms.isEmpty)
           const Card(
             child: Padding(
               padding: EdgeInsets.all(20),
-              child: Center(child: Text('No properties yet')),
+              child: Center(child: Text('You didn\'t add any property. Add now.')),
             ),
           )
         else
           ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: _rooms.length,
+            itemCount: displayRooms.length,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
-              final room = _rooms[index] as Map<String, dynamic>;
+              final room = displayRooms[index] as Map<String, dynamic>;
               final rawType = (room['accommodationType'] ?? room['type'] ?? '')
                   .toString()
                   .trim();
@@ -4865,10 +5440,11 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               final coverUrl = _merchantPropertyCoverUrl(room);
               final desc = (room['description'] ?? '').toString().trim();
               final locationStr = (room['location'] ?? '').toString().trim();
-              final name = room['name']?.toString().isNotEmpty == true
-                  ? room['name'].toString()
-                  : 'Property ${index + 1}';
-              final cap = room['capacity'];
+              final name = room['name'].toString();
+              final capRaw = room['capacity'];
+              final cap = capRaw is num
+                  ? capRaw.toInt()
+                  : int.tryParse(capRaw?.toString() ?? '') ?? 1;
        
 
               return Card(
@@ -4981,6 +5557,59 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                   materialTapTargetSize:
                                       MaterialTapTargetSize.shrinkWrap,
                                 ),
+                                if (typeKey == 'hotel' || typeKey == 'lodge')
+                                  Chip(
+                                    label: Text(
+                                      '$cap room${cap == 1 ? '' : 's'}',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    backgroundColor: Colors.blue.shade50,
+                                    padding: EdgeInsets.zero,
+                                    visualDensity: VisualDensity.compact,
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                if (typeKey == 'hostel' &&
+                                    (room['hostelGender'] ?? '')
+                                        .toString()
+                                        .trim()
+                                        .isNotEmpty)
+                                  Chip(
+                                    label: Text(
+                                      '${(room['hostelGender'] ?? '').toString()[0].toUpperCase()}${(room['hostelGender'] ?? '').toString().substring(1)} hostel',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    backgroundColor: Colors.purple.shade50,
+                                    padding: EdgeInsets.zero,
+                                    visualDensity: VisualDensity.compact,
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                if (typeKey == 'hostel' &&
+                                    (room['roomType'] ?? '')
+                                        .toString()
+                                        .trim()
+                                        .isNotEmpty)
+                                  Chip(
+                                    label: Text(
+                                      '${(room['roomType'] ?? '').toString()[0].toUpperCase()}${(room['roomType'] ?? '').toString().substring(1)}',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    backgroundColor: Colors.indigo.shade50,
+                                    padding: EdgeInsets.zero,
+                                    visualDensity: VisualDensity.compact,
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
                               ],
                             ),
                             const SizedBox(height: 4),

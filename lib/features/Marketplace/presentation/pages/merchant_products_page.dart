@@ -446,7 +446,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             await AccommodationService().fetchOwnedByEmail(email);
         for (final a in mine) {
           apiIds.add(a.id);
-          merged.add(_MerchantStayPreview.fromAccommodation(a));
+          final preview = _MerchantStayPreview.fromAccommodation(a);
+          if (!preview.isDummyListing) {
+            merged.add(preview);
+          }
         }
       } catch (e) {
         debugPrint('Merchant stays (API): $e');
@@ -462,7 +465,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         final d = doc.data();
         final pid = _stayListingApiId(d);
         if (pid != null && apiIds.contains(pid)) continue;
-        merged.add(_MerchantStayPreview.fromFirestore(doc.id, d));
+        final preview = _MerchantStayPreview.fromFirestore(doc.id, d);
+        if (!preview.isDummyListing) {
+          merged.add(preview);
+        }
       }
     } catch (e) {
       debugPrint('Merchant stays (Firestore): $e');
@@ -1700,15 +1706,26 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                '${widget.merchantName.trim().isEmpty ? 'Merchant' : widget.merchantName.trim()} Store',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 17,
-                  letterSpacing: -0.2,
-                ),
+              child: FutureBuilder<bool>(
+                future: _isAccommodationMerchantFuture,
+                builder: (context, snap) {
+                  final isAccommodation = snap.data == true;
+                  final baseName = widget.merchantName.trim().isEmpty
+                      ? 'Merchant'
+                      : widget.merchantName.trim();
+                  final title =
+                      isAccommodation ? baseName : '$baseName Store';
+                  return Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 17,
+                      letterSpacing: -0.2,
+                    ),
+                  );
+                },
               ),
             ),
           ],
@@ -2009,6 +2026,16 @@ class _MerchantStayPreview {
   final String typeLabel;
   final int? apiAccommodationId;
 
+  bool get isDummyListing {
+    final n = name.trim().toLowerCase();
+    final hasRealName = n.isNotEmpty && n != 'stay';
+    final hasInfo = location.trim().isNotEmpty ||
+        description.trim().isNotEmpty ||
+        imageSources.isNotEmpty;
+    final hasPrice = price > 0;
+    return !hasRealName && !hasInfo && !hasPrice;
+  }
+
   List<String> get imageSources {
     final out = <String>[];
     final seen = <String>{};
@@ -2061,7 +2088,7 @@ class _MerchantStayPreview {
     }
     return _MerchantStayPreview(
       stableId: docId,
-      name: (d['name'] ?? 'Stay').toString(),
+      name: (d['name'] ?? '').toString(),
       location: (d['location'] ?? '').toString(),
       description: (d['description'] ?? '').toString(),
       price: price,
@@ -2129,7 +2156,7 @@ class _MerchantStayCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    stay.name,
+                    stay.name.trim().isEmpty ? 'Stay' : stay.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(

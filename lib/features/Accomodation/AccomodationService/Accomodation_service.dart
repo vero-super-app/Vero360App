@@ -234,8 +234,12 @@ class AccommodationService {
     required String location,
     required String description,
     required num pricePerNight,
+    int capacity = 1,
     String pricingPeriod = 'night',
     required String accommodationType,
+    String? hostelGender,
+    String? roomType,
+    bool? isAvailable,
     required String image,
     List<String> gallery = const [],
   }) async {
@@ -249,14 +253,21 @@ class AccommodationService {
     final period = pricingPeriod.trim().toLowerCase();
     final normalizedPeriod =
         period == 'day' || period == 'month' ? period : 'night';
+    final normalizedCapacity = capacity < 1 ? 1 : capacity;
 
     final body = jsonEncode({
       'name': name,
       'location': location,
       'description': description,
       'pricePerNight': pricePerNight,
+      'capacity': normalizedCapacity,
       'pricingPeriod': normalizedPeriod,
       'accommodationType': accommodationType.toLowerCase().trim(),
+      if (hostelGender != null && hostelGender.trim().isNotEmpty)
+        'hostelGender': hostelGender.trim().toLowerCase(),
+      if (roomType != null && roomType.trim().isNotEmpty)
+        'roomType': roomType.trim().toLowerCase(),
+      if (isAvailable != null) 'isAvailable': isAvailable,
       'image': normalizedImage,
       'gallery': normalizedGallery,
     });
@@ -280,8 +291,12 @@ class AccommodationService {
     required String location,
     required String description,
     required num pricePerNight,
+    int capacity = 1,
     String pricingPeriod = 'night',
     required String accommodationType,
+    String? hostelGender,
+    String? roomType,
+    bool? isAvailable,
     required String image,
     List<String> gallery = const [],
   }) async {
@@ -295,14 +310,21 @@ class AccommodationService {
     final period = pricingPeriod.trim().toLowerCase();
     final normalizedPeriod =
         period == 'day' || period == 'month' ? period : 'night';
+    final normalizedCapacity = capacity < 1 ? 1 : capacity;
 
     final body = jsonEncode({
       'name': name,
       'location': location,
       'description': description,
       'pricePerNight': pricePerNight,
+      'capacity': normalizedCapacity,
       'pricingPeriod': normalizedPeriod,
       'accommodationType': accommodationType.toLowerCase().trim(),
+      if (hostelGender != null && hostelGender.trim().isNotEmpty)
+        'hostelGender': hostelGender.trim().toLowerCase(),
+      if (roomType != null && roomType.trim().isNotEmpty)
+        'roomType': roomType.trim().toLowerCase(),
+      if (isAvailable != null) 'isAvailable': isAvailable,
       'image': normalizedImage,
       'gallery': normalizedGallery,
     });

@@ -321,12 +321,36 @@ class BookingItem {
       'bookerEmail',
     ]);
     var gPhone = _first<String>(m, [
+      'phone_number',
+      'phoneNumber',
       'guestPhone',
       'guest_phone',
+      'guestPhoneNumber',
+      'guest_phone_number',
       'customerPhone',
+      'customer_phone',
       'bookerPhone',
+      'booker_phone',
+      'contactPhone',
+      'contact_phone',
       'phone',
     ]);
+
+    // Some payloads wrap submitted booking contact details.
+    final contact = _first<Map<String, dynamic>>(m, [
+      'contact',
+      'bookingContact',
+      'booking_contact',
+      'guestContact',
+      'guest_contact',
+    ]);
+    if (contact != null) {
+      gPhone ??= contact['phone_number']?.toString() ??
+          contact['phoneNumber']?.toString() ??
+          contact['phone']?.toString() ??
+          contact['mobile']?.toString() ??
+          contact['telephone']?.toString();
+    }
 
     final person = _first<Map<String, dynamic>>(m, [
       'user',
@@ -345,11 +369,15 @@ class BookingItem {
     if (person != null) {
       gName ??= _displayNameFromPersonMap(person);
       gEmail ??= person['email']?.toString() ?? person['Email']?.toString();
-      gPhone ??= person['phone']?.toString() ??
-          person['phoneNumber']?.toString() ??
-          person['mobile']?.toString() ??
-          person['telephone']?.toString();
+      if (_sanitizeGuestPhone(gPhone) == null) {
+        gPhone = person['phone']?.toString() ??
+            person['phoneNumber']?.toString() ??
+            person['mobile']?.toString() ??
+            person['telephone']?.toString();
+      }
     }
+
+    final cleanedGuestPhone = _sanitizeGuestPhone(gPhone);
 
     return BookingItem(
       id: idStr,
@@ -366,7 +394,7 @@ class BookingItem {
       imageUrl: img,
       guestName: _nonEmpty(gName),
       guestEmail: _nonEmpty(gEmail),
-      guestPhone: _nonEmpty(gPhone),
+      guestPhone: _nonEmpty(cleanedGuestPhone),
       bookingNumber: bookingNumberStr,
       includeInGuestMyBookings: guestPaidOk,
       checkOutDate: checkOut,
@@ -422,6 +450,24 @@ class BookingItem {
   static String? _nonEmpty(String? s) {
     final t = s?.trim();
     if (t == null || t.isEmpty) return null;
+    return t;
+  }
+
+  /// Prevent Firebase uid/token-like values from rendering as phone numbers.
+  static String? _sanitizeGuestPhone(String? raw) {
+    final t = raw?.trim() ?? '';
+    if (t.isEmpty) return null;
+    final lower = t.toLowerCase();
+    if (lower.contains('firebase_') ||
+        lower.startsWith('firebase_') ||
+        lower.startsWith('+firebase_')) {
+      return null;
+    }
+    // Looks like uid / token-ish blob instead of phone.
+    final compact = t.replaceAll(RegExp(r'[\s\-\(\)]'), '');
+    if (compact.length > 20 && !compact.contains('@')) {
+      return null;
+    }
     return t;
   }
 

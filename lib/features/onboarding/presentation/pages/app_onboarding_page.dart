@@ -129,7 +129,6 @@ class _AppOnboardingPageState extends State<AppOnboardingPage>
   @override
   Widget build(BuildContext context) {
     final page = _pages[_index];
-    final size = MediaQuery.of(context).size;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 600),
@@ -144,123 +143,130 @@ class _AppOnboardingPageState extends State<AppOnboardingPage>
       child: Scaffold(
         backgroundColor: Colors.transparent,
         body: SafeArea(
-          child: Stack(
-            children: [
-              // Decorative background blobs
-              ..._buildBackgroundBlobs(size, page.bubbleColors),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final size = Size(constraints.maxWidth, constraints.maxHeight);
+              final maxBottomCardHeight =
+                  (constraints.maxHeight * 0.48).clamp(280.0, 420.0);
 
-              // Main content
-              Column(
+              return Stack(
                 children: [
-                  // Top bar
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
+                  // Decorative background blobs
+                  ..._buildBackgroundBlobs(size, page.bubbleColors),
+
+                  // Main content
+                  Column(
+                    children: [
+                      // Top bar
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 12),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Container(
-                              padding: const EdgeInsets.all(3),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.95),
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.12),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 2),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.95),
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.12),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                              child: ClipOval(
-                                child: Image.asset(
-                                  'assets/logo_mark.png',
-                                  width: 34,
-                                  height: 34,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => const Icon(
-                                    Icons.eco,
-                                    size: 22,
-                                    color: Color(0xFFE85A00),
+                                  child: ClipOval(
+                                    child: Image.asset(
+                                      'assets/logo_mark.png',
+                                      width: 34,
+                                      height: 34,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => const Icon(
+                                        Icons.eco,
+                                        size: 22,
+                                        color: Color(0xFFE85A00),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                RichText(
+                                  text: TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: 'Vero',
+                                        style: TextStyle(
+                                          fontFamily: 'Georgia',
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w900,
+                                          color: Colors.white,
+                                          letterSpacing: -0.5,
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text: '360',
+                                        style: TextStyle(
+                                          fontFamily: 'Georgia',
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w400,
+                                          color: Colors.white.withValues(alpha: 0.75),
+                                          letterSpacing: -0.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            GestureDetector(
+                              onTap: widget.onFinish,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 7),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.18),
+                                  borderRadius: BorderRadius.circular(99),
+                                  border: Border.all(
+                                      color: Colors.white.withValues(alpha: 0.30)),
+                                ),
+                                child: Text(
+                                  'Skip',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.3,
                                   ),
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            RichText(
-                              text: TextSpan(
-                                children: [
-                                  TextSpan(
-                                    text: 'Vero',
-                                    style: TextStyle(
-                                      fontFamily: 'Georgia',
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w900,
-                                      color: Colors.white,
-                                      letterSpacing: -0.5,
-                                    ),
-                                  ),
-                                  TextSpan(
-                                    text: '360',
-                                    style: TextStyle(
-                                      fontFamily: 'Georgia',
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w400,
-                                      color: Colors.white.withValues(alpha: 0.75),
-                                      letterSpacing: -0.5,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
                           ],
                         ),
-                        GestureDetector(
-                          onTap: widget.onFinish,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 7),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.18),
-                              borderRadius: BorderRadius.circular(99),
-                              border: Border.all(
-                                  color:
-                                      Colors.white.withValues(alpha: 0.30)),
-                            ),
-                            child: Text(
-                              'Skip',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.3,
-                              ),
-                            ),
-                          ),
+                      ),
+
+                      // Page view (illustration area)
+                      Expanded(
+                        child: PageView.builder(
+                          controller: _controller,
+                          itemCount: _pages.length,
+                          onPageChanged: _onPageChanged,
+                          itemBuilder: (context, i) {
+                            return _buildIllustration(_pages[i]);
+                          },
                         ),
-                      ],
-                    ),
-                  ),
+                      ),
 
-                  // Page view (illustration area)
-                  Expanded(
-                    child: PageView.builder(
-                      controller: _controller,
-                      itemCount: _pages.length,
-                      onPageChanged: _onPageChanged,
-                      itemBuilder: (context, i) {
-                        return _buildIllustration(_pages[i]);
-                      },
-                    ),
+                      // Bottom card
+                      _buildBottomCard(page, maxBottomCardHeight),
+                    ],
                   ),
-
-                  // Bottom card
-                  _buildBottomCard(page),
                 ],
-              ),
-            ],
+              );
+            },
           ),
         ),
       ),
@@ -390,7 +396,7 @@ class _AppOnboardingPageState extends State<AppOnboardingPage>
     );
   }
 
-  Widget _buildBottomCard(dynamic page) {
+  Widget _buildBottomCard(dynamic page, double maxHeight) {
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       decoration: BoxDecoration(
@@ -405,11 +411,14 @@ class _AppOnboardingPageState extends State<AppOnboardingPage>
           ),
         ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(28, 28, 28, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(28, 28, 28, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             // Tag chip
             Container(
               padding:
@@ -471,59 +480,75 @@ class _AppOnboardingPageState extends State<AppOnboardingPage>
             // Dots + button row
             Row(
               children: [
-                // Dot indicators
-                Row(
-                  children: List.generate(_pages.length, (i) {
-                    final active = i == _index;
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 260),
-                      curve: Curves.easeOutCubic,
-                      margin: const EdgeInsets.only(right: 6),
-                      width: active ? 22 : 7,
-                      height: 7,
-                      decoration: BoxDecoration(
-                        color: active
-                            ? page.gradient[0]
-                            : const Color(0xFFE0E0E0),
-                        borderRadius: BorderRadius.circular(99),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: List.generate(_pages.length, (i) {
+                          final active = i == _index;
+                          return AnimatedContainer(
+                            duration: const Duration(milliseconds: 260),
+                            curve: Curves.easeOutCubic,
+                            margin: const EdgeInsets.only(right: 6),
+                            width: active ? 22 : 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: active
+                                  ? page.gradient[0]
+                                  : const Color(0xFFE0E0E0),
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                          );
+                        }),
                       ),
-                    );
-                  }),
+                    ),
+                  ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
 
-                // CTA button
+                // CTA: never animate width between 56 and null — that breaks constraints
+                // and squeezes "Get Started" into 56px. Cross-fade two fixed layouts instead.
                 GestureDetector(
                   onTap: _next,
-                  child: AnimatedContainer(
+                  child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 300),
-                    padding: EdgeInsets.symmetric(
-                      horizontal:
-                          _index == _pages.length - 1 ? 22 : 0,
-                      vertical: 0,
-                    ),
-                    width: _index == _pages.length - 1 ? null : 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: page.gradient,
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(99),
-                      boxShadow: [
-                        BoxShadow(
-                          color: page.gradient[0].withValues(alpha: 0.45),
-                          blurRadius: 20,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: _index == _pages.length - 1
-                          ? Row(
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) {
+                      return FadeTransition(
+                        opacity: animation,
+                        child: child,
+                      );
+                    },
+                    child: _index == _pages.length - 1
+                        ? Container(
+                            key: const ValueKey('onboard-cta-get-started'),
+                            height: 56,
+                            padding: const EdgeInsets.symmetric(horizontal: 22),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: page.gradient,
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(99),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: page.gradient[0]
+                                      .withValues(alpha: 0.45),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
+                            ),
+                            child: const Row(
                               mainAxisSize: MainAxisSize.min,
-                              children: const [
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
                                 Text(
                                   'Get Started',
                                   style: TextStyle(
@@ -534,21 +559,47 @@ class _AppOnboardingPageState extends State<AppOnboardingPage>
                                   ),
                                 ),
                                 SizedBox(width: 8),
-                                Icon(Icons.arrow_forward_rounded,
-                                    color: Colors.white, size: 18),
+                                Icon(
+                                  Icons.arrow_forward_rounded,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
                               ],
-                            )
-                          : const Icon(
+                            ),
+                          )
+                        : Container(
+                            key: const ValueKey('onboard-cta-next'),
+                            width: 56,
+                            height: 56,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: page.gradient,
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(99),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: page.gradient[0]
+                                      .withValues(alpha: 0.45),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
                               Icons.arrow_forward_rounded,
                               color: Colors.white,
                               size: 24,
                             ),
-                    ),
+                          ),
                   ),
                 ),
               ],
             ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart'
@@ -25,6 +26,9 @@ class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
 
   final MyBookingService _svc = MyBookingService();
   Future<List<BookingItem>>? _future;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  DateTime? _searchDate;
 
   @override
   bool get wantKeepAlive => true;
@@ -33,6 +37,16 @@ class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
   void initState() {
     super.initState();
     _reload();
+    _searchController.addListener(() {
+      if (!mounted) return;
+      setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   void _reload() {
@@ -74,6 +88,60 @@ class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
       case BookingStatus.unknown:
         return 'Status unknown';
     }
+  }
+
+  String _normalizeSearchText(String s) {
+    return s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+  }
+
+  bool _matchesBookingSearch(BookingItem b, DateFormat dateFmt) {
+    if (_searchDate != null) {
+      final d = b.bookingDate;
+      if (d == null ||
+          d.year != _searchDate!.year ||
+          d.month != _searchDate!.month ||
+          d.day != _searchDate!.day) {
+        return false;
+      }
+    }
+    if (_searchQuery.isEmpty) return true;
+    final q = _searchQuery.trim().toLowerCase();
+    final qCompact = _normalizeSearchText(q);
+
+    final fields = <String>[
+      b.displayBookingRef,
+      b.bookingNumber ?? '',
+      b.id,
+      b.accommodationName ?? '',
+      b.accommodationLocation ?? '',
+      b.guestName ?? '',
+      b.guestEmail ?? '',
+      b.guestPhone ?? '',
+      if (b.bookingDate != null) dateFmt.format(b.bookingDate!),
+      if (b.bookingDate != null) DateFormat('yyyy-MM-dd').format(b.bookingDate!),
+    ];
+
+    for (final f in fields) {
+      final raw = f.trim().toLowerCase();
+      if (raw.isEmpty) continue;
+      if (raw.contains(q)) return true;
+      if (qCompact.isNotEmpty && _normalizeSearchText(raw).contains(qCompact)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> _pickSearchDate(BuildContext context) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _searchDate ?? now,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 5),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _searchDate = DateTime(picked.year, picked.month, picked.day));
   }
 
   bool _hasBookerDetails(BookingItem b) {
@@ -180,6 +248,7 @@ class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
         }
 
         final list = snapshot.data ?? [];
+        final filtered = list.where((b) => _matchesBookingSearch(b, dateFmt)).toList();
         if (list.isEmpty) {
           return ListView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -219,10 +288,86 @@ class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
           child: ListView.separated(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            itemCount: list.length,
+            itemCount: filtered.length + 1,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
-              final b = list[index];
+              if (index == 0) {
+                return Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: widget.isDark ? const Color(0xFF1E293B) : Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E6EF)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Search bookings',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: _brandNavy,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Booking ref, name or booking date',
+                          prefixIcon: const Icon(Icons.search_rounded),
+                          isDense: true,
+                          filled: true,
+                          fillColor: const Color(0xFFF7F8FB),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () => _pickSearchDate(context),
+                            icon: const Icon(Icons.event_rounded, size: 18),
+                            label: Text(
+                              _searchDate == null
+                                  ? 'Filter by date'
+                                  : dateFmt.format(_searchDate!),
+                            ),
+                          ),
+                          if (_searchDate != null || _searchQuery.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            TextButton(
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {
+                                  _searchQuery = '';
+                                  _searchDate = null;
+                                });
+                              },
+                              child: const Text('Clear'),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (filtered.isEmpty)
+                        Text(
+                          'No bookings match this search.',
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              }
+              final b = filtered[index - 1];
               final title = (b.accommodationName ?? 'Accommodation').trim();
               final loc = (b.accommodationLocation ?? '').trim();
               final paid = _showPaidBadge(b);
@@ -453,6 +598,23 @@ class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                               ? b.displayBookingRef
                               : '—',
                           widget.isDark,
+                          trailing: b.displayBookingRef.isNotEmpty
+                              ? IconButton(
+                                  tooltip: 'Copy booking ref',
+                                  icon: const Icon(Icons.copy_rounded, size: 18),
+                                  onPressed: () async {
+                                    await Clipboard.setData(
+                                      ClipboardData(text: b.displayBookingRef),
+                                    );
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Booking ref copied'),
+                                      ),
+                                    );
+                                  },
+                                )
+                              : null,
                         ),
                         const SizedBox(height: 8),
                         _detailRow(
@@ -491,6 +653,7 @@ class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
     String value,
     bool isDark, {
     bool boldValue = false,
+    Widget? trailing,
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -521,6 +684,7 @@ class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
             ],
           ),
         ),
+        if (trailing != null) trailing,
       ],
     );
   }

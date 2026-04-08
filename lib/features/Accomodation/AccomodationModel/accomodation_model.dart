@@ -164,6 +164,7 @@ class Accommodation {
       _pricePeriod ?? AccommodationPricePeriod.night;
 
   final String accommodationType;
+  final int roomsAvailable;
   final Owner? owner;
 
   /// Host Firebase UID when API exposes it (escrow / wallet). Optional.
@@ -184,6 +185,7 @@ class Accommodation {
     required this.price,
     AccommodationPricePeriod? pricePeriod,
     required this.accommodationType,
+    this.roomsAvailable = 1,
     this.owner,
     this.hostMerchantUid,
     this.image,
@@ -201,6 +203,25 @@ class Accommodation {
       price: price,
       pricePeriod: period,
       accommodationType: accommodationType,
+      roomsAvailable: roomsAvailable,
+      owner: owner,
+      hostMerchantUid: hostMerchantUid,
+      image: image,
+      imageBytes: imageBytes,
+      gallery: gallery,
+    );
+  }
+
+  Accommodation withRoomsAvailable(int rooms) {
+    return Accommodation(
+      id: id,
+      name: name,
+      location: location,
+      description: description,
+      price: price,
+      pricePeriod: pricePeriod,
+      accommodationType: accommodationType,
+      roomsAvailable: rooms < 1 ? 1 : rooms,
       owner: owner,
       hostMerchantUid: hostMerchantUid,
       image: image,
@@ -284,6 +305,8 @@ class Accommodation {
       gallery = galleryRaw.map((e) => e.toString()).toList();
     }
     final priceRaw = json['pricePerNight'] ?? json['price'];
+    final roomsRaw =
+        json['roomsAvailable'] ?? json['roomCount'] ?? json['capacity'] ?? 1;
     final ownerMap = json['owner'] is Map
         ? Map<String, dynamic>.from(json['owner'] as Map)
         : null;
@@ -301,6 +324,9 @@ class Accommodation {
         pricingPeriodRawFromAccommodationJson(json),
       ),
       accommodationType: (json['accommodationType'] ?? '').toString(),
+      roomsAvailable: roomsRaw is num
+          ? roomsRaw.toInt()
+          : int.tryParse(roomsRaw?.toString() ?? '1') ?? 1,
       owner: ownerMap != null ? Owner.fromJson(ownerMap) : null,
       hostMerchantUid: hostUid,
       image: rawImage.isEmpty ? null : rawImage,

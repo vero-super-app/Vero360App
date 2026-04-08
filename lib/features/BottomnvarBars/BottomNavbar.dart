@@ -187,7 +187,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     final email = prefs.getString('email') ?? widget.email;
     final key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ?? 'marketplace';
     return switch (key) {
-      'food' => FoodMerchantDashboard(email: email),
+      'food' => FoodMerchantDashboard(email: email, embeddedInMainNav: true),
       'accommodation' => AccommodationMerchantDashboard(email: email),
       'courier' => CourierMerchantDashboard(email: email),
       _ => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () => setState(() => _selectedIndex = 0), embeddedInMainNav: true),

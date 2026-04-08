@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' show min;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
@@ -41,6 +42,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
 
   final AccommodationService _service = AccommodationService();
   late final TabController _tabController;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _locationController = TextEditingController();
@@ -105,10 +107,15 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
   /// Discover list: drives “Book now” vs “Sign in to book” on cards.
   bool _authReady = false;
   bool _isLoggedIn = false;
+  bool _isAccommodationMerchantUser = false;
+  int? _openingAccommodationId;
 
   /// Paid stays for the signed-in guest — used to disable “Book now” on check-in days.
   List<BookingItem> _guestPaidStays = [];
   final MyBookingService _myBookingService = MyBookingService();
+  final Map<int, String> _hostelGenderByApiId = <int, String>{};
+  final Map<int, String> _hostelRoomTypeByApiId = <int, String>{};
+  final Map<int, bool> _hostelAvailabilityByApiId = <int, bool>{};
 
   @override
   void initState() {
@@ -127,15 +134,45 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
 
   Future<void> _refreshSession() async {
     final ok = await AuthHandler.isAuthenticated();
+    var isAccommodationMerchant = false;
+    if (ok) {
+      isAccommodationMerchant = await _detectCurrentUserIsAccommodationMerchant();
+    }
     if (!mounted) return;
     setState(() {
       _isLoggedIn = ok;
       _authReady = true;
+      _isAccommodationMerchantUser = isAccommodationMerchant;
     });
+    if (isAccommodationMerchant && _tabController.index != 0) {
+      _tabController.animateTo(0);
+    }
     if (ok) {
       await _loadGuestPaidStays();
     } else if (mounted) {
       setState(() => _guestPaidStays = []);
+    }
+  }
+
+  bool get _showMyBookingsTab => !_isAccommodationMerchantUser;
+
+  Future<bool> _detectCurrentUserIsAccommodationMerchant() async {
+    final uid = _auth.currentUser?.uid.trim() ?? '';
+    if (uid.isEmpty) return false;
+    try {
+      final doc =
+          await FirebaseFirestore.instance.collection('accommodation_merchants').doc(uid).get();
+      if (doc.exists) return true;
+    } catch (_) {}
+    try {
+      final rooms = await FirebaseFirestore.instance
+          .collection('accommodation_rooms')
+          .where('merchantId', isEqualTo: uid)
+          .limit(1)
+          .get();
+      return rooms.docs.isNotEmpty;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -157,17 +194,54 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     }
   }
 
-  bool _isBookedTodayForListing(int accommodationId) {
+  bool _isSingleUnitType(String type) {
+    return type == 'house' || type == 'bnb' || type == 'apartment';
+  }
+
+  bool _isBookedTodayForListing(Accommodation accommodation) {
+    final accommodationId = accommodation.id;
     if (accommodationId <= 0) return false;
     final n = DateTime.now();
     final today = DateTime(n.year, n.month, n.day);
-    return _guestPaidStays
-        .any((b) => b.stayCoversCalendarDay(today, accommodationId));
+    final todaysBookings = _guestPaidStays
+        .where((b) => b.stayCoversCalendarDay(today, accommodationId))
+        .length;
+    if (todaysBookings <= 0) return false;
+
+    final type = accommodation.accommodationType.toLowerCase().trim();
+    if (type == 'hostel') {
+      final explicitlyAvailable = _hostelAvailabilityByApiId[accommodationId];
+      if (explicitlyAvailable == false) return true;
+    }
+    if (_isSingleUnitType(type)) return true;
+    if (type == 'hotel' || type == 'lodge') {
+      return todaysBookings >= accommodation.roomsAvailable;
+    }
+    return false;
   }
 
   Future<void> _openBookingFlow(Accommodation accommodation) async {
-    await _refreshSession();
-    if (!mounted) return;
+    if (_openingAccommodationId == accommodation.id) return;
+    if (mounted) {
+      setState(() => _openingAccommodationId = accommodation.id);
+    }
+    try {
+    // Fast path: if auth state is already known + logged in, navigate immediately.
+    if (_authReady && _isLoggedIn) {
+      await _pushBookingPage(accommodation);
+      if (mounted) {
+        unawaited(_refreshSession());
+        unawaited(_loadGuestPaidStays());
+      }
+      return;
+    }
+
+    // Fallback: refresh only when auth state is unknown/stale.
+    if (!_authReady) {
+      await _refreshSession();
+      if (!mounted) return;
+    }
+
     if (!_isLoggedIn) {
       await _showMembersOnlyBookSheet(context);
       if (!mounted) return;
@@ -175,6 +249,19 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
       if (!_isLoggedIn) return;
     }
     if (!mounted) return;
+    await _pushBookingPage(accommodation);
+    if (mounted) {
+      unawaited(_refreshSession());
+      unawaited(_loadGuestPaidStays());
+    }
+    } finally {
+      if (mounted) {
+        setState(() => _openingAccommodationId = null);
+      }
+    }
+  }
+
+  Future<void> _pushBookingPage(Accommodation accommodation) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => AccommodationBookingPage.fromAccommodation(
@@ -194,10 +281,6 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
         ),
       ),
     );
-    if (mounted) {
-      await _refreshSession();
-      await _loadGuestPaidStays();
-    }
   }
 
   Future<void> _showMembersOnlyBookSheet(BuildContext context) {
@@ -369,6 +452,10 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     if (ids.isEmpty) return list;
 
     final byApiId = <int, AccommodationPricePeriod>{};
+    final byApiIdCapacity = <int, int>{};
+    final byApiIdHostelGender = <int, String>{};
+    final byApiIdRoomType = <int, String>{};
+    final byApiIdAvailability = <int, bool>{};
     try {
       final idList = ids.toList();
       for (var i = 0; i < idList.length; i += 10) {
@@ -379,9 +466,6 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
             .get();
         for (final doc in snap.docs) {
           final d = doc.data();
-          if (!d.containsKey('pricingPeriod') && !d.containsKey('pricePeriod')) {
-            continue;
-          }
           final rawId = d['apiAccommodationId'];
           int? apiId;
           if (rawId is int) {
@@ -392,21 +476,61 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
             apiId = int.tryParse(rawId?.toString() ?? '');
           }
           if (apiId == null || apiId <= 0) continue;
-          byApiId[apiId] = accommodationPricePeriodFromDynamic(
-            d['pricingPeriod'] ?? d['pricePeriod'],
-          );
+          if (d.containsKey('pricingPeriod') || d.containsKey('pricePeriod')) {
+            byApiId[apiId] = accommodationPricePeriodFromDynamic(
+              d['pricingPeriod'] ?? d['pricePeriod'],
+            );
+          }
+          final capRaw = d['capacity'] ?? d['roomsAvailable'] ?? d['roomCount'];
+          final cap = capRaw is num
+              ? capRaw.toInt()
+              : int.tryParse(capRaw?.toString() ?? '');
+          if (cap != null && cap > 0) {
+            byApiIdCapacity[apiId] = cap;
+          }
+          final rawHostelGender = d['hostelGender']?.toString().trim().toLowerCase();
+          if (rawHostelGender != null &&
+              (rawHostelGender == 'boys' ||
+                  rawHostelGender == 'girls' ||
+                  rawHostelGender == 'mixed')) {
+            byApiIdHostelGender[apiId] = rawHostelGender;
+          }
+          final rawRoomType = d['roomType']?.toString().trim().toLowerCase();
+          if (rawRoomType != null &&
+              (rawRoomType == 'single' ||
+                  rawRoomType == 'double' ||
+                  rawRoomType == 'hall')) {
+            byApiIdRoomType[apiId] = rawRoomType;
+          }
+          final rawAvailable = d['isAvailable'];
+          if (rawAvailable is bool) {
+            byApiIdAvailability[apiId] = rawAvailable;
+          }
         }
       }
     } catch (_) {
       return list;
     }
 
-    if (byApiId.isEmpty) return list;
+    _hostelGenderByApiId
+      ..clear()
+      ..addAll(byApiIdHostelGender);
+    _hostelRoomTypeByApiId
+      ..clear()
+      ..addAll(byApiIdRoomType);
+    _hostelAvailabilityByApiId
+      ..clear()
+      ..addAll(byApiIdAvailability);
+
+    if (byApiId.isEmpty && byApiIdCapacity.isEmpty) return list;
     return list
         .map((a) {
           final p = byApiId[a.id];
-          if (p == null) return a;
-          return a.withPricingPeriod(p);
+          final cap = byApiIdCapacity[a.id];
+          var updated = a;
+          if (p != null) updated = updated.withPricingPeriod(p);
+          if (cap != null) updated = updated.withRoomsAvailable(cap);
+          return updated;
         })
         .toList();
   }
@@ -501,8 +625,8 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     if (_searchQuery.isEmpty) return list;
     final q = _searchQuery.toLowerCase();
     return list.where((a) {
-      final name = (a.name ?? '').toLowerCase();
-      final loc = (a.location ?? '').toLowerCase();
+      final name = a.name.toLowerCase();
+      final loc = a.location.toLowerCase();
       return name.contains(q) || loc.contains(q);
     }).toList();
   }
@@ -589,7 +713,11 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
                       highlight: isFocus,
                       authReady: _authReady,
                       isLoggedIn: _isLoggedIn,
-                      bookedToday: _isBookedTodayForListing(item.id),
+                      bookedToday: _isBookedTodayForListing(item),
+                      isOpening: _openingAccommodationId == item.id,
+                      hostelGender: _hostelGenderByApiId[item.id],
+                      hostelRoomType: _hostelRoomTypeByApiId[item.id],
+                      hostelAvailable: _hostelAvailabilityByApiId[item.id],
                       onBookStay: _openBookingFlow,
                     );
                     if (isFocus) {
@@ -643,30 +771,34 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
             ),
           ],
         ),
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          indicatorWeight: 3,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          labelStyle: const TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 14,
-          ),
-          tabs: const [
-            Tab(text: 'Discover'),
-            Tab(text: 'My bookings'),
-          ],
-        ),
+        bottom: _showMyBookingsTab
+            ? TabBar(
+                controller: _tabController,
+                indicatorColor: Colors.white,
+                indicatorWeight: 3,
+                labelColor: Colors.white,
+                unselectedLabelColor: Colors.white70,
+                labelStyle: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+                tabs: const [
+                  Tab(text: 'Discover'),
+                  Tab(text: 'My bookings'),
+                ],
+              )
+            : null,
       ),
       body: SafeArea(
-        child: TabBarView(
-          controller: _tabController,
-          children: [
-            _buildDiscoverTab(context, isDark),
-            AccommodationMyBookingsTab(isDark: isDark),
-          ],
-        ),
+        child: _showMyBookingsTab
+            ? TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildDiscoverTab(context, isDark),
+                  AccommodationMyBookingsTab(isDark: isDark),
+                ],
+              )
+            : _buildDiscoverTab(context, isDark),
       ),
     );
   }
@@ -1078,6 +1210,10 @@ class _AccommodationCard extends StatelessWidget {
   final bool isLoggedIn;
   /// Paid stay covers **today** for this listing — freeze Book now.
   final bool bookedToday;
+  final bool isOpening;
+  final String? hostelGender;
+  final String? hostelRoomType;
+  final bool? hostelAvailable;
   final Future<void> Function(Accommodation acc) onBookStay;
 
   const _AccommodationCard({
@@ -1087,6 +1223,10 @@ class _AccommodationCard extends StatelessWidget {
     required this.authReady,
     required this.isLoggedIn,
     this.bookedToday = false,
+    this.isOpening = false,
+    this.hostelGender,
+    this.hostelRoomType,
+    this.hostelAvailable,
     required this.onBookStay,
   });
 
@@ -1152,12 +1292,54 @@ class _AccommodationCard extends StatelessWidget {
     );
   }
 
+  Widget _metaChip(
+    String label, {
+    required bool isDark,
+    Color? textColor,
+    Color? background,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: background ??
+            (isDark
+                ? Colors.white.withValues(alpha: 0.08)
+                : _brandOrange.withValues(alpha: 0.12)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: textColor ?? (isDark ? Colors.white : _brandNavy),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final name = accommodation.name ?? '';
-    final location = accommodation.location ?? '';
+    final name = accommodation.name;
+    final location = accommodation.location;
     final description = accommodation.description.trim();
-    final type = (accommodation.accommodationType ?? '').toLowerCase();
+    final type = accommodation.accommodationType.toLowerCase();
+    final isHotelOrLodge = type == 'hotel' || type == 'lodge';
+    final isHostel = type == 'hostel';
+    final roomCount = accommodation.roomsAvailable < 1
+        ? 1
+        : accommodation.roomsAvailable;
+    final hostelGenderLabel = (() {
+      final v = hostelGender?.trim().toLowerCase();
+      if (v == null || v.isEmpty) return null;
+      return '${v[0].toUpperCase()}${v.substring(1)} hostel';
+    })();
+    final hostelRoomTypeLabel = (() {
+      final v = hostelRoomType?.trim().toLowerCase();
+      if (v == null || v.isEmpty) return null;
+      return '${v[0].toUpperCase()}${v.substring(1)} room';
+    })();
+    final isHostelBooked = bookedToday || (hostelAvailable == false);
 
     final owner = accommodation.owner;
     final rating = (owner?.averageRating ?? 0).toDouble();
@@ -1234,7 +1416,7 @@ class _AccommodationCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (bookedToday)
+                  if (bookedToday || (isHostel && hostelAvailable == false))
                     Positioned(
                       top: 10,
                       right: 10,
@@ -1261,7 +1443,11 @@ class _AccommodationCard extends StatelessWidget {
                                 size: 15, color: Colors.teal.shade50),
                             const SizedBox(width: 5),
                             Text(
-                              'Booked today',
+                              isHostel
+                                  ? 'Booked / unavailable'
+                                  : (isHotelOrLodge
+                                      ? 'Fully booked today'
+                                      : 'Booked today'),
                               style: TextStyle(
                                 color: Colors.teal.shade50,
                                 fontWeight: FontWeight.w900,
@@ -1269,6 +1455,29 @@ class _AccommodationCard extends StatelessWidget {
                               ),
                             ),
                           ],
+                        ),
+                      ),
+                    ),
+                  if (isHotelOrLodge)
+                    Positioned(
+                      top: bookedToday ? 44 : 10,
+                      right: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.56),
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        child: Text(
+                          '$roomCount room${roomCount == 1 ? '' : 's'} available',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
                     ),
@@ -1352,6 +1561,38 @@ class _AccommodationCard extends StatelessWidget {
                       ),
                     ],
                   ),
+                  if (isHostel &&
+                      (hostelGenderLabel != null ||
+                          hostelRoomTypeLabel != null ||
+                          hostelAvailable != null)) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        if (hostelGenderLabel != null)
+                          _metaChip(
+                            hostelGenderLabel,
+                            isDark: isDark,
+                          ),
+                        if (hostelRoomTypeLabel != null)
+                          _metaChip(
+                            hostelRoomTypeLabel,
+                            isDark: isDark,
+                          ),
+                        _metaChip(
+                          isHostelBooked ? 'Booked' : 'Available',
+                          isDark: isDark,
+                          textColor: isHostelBooked
+                              ? Colors.red.shade800
+                              : Colors.green.shade800,
+                          background: isHostelBooked
+                              ? Colors.red.shade50
+                              : Colors.green.shade50,
+                        ),
+                      ],
+                    ),
+                  ],
                   if (description.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Text(
@@ -1422,24 +1663,40 @@ class _AccommodationCard extends StatelessWidget {
                         )
                       else
                         FilledButton.icon(
-                          onPressed: accommodation.id <= 0 ||
+                          onPressed: isOpening ||
+                                  accommodation.id <= 0 ||
                                   (authReady &&
                                       isLoggedIn &&
-                                      bookedToday)
+                                      isHostelBooked)
                               ? null
                               : () => onBookStay(accommodation),
-                          icon: Icon(
-                            bookedToday
-                                ? Icons.lock_clock_rounded
-                                : authReady && isLoggedIn
-                                    ? Icons.event_available_rounded
-                                    : Icons.hotel_rounded,
-                            size: 17,
-                            color: Colors.white,
-                          ),
+                          icon: isOpening
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Icon(
+                                  isHostelBooked
+                                      ? Icons.lock_clock_rounded
+                                      : authReady && isLoggedIn
+                                          ? Icons.event_available_rounded
+                                          : Icons.hotel_rounded,
+                                  size: 17,
+                                  color: Colors.white,
+                                ),
                           label: Text(
-                            bookedToday
-                                ? 'Booked today'
+                            isOpening
+                                ? 'Opening...'
+                                : isHostelBooked
+                                ? (isHostel
+                                    ? 'Booked / unavailable'
+                                    : (isHotelOrLodge
+                                        ? 'Fully booked today'
+                                        : 'Booked today'))
                                 : authReady
                                     ? 'Book now'
                                     : 'Book',

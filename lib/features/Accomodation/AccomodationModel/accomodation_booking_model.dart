@@ -4,12 +4,14 @@ class VeroBookingsCreatePayload {
   final String bookingDate;
   final num price;
   final num bookingFee;
+  final String? phoneNumber;
 
   VeroBookingsCreatePayload({
     required this.accommodationId,
     required this.bookingDate,
     required this.price,
     this.bookingFee = 0,
+    this.phoneNumber,
   });
 
   Map<String, dynamic> toJson() => {
@@ -17,6 +19,10 @@ class VeroBookingsCreatePayload {
         'bookingDate': bookingDate,
         'price': price,
         'bookingFee': bookingFee,
+        if (phoneNumber != null && phoneNumber!.trim().isNotEmpty)
+          'phone_number': phoneNumber!.trim(),
+        if (phoneNumber != null && phoneNumber!.trim().isNotEmpty)
+          'phoneNumber': phoneNumber!.trim(),
       };
 }
 

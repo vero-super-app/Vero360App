@@ -1,130 +1,121 @@
-// lib/models/courier.models.dart
+class CreateCourierDeliveryDto {
+  final String courierPhone;
+  final String courierEmail;
+  final String courierCity;
+  final String pickupLocation;
+  final String dropoffLocation;
+  final String? typeOfGoods;
+  final String? descriptionOfGoods;
+  final String? additionalInformation;
 
-/// Local (Lilongwe-only) courier request payload
-class CourierLocalRequestPayload {
-  final double pickupLat;
-  final double pickupLng;
-  final double dropoffLat;
-  final double dropoffLng;
-  final String vehicleId; // "bike" | "car" | "van"
-  final double? clientFareEstimate;
-  final String? notes;
-
-  const CourierLocalRequestPayload({
-    required this.pickupLat,
-    required this.pickupLng,
-    required this.dropoffLat,
-    required this.dropoffLng,
-    required this.vehicleId,
-    this.clientFareEstimate,
-    this.notes,
+  const CreateCourierDeliveryDto({
+    required this.courierPhone,
+    required this.courierEmail,
+    required this.courierCity,
+    required this.pickupLocation,
+    required this.dropoffLocation,
+    this.typeOfGoods,
+    this.descriptionOfGoods,
+    this.additionalInformation,
   });
 
   Map<String, dynamic> toJson() => {
-        'pickupLat': pickupLat,
-        'pickupLng': pickupLng,
-        'dropoffLat': dropoffLat,
-        'dropoffLng': dropoffLng,
-        'vehicleId': vehicleId,
-        if (clientFareEstimate != null)
-          'clientFareEstimate': clientFareEstimate,
-        if (notes != null && notes!.trim().isNotEmpty) 'notes': notes,
+        'CourierPhone': courierPhone,
+        'CourierEmail': courierEmail,
+        'CourierCity': courierCity,
+        'pickupLocation': pickupLocation,
+        'dropoffLocation': dropoffLocation,
+        if (typeOfGoods != null && typeOfGoods!.trim().isNotEmpty)
+          'TypeOfGoods': typeOfGoods,
+        if (descriptionOfGoods != null && descriptionOfGoods!.trim().isNotEmpty)
+          'DescriptionOfGoods': descriptionOfGoods,
+        if (additionalInformation != null &&
+            additionalInformation!.trim().isNotEmpty)
+          'AdditionalInformation': additionalInformation,
       };
 }
 
-/// Inter-district courier request payload
-class CourierIntercityRequestPayload {
-  final double pickupLat;
-  final double pickupLng;
-  final String destinationDistrict;
-  final String destinationAddressText; // receiver name, phone, address
-  final String courierName; // "Speed Courier", "CTS Courier", etc.
-  final String? notes;
+enum CourierStatus {
+  pending('PENDING'),
+  accepted('ACCEPTED'),
+  onTheWay('ON_THE_WAY'),
+  delivered('DELIVERED'),
+  cancelled('CANCELLED');
 
-  const CourierIntercityRequestPayload({
-    required this.pickupLat,
-    required this.pickupLng,
-    required this.destinationDistrict,
-    required this.destinationAddressText,
-    required this.courierName,
-    this.notes,
-  });
+  final String value;
+  const CourierStatus(this.value);
 
-  Map<String, dynamic> toJson() => {
-        'pickupLat': pickupLat,
-        'pickupLng': pickupLng,
-        'destinationDistrict': destinationDistrict,
-        'destinationAddressText': destinationAddressText,
-        'courierName': courierName,
-        if (notes != null && notes!.trim().isNotEmpty) 'notes': notes,
-      };
+  static CourierStatus fromValue(String raw) {
+    return CourierStatus.values.firstWhere(
+      (s) => s.value == raw.toUpperCase(),
+      orElse: () => CourierStatus.pending,
+    );
+  }
 }
 
-/// Mirrors src/entities/courier-delivery.entity.ts
-class CourierDeliveryBooking {
-  final int id;
-  final int? userId;
-  final String mode; // "LOCAL" | "INTERCITY"
-  final double pickupLat;
-  final double pickupLng;
-  final double? dropoffLat;
-  final double? dropoffLng;
-  final String? destinationDistrict;
-  final String? destinationAddressText;
-  final String? courierName;
-  final String? vehicleId;
-  final String? vehicleLabel;
-  final double? distanceKm;
-  final int? estimatedFare; // MWK
-  final int? clientFareEstimate; // MWK
-  final String? notes;
-  final String status; // "PENDING", "ON_THE_WAY", etc.
-  final DateTime createdAt;
-  final DateTime updatedAt;
+class CourierDelivery {
+  final int courierId;
+  final String courierPhone;
+  final String courierEmail;
+  final String courierCity;
+  final String pickupLocation;
+  final String dropoffLocation;
+  final String? typeOfGoods;
+  final String? descriptionOfGoods;
+  final String? additionalInformation;
+  final CourierStatus status;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 
-  CourierDeliveryBooking({
-    required this.id,
-    required this.userId,
-    required this.mode,
-    required this.pickupLat,
-    required this.pickupLng,
-    this.dropoffLat,
-    this.dropoffLng,
-    this.destinationDistrict,
-    this.destinationAddressText,
-    this.courierName,
-    this.vehicleId,
-    this.vehicleLabel,
-    this.distanceKm,
-    this.estimatedFare,
-    this.clientFareEstimate,
-    this.notes,
+  const CourierDelivery({
+    required this.courierId,
+    required this.courierPhone,
+    required this.courierEmail,
+    required this.courierCity,
+    required this.pickupLocation,
+    required this.dropoffLocation,
+    required this.typeOfGoods,
+    required this.descriptionOfGoods,
+    required this.additionalInformation,
     required this.status,
     required this.createdAt,
     required this.updatedAt,
   });
 
-  factory CourierDeliveryBooking.fromJson(Map<String, dynamic> json) {
-    return CourierDeliveryBooking(
-      id: json['id'] as int,
-      userId: json['userId'] as int?,
-      mode: json['mode'] as String,
-      pickupLat: (json['pickupLat'] as num).toDouble(),
-      pickupLng: (json['pickupLng'] as num).toDouble(),
-      dropoffLat: (json['dropoffLat'] as num?)?.toDouble(),
-      dropoffLng: (json['dropoffLng'] as num?)?.toDouble(),
-      destinationDistrict: json['destinationDistrict'] as String?,
-      destinationAddressText: json['destinationAddressText'] as String?,
-      courierName: json['courierName'] as String?,
-      vehicleId: json['vehicleId'] as String?,
-      vehicleLabel: json['vehicleLabel'] as String?,
-      distanceKm: (json['distanceKm'] as num?)?.toDouble(),
-      estimatedFare: (json['estimatedFare'] as num?)?.toInt(),
-      clientFareEstimate: (json['clientFareEstimate'] as num?)?.toInt(),
-      notes: json['notes'] as String?,
-      status: json['status'] as String,
-      createdAt: DateTime.parse(json['createdAt'] as String),
-      updatedAt: DateTime.parse(json['updatedAt'] as String),
+  factory CourierDelivery.fromJson(Map<String, dynamic> json) {
+    final statusRaw = (json['CourierStatus'] ?? json['status'] ?? 'PENDING')
+        .toString();
+    return CourierDelivery(
+      courierId: _toInt(json['CourierID'] ?? json['id']) ?? 0,
+      courierPhone: (json['CourierPhone'] ?? '').toString(),
+      courierEmail: (json['CourierEmail'] ?? '').toString(),
+      courierCity: (json['CourierCity'] ?? '').toString(),
+      pickupLocation: (json['pickupLocation'] ?? '').toString(),
+      dropoffLocation: (json['dropoffLocation'] ?? '').toString(),
+      typeOfGoods: _toNullableString(json['TypeOfGoods']),
+      descriptionOfGoods: _toNullableString(json['DescriptionOfGoods']),
+      additionalInformation: _toNullableString(json['AdditionalInformation']),
+      status: CourierStatus.fromValue(statusRaw),
+      createdAt: _parseDate(json['createdAt']),
+      updatedAt: _parseDate(json['updatedAt']),
     );
+  }
+
+  static int? _toInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
+  }
+
+  static String? _toNullableString(dynamic value) {
+    if (value == null) return null;
+    final parsed = value.toString().trim();
+    return parsed.isEmpty ? null : parsed;
+  }
+
+  static DateTime? _parseDate(dynamic value) {
+    if (value == null) return null;
+    return DateTime.tryParse(value.toString());
   }
 }

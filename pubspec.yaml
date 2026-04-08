@@ -83,6 +83,7 @@ dependencies:
   flutter_map: ^6.1.0
   latlong2: ^0.9.0
   image: ^4.8.0
+  phosphor_flutter: ^2.1.0
 
 dev_dependencies:
   flutter_test:
@@ -120,6 +121,7 @@ flutter:
     - assets/brands/chatgpt.png
     - assets/icons/playstore.png
     - assets/icons/car-location-marker.png
+    - assets/courier/
     - assets/playstore.png
     - assets/style/map_style.txt
     - assets/documents/Vero360_Platform_Agreement_Policy.pdf

@@ -237,7 +237,6 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
     showDialog<void>(
       context: context,
-<<<<<<< HEAD
       barrierDismissible: true,
       barrierColor: Colors.black.withValues(alpha: 0.45),
       builder: (dialogContext) {
@@ -263,13 +262,13 @@ class _BottomnavbarState extends State<Bottomnavbar>
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                         colors: [
-                          _brandOrange.withValues(alpha: 0.18),
-                          _brandOrangeGlow.withValues(alpha: 0.65),
+                          _kOrange.withValues(alpha: 0.18),
+                          _kOrangeLight.withValues(alpha: 0.65),
                         ],
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: _brandOrange.withValues(alpha: 0.22),
+                          color: _kOrange.withValues(alpha: 0.22),
                           blurRadius: 20,
                           offset: const Offset(0, 8),
                         ),
@@ -278,7 +277,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
                     child: Icon(
                       Icons.lock_person_rounded,
                       size: 36,
-                      color: _brandOrangeDark,
+                      color: _kOrangeDark,
                     ),
                   ),
                   const SizedBox(height: 22),
@@ -345,10 +344,10 @@ class _BottomnavbarState extends State<Bottomnavbar>
                             Navigator.pushNamed(context, '/login');
                           },
                           style: FilledButton.styleFrom(
-                            backgroundColor: _brandOrange,
+                            backgroundColor: _kOrange,
                             foregroundColor: Colors.white,
                             disabledBackgroundColor:
-                                _brandOrange.withValues(alpha: 0.38),
+                                _kOrange.withValues(alpha: 0.38),
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             elevation: 0,
                             shape: RoundedRectangleBorder(
@@ -369,21 +368,6 @@ class _BottomnavbarState extends State<Bottomnavbar>
           ),
         );
       },
-=======
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Login Required', style: TextStyle(fontWeight: FontWeight.w900)),
-        content: const Text('Please log in to access this feature.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: _kOrange, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-            onPressed: () { Navigator.pop(context); Navigator.pushNamed(context, '/login'); },
-            child: const Text('Log In'),
-          ),
-        ],
-      ),
->>>>>>> 0416951a2ff4464054ba9cf6fe76e2dbbbad7b8a
     );
   }
 

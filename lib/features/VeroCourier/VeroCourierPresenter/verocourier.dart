@@ -1,21 +1,16 @@
-// lib/Pages/address.dart  (Vero Courier)
-
 import 'dart:async';
-import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
-
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_onboarding_page.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_widgets.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/vero_courier_service.dart';
-
-// ---- Brand (file-level so all widgets can use these) ----
-const Color kBrandOrange = Color(0xFFFF8A00);
-const Color kBrandSoft = Color(0xFFFFE8CC);
 
 class VerocourierPage extends StatefulWidget {
   const VerocourierPage({super.key});
@@ -25,804 +20,1008 @@ class VerocourierPage extends StatefulWidget {
 }
 
 class _VerocourierPageState extends State<VerocourierPage> {
-  // ---- Lilongwe geofence ----
-  static final LatLng _lilongweCenter = LatLng(-13.9626, 33.7741);
-  static const double _llRadiusKm = 60;
+  static const _onboardingDoneKey = 'courier_onboarding_done';
+  static const _veroOrange = Color(0xFFFF8A00);
+  static const _skyBlue = Color(0xFF2D9CDB);
+  static const _mintGreen = Color(0xFF27AE60);
+  static const _violet = Color(0xFF9B51E0);
+  static const _rose = Color(0xFFEB5757);
 
-  // ---- Google Map state ----
-  GoogleMapController? _map;
-  static const CameraPosition _initialCamera = CameraPosition(
-    target: LatLng(-14.3, 34.3), // Malawi fallback
-    zoom: 6.8,
-  );
+  final _formKey = GlobalKey<FormState>();
+  final _pickupCtrl = TextEditingController();
+  final _dropoffCtrl = TextEditingController();
+  final _descriptionCtrl = TextEditingController();
+  final _additionalCtrl = TextEditingController();
+  final _trackCtrl = TextEditingController();
+  final _senderNameCtrl = TextEditingController();
+  final _senderPhoneCtrl = TextEditingController();
+  final _senderAddressCtrl = TextEditingController();
+  final _recipientNameCtrl = TextEditingController();
+  final _recipientPhoneCtrl = TextEditingController();
+  final _recipientAddressCtrl = TextEditingController();
 
-  // ---- Device location banner info ----
-  LatLng? _myLatLng;
-  bool _locating = true;
-
-  // ---- Local (Lilongwe) mode: pickup + dropoff pins ----
-  LatLng? _pickup;
-  LatLng? _dropoff;
-  bool _pickingPickup = false;
-  bool _pickingDropoff = false;
-
-  // Vehicle options for local courier (bike/car/van)
-  static const List<_Vehicle> _vehicles = [
-    _Vehicle(
-        id: 'bike',
-        label: 'Bike',
-        note: 'Small parcels',
-        base: 2500,
-        perKm: 500),
-    _Vehicle(
-        id: 'car', label: 'Car', note: 'Medium loads', base: 4000, perKm: 800),
-    _Vehicle(
-        id: 'van', label: 'Van', note: 'Bulk items', base: 7000, perKm: 1200),
-  ];
-  _Vehicle _vehicle = _vehicles.first;
-
-  // ---- Inter-district mode ----
-  final TextEditingController _destDistrictCtrl = TextEditingController();
-  final TextEditingController _destAddressCtrl = TextEditingController();
-  String _courier = 'Speed Courier';
-  static const List<String> _couriers = [
-    'Speed Courier',
-    'CTS Courier',
-    'Ankolo Courier',
-    'VIP Courier',
-  ];
-
-  // ---- Mode toggle ----
-  _Mode _mode = _Mode.local;
-
-  // API service & loading flags
   final CourierService _courierService = const CourierService();
-  bool _submittingLocal = false;
-  bool _submittingIntercity = false;
-
-  // Markers
-  final Set<Marker> _markers = {};
+  List<CourierDelivery> _deliveries = const [];
+  CourierDelivery? _trackingResult;
+  int? _trackedDeliveryId;
+  Timer? _progressPollingTimer;
+  String _senderName = '';
+  String _senderPhone = '';
+  String _senderCity = '';
+  String? _selectedGoodsType;
+  int _selectedService = 0;
+  bool _loadingSendingDetails = true;
+  bool _detectingCity = true;
+  bool _citySupported = true;
+  String _detectedCity = '';
+  bool _loadingParcelForm = false;
+  bool _submitting = false;
+  bool _loadingList = false;
+  bool _tracking = false;
 
   @override
   void initState() {
     super.initState();
-    _initLocation();
+    _checkOnboarding();
+    _loadSenderInfo();
+    _detectAndValidateCity();
+  }
+
+  Future<void> _onServiceTabChanged(int index) async {
+    setState(() => _selectedService = index);
+    if (index == 1) {
+      setState(() => _loadingParcelForm = true);
+      Future<void>.delayed(const Duration(milliseconds: 260), () {
+        if (!mounted) return;
+        setState(() => _loadingParcelForm = false);
+      });
+    }
+    if (index == 3 && _deliveries.isEmpty) {
+      await _loadDeliveries();
+    }
+  }
+
+  Future<void> _checkOnboarding() async {
+    final prefs = await SharedPreferences.getInstance();
+    final completed = prefs.getBool(_onboardingDoneKey) ?? false;
+    if (!mounted || completed) return;
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    final done = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => const CourierOnboardingPage(),
+        fullscreenDialog: true,
+      ),
+    );
+    await prefs.setBool(_onboardingDoneKey, done == true);
+  }
+
+  Future<void> _loadSenderInfo() async {
+    if (mounted) {
+      setState(() => _loadingSendingDetails = true);
+    }
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _senderName =
+          (prefs.getString('fullName') ??
+                  prefs.getString('name') ??
+                  'Vero User')
+              .trim();
+      _senderPhone = (prefs.getString('phone') ?? '').trim();
+      _senderCity = (prefs.getString('city') ?? 'Lilongwe').trim();
+      _senderNameCtrl.text = _senderName;
+      _senderPhoneCtrl.text = _senderPhone;
+      _senderAddressCtrl.text = _senderCity;
+      _loadingSendingDetails = false;
+    });
+  }
+
+  Future<void> _detectAndValidateCity() async {
+    setState(() => _detectingCity = true);
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (!mounted) return;
+        setState(() {
+          _detectingCity = false;
+          _citySupported = false;
+          _detectedCity = 'Unknown';
+        });
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (!mounted) return;
+        setState(() {
+          _detectingCity = false;
+          _citySupported = false;
+          _detectedCity = 'Unknown';
+        });
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+      final placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+      final place = placemarks.isNotEmpty ? placemarks.first : null;
+      final rawCity = (place?.locality?.trim().isNotEmpty == true
+              ? place!.locality!
+              : (place?.subAdministrativeArea?.trim().isNotEmpty == true
+                  ? place!.subAdministrativeArea!
+                  : (place?.administrativeArea ?? 'Unknown')))
+          .trim();
+
+      final normalized = rawCity.toLowerCase();
+      final supported = normalized.contains('lilongwe') ||
+          normalized.contains('blantyre') ||
+          normalized.contains('zomba');
+
+      if (!mounted) return;
+      setState(() {
+        _detectingCity = false;
+        _citySupported = supported;
+        _detectedCity = rawCity;
+        if (rawCity.isNotEmpty && rawCity != 'Unknown') {
+          _senderCity = rawCity;
+          _senderAddressCtrl.text = rawCity;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _detectingCity = false;
+        _citySupported = false;
+        _detectedCity = 'Unknown';
+      });
+    }
   }
 
   @override
   void dispose() {
-    _destDistrictCtrl.dispose();
-    _destAddressCtrl.dispose();
+    _progressPollingTimer?.cancel();
+    _pickupCtrl.dispose();
+    _dropoffCtrl.dispose();
+    _descriptionCtrl.dispose();
+    _additionalCtrl.dispose();
+    _trackCtrl.dispose();
+    _senderNameCtrl.dispose();
+    _senderPhoneCtrl.dispose();
+    _senderAddressCtrl.dispose();
+    _recipientNameCtrl.dispose();
+    _recipientPhoneCtrl.dispose();
+    _recipientAddressCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _initLocation() async {
-    setState(() => _locating = true);
+  Future<void> _loadDeliveries() async {
+    setState(() => _loadingList = true);
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        setState(() => _locating = false);
-        return;
-      }
-      var perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) {
-        perm = await Geolocator.requestPermission();
-      }
-      if (perm == LocationPermission.denied ||
-          perm == LocationPermission.deniedForever) {
-        setState(() => _locating = false);
-        return;
-      }
-      final pos =
-          await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      final me = LatLng(pos.latitude, pos.longitude);
-      setState(() {
-        _myLatLng = me;
-        _locating = false;
-      });
-      await _map?.animateCamera(
-        CameraUpdate.newCameraPosition(CameraPosition(target: me, zoom: 13.5)),
-      );
+      final data = await _courierService.getMyDeliveries();
+      if (!mounted) return;
+      setState(() => _deliveries = data);
+    } on ApiException catch (e) {
+      _toast(e.message, isError: true);
     } catch (_) {
-      setState(() => _locating = false);
+      _toast('Failed to load courier deliveries.', isError: true);
+    } finally {
+      if (mounted) setState(() => _loadingList = false);
     }
   }
 
-  // --- Token helper (guest or logged-in) ---
-  Future<String?> _readToken() async {
-    final sp = await SharedPreferences.getInstance();
-    return sp.getString('jwt_token') ??
-        sp.getString('token') ??
-        sp.getString('jwt');
+  Future<void> _trackDelivery() async {
+    final id = int.tryParse(_trackCtrl.text.trim());
+    if (id == null) {
+      _toast('Enter a valid delivery number.', isError: true);
+      return;
+    }
+    setState(() => _tracking = true);
+    try {
+      final data = await _courierService.getDeliveryById(id);
+      if (!mounted) return;
+      setState(() {
+        _trackingResult = data;
+        _trackedDeliveryId = id;
+      });
+      _startProgressPolling();
+    } on ApiException catch (e) {
+      _toast(e.message, isError: true);
+      if (mounted) setState(() => _trackingResult = null);
+    } catch (_) {
+      _toast('Could not track this delivery right now.', isError: true);
+      if (mounted) setState(() => _trackingResult = null);
+    } finally {
+      if (mounted) setState(() => _tracking = false);
+    }
   }
 
-  // --- Map handlers ---
-  void _onMapCreated(GoogleMapController c) => _map = c;
-
-  void _onMapTap(LatLng latLng) {
-    if (_mode == _Mode.local) {
-      if (_pickingPickup) {
-        setState(() {
-          _pickup = latLng;
-          _pickingPickup = false;
-        });
-      } else if (_pickingDropoff) {
-        setState(() {
-          _dropoff = latLng;
-          _pickingDropoff = false;
-        });
+  void _startProgressPolling() {
+    _progressPollingTimer?.cancel();
+    if (_trackedDeliveryId == null) return;
+    _progressPollingTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+      if (!mounted || _trackedDeliveryId == null) return;
+      try {
+        final latest = await _courierService.getDeliveryById(_trackedDeliveryId!);
+        if (!mounted) return;
+        setState(() => _trackingResult = latest);
+      } catch (_) {
+        // keep last known state; no noisy toasts during background refresh
       }
-      _refreshMarkers();
-    } else {
-      // Inter-district: only pickup in Lilongwe
-      if (_pickingPickup) {
-        setState(() {
-          _pickup = latLng;
-          _pickingPickup = false;
-        });
-        _refreshMarkers();
-      }
-    }
-  }
-
-  void _refreshMarkers() {
-    final m = <Marker>{};
-    if (_myLatLng != null) {
-      m.add(Marker(
-        markerId: const MarkerId('me'),
-        position: _myLatLng!,
-        infoWindow: const InfoWindow(title: 'You are here'),
-      ));
-    }
-    if (_pickup != null) {
-      m.add(Marker(
-        markerId: const MarkerId('pickup'),
-        position: _pickup!,
-        infoWindow: const InfoWindow(title: 'Pickup'),
-        icon:
-            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-      ));
-    }
-    if (_mode == _Mode.local && _dropoff != null) {
-      m.add(Marker(
-        markerId: const MarkerId('dropoff'),
-        position: _dropoff!,
-        infoWindow: const InfoWindow(title: 'Drop-off'),
-        icon:
-            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-      ));
-    }
-    setState(() {
-      _markers
-        ..clear()
-        ..addAll(m);
     });
   }
 
-  // --- Distance helpers (Haversine) ---
-  static double _kmBetween(LatLng a, LatLng b) {
-    const R = 6371.0;
-    final dLat = _deg2rad(b.latitude - a.latitude);
-    final dLng = _deg2rad(b.longitude - a.longitude);
-    final lat1 = _deg2rad(a.latitude);
-    final lat2 = _deg2rad(b.latitude);
-    final h = math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(lat1) *
-            math.cos(lat2) *
-            math.sin(dLng / 2) *
-            math.sin(dLng / 2);
-    final c = 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
-    return R * c;
+  String _statusDisplay(CourierStatus status) {
+    switch (status) {
+      case CourierStatus.accepted:
+        return 'Accepted';
+      case CourierStatus.onTheWay:
+        return 'Coming';
+      case CourierStatus.delivered:
+        return 'Delivered';
+      case CourierStatus.cancelled:
+        return 'Cancelled';
+      case CourierStatus.pending:
+        return 'Pending';
+    }
   }
 
-  static double _deg2rad(double d) => d * math.pi / 180.0;
-  static bool _withinKm(LatLng p, LatLng center, double km) =>
-      _kmBetween(p, center) <= km;
-
-  bool _insideLilongwe(LatLng p) => _withinKm(p, _lilongweCenter, _llRadiusKm);
-
-  // --- Fare for local deliveries ---
-  double? _localFare() {
-    if (_pickup == null || _dropoff == null) return null;
-    if (!(_insideLilongwe(_pickup!) && _insideLilongwe(_dropoff!))) {
-      return null;
+  Future<void> _submit() async {
+    if (!_citySupported) {
+      _toast(
+        'Sorry, Vero Courier is not available in your city. We are expanding soon.',
+        isError: true,
+      );
+      return;
     }
-    final km = _kmBetween(_pickup!, _dropoff!);
-    return _vehicle.base + _vehicle.perKm * km;
-  }
-
-  // --- Actions (LOCAL) ---
-  Future<void> _bookLocal() async {
-    if (_pickup == null) {
-      return _toast('Set a pickup location (tap Pick on Map).');
+    if (!_formKey.currentState!.validate()) return;
+    if (_senderPhone.isEmpty || _senderCity.isEmpty) {
+      _toast(
+        'Missing sender profile details. Please update your account (name, phone, city).',
+        isError: true,
+      );
+      return;
     }
-    if (_dropoff == null) {
-      return _toast('Set a drop-off location (tap Pick on Map).');
-    }
-    if (!(_insideLilongwe(_pickup!) && _insideLilongwe(_dropoff!))) {
-      return _toast(
-          'Local Vero Courier is in Lilongwe-only. Keep both pins inside Lilongwe.');
-    }
+    _senderName = _senderNameCtrl.text.trim();
+    _senderPhone = _senderPhoneCtrl.text.trim();
+    _senderCity = _senderAddressCtrl.text.trim().isEmpty
+        ? _senderCity
+        : _senderAddressCtrl.text.trim();
 
-    final fare = _localFare();
-    final token = await _readToken();
-
-    final payload = CourierLocalRequestPayload(
-      pickupLat: _pickup!.latitude,
-      pickupLng: _pickup!.longitude,
-      dropoffLat: _dropoff!.latitude,
-      dropoffLng: _dropoff!.longitude,
-      vehicleId: _vehicle.id,
-      clientFareEstimate: fare,
-      notes: null, // you can add a notes field in UI later
-    );
-
-    setState(() => _submittingLocal = true);
+    setState(() => _submitting = true);
+    final mergedAdditionalInfo = [
+      _additionalCtrl.text.trim(),
+      if (_recipientNameCtrl.text.trim().isNotEmpty)
+        'Recipient: ${_recipientNameCtrl.text.trim()}',
+      if (_recipientPhoneCtrl.text.trim().isNotEmpty)
+        'Recipient Phone: ${_recipientPhoneCtrl.text.trim()}',
+      if (_recipientAddressCtrl.text.trim().isNotEmpty)
+        'Recipient Address: ${_recipientAddressCtrl.text.trim()}',
+    ].where((e) => e.isNotEmpty).join(' | ');
 
     try {
-      final booking = await _courierService.createLocalDelivery(
-        payload,
-        authToken: token,
+      final created = await _courierService.createDelivery(
+        CreateCourierDeliveryDto(
+          courierPhone: _senderPhone,
+          courierEmail: 'no-email@vero.local',
+          courierCity: _senderCity,
+          pickupLocation: _pickupCtrl.text.trim(),
+          dropoffLocation: _dropoffCtrl.text.trim(),
+          typeOfGoods: _selectedGoodsType,
+          descriptionOfGoods: _descriptionCtrl.text.trim(),
+          additionalInformation: mergedAdditionalInfo,
+        ),
       );
-
-      _toast(
-        'Local courier booked • '
-        '${booking.vehicleLabel ?? booking.vehicleId ?? _vehicle.label} '
-        '• Status: ${booking.status}',
-      );
+      if (!mounted) return;
+      _toast('Delivery created: #${created.courierId}');
+      _formKey.currentState?.reset();
+      _pickupCtrl.clear();
+      _dropoffCtrl.clear();
+      _selectedGoodsType = null;
+      _descriptionCtrl.clear();
+      _additionalCtrl.clear();
+      _recipientNameCtrl.clear();
+      _recipientPhoneCtrl.clear();
+      _recipientAddressCtrl.clear();
+      await _loadDeliveries();
     } on ApiException catch (e) {
-      _toast(e.message);
+      _toast(e.message, isError: true);
     } catch (_) {
-      _toast('Could not submit courier request. Please try again.');
+      _toast('Could not create delivery. Please try again.', isError: true);
     } finally {
-      if (mounted) {
-        setState(() => _submittingLocal = false);
-      }
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
-  // --- Actions (INTERCITY) ---
-  Future<void> _bookIntercity() async {
-    if (_pickup == null) {
-      return _toast('Set a pickup location in Lilongwe.');
+  void _saveSendingDetails() {
+    if (!_citySupported) {
+      _toast(
+        'Sorry, Vero Courier is not available in your city. We are expanding soon.',
+        isError: true,
+      );
+      return;
     }
-    if (!_insideLilongwe(_pickup!)) {
-      return _toast(
-          'Pickup must be within Lilongwe for inter-district shipments.');
-    }
-    final destDistrict = _destDistrictCtrl.text.trim();
-    final destAddress = _destAddressCtrl.text.trim();
-
-    if (destDistrict.isEmpty) {
-      return _toast('Enter the destination district (outside Lilongwe).');
-    }
-    if (destAddress.isEmpty) {
-      return _toast(
-          'Enter destination address (receiver name, phone & location).');
+    final missing = <String>[];
+    if (_senderNameCtrl.text.trim().isEmpty) missing.add('Sender full name');
+    if (_senderPhoneCtrl.text.trim().isEmpty) missing.add('Sender phone number');
+    if (_senderAddressCtrl.text.trim().isEmpty) missing.add('Sender address');
+    if (_recipientNameCtrl.text.trim().isEmpty) missing.add('Recipient full name');
+    if (_recipientPhoneCtrl.text.trim().isEmpty) missing.add('Recipient phone number');
+    if (_recipientAddressCtrl.text.trim().isEmpty) missing.add('Recipient address');
+    if (missing.isNotEmpty) {
+      _toast('Complete all fields first: ${missing.join(', ')}', isError: true);
+      return;
     }
 
-    final token = await _readToken();
+    setState(() {
+      _senderName = _senderNameCtrl.text.trim();
+      _senderPhone = _senderPhoneCtrl.text.trim();
+      _senderCity = _senderAddressCtrl.text.trim().isEmpty
+          ? _senderCity
+          : _senderAddressCtrl.text.trim();
+    });
+    _toast('Sending details saved for this session.');
+  }
 
-    final payload = CourierIntercityRequestPayload(
-      pickupLat: _pickup!.latitude,
-      pickupLng: _pickup!.longitude,
-      destinationDistrict: destDistrict,
-      destinationAddressText: destAddress,
-      courierName: _courier,
-      notes: null,
-    );
-
-    setState(() => _submittingIntercity = true);
-
+  Future<void> _updateStatus(CourierDelivery delivery, CourierStatus status) async {
     try {
-      final booking = await _courierService.createIntercityDelivery(
-        payload,
-        authToken: token,
-      );
-
-      _toast(
-        'Inter-district via ${booking.courierName ?? _courier} '
-        'to ${booking.destinationDistrict ?? destDistrict}. '
-        'Status: ${booking.status}',
-      );
+      await _courierService.updateStatus(id: delivery.courierId, status: status);
+      if (!mounted) return;
+      _toast('Status updated to ${status.value}.');
+      await _loadDeliveries();
     } on ApiException catch (e) {
-      _toast(e.message);
+      _toast(e.message, isError: true);
     } catch (_) {
-      _toast('Could not submit inter-district request. Please try again.');
-    } finally {
-      if (mounted) {
-        setState(() => _submittingIntercity = false);
-      }
+      _toast('Failed to update status.', isError: true);
     }
   }
 
-  void _toast(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: Colors.black87,
-    ));
-  }
-
-  // --- Styles/helpers ---
-  static ButtonStyle _btnStyle({double padV = 12}) =>
-      FilledButton.styleFrom(
-        backgroundColor: kBrandOrange,
-        foregroundColor: Colors.white,
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        padding: EdgeInsets.symmetric(horizontal: 14, vertical: padV),
-        textStyle: const TextStyle(
-            fontSize: 16, fontWeight: FontWeight.w700),
-      );
-
-  static InputDecoration _inputDecoration() => const InputDecoration(
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding:
-            EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        enabledBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: Colors.black, width: 1),
-          borderRadius: BorderRadius.all(Radius.circular(12)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: kBrandOrange, width: 2),
-          borderRadius: BorderRadius.all(Radius.circular(12)),
-        ),
-      );
-
-  static String _fmtMoney(double n) {
-    final s = n.round().toString();
-    final buf = StringBuffer();
-    for (var i = 0; i < s.length; i++) {
-      final fromEnd = s.length - i;
-      buf.write(s[i]);
-      if (fromEnd > 1 && fromEnd % 3 == 1) buf.write(',');
-    }
-    return buf.toString();
+  void _toast(String msg, {bool isError = false}) {
+    ToastHelper.showCustomToast(
+      context,
+      msg,
+      isSuccess: !isError,
+      errorMessage: isError ? msg : '',
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final fare = _localFare();
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Vero Courier'),
-        backgroundColor: kBrandOrange,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
-      body: Stack(
-        children: [
-          GoogleMap(
-            initialCameraPosition: _initialCamera,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: true,
-            onMapCreated: _onMapCreated,
-            onTap: _onMapTap,
-            markers: _markers,
-            zoomControlsEnabled: false,
-          ),
-
-          // Top banner
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: _ServiceBanner(
-                locating: _locating,
-                text: 'Local deliveries available in Lilongwe. '
-                    'For other districts, use partner couriers.',
-                okColor: const Color(0xFFE8FFF0),
+      body: RefreshIndicator(
+        onRefresh: _loadDeliveries,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(0, 0, 0, 24),
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                bottom: Radius.circular(24),
               ),
-            ),
-          ),
-
-          // Bottom sheet controls
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius:
-                    BorderRadius.vertical(top: Radius.circular(20)),
-                boxShadow: [
-                  BoxShadow(
-                    blurRadius: 20,
-                    color: Colors.black26,
-                    offset: Offset(0, -6),
-                  )
-                ],
-              ),
-              padding:
-                  const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              child: SafeArea(
-                top: false,
-                child: SingleChildScrollView(
+              child: ColoredBox(
+                color: _veroOrange,
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    MediaQuery.of(context).padding.top + 14,
+                    16,
+                    18,
+                  ),
                   child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Grip
-                      Container(
-                        width: 42,
-                        height: 5,
-                        decoration: BoxDecoration(
-                          color: Colors.black12,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Mode toggle
                       Row(
                         children: [
-                          _ModeChip(
-                            label: 'Lilongwe (Local)',
-                            selected: _mode == _Mode.local,
-                            onTap: () =>
-                                setState(() => _mode = _Mode.local),
+                          Container(
+                            height: 52,
+                            width: 52,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFFFFD18A), Colors.white],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: const Icon(
+                              PhosphorIconsBold.truck,
+                              color: _veroOrange,
+                              size: 28,
+                            ),
                           ),
-                          const SizedBox(width: 8),
-                          _ModeChip(
-                            label: 'Other Districts',
-                            selected: _mode == _Mode.intercity,
-                            onTap: () => setState(
-                                () => _mode = _Mode.intercity),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Text(
+                              'Vero Courier',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 24,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
-
-                      if (_mode == _Mode.local) ...[
-                        _Labeled(
-                          label: 'Pickup (pin on map)',
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: _PinnedReadout(
-                                  value: _pickup == null
-                                      ? null
-                                      : 'Lat ${_pickup!.latitude.toStringAsFixed(5)}, '
-                                          'Lng ${_pickup!.longitude.toStringAsFixed(5)}',
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              FilledButton(
-                                style: _btnStyle(),
-                                onPressed: () {
-                                  setState(() {
-                                    _pickingPickup = true;
-                                    _pickingDropoff = false;
-                                  });
-                                  _map?.animateCamera(
-                                    CameraUpdate.newLatLngZoom(
-                                        _lilongweCenter, 13.0),
-                                  );
-                                },
-                                child: Text(_pickingPickup
-                                    ? 'Cancel'
-                                    : 'Pick on Map'),
-                              ),
-                            ],
-                          ),
+                      const SizedBox(height: 14),
+                      const Text(
+                        'Send parcel with us within your city',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
+                          height: 1.3,
                         ),
-                        const SizedBox(height: 12),
-
-                        _Labeled(
-                          label: 'Drop-off (pin on map)',
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: _PinnedReadout(
-                                  value: _dropoff == null
-                                      ? null
-                                      : 'Lat ${_dropoff!.latitude.toStringAsFixed(5)}, '
-                                          'Lng ${_dropoff!.longitude.toStringAsFixed(5)}',
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              FilledButton(
-                                style: _btnStyle(),
-                                onPressed: () {
-                                  setState(() {
-                                    _pickingDropoff = true;
-                                    _pickingPickup = false;
-                                  });
-                                  _map?.animateCamera(
-                                    CameraUpdate.newLatLngZoom(
-                                        _lilongweCenter, 13.0),
-                                  );
-                                },
-                                child: Text(_pickingDropoff
-                                    ? 'Cancel'
-                                    : 'Pick on Map'),
-                              ),
-                            ],
-                          ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Fast pickup, secure handling, real-time progress updates.',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
                         ),
-                        const SizedBox(height: 12),
-
-                        // Vehicle selection
-                        _Labeled(
-                          label: 'Vehicle',
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: _vehicles.map((v) {
-                              final selected = v.id == _vehicle.id;
-                              return InkWell(
-                                onTap: () => setState(() => _vehicle = v),
-                                borderRadius: BorderRadius.circular(12),
-                                child: Container(
-                                  padding:
-                                      const EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    borderRadius:
-                                        BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: selected
-                                          ? kBrandOrange
-                                          : Colors.black,
-                                      width: 1,
-                                    ),
-                                    color: selected
-                                        ? kBrandSoft
-                                        : Colors.white,
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.local_shipping,
-                                        size: 18,
-                                        color: selected
-                                            ? kBrandOrange
-                                            : Colors.black87,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        '${v.label} • ${v.note}',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          color: selected
-                                              ? Colors.black
-                                              : Colors.black87,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-
-                        // Fare estimate
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            borderRadius:
-                                BorderRadius.circular(12),
-                            border:
-                                Border.all(color: Colors.black12),
-                            color: const Color(0xFFF8F8F8),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.attach_money_rounded),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  (_pickup == null || _dropoff == null)
-                                      ? 'Set pickup & drop-off to see estimate.'
-                                      : (_insideLilongwe(_pickup!) &&
-                                              _insideLilongwe(
-                                                  _dropoff!) &&
-                                              fare != null)
-                                          ? 'Estimated fare: MWK ${_fmtMoney(fare)}'
-                                          : 'Both locations must be inside Lilongwe.',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton(
-                            style: _btnStyle(padV: 14),
-                            onPressed:
-                                _submittingLocal ? null : _bookLocal,
-                            child: _submittingLocal
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor:
-                                          AlwaysStoppedAnimation<Color>(
-                                        Colors.white,
-                                      ),
-                                    ),
-                                  )
-                                : const Text('Book Local Delivery'),
-                          ),
-                        ),
-                      ] else ...[
-                        _Labeled(
-                          label: 'Pickup in Lilongwe (pin on map)',
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: _PinnedReadout(
-                                  value: _pickup == null
-                                      ? null
-                                      : 'Lat ${_pickup!.latitude.toStringAsFixed(5)}, '
-                                          'Lng ${_pickup!.longitude.toStringAsFixed(5)}',
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              FilledButton(
-                                style: _btnStyle(),
-                                onPressed: () {
-                                  setState(() {
-                                    _pickingPickup = true;
-                                    _pickingDropoff = false;
-                                  });
-                                  _map?.animateCamera(
-                                    CameraUpdate.newLatLngZoom(
-                                        _lilongweCenter, 13.0),
-                                  );
-                                },
-                                child: Text(_pickingPickup
-                                    ? 'Cancel'
-                                    : 'Pick on Map'),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-
-                        _Labeled(
-                          label:
-                              'Destination District (outside Lilongwe)',
-                          child: TextField(
-                            controller: _destDistrictCtrl,
-                            decoration: _inputDecoration().copyWith(
-                              hintText:
-                                  'e.g., Mzimba, Zomba, Karonga…',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-
-                        _Labeled(
-                          label:
-                              'Destination Address (required details)',
-                          child: TextField(
-                            controller: _destAddressCtrl,
-                            decoration: _inputDecoration().copyWith(
-                              hintText:
-                                  'Receiver name, phone & exact address…',
-                            ),
-                            maxLines: 2,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-
-                        _Labeled(
-                          label: 'Courier Partner',
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: _couriers.map((name) {
-                              final selected = _courier == name;
-                              return InkWell(
-                                onTap: () =>
-                                    setState(() => _courier = name),
-                                borderRadius:
-                                    BorderRadius.circular(12),
-                                child: Container(
-                                  padding:
-                                      const EdgeInsets.symmetric(
-                                          horizontal: 12, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    borderRadius:
-                                        BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: selected
-                                          ? kBrandOrange
-                                          : Colors.black,
-                                      width: 1,
-                                    ),
-                                    color: selected
-                                        ? kBrandSoft
-                                        : Colors.white,
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.local_post_office,
-                                        size: 18,
-                                        color: selected
-                                            ? kBrandOrange
-                                            : Colors.black87,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        name,
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          color: selected
-                                              ? Colors.black
-                                              : Colors.black87,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton(
-                            style: _btnStyle(padV: 14),
-                            onPressed: _submittingIntercity
-                                ? null
-                                : _bookIntercity,
-                            child: _submittingIntercity
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor:
-                                          AlwaysStoppedAnimation<Color>(
-                                        Colors.white,
-                                      ),
-                                    ),
-                                  )
-                                : const Text('Send to Other District'),
-                          ),
-                        ),
-                      ],
+                      ),
                     ],
                   ),
                 ),
               ),
             ),
-          ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _serviceTypesRow(),
+                  const SizedBox(height: 10),
+                  if (_detectingCity)
+                    const Card(
+                      elevation: 0,
+                      child: Padding(
+                        padding: EdgeInsets.all(12),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text('Detecting your city for courier availability...'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    Card(
+                      elevation: 0,
+                      color: _citySupported
+                          ? const Color(0xFFEAF9EF)
+                          : const Color(0xFFFFF3F1),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: _citySupported
+                              ? const Color(0xFFBEE7C8)
+                              : const Color(0xFFFFCFC8),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(
+                          _citySupported
+                              ? 'Vero Courier is available in your city: $_detectedCity'
+                              : 'Sorry, Vero Courier is not available in your city. We are expanding soon.',
+                          style: TextStyle(
+                            color: _citySupported
+                                ? const Color(0xFF1E7A38)
+                                : const Color(0xFFAA3A2A),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  ..._activeSectionContent(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-          // Overlay helper when picking on map
-          if (_pickingPickup || _pickingDropoff)
-            IgnorePointer(
-              ignoring: true,
-              child: Container(
-                alignment: Alignment.topCenter,
-                margin: const EdgeInsets.only(top: 90),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black87,
-                    borderRadius: BorderRadius.circular(10),
+  Widget _sectionTitle(String title) {
+    return Text(
+      title,
+      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+    );
+  }
+
+  Widget _senderCard() {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: Color(0xFFEAEAEA)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(PhosphorIconsBold.userCircle, color: _skyBlue, size: 18),
+                SizedBox(width: 8),
+                Text(
+                  "Sender details",
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _field(
+              _senderNameCtrl,
+              'Full Name',
+              hint: 'Enter your full name',
+            ),
+            _field(
+              _senderPhoneCtrl,
+              'Phone Number',
+              hint: 'Enter phone number',
+            ),
+            _field(
+              _senderAddressCtrl,
+              'Address',
+              hint: 'Enter address',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _recipientCard() {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFFEAEAEA)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(PhosphorIconsBold.identificationBadge, color: _mintGreen, size: 18),
+                SizedBox(width: 8),
+                Text(
+                  "Recipient details",
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _field(_recipientNameCtrl, 'Full Name', hint: 'Recipient name'),
+            _field(
+              _recipientPhoneCtrl,
+              'Phone Number',
+              hint: 'Recipient phone',
+            ),
+            _field(
+              _recipientAddressCtrl,
+              'Address',
+              hint: 'Recipient address',
+              maxLines: 2,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _activeSectionContent() {
+    switch (_selectedService) {
+      case 0:
+        if (!_citySupported) {
+          return [];
+        }
+        return [
+          _sectionTitle('Sending Details'),
+          const SizedBox(height: 8),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 380),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: _loadingSendingDetails
+                ? const _DetailsLoadingCard()
+                : Column(
+                    key: const ValueKey('sendingDetailsForms'),
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0, end: 1),
+                        duration: const Duration(milliseconds: 420),
+                        builder: (context, value, child) => Opacity(
+                          opacity: value,
+                          child: Transform.translate(
+                            offset: Offset(0, (1 - value) * 10),
+                            child: child,
+                          ),
+                        ),
+                        child: _senderCard(),
+                      ),
+                      const SizedBox(height: 12),
+                      _sectionTitle("Recipient's Information"),
+                      const SizedBox(height: 8),
+                      TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0, end: 1),
+                        duration: const Duration(milliseconds: 520),
+                        builder: (context, value, child) => Opacity(
+                          opacity: value,
+                          child: Transform.translate(
+                            offset: Offset(0, (1 - value) * 14),
+                            child: child,
+                          ),
+                        ),
+                        child: _recipientCard(),
+                      ),
+                    ],
                   ),
-                  child: Text(
-                    _pickingPickup
-                        ? 'Tap on the map to set PICKUP (Lilongwe)'
-                        : 'Tap on the map to set DROP-OFF (Lilongwe)',
-                    style: const TextStyle(color: Colors.white),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: _veroOrange,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              onPressed: _saveSendingDetails,
+              icon: const Icon(PhosphorIconsBold.checkCircle, size: 20),
+              label: const Text(
+                'Save Sending Details',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ];
+      case 1:
+        if (!_citySupported) {
+          return [];
+        }
+        const goodsOptions = <String>[
+          'Documents',
+          'Electronics',
+          'Groceries',
+          'Food',
+          'Clothes',
+          'Fragile Item',
+          'Other',
+        ];
+        return [
+          _sectionTitle('Send a Parcel'),
+          const SizedBox(height: 8),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 360),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: _loadingParcelForm
+                ? const _ParcelFormLoadingCard()
+                : TweenAnimationBuilder<double>(
+                    key: const ValueKey('parcelFormContent'),
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 480),
+                    builder: (context, value, child) => Opacity(
+                      opacity: value,
+                      child: Transform.translate(
+                        offset: Offset(0, (1 - value) * 14),
+                        child: child,
+                      ),
+                    ),
+                    child: Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: _veroOrange.withValues(alpha: 0.30)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _field(_pickupCtrl, 'pickupLocation', hint: 'Area 18, House 123'),
+                      _field(_dropoffCtrl, 'dropoffLocation', hint: 'City Centre, Shop 45'),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: DropdownButtonFormField<String>(
+                          initialValue: _selectedGoodsType,
+                          decoration: InputDecoration(
+                            labelText: 'TypeOfGoods',
+                            hintText: 'Select goods type',
+                            filled: true,
+                            fillColor: const Color(0xFFFFFBF4),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide:
+                                  BorderSide(color: _veroOrange.withValues(alpha: 0.24)),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide:
+                                  const BorderSide(color: _veroOrange, width: 1.4),
+                            ),
+                          ),
+                          items: goodsOptions
+                              .map(
+                                (item) => DropdownMenuItem<String>(
+                                  value: item,
+                                  child: Text(item),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) =>
+                              setState(() => _selectedGoodsType = value),
+                        ),
+                      ),
+                      _field(
+                        _descriptionCtrl,
+                        'DescriptionOfGoods (optional)',
+                        required: false,
+                        maxLines: 2,
+                      ),
+                      _field(
+                        _additionalCtrl,
+                        'AdditionalInformation (optional)',
+                        required: false,
+                        maxLines: 2,
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _veroOrange,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: _submitting ? null : _submit,
+                          icon: _submitting
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(PhosphorIconsBold.paperPlaneTilt),
+                          label: Text(_submitting ? 'Submitting...' : 'Book Delivery'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+                  ),
+          ),
+        ];
+      case 2:
+        if (!_citySupported) {
+          return [];
+        }
+        return [
+          _sectionTitle('Progress'),
+          const SizedBox(height: 8),
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: _violet.withValues(alpha: 0.26)),
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFF8F2FF), Color(0xFFFFFFFF)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Container(
+                    height: 38,
+                    width: 38,
+                    decoration: BoxDecoration(
+                      color: _violet.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(PhosphorIconsBold.magnifyingGlass, color: _violet),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _trackCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        hintText: 'Search by delivery number',
+                        border: InputBorder.none,
+                      ),
+                    ),
+                  ),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _violet,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    onPressed: _tracking ? null : _trackDelivery,
+                    child: _tracking
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Track'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_trackingResult != null) ...[
+            const SizedBox(height: 12),
+            Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: BorderSide(color: _violet.withValues(alpha: 0.18)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    const Icon(PhosphorIconsBold.clockCounterClockwise, color: _violet, size: 18),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Live status',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: _violet.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        _statusDisplay(_trackingResult!.status),
+                        style: const TextStyle(
+                          color: _violet,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            CourierDeliveryCard(delivery: _trackingResult!),
+          ],
+        ];
+      default:
+        if (!_citySupported) {
+          return [];
+        }
+        return [
+          _sectionTitle('Shipping History'),
+          const SizedBox(height: 8),
+          if (_loadingList)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (_deliveries.isEmpty)
+            Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: Color(0xFFEAEAEA)),
+              ),
+              child: const Padding(
+                padding: EdgeInsets.all(18),
+                child: Text('No parcel history yet.'),
+              ),
+            )
+          else
+            ..._deliveries.take(20).map(_deliveryCard),
+        ];
+    }
+  }
+
+  Widget _serviceTypesRow() {
+    final List<(String, IconData, Color)> services = [
+      ('Sending Details', PhosphorIconsBold.package, _skyBlue),
+      ('Send a Parcel', PhosphorIconsBold.truck, _mintGreen),
+      ('Progress', PhosphorIconsBold.airplaneTakeoff, _violet),
+      ('Shipping History', PhosphorIconsBold.clockCounterClockwise, _rose),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (var i = 0; i < services.length; i++)
+            Padding(
+              padding: EdgeInsets.only(right: i == services.length - 1 ? 0 : 10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => _onServiceTabChanged(i),
+                child: Container(
+                  width: 88,
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: _selectedService == i
+                        ? services[i].$3.withValues(alpha: 0.12)
+                        : const Color(0xFFF4F4F6),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _selectedService == i
+                          ? services[i].$3.withValues(alpha: 0.45)
+                          : const Color(0xFFE6E6E8),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        services[i].$2,
+                        color: _selectedService == i
+                            ? services[i].$3
+                            : const Color(0xFF8A8A8A),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        services[i].$1,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: _selectedService == i
+                              ? services[i].$3
+                              : const Color(0xFF555555),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -831,87 +1030,52 @@ class _VerocourierPageState extends State<VerocourierPage> {
       ),
     );
   }
-}
 
-// --- Small widgets & models ---
-
-class _ServiceBanner extends StatelessWidget {
-  final bool locating;
-  final String text;
-  final Color okColor;
-  const _ServiceBanner({
-    required this.locating,
-    required this.text,
-    required this.okColor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: okColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFB8E6C5)),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            locating ? Icons.my_location : Icons.check_circle,
-            color: locating
-                ? Colors.black54
-                : const Color(0xFF1B8F3E),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              locating ? 'Detecting your location…' : text,
-              style: TextStyle(
-                color: locating
-                    ? Colors.black87
-                    : const Color(0xFF0A5730),
-                fontWeight: FontWeight.w600,
+  Widget _deliveryCard(CourierDelivery d) {
+    return CourierDeliveryCard(
+      delivery: d,
+      footer: Wrap(
+        spacing: 8,
+        children: CourierStatus.values
+            .where((s) => s != d.status)
+            .map(
+              (s) => ActionChip(
+                label: Text(s.value),
+                onPressed: () => _updateStatus(d, s),
               ),
-            ),
-          ),
-        ],
+            )
+            .toList(),
       ),
     );
   }
-}
 
-class _ModeChip extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  const _ModeChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? kBrandSoft : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: selected ? kBrandOrange : Colors.black,
-            width: 1,
+  Widget _field(
+    TextEditingController controller,
+    String label, {
+    String? hint,
+    bool required = true,
+    int maxLines = 1,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextFormField(
+        controller: controller,
+        maxLines: maxLines,
+        validator: required
+            ? (v) => (v == null || v.trim().isEmpty) ? 'Required' : null
+            : null,
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: hint,
+          filled: true,
+          fillColor: const Color(0xFFFFFBF4),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: _veroOrange.withValues(alpha: 0.24)),
           ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: selected ? Colors.black : Colors.black87,
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: _veroOrange, width: 1.4),
           ),
         ),
       ),
@@ -919,64 +1083,85 @@ class _ModeChip extends StatelessWidget {
   }
 }
 
-class _Labeled extends StatelessWidget {
-  final String label;
-  final Widget child;
-  const _Labeled({required this.label, required this.child});
+class _DetailsLoadingCard extends StatelessWidget {
+  const _DetailsLoadingCard();
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style: const TextStyle(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 6),
-        child,
-      ],
+    return Card(
+      key: const ValueKey('detailsLoading'),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFFEAEAEA)),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          children: [
+            _DetailsSkeletonLine(width: 180, height: 14),
+            SizedBox(height: 12),
+            _DetailsSkeletonLine(width: double.infinity, height: 46),
+            SizedBox(height: 10),
+            _DetailsSkeletonLine(width: double.infinity, height: 46),
+            SizedBox(height: 10),
+            _DetailsSkeletonLine(width: double.infinity, height: 46),
+          ],
+        ),
+      ),
     );
   }
 }
 
-class _PinnedReadout extends StatelessWidget {
-  final String? value;
-  const _PinnedReadout({this.value});
+class _ParcelFormLoadingCard extends StatelessWidget {
+  const _ParcelFormLoadingCard();
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 48,
+    return Card(
+      key: const ValueKey('parcelLoading'),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFFEAEAEA)),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          children: [
+            _DetailsSkeletonLine(width: double.infinity, height: 46),
+            SizedBox(height: 10),
+            _DetailsSkeletonLine(width: double.infinity, height: 46),
+            SizedBox(height: 10),
+            _DetailsSkeletonLine(width: double.infinity, height: 46),
+            SizedBox(height: 10),
+            _DetailsSkeletonLine(width: double.infinity, height: 72),
+            SizedBox(height: 12),
+            _DetailsSkeletonLine(width: double.infinity, height: 46),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DetailsSkeletonLine extends StatelessWidget {
+  final double width;
+  final double height;
+  const _DetailsSkeletonLine({required this.width, required this.height});
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
       alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border:
-            Border.all(color: Colors.black, width: 1),
-        color: Colors.white,
-      ),
-      child: Text(
-        value ?? 'Tap "Pick on Map" and place a pin',
-        style: TextStyle(
-          color: value == null ? Colors.black54 : Colors.black,
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF1F1F1),
+          borderRadius: BorderRadius.circular(10),
         ),
-        overflow: TextOverflow.ellipsis,
       ),
     );
   }
 }
-
-class _Vehicle {
-  final String id;
-  final String label;
-  final String note;
-  final double base;
-  final double perKm;
-  const _Vehicle({
-    required this.id,
-    required this.label,
-    required this.note,
-    required this.base,
-    required this.perKm,
-  });
-}
-
-enum _Mode { local, intercity }

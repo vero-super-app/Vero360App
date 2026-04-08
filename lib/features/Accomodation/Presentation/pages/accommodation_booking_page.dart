@@ -36,6 +36,8 @@ class AccommodationBookingPage extends StatefulWidget {
   final String propertyName;
   final String location;
   final num pricePerNight;
+  final String accommodationType;
+  final int roomsAvailable;
   final AccommodationPricePeriod? pricePeriod;
   final List<String> photoSources;
   final Uint8List? memoryHeroBytes;
@@ -51,6 +53,8 @@ class AccommodationBookingPage extends StatefulWidget {
     required this.propertyName,
     required this.location,
     required this.pricePerNight,
+    this.accommodationType = '',
+    this.roomsAvailable = 1,
     this.pricePeriod,
     this.photoSources = const [],
     this.memoryHeroBytes,
@@ -99,6 +103,8 @@ class AccommodationBookingPage extends StatefulWidget {
       propertyName: a.name,
       location: a.location,
       pricePerNight: a.price,
+      accommodationType: a.accommodationType,
+      roomsAvailable: a.roomsAvailable,
       pricePeriod: a.pricePeriod,
       photoSources: photoSources,
       memoryHeroBytes: a.imageBytes,
@@ -134,6 +140,10 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   int _heroIndex = 0;
   bool _showSwipeHint = false;
   Timer? _swipeHintTimer;
+  String _ownerName = '';
+  String _ownerEmail = '';
+  String _ownerPhone = '';
+  String _ownerPhotoUrl = '';
 
   List<Widget> get _heroPages {
     final pages = <Widget>[];
@@ -193,6 +203,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   }
 
   Future<void> _bootstrap() async {
+    await _loadOwnerProfile();
     final ok = await AuthHandler.isAuthenticated();
     if (!mounted) return;
     setState(() {
@@ -202,6 +213,253 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     if (ok) await _prefillFromAccount();
     if (!mounted) return;
     _scheduleSwipeHint(_heroPages.length);
+  }
+
+  Future<void> _loadOwnerProfile() async {
+    final fallbackName = (widget.hostDisplayName ?? '').trim();
+    var ownerName = fallbackName;
+    var ownerEmail = '';
+    var ownerPhone = '';
+    var ownerPhoto = '';
+    var ownerUid = (widget.hostMerchantUid ?? '').trim();
+
+    // Fallback when listing did not carry host UID: resolve from Firestore mirror.
+    if (ownerUid.isEmpty && widget.accommodationId > 0) {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('accommodation_rooms')
+            .where('apiAccommodationId', isEqualTo: widget.accommodationId)
+            .limit(1)
+            .get();
+        if (snap.docs.isNotEmpty) {
+          ownerUid = (snap.docs.first.data()['merchantId'] ?? '')
+              .toString()
+              .trim();
+        }
+      } catch (_) {}
+    }
+
+    if (ownerUid.isNotEmpty) {
+      try {
+        final merchantSnap = await FirebaseFirestore.instance
+            .collection('accommodation_merchants')
+            .doc(ownerUid)
+            .get();
+        final merchant = merchantSnap.data();
+        if (merchant != null) {
+          ownerName = _firstNonEmpty([
+            merchant['businessName']?.toString(),
+            merchant['business_name']?.toString(),
+            merchant['companyName']?.toString(),
+            merchant['company_name']?.toString(),
+            ownerName,
+          ]);
+          ownerPhoto = _firstNonEmpty([
+            merchant['profilePicture']?.toString(),
+            merchant['profilepicture']?.toString(),
+            merchant['logo']?.toString(),
+            ownerPhoto,
+          ]);
+        }
+
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(ownerUid)
+            .get();
+        final d = snap.data();
+        if (d != null) {
+          ownerName = _firstNonEmpty([
+            d['businessName']?.toString(),
+            d['business_name']?.toString(),
+            d['companyName']?.toString(),
+            d['company_name']?.toString(),
+            d['displayName']?.toString(),
+            d['name']?.toString(),
+            d['fullName']?.toString(),
+            ownerName,
+          ]);
+          ownerEmail = _firstNonEmpty([
+            d['email']?.toString(),
+          ]);
+          ownerPhone = _firstNonEmpty([
+            d['phone']?.toString(),
+            d['phoneNumber']?.toString(),
+            d['mobile']?.toString(),
+          ]);
+          ownerPhoto = _firstNonEmpty([
+            d['profilePicture']?.toString(),
+            d['profilepicture']?.toString(),
+            d['photoURL']?.toString(),
+          ]);
+        }
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _ownerName = ownerName;
+      _ownerEmail = ownerEmail;
+      _ownerPhone = ownerPhone;
+      _ownerPhotoUrl = ownerPhoto;
+    });
+  }
+
+  void _showOwnerPhotoPreview(String url) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.88),
+      builder: (ctx) => GestureDetector(
+        onTap: () => Navigator.pop(ctx),
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: SafeArea(
+            child: Stack(
+              children: [
+                Center(
+                  child: InteractiveViewer(
+                    minScale: 1,
+                    maxScale: 4,
+                    child: Image.network(
+                      url,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.broken_image_rounded,
+                        color: Colors.white70,
+                        size: 72,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close_rounded, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showOwnerProfileSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) {
+        final name = _ownerName.trim().isNotEmpty
+            ? _ownerName.trim()
+            : (widget.hostDisplayName?.trim().isNotEmpty == true
+                ? widget.hostDisplayName!.trim()
+                : 'Accommodation owner');
+        final email = _ownerEmail.trim();
+        final phone = _ownerPhone.trim();
+        final photo = _ownerPhotoUrl.trim();
+        final hasPhoto = photo.startsWith('http://') || photo.startsWith('https://');
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundColor: _brandNavy.withValues(alpha: 0.08),
+                    child: hasPhoto
+                        ? GestureDetector(
+                            onTap: () => _showOwnerPhotoPreview(photo),
+                            child: ClipOval(
+                              child: Image.network(
+                                photo,
+                                width: 56,
+                                height: 56,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    const Icon(Icons.person_rounded, size: 28),
+                              ),
+                            ),
+                          )
+                        : const Icon(Icons.person_rounded, size: 28),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            color: _brandNavy,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Accommodation business',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (email.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Text('Email: $email',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade800,
+                      fontWeight: FontWeight.w600,
+                    )),
+              ],
+              if (phone.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('Phone: $phone',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade800,
+                      fontWeight: FontWeight.w600,
+                    )),
+              ],
+              if (hasPhoto) ...[
+                const SizedBox(height: 10),
+                TextButton.icon(
+                  onPressed: () => _showOwnerPhotoPreview(photo),
+                  icon: const Icon(Icons.zoom_in_rounded),
+                  label: const Text('View profile picture'),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _prefillFromAccount() async {
@@ -305,6 +563,11 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   AccommodationPricePeriod get _effectivePricePeriod =>
       widget.pricePeriod ?? AccommodationPricePeriod.night;
 
+  bool get _isMultiRoomType {
+    final t = widget.accommodationType.toLowerCase().trim();
+    return t == 'hotel' || t == 'lodge';
+  }
+
   /// For monthly listings: bill in 30-night blocks (rounded up).
   int get _billingMonths {
     final n = _nights;
@@ -335,7 +598,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         return '$_nights day${_nights == 1 ? '' : 's'}';
       case AccommodationPricePeriod.month:
         final m = _billingMonths;
-        return '$m month${m == 1 ? '' : 's'} · $_nights night${_nights == 1 ? '' : 's'}';
+        return '$m month${m == 1 ? '' : 's'}';
     }
   }
 
@@ -457,6 +720,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         bookingDate: dateStr,
         price: _totalMwk,
         bookingFee: 0,
+        phoneNumber: _phoneController.text.trim(),
       );
       final result = await _bookingService.createBooking(payload);
       if (!mounted) return;
@@ -633,7 +897,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   Widget build(BuildContext context) {
     final dateFmt = DateFormat.yMMMd();
     final pages = _heroPages;
-    final user = FirebaseAuth.instance.currentUser;
 
     if (!_authReady) {
       return Scaffold(
@@ -782,6 +1045,30 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                               ],
                             ),
                           ],
+                          if (_isMultiRoomType) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.35),
+                                ),
+                              ),
+                              child: Text(
+                                '${widget.roomsAvailable < 1 ? 1 : widget.roomsAvailable} room${(widget.roomsAvailable < 1 ? 1 : widget.roomsAvailable) == 1 ? '' : 's'} available',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -878,11 +1165,14 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                  child: _LoggedInBanner(
-                    email: user?.email ?? _emailController.text,
-                    name: user?.displayName ?? _nameController.text,
-                    photoUrl: user?.photoURL,
-                    phone: _phoneController.text.trim(),
+                  child: _AccommodationOwnerBanner(
+                    ownerName: _ownerName.isNotEmpty
+                        ? _ownerName
+                        : (widget.hostDisplayName ?? ''),
+                    ownerEmail: _ownerEmail,
+                    ownerPhone: _ownerPhone,
+                    ownerPhotoUrl: _ownerPhotoUrl,
+                    onViewProfile: _showOwnerProfileSheet,
                   ),
                 ),
               ),
@@ -923,6 +1213,28 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (_isMultiRoomType) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(color: Colors.green.shade200),
+                            ),
+                            child: Text(
+                              '${widget.roomsAvailable < 1 ? 1 : widget.roomsAvailable} room${(widget.roomsAvailable < 1 ? 1 : widget.roomsAvailable) == 1 ? '' : 's'} available now',
+                              style: TextStyle(
+                                color: Colors.green.shade800,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                         Text(
                           'MWK ${NumberFormat('#,##0').format(widget.pricePerNight.round())}${_effectivePricePeriod.uiSuffix}',
                           style: TextStyle(
@@ -1169,29 +1481,29 @@ class _SignInRequiredCard extends StatelessWidget {
   }
 }
 
-class _LoggedInBanner extends StatelessWidget {
-  final String? email;
-  final String? name;
-  final String? photoUrl;
-  final String phone;
+class _AccommodationOwnerBanner extends StatelessWidget {
+  final String ownerName;
+  final String ownerEmail;
+  final String ownerPhone;
+  final String ownerPhotoUrl;
+  final VoidCallback onViewProfile;
 
-  const _LoggedInBanner({
-    this.email,
-    this.name,
-    this.photoUrl,
-    this.phone = '',
+  const _AccommodationOwnerBanner({
+    required this.ownerName,
+    required this.ownerEmail,
+    required this.ownerPhone,
+    required this.ownerPhotoUrl,
+    required this.onViewProfile,
   });
 
   @override
   Widget build(BuildContext context) {
-    final display = (name?.trim().isNotEmpty == true)
-        ? name!.trim()
-        : (email ?? 'Signed in');
-    final phoneLine = phone.trim();
+    final display =
+        ownerName.trim().isNotEmpty ? ownerName.trim() : 'Accommodation owner';
+    final emailLine = ownerEmail.trim();
+    final phoneLine = ownerPhone.trim();
     final missingPhone = phoneLine.isEmpty;
-    final url = photoUrl?.trim();
-    final hasPhoto =
-        url != null && url.isNotEmpty && url.startsWith('http');
+    final hasPhoto = ownerPhotoUrl.startsWith('http');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
@@ -1218,17 +1530,17 @@ class _LoggedInBanner extends StatelessWidget {
             child: hasPhoto
                 ? ClipOval(
                     child: Image.network(
-                      url,
+                      ownerPhotoUrl,
                       width: 52,
                       height: 52,
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => const Icon(
-                        Icons.verified_user_rounded,
+                        Icons.person_rounded,
                         color: Colors.white,
                       ),
                     ),
                   )
-                : const Icon(Icons.verified_user_rounded, color: Colors.white),
+                : const Icon(Icons.person_rounded, color: Colors.white),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1236,7 +1548,7 @@ class _LoggedInBanner extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Account details',
+                  'Accommodation owner',
                   style: TextStyle(
                     color: Colors.white70,
                     fontSize: 12,
@@ -1253,10 +1565,10 @@ class _LoggedInBanner extends StatelessWidget {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                if ((email ?? '').trim().isNotEmpty) ...[
+                if (emailLine.isNotEmpty) ...[
                   const SizedBox(height: 2),
                   Text(
-                    email!.trim(),
+                    emailLine,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -1279,6 +1591,21 @@ class _LoggedInBanner extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                     fontStyle:
                         missingPhone ? FontStyle.italic : FontStyle.normal,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TextButton.icon(
+                  onPressed: onViewProfile,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  icon: const Icon(Icons.person_search_rounded, size: 16),
+                  label: const Text(
+                    'View profile',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
                   ),
                 ),
               ],

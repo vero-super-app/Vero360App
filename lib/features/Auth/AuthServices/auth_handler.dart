@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -12,14 +13,27 @@ class AuthHandler {
 
   /// Get the current Firebase ID token, or null if not logged in.
   /// Tries cached first; if null but user exists, forces refresh (helps after ~1hr expiry).
+  static const Duration _cachedTokenTimeout = Duration(seconds: 5);
+  static const Duration _refreshTokenTimeout = Duration(seconds: 10);
+
   static Future<String?> getFirebaseToken() async {
     final user = _firebaseAuth.currentUser;
     if (user == null) return null;
-    var token = await user.getIdToken(false);
-    if (token == null || token.isEmpty) {
-      token = await user.getIdToken(true);
+    try {
+      var token = await user.getIdToken(false).timeout(_cachedTokenTimeout);
+      if (token == null || token.isEmpty) {
+        token = await user.getIdToken(true).timeout(_refreshTokenTimeout);
+      }
+      return token;
+    } on TimeoutException {
+      try {
+        return await user.getIdToken(false).timeout(_cachedTokenTimeout);
+      } catch (_) {
+        return null;
+      }
+    } catch (_) {
+      return null;
     }
-    return token;
   }
 
   /// Prefer Firebase token so session stays valid after 1hr refresh; fallback to SP.
@@ -28,10 +42,6 @@ class AuthHandler {
   static Future<String?> getTokenForApi() async {
     final firebaseToken = await getFirebaseToken();
     if (firebaseToken != null && firebaseToken.isNotEmpty) {
-      if (kDebugMode) {
-        // ignore: avoid_print
-       print('[AuthHandler] full token (Firebase): $firebaseToken');
-      }
       await persistTokenToSp(firebaseToken);
       return firebaseToken;
     }
@@ -39,10 +49,6 @@ class AuthHandler {
     for (final k in _spTokenKeys) {
       final v = sp.getString(k);
       if (v != null && v.isNotEmpty) {
-        if (kDebugMode) {
-          // ignore: avoid_print
-          print('[AuthHandler] full token (SP $k): $v');
-        }
         return v;
       }
     }
@@ -66,9 +72,9 @@ class AuthHandler {
     final user = _firebaseAuth.currentUser;
     if (user == null) return false;
     try {
-      final token = await user.getIdToken(false);
+      final token = await user.getIdToken(false).timeout(_cachedTokenTimeout);
       if (token != null && token.isNotEmpty) return true;
-      final refreshed = await user.getIdToken(true);
+      final refreshed = await user.getIdToken(true).timeout(_refreshTokenTimeout);
       return refreshed != null && refreshed.isNotEmpty;
     } catch (_) {
       final sp = await SharedPreferences.getInstance();

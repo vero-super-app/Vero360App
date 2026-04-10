@@ -9,10 +9,10 @@ import 'package:intl/intl.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
-import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/Post_On_Marketplace.dart';
-import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_menu_post_page.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
+import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 final NumberFormat _mwk0Fmt =
@@ -38,16 +38,20 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     with TickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final MerchantServiceHelper _helper = MerchantServiceHelper();
 
   late TabController _foodTabs;
   Timer? _refreshTimer;
 
-  Map<String, dynamic>? _merchantData;
+  /// Every Firestore read is capped so a hung network call cannot block the dashboard forever.
+  static const Duration _firestoreTimeout = Duration(seconds: 12);
+
+  /// Throttle repeated timeout / error logs when the emulator or network is unhealthy.
+  DateTime? _lastOrdersSummaryErrorLog;
+
   List<dynamic> _recentOrders = [];
   List<dynamic> _menuItems = [];
   List<dynamic> _reviews = [];
-  bool _isLoading = true;
+  bool _isFetching = false;
   String _uid = '';
   String _businessName = '';
   String _merchantEmail = '';
@@ -68,9 +72,11 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   void initState() {
     super.initState();
     _foodTabs = TabController(length: 3, vsync: this);
-    _loadMerchantData();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) _loadMerchantData();
+    _loadMerchantData(showLoader: false);
+    _refreshTimer = Timer.periodic(const Duration(minutes: 3), (_) {
+      if (mounted) {
+        _loadMerchantData(showLoader: false);
+      }
     });
   }
 
@@ -145,46 +151,81 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     }
   }
 
-  Future<void> _loadMerchantData() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadMerchantData({bool showLoader = true}) async {
+    if (_isFetching) return;
+    _isFetching = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? '';
+      _businessName = prefs.getString('business_name') ?? 'Food Business';
+      _merchantEmail = prefs.getString('email') ?? widget.email;
+      _merchantPhone = prefs.getString('phone') ?? '';
 
-    final prefs = await SharedPreferences.getInstance();
-    _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? '';
-    _businessName = prefs.getString('business_name') ?? 'Food Business';
-    _merchantEmail =
-        prefs.getString('email') ?? widget.email;
-    _merchantPhone = prefs.getString('phone') ?? '';
+      if (_uid.isNotEmpty) {
+        // Parallel + bounded timeouts: avoids serial 15s+ stalls and a stuck `_isFetching`.
+        await Future.wait<void>([
+          _loadOrderSummary(),
+          _loadMenuItems(),
+          _loadWalletBalance(),
+          _loadReviews(),
+        ]);
+      }
+    } finally {
+      _isFetching = false;
+    }
+  }
 
-    if (_uid.isNotEmpty) {
-      try {
-        final dashboardData = await _helper.getMerchantDashboardData(_uid, 'food');
+  Future<void> _loadOrderSummary() async {
+    try {
+      final snapshot = await _firestore
+          .collection('food_orders')
+          .where('merchantId', isEqualTo: _uid)
+          .limit(120)
+          .get()
+          .timeout(_firestoreTimeout);
 
-        if (!dashboardData.containsKey('error')) {
-          setState(() {
-            _merchantData = dashboardData['merchant'];
-            _recentOrders = dashboardData['recentOrders'] ?? [];
-            _totalOrders = dashboardData['totalOrders'] ?? 0;
-            _completedOrders = dashboardData['completedOrders'] ?? 0;
-            _pendingOrders = dashboardData['pendingOrders'] ?? 0;
-            _totalRevenue = (dashboardData['totalRevenue'] is num)
-                ? (dashboardData['totalRevenue'] as num).toDouble()
-                : double.tryParse('${dashboardData['totalRevenue']}') ?? 0;
-            _rating = _merchantData?['rating'] is num
-                ? (_merchantData!['rating'] as num).toDouble()
-                : double.tryParse('${_merchantData?['rating']}') ?? 0.0;
-            _status = _merchantData?['status']?.toString() ?? 'pending';
-          });
+      final rows = snapshot.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      rows.sort((a, b) {
+        final ad = a['createdAt'];
+        final bd = b['createdAt'];
+        DateTime at = DateTime.fromMillisecondsSinceEpoch(0);
+        DateTime bt = DateTime.fromMillisecondsSinceEpoch(0);
+        if (ad is Timestamp) at = ad.toDate();
+        if (bd is Timestamp) bt = bd.toDate();
+        return bt.compareTo(at);
+      });
+
+      int completed = 0;
+      int pending = 0;
+      double revenue = 0;
+      for (final o in rows) {
+        final s = (o['status']?.toString().toLowerCase() ?? '').trim();
+        if (s == 'delivered' || s == 'completed') {
+          completed++;
+          final amt = o['totalAmount'];
+          revenue += amt is num ? amt.toDouble() : double.tryParse('$amt') ?? 0;
+        } else if (s == 'pending' || s == 'preparing' || s == 'ready') {
+          pending++;
         }
+      }
 
-        await _loadMenuItems();
-        await _loadWalletBalance();
-        await _loadReviews();
-      } catch (e) {
-        debugPrint('Error loading merchant data: $e');
+      if (!mounted) return;
+      setState(() {
+        _recentOrders = rows.take(10).toList();
+        _totalOrders = rows.length;
+        _completedOrders = completed;
+        _pendingOrders = pending;
+        _totalRevenue = revenue;
+      });
+    } catch (e) {
+      final now = DateTime.now();
+      if (_lastOrdersSummaryErrorLog == null ||
+          now.difference(_lastOrdersSummaryErrorLog!) >
+              const Duration(minutes: 1)) {
+        _lastOrdersSummaryErrorLog = now;
+        debugPrint('Error loading orders summary: $e');
       }
     }
-
-    if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _loadMenuItems() async {
@@ -192,14 +233,24 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       final snapshot = await _firestore
           .collection('food_menu_items')
           .where('merchantId', isEqualTo: _uid)
-          .orderBy('createdAt', descending: true)
           .limit(50)
-          .get();
+          .get()
+          .timeout(_firestoreTimeout);
 
-      _menuItems = snapshot.docs.map((doc) {
+      final rows = snapshot.docs.map((doc) {
         final data = doc.data();
         return {'id': doc.id, ...data};
       }).toList();
+      rows.sort((a, b) {
+        final ad = a['createdAt'];
+        final bd = b['createdAt'];
+        DateTime at = DateTime.fromMillisecondsSinceEpoch(0);
+        DateTime bt = DateTime.fromMillisecondsSinceEpoch(0);
+        if (ad is Timestamp) at = ad.toDate();
+        if (bd is Timestamp) bt = bd.toDate();
+        return bt.compareTo(at);
+      });
+      _menuItems = rows;
 
       if (mounted) setState(() {});
     } catch (e) {
@@ -209,8 +260,11 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
 
   Future<void> _loadWalletBalance() async {
     try {
-      final walletDoc =
-          await _firestore.collection('merchant_wallets').doc(_uid).get();
+      final walletDoc = await _firestore
+          .collection('merchant_wallets')
+          .doc(_uid)
+          .get()
+          .timeout(_firestoreTimeout);
 
       if (walletDoc.exists) {
         final b = walletDoc.data()?['balance'];
@@ -228,11 +282,21 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       final snapshot = await _firestore
           .collection('food_reviews')
           .where('merchantId', isEqualTo: _uid)
-          .orderBy('createdAt', descending: true)
-          .limit(5)
-          .get();
+          .limit(30)
+          .get()
+          .timeout(_firestoreTimeout);
 
-      _reviews = snapshot.docs.map((doc) => doc.data()).toList();
+      final rows = snapshot.docs.map((doc) => doc.data()).toList();
+      rows.sort((a, b) {
+        final ad = a['createdAt'];
+        final bd = b['createdAt'];
+        DateTime at = DateTime.fromMillisecondsSinceEpoch(0);
+        DateTime bt = DateTime.fromMillisecondsSinceEpoch(0);
+        if (ad is Timestamp) at = ad.toDate();
+        if (bd is Timestamp) bt = bd.toDate();
+        return bt.compareTo(at);
+      });
+      _reviews = rows.take(5).toList();
       if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Error loading reviews: $e');
@@ -253,13 +317,13 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
 
   Future<void> _openPostFood() async {
     if (!mounted) return;
-    await Navigator.push<void>(
+    final added = await Navigator.push<bool>(
       context,
-      MaterialPageRoute<void>(
-        builder: (_) => const MarketplaceCrudPage(initialCategory: 'food'),
+      MaterialPageRoute<bool>(
+        builder: (_) => const FoodMenuPostPage(),
       ),
     );
-    if (mounted) await _loadMerchantData();
+    if (added == true && mounted) await _loadMenuItems();
   }
 
   AppBar _buildFoodAppBar() {
@@ -282,66 +346,108 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       backgroundColor: _brandOrange,
       foregroundColor: Colors.white,
       actions: [
-        IconButton(
-          icon: const Icon(Icons.auto_stories_rounded),
-          tooltip: 'Post story (24h)',
-          onPressed: () {
-            final uid = _auth.currentUser?.uid;
-            if (uid == null) {
-              ToastHelper.showCustomToast(
+        Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: GestureDetector(
+            onTap: () {
+              final uid = _auth.currentUser?.uid;
+              if (uid == null) {
+                ToastHelper.showCustomToast(
+                  context,
+                  'Please sign in to post a story',
+                  isSuccess: false,
+                  errorMessage: '',
+                );
+                return;
+              }
+              Navigator.push(
                 context,
-                'Please sign in to post a story',
-                isSuccess: false,
-                errorMessage: '',
+                MaterialPageRoute<bool>(
+                  builder: (_) => PostStoryPage(
+                    merchantId: uid,
+                    merchantName: _businessName.isNotEmpty
+                        ? _businessName
+                        : (_auth.currentUser?.displayName ?? 'Food Merchant'),
+                    serviceType: 'food',
+                  ),
+                ),
               );
-              return;
-            }
-            Navigator.push(
-              context,
-              MaterialPageRoute<bool>(
-                builder: (_) => PostStoryPage(
-                  merchantId: uid,
-                  merchantName: _businessName.isNotEmpty
-                      ? _businessName
-                      : (_auth.currentUser?.displayName ?? 'Food Merchant'),
-                  serviceType: 'food',
+            },
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [
+                        Color(0xFFF58529),
+                        Color(0xFFDD2A7B),
+                        Color(0xFF8134AF),
+                        Color(0xFF515BD4),
+                      ],
+                    ),
+                  ),
+                  child: CircleAvatar(
+                    radius: 16,
+                    backgroundColor: Colors.grey.shade200,
+                    child: const Icon(
+                      Icons.restaurant_menu_rounded,
+                      size: 16,
+                      color: Colors.grey,
+                    ),
+                  ),
                 ),
-              ),
-            );
-          },
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: Container(
+                    width: 18,
+                    height: 18,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Container(
+                      margin: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF25D366),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.add,
+                        size: 14,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
+        // IconButton(
+        //   icon: const Icon(Icons.person_outline_rounded),
+        //   tooltip: 'Profile',
+        //   onPressed: () {
+        //     Navigator.push(
+        //       context,
+        //       MaterialPageRoute(builder: (_) => const ProfilePage()),
+        //     );
+        //   },
+        // ),
         IconButton(
-          icon: const Icon(Icons.shopping_cart_rounded),
-          tooltip: 'Browse app',
+          icon: const Icon(Icons.settings),
+          tooltip: 'Settings',
           onPressed: () {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => Bottomnavbar(email: widget.email),
+                builder: (_) => SettingsPage(onBackToHomeTab: () {}),
               ),
             );
           },
-        ),
-        IconButton(
-          icon: const Icon(Icons.account_balance_wallet_rounded),
-          tooltip: 'Wallet',
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => MerchantWalletPage(
-                  merchantId: _uid,
-                  merchantName: _businessName,
-                  serviceType: 'food',
-                ),
-              ),
-            );
-          },
-        ),
-        IconButton(
-          icon: const Icon(Icons.logout_rounded),
-          tooltip: 'Logout',
-          onPressed: _logout,
         ),
       ],
     );
@@ -628,23 +734,23 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               color: _brandNavy,
               onTap: () => _foodTabs.animateTo(2),
             ),
-            _FoodQuickActionTile(
-              title: 'Wallet',
-              icon: Icons.account_balance_wallet_outlined,
-              color: Colors.green,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => MerchantWalletPage(
-                      merchantId: _uid,
-                      merchantName: _businessName,
-                      serviceType: 'food',
-                    ),
-                  ),
-                );
-              },
-            ),
+            // _FoodQuickActionTile(
+            //   title: 'Wallet',
+            //   icon: Icons.account_balance_wallet_outlined,
+            //   color: Colors.green,
+            //   onTap: () {
+            //     Navigator.push(
+            //       context,
+            //       MaterialPageRoute(
+            //         builder: (_) => MerchantWalletPage(
+            //           merchantId: _uid,
+            //           merchantName: _businessName,
+            //           serviceType: 'food',
+            //         ),
+            //       ),
+            //     );
+            //   },
+            // ),
             _FoodQuickActionTile(
               title: 'Browse app',
               icon: Icons.storefront_outlined,
@@ -1047,48 +1153,6 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     );
   }
 
-  Widget _buildAccountSection() {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(12, 12, 12, 0),
-            child: Text(
-              'Account',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-            ),
-          ),
-          ListTile(
-            leading: Icon(Icons.person_rounded, color: _brandNavy),
-            title: const Text('Merchant profile'),
-            subtitle: Text(_businessName),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () {},
-          ),
-          ListTile(
-            leading: const Icon(Icons.settings_rounded, color: Colors.grey),
-            title: const Text('Settings'),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () {},
-          ),
-          ListTile(
-            leading: const Icon(Icons.logout_rounded, color: Colors.red),
-            title: const Text('Logout'),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: _logout,
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildPostFoodTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -1146,8 +1210,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Opens the listing form with category Food. Use the '
-                            'location pin so customers nearby can find your kitchen.',
+                            'Add dishes to your in-app menu (food only). They appear '
+                            'under My menu after you save.',
                             style: TextStyle(
                               fontSize: 13,
                               color: Colors.grey.shade700,
@@ -1177,7 +1241,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
             ),
             icon: const Icon(Icons.edit_note_rounded),
             label: const Text(
-              'Open post form',
+              'Post Food ',
               style: TextStyle(fontWeight: FontWeight.w900),
             ),
           ),
@@ -1207,8 +1271,6 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
             _buildRecentOrders(),
             const SizedBox(height: 12),
             _buildRecentReviews(),
-            const SizedBox(height: 12),
-            _buildAccountSection(),
           ],
         ),
       ),
@@ -1250,36 +1312,34 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       extendBody: mainNav != null,
       appBar: _buildFoodAppBar(),
       bottomNavigationBar: mainNav,
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Container(
-                  color: Colors.white,
-                  child: TabBar(
-                    controller: _foodTabs,
-                    labelColor: _brandOrange,
-                    unselectedLabelColor: Colors.grey,
-                    indicatorColor: _brandOrange,
-                    tabs: const [
-                      Tab(text: 'Dashboard'),
-                      Tab(text: 'Post food'),
-                      Tab(text: 'My menu'),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: TabBarView(
-                    controller: _foodTabs,
-                    children: [
-                      _buildDashboardTab(),
-                      _buildPostFoodTab(),
-                      _buildMenuTab(),
-                    ],
-                  ),
-                ),
+      body: Column(
+        children: [
+          Container(
+            color: Colors.white,
+            child: TabBar(
+              controller: _foodTabs,
+              labelColor: _brandOrange,
+              unselectedLabelColor: Colors.grey,
+              indicatorColor: _brandOrange,
+              tabs: const [
+                Tab(text: 'Dashboard'),
+                Tab(text: 'Post food'),
+                Tab(text: 'Orders'),
               ],
             ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _foodTabs,
+              children: [
+                _buildDashboardTab(),
+                _buildPostFoodTab(),
+                _buildMenuTab(),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

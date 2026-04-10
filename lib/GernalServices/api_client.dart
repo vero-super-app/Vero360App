@@ -161,9 +161,6 @@ class ApiClient {
         final t = token?.trim();
         if (t != null && t.isNotEmpty) {
           allHeaders['Authorization'] = 'Bearer $t';
-          if (kDebugMode) {
-            debugPrint('[JWT] Auth token length: ${t.length}');
-          }
         }
       }
     } catch (_) {

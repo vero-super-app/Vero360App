@@ -150,7 +150,11 @@ class _BottomnavbarState extends State<Bottomnavbar>
     try {
       final fbUser = FirebaseAuth.instance.currentUser;
       if (fbUser == null) return null;
-      final doc = await FirebaseFirestore.instance.collection('users').doc(fbUser.uid).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(fbUser.uid)
+          .get()
+          .timeout(const Duration(seconds: 10));
       if (doc.exists && doc.data() != null) return (doc.data()!['role'] ?? '').toString().toLowerCase();
     } catch (_) {}
     return null;
@@ -227,7 +231,6 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 
   Widget _buildBody() {
-    if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) return const Center(child: CircularProgressIndicator());
     return _pages[_selectedIndex];
   }
 

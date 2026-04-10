@@ -57,64 +57,63 @@ Future<void> hydrateMerchantServiceFromFirestore(SharedPreferences prefs) async 
 class MerchantServiceHelper {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  Future<QuerySnapshot<Map<String, dynamic>>> _recentOrdersForMerchant(
+  Future<List<Map<String, dynamic>>> _recentOrdersForMerchant(
     String serviceKey,
     String uid,
-  ) {
+  ) async {
+    String collection = 'orders';
+    String ownerField = 'merchantId';
+    Set<String> allowedStatuses = {'pending', 'processing', 'completed'};
+
     switch (serviceKey) {
       case 'food':
-        return _firestore
-            .collection('food_orders')
-            .where('merchantId', isEqualTo: uid)
-            .where('status',
-                whereIn: ['pending', 'preparing', 'ready', 'delivered'])
-            .orderBy('createdAt', descending: true)
-            .limit(20)
-            .get();
+        collection = 'food_orders';
+        ownerField = 'merchantId';
+        allowedStatuses = {'pending', 'preparing', 'ready', 'delivered'};
+        break;
       case 'taxi':
-        return _firestore
-            .collection('taxi_rides')
-            .where('driverId', isEqualTo: uid)
-            .where('status', whereIn: [
-              'requested',
-              'accepted',
-              'in_progress',
-              'completed',
-            ])
-            .orderBy('createdAt', descending: true)
-            .limit(20)
-            .get();
+        collection = 'taxi_rides';
+        ownerField = 'driverId';
+        allowedStatuses = {'requested', 'accepted', 'in_progress', 'completed'};
+        break;
       case 'accommodation':
-        return _firestore
-            .collection('bookings')
-            .where('accommodationId', isEqualTo: uid)
-            .where('status', whereIn: [
-              'pending',
-              'confirmed',
-              'checked_in',
-              'checked_out',
-            ])
-            .orderBy('createdAt', descending: true)
-            .limit(20)
-            .get();
+        collection = 'bookings';
+        ownerField = 'accommodationId';
+        allowedStatuses = {'pending', 'confirmed', 'checked_in', 'checked_out'};
+        break;
       case 'courier':
-        return _firestore
-            .collection('courier_orders')
-            .where('courierId', isEqualTo: uid)
-            .where('status',
-                whereIn: ['pending', 'accepted', 'in_transit', 'delivered'])
-            .orderBy('createdAt', descending: true)
-            .limit(20)
-            .get();
+        collection = 'courier_orders';
+        ownerField = 'courierId';
+        allowedStatuses = {'pending', 'accepted', 'in_transit', 'delivered'};
+        break;
       default:
-        return _firestore
-            .collection('orders')
-            .where('merchantId', isEqualTo: uid)
-            .where('status', whereIn: ['pending', 'processing', 'completed'])
-            .orderBy('createdAt', descending: true)
-            .limit(20)
-            .get();
+        break;
     }
+
+    // Index-safe strategy: filter by owner only, then filter/sort in memory.
+    final snapshot = await _firestore
+        .collection(collection)
+        .where(ownerField, isEqualTo: uid)
+        .limit(120)
+        .get();
+
+    final rows = snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+    final filtered = rows.where((row) {
+      final status = (row['status']?.toString().toLowerCase() ?? '').trim();
+      return allowedStatuses.contains(status);
+    }).toList();
+
+    filtered.sort((a, b) {
+      final ad = a['createdAt'];
+      final bd = b['createdAt'];
+      DateTime at = DateTime.fromMillisecondsSinceEpoch(0);
+      DateTime bt = DateTime.fromMillisecondsSinceEpoch(0);
+      if (ad is Timestamp) at = ad.toDate();
+      if (bd is Timestamp) bt = bd.toDate();
+      return bt.compareTo(at);
+    });
+
+    return filtered.take(20).toList();
   }
 
   // Get merchant dashboard data
@@ -128,21 +127,13 @@ class MerchantServiceHelper {
       final results =
           await Future.wait<dynamic>([merchantFuture, ordersFuture]);
       final merchantDoc = results[0] as DocumentSnapshot<Map<String, dynamic>>;
-      final ordersSnapshot = results[1] as QuerySnapshot<Map<String, dynamic>>;
+      final orders = results[1] as List<Map<String, dynamic>>;
 
       if (!merchantDoc.exists) {
         return {'error': 'Merchant profile not found'};
       }
 
       final merchantData = merchantDoc.data() as Map<String, dynamic>;
-      
-      final orders = ordersSnapshot.docs.map((doc) {
-        final data = doc.data();
-        return {
-          'id': doc.id,
-          ...data,
-        };
-      }).toList();
       
       // Calculate stats
       double totalRevenue = 0;
@@ -153,7 +144,8 @@ class MerchantServiceHelper {
             order['status'] == 'delivered' ||
             order['status'] == 'checked_out') {
           completedOrders++;
-          totalRevenue += (order['totalAmount'] ?? 0).toDouble();
+          final raw = order['totalAmount'];
+          totalRevenue += raw is num ? raw.toDouble() : double.tryParse('$raw') ?? 0;
         }
       }
       

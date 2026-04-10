@@ -43,15 +43,17 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    // Keep WebSocket init + notification gate subscribed so overlays work off the ride-requests page.
-    ref.watch(driverRideRequestsInitProvider);
-    ref.watch(driverRideNotificationsEnabledProvider);
+    final rideNotificationsEnabled = ref.watch(driverRideNotificationsEnabledProvider);
+    if (rideNotificationsEnabled) {
+      // Only initialize ride sockets for driver sessions.
+      ref.watch(driverRideRequestsInitProvider);
+    }
 
     ref.listen(
       driverRideRequestsStreamProvider,
       (prev, next) {
         if (!mounted) return;
-        if (!ref.read(driverRideNotificationsEnabledProvider)) {
+        if (!rideNotificationsEnabled) {
           debugPrint(
               '[RideRequestOverlay] Skipping request — not a driver session');
           return;
@@ -75,7 +77,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       combinedDriverRideRequestsProvider,
       (prev, next) {
         if (!mounted) return;
-        if (!ref.read(driverRideNotificationsEnabledProvider)) {
+        if (!rideNotificationsEnabled) {
           debugPrint(
               '[RideRequestOverlay] Skipping combined — not a driver session');
           return;

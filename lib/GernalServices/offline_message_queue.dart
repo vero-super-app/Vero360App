@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:vero360_app/GeneralModels/messaging_models.dart';
 import 'package:vero360_app/GernalServices/local_message_database.dart';
 
@@ -48,6 +49,9 @@ typedef SyncCallback = Future<bool> Function(QueuedMessageOperation operation);
 
 /// Offline message queue manager
 class OfflineMessageQueue {
+  void _log(String message) {
+    if (kDebugMode) debugPrint(message);
+  }
   final LocalMessageDatabase _database;
   final StreamController<List<QueuedMessageOperation>> _queueController =
       StreamController<List<QueuedMessageOperation>>.broadcast();
@@ -79,10 +83,10 @@ class OfflineMessageQueue {
         final operation = QueuedMessageOperation.fromJson(item);
         _queue[operation.id] = operation;
       }
-      print('[OfflineMessageQueue] Initialized with ${_queue.length} pending operations');
+      _log('[OfflineMessageQueue] Initialized with ${_queue.length} pending operations');
       _notifyQueueChanged();
     } catch (e) {
-      print('[OfflineMessageQueue] Error initializing: $e');
+      _log('[OfflineMessageQueue] Error initializing: $e');
       rethrow;
     }
   }
@@ -187,14 +191,14 @@ class OfflineMessageQueue {
       }
     });
 
-    print('[OfflineMessageQueue] Started periodic sync');
+    _log('[OfflineMessageQueue] Started periodic sync');
   }
 
   /// Stop periodic sync
   void stopPeriodicSync() {
     _syncTimer?.cancel();
     _syncTimer = null;
-    print('[OfflineMessageQueue] Stopped periodic sync');
+    _log('[OfflineMessageQueue] Stopped periodic sync');
   }
 
   /// Process all pending queue items
@@ -205,7 +209,7 @@ class OfflineMessageQueue {
 
     _isProcessing = true;
     try {
-      print('[OfflineMessageQueue] Processing ${_queue.length} pending operations');
+      _log('[OfflineMessageQueue] Processing ${_queue.length} pending operations');
 
       final operationsToProcess = _queue.values.toList();
 
@@ -213,9 +217,9 @@ class OfflineMessageQueue {
         await _processOperation(operation);
       }
 
-      print('[OfflineMessageQueue] Finished processing queue');
+      _log('[OfflineMessageQueue] Finished processing queue');
     } catch (e) {
-      print('[OfflineMessageQueue] Error processing queue: $e');
+      _log('[OfflineMessageQueue] Error processing queue: $e');
     } finally {
       _isProcessing = false;
     }
@@ -224,7 +228,7 @@ class OfflineMessageQueue {
   /// Process a single operation
   Future<void> _processOperation(QueuedMessageOperation operation) async {
     try {
-      print('[OfflineMessageQueue] Processing ${operation.type} operation: ${operation.id}');
+      _log('[OfflineMessageQueue] Processing ${operation.type} operation: ${operation.id}');
 
       bool success = false;
       int attempts = 0;
@@ -234,7 +238,7 @@ class OfflineMessageQueue {
           success = await _syncCallback!(operation);
 
           if (success) {
-            print('[OfflineMessageQueue] Successfully synced ${operation.id}');
+            _log('[OfflineMessageQueue] Successfully synced ${operation.id}');
             _queue.remove(operation.id);
             await _database.removePendingSync(operation.id);
             _notifyQueueChanged();
@@ -242,7 +246,7 @@ class OfflineMessageQueue {
           }
         } catch (e) {
           attempts++;
-          print('[OfflineMessageQueue] Attempt $attempts failed for ${operation.id}: $e');
+          _log('[OfflineMessageQueue] Attempt $attempts failed for ${operation.id}: $e');
 
           if (attempts < _maxRetries) {
             await Future.delayed(_retryDelay);
@@ -251,10 +255,10 @@ class OfflineMessageQueue {
       }
 
       if (!success && attempts >= _maxRetries) {
-        print('[OfflineMessageQueue] Max retries reached for ${operation.id}');
+        _log('[OfflineMessageQueue] Max retries reached for ${operation.id}');
       }
     } catch (e) {
-      print('[OfflineMessageQueue] Error processing operation: $e');
+      _log('[OfflineMessageQueue] Error processing operation: $e');
     }
   }
 
@@ -274,7 +278,7 @@ class OfflineMessageQueue {
       }
       return success;
     } catch (e) {
-      print('[OfflineMessageQueue] Error syncing operation: $e');
+      _log('[OfflineMessageQueue] Error syncing operation: $e');
       return false;
     }
   }
@@ -286,7 +290,7 @@ class OfflineMessageQueue {
       await _database.removePendingSync(operationId);
       _notifyQueueChanged();
     } catch (e) {
-      print('[OfflineMessageQueue] Error removing operation: $e');
+      _log('[OfflineMessageQueue] Error removing operation: $e');
     }
   }
 
@@ -296,9 +300,9 @@ class OfflineMessageQueue {
       _queue.clear();
       await _database.clearPendingSyncs();
       _notifyQueueChanged();
-      print('[OfflineMessageQueue] Queue cleared');
+      _log('[OfflineMessageQueue] Queue cleared');
     } catch (e) {
-      print('[OfflineMessageQueue] Error clearing queue: $e');
+      _log('[OfflineMessageQueue] Error clearing queue: $e');
     }
   }
 

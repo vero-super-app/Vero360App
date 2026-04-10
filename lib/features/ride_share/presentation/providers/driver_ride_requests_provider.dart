@@ -4,6 +4,7 @@ import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
 
@@ -266,6 +267,8 @@ final _driverRideRequestsServiceProvider =
 
 /// Initialize WebSocket connection for driver ride requests
 final driverRideRequestsInitProvider = FutureProvider<void>((ref) async {
+  final enabled = ref.watch(driverRideNotificationsEnabledProvider);
+  if (!enabled) return;
   final service = ref.watch(_driverRideRequestsServiceProvider);
   if (!service.isConnected) {
     await service.connect();
@@ -275,6 +278,8 @@ final driverRideRequestsInitProvider = FutureProvider<void>((ref) async {
 /// Stream of incoming ride requests via WebSocket
 final driverRideRequestsStreamProvider =
     StreamProvider<IncomingRideRequest>((ref) {
+  final enabled = ref.watch(driverRideNotificationsEnabledProvider);
+  if (!enabled) return const Stream<IncomingRideRequest>.empty();
   final service = ref.watch(_driverRideRequestsServiceProvider);
   return service.rideRequestsStream;
 });
@@ -282,6 +287,8 @@ final driverRideRequestsStreamProvider =
 /// Connection status of driver ride requests WebSocket
 final driverRideRequestsConnectionProvider =
     StreamProvider<bool>((ref) {
+  final enabled = ref.watch(driverRideNotificationsEnabledProvider);
+  if (!enabled) return const Stream<bool>.empty();
   final service = ref.watch(_driverRideRequestsServiceProvider);
   return service.connectionStatusStream;
 });
@@ -295,6 +302,13 @@ typedef CombinedDriverRidesState = ({
 /// Combined stream of ride requests from both WebSocket and HTTP polling
 final combinedDriverRideRequestsProvider =
     StreamProvider<CombinedDriverRidesState>((ref) {
+  final enabled = ref.watch(driverRideNotificationsEnabledProvider);
+  if (!enabled) {
+    return Stream<CombinedDriverRidesState>.value((
+      rides: const <DriverRideRequest>[],
+      pollErrorMessage: null,
+    ));
+  }
   ref.watch(driverRideRequestsInitProvider);
 
   return Stream.periodic(

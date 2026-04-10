@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:vero360_app/GeneralModels/messaging_models.dart';
 import 'package:vero360_app/GernalServices/local_message_database.dart';
 import 'package:vero360_app/GernalServices/offline_message_queue.dart';
@@ -6,6 +7,9 @@ import 'package:vero360_app/GernalServices/websocket_messaging_service.dart';
 
 /// Message sync service to handle offline/online sync
 class MessageSyncService {
+  void _log(String message) {
+    if (kDebugMode) debugPrint(message);
+  }
   final WebSocketMessagingService? _webSocket;
   final LocalMessageDatabase _database;
   final OfflineMessageQueue _queue;
@@ -49,23 +53,23 @@ class MessageSyncService {
         });
       }
 
-      print('[MessageSyncService] Initialized');
+      _log('[MessageSyncService] Initialized');
     } catch (e) {
-      print('[MessageSyncService] Error initializing: $e');
+      _log('[MessageSyncService] Error initializing: $e');
       rethrow;
     }
   }
 
   /// Called when WebSocket connects
   Future<void> _onWebSocketConnected() async {
-    print('[MessageSyncService] WebSocket connected, syncing pending operations');
+    _log('[MessageSyncService] WebSocket connected, syncing pending operations');
     await syncPendingOperations();
   }
 
   /// Sync all pending operations
   Future<void> syncPendingOperations() async {
     if (_isSyncing) {
-      print('[MessageSyncService] Already syncing, skipping');
+      _log('[MessageSyncService] Already syncing, skipping');
       return;
     }
 
@@ -75,21 +79,21 @@ class MessageSyncService {
     try {
       final pendingOps = _queue.getQueue();
       if (pendingOps.isEmpty) {
-        print('[MessageSyncService] No pending operations to sync');
+        _log('[MessageSyncService] No pending operations to sync');
         _isSyncing = false;
         _statusController.add(currentStatus);
         return;
       }
 
-      print('[MessageSyncService] Syncing ${pendingOps.length} pending operations');
+      _log('[MessageSyncService] Syncing ${pendingOps.length} pending operations');
 
       // Process queue (it will handle retries internally)
       await _queue.processPendingQueue();
 
       _lastSyncTime = DateTime.now();
-      print('[MessageSyncService] Sync completed');
+      _log('[MessageSyncService] Sync completed');
     } catch (e) {
-      print('[MessageSyncService] Error syncing: $e');
+      _log('[MessageSyncService] Error syncing: $e');
     } finally {
       _isSyncing = false;
       _statusController.add(currentStatus);
@@ -109,11 +113,11 @@ class MessageSyncService {
         case 'read':
           return await _syncReadReceipt(operation);
         default:
-          print('[MessageSyncService] Unknown operation type: ${operation.type}');
+          _log('[MessageSyncService] Unknown operation type: ${operation.type}');
           return false;
       }
     } catch (e) {
-      print('[MessageSyncService] Error executing sync operation: $e');
+      _log('[MessageSyncService] Error executing sync operation: $e');
       return false;
     }
   }
@@ -122,7 +126,7 @@ class MessageSyncService {
   Future<bool> _syncSendMessage(QueuedMessageOperation operation) async {
     try {
       if (_webSocket == null || !_webSocket!.isConnected) {
-        print('[MessageSyncService] WebSocket not connected for send sync');
+        _log('[MessageSyncService] WebSocket not connected for send sync');
         return false;
       }
 
@@ -151,10 +155,10 @@ class MessageSyncService {
       );
       await _database.saveMessage(syncedMsg);
 
-      print('[MessageSyncService] Successfully synced send for ${message.id}');
+      _log('[MessageSyncService] Successfully synced send for ${message.id}');
       return true;
     } catch (e) {
-      print('[MessageSyncService] Error syncing send: $e');
+      _log('[MessageSyncService] Error syncing send: $e');
       return false;
     }
   }
@@ -163,7 +167,7 @@ class MessageSyncService {
   Future<bool> _syncEditMessage(QueuedMessageOperation operation) async {
     try {
       if (_webSocket == null || !_webSocket!.isConnected) {
-        print('[MessageSyncService] WebSocket not connected for edit sync');
+        _log('[MessageSyncService] WebSocket not connected for edit sync');
         return false;
       }
 
@@ -177,10 +181,10 @@ class MessageSyncService {
         newContent: newContent,
       );
 
-      print('[MessageSyncService] Successfully synced edit for $messageId');
+      _log('[MessageSyncService] Successfully synced edit for $messageId');
       return true;
     } catch (e) {
-      print('[MessageSyncService] Error syncing edit: $e');
+      _log('[MessageSyncService] Error syncing edit: $e');
       return false;
     }
   }
@@ -189,7 +193,7 @@ class MessageSyncService {
   Future<bool> _syncDeleteMessage(QueuedMessageOperation operation) async {
     try {
       if (_webSocket == null || !_webSocket!.isConnected) {
-        print('[MessageSyncService] WebSocket not connected for delete sync');
+        _log('[MessageSyncService] WebSocket not connected for delete sync');
         return false;
       }
 
@@ -201,10 +205,10 @@ class MessageSyncService {
         messageId: messageId,
       );
 
-      print('[MessageSyncService] Successfully synced delete for $messageId');
+      _log('[MessageSyncService] Successfully synced delete for $messageId');
       return true;
     } catch (e) {
-      print('[MessageSyncService] Error syncing delete: $e');
+      _log('[MessageSyncService] Error syncing delete: $e');
       return false;
     }
   }
@@ -213,7 +217,7 @@ class MessageSyncService {
   Future<bool> _syncReadReceipt(QueuedMessageOperation operation) async {
     try {
       if (_webSocket == null || !_webSocket!.isConnected) {
-        print('[MessageSyncService] WebSocket not connected for read sync');
+        _log('[MessageSyncService] WebSocket not connected for read sync');
         return false;
       }
 
@@ -225,10 +229,10 @@ class MessageSyncService {
         messageIds: messageIds,
       );
 
-      print('[MessageSyncService] Successfully synced read for $chatId');
+      _log('[MessageSyncService] Successfully synced read for $chatId');
       return true;
     } catch (e) {
-      print('[MessageSyncService] Error syncing read: $e');
+      _log('[MessageSyncService] Error syncing read: $e');
       return false;
     }
   }
@@ -261,11 +265,11 @@ class MessageSyncService {
   /// Force resync all messages in a chat
   Future<void> resyncChat(String chatId) async {
     try {
-      print('[MessageSyncService] Resyncing chat: $chatId');
+      _log('[MessageSyncService] Resyncing chat: $chatId');
       await _database.clearChatMessages(chatId);
       // Messages will be reloaded from Firebase fallback
     } catch (e) {
-      print('[MessageSyncService] Error resyncing chat: $e');
+      _log('[MessageSyncService] Error resyncing chat: $e');
       rethrow;
     }
   }

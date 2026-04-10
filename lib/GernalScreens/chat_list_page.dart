@@ -184,9 +184,12 @@ class _ChatListPageState extends State<ChatListPage> {
                     ? t.participants.first
                     : ChatParticipant(id: 0, name: 'Contact', email: ''),
               );
-              final name = otherParticipant.name.toLowerCase();
+              var pName = otherParticipant.name.toLowerCase();
+              if (pName.isEmpty || pName == 'user') {
+                pName = otherParticipant.email.split('@').first.toLowerCase();
+              }
               final chatName = (t.name ?? '').toLowerCase();
-              return name.contains(q) || chatName.contains(q);
+              return pName.contains(q) || chatName.contains(q);
             }).toList();
           }
 
@@ -217,7 +220,15 @@ class _ChatListPageState extends State<ChatListPage> {
                       : ChatParticipant(id: 0, name: 'Contact', email: ''),
                 );
 
-                final name = otherParticipant.name.trim();
+                // Use participant name, but fall back to email prefix
+                // if name is empty or a generic placeholder like "user"
+                var name = otherParticipant.name.trim();
+                if (name.isEmpty || name.toLowerCase() == 'user') {
+                  final email = otherParticipant.email.trim();
+                  if (email.isNotEmpty) {
+                    name = email.split('@').first;
+                  }
+                }
                 final avatarUrl = otherParticipant.profilePicture ?? '';
 
                 final subtitle = t.type == 'direct'

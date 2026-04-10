@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:intl/intl.dart';
@@ -26,6 +27,7 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
   bool _isLoading = true;
   bool _isSending = false;
   String? _error;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
@@ -35,6 +37,7 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -48,6 +51,10 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
       );
       _chatId = chat.id;
       await _loadMessages();
+      // Start polling for new messages every 3 seconds
+      _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+        if (mounted) _loadMessages();
+      });
     } catch (e) {
       if (mounted) {
         setState(() {

@@ -35,8 +35,9 @@ import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
-import 'package:vero360_app/Home/Messages.dart';
-import 'package:vero360_app/GernalServices/chat_service.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
@@ -925,17 +926,80 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
   Future<void> _openChatWithMerchant(MarketplaceDetailModel item) async {
     if (!await _requireLoginForChat()) return;
-    final peerAppId = (item.serviceProviderId ?? item.sellerUserId ?? '').trim();
-    if (peerAppId.isEmpty) { if (!mounted) return; ToastHelper.showCustomToast(context, 'Seller chat unavailable', isSuccess: false, errorMessage: 'Seller id missing'); return; }
-    final merchantName = (item.merchantName ?? '').trim();
-    final sellerName = merchantName.isNotEmpty ? merchantName : ((item.sellerBusinessName ?? 'Seller').trim());
-    final rawAvatar = (item.sellerLogoUrl ?? '').trim();
-    final sellerAvatar = (await _toDownloadUrl(rawAvatar)) ?? rawAvatar;
-    await ChatService.ensureFirebaseAuth();
-    final me = await ChatService.myAppUserId();
-    await ChatService.ensureThread(myAppId: me, peerAppId: peerAppId, peerName: sellerName, peerAvatar: sellerAvatar);
-    if (!mounted) return;
-    Navigator.push(context, MaterialPageRoute(builder: (_) => MessagePage(peerAppId: peerAppId, peerName: sellerName, peerAvatarUrl: sellerAvatar, peerId: '')));
+
+    try {
+      // Resolve seller numeric ID from available fields
+      final idCandidates = [
+        item.serviceProviderId,
+        item.sellerUserId,
+        item.merchantId,
+      ];
+
+      int? sellerId;
+      String? firebaseUidToLookup;
+
+      for (final candidate in idCandidates) {
+        if (candidate != null && candidate.trim().isNotEmpty) {
+          sellerId = int.tryParse(candidate.trim());
+          if (sellerId != null && sellerId > 0) break;
+          firebaseUidToLookup ??= candidate.trim();
+        }
+      }
+
+      // If no numeric ID, try resolving Firebase UID via backend
+      if ((sellerId == null || sellerId <= 0) && firebaseUidToLookup != null) {
+        sellerId = await BackendChatService.getUserIdByFirebaseUid(firebaseUidToLookup);
+      }
+
+      if (sellerId == null || sellerId <= 0) {
+        if (!mounted) return;
+        ToastHelper.showCustomToast(context, 'Seller chat unavailable', isSuccess: false, errorMessage: 'Seller id missing');
+        return;
+      }
+
+      final myId = await AuthStorage.userIdFromToken();
+      if (myId == null) {
+        if (!mounted) return;
+        ToastHelper.showCustomToast(context, 'Please log in to chat', isSuccess: false, errorMessage: '');
+        return;
+      }
+
+      // Don't allow chatting with yourself
+      if (sellerId == myId) {
+        if (kDebugMode) debugPrint('[_openChatWithMerchant] sellerId ($sellerId) == myId ($myId), this is your own listing');
+        if (!mounted) return;
+        ToastHelper.showCustomToast(context, 'This is your own listing', isSuccess: false, errorMessage: '');
+        return;
+      }
+
+      final merchantName = (item.merchantName ?? '').trim();
+      final sellerName = merchantName.isNotEmpty ? merchantName : ((item.sellerBusinessName ?? 'Seller').trim());
+      final rawAvatar = (item.sellerLogoUrl ?? '').trim();
+      final sellerAvatar = (await _toDownloadUrl(rawAvatar)) ?? rawAvatar;
+
+      // Create or get existing chat via backend API
+      final chat = await BackendChatService.ensureChat(
+        peerUserId: sellerId,
+        peerName: sellerName,
+        peerAvatar: sellerAvatar,
+      );
+
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MessagePageBackendApi(
+            peerId: chat.id,
+            peerName: sellerName,
+            peerAvatarUrl: sellerAvatar,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[_openChatWithMerchant] Error: $e');
+      if (!mounted) return;
+      ToastHelper.showCustomToast(context, 'Error opening chat', isSuccess: false, errorMessage: e.toString());
+    }
   }
 
   Future<void> _goToCheckoutFromBottomSheet(MarketplaceDetailModel item) async {

@@ -474,6 +474,10 @@ class BackendChatService {
   }) async {
     await ensureAuth();
 
+    if (peerUserId == _userId) {
+      throw Exception('Cannot create a chat with yourself');
+    }
+
     try {
       final response = await http
           .post(

@@ -1223,7 +1223,7 @@ class AuthFlow {
           'Authorization': 'Bearer $token',
           'Accept': 'application/json'
         },
-      );
+      ).timeout(const Duration(seconds: 15));
 
       if (resp.statusCode == 200) {
         final decoded = json.decode(resp.body);

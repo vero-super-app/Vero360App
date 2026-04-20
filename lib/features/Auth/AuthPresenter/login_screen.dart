@@ -1,4 +1,4 @@
-import 'dart:async' show unawaited;
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +16,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
@@ -243,7 +244,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<String?> _fetchMerchantServiceFromFirebase(String uid) async {
     try {
-      final userDoc = await _firestore.collection('users').doc(uid).get();
+      final userDoc = await _firestore
+          .collection('users')
+          .doc(uid)
+          .get()
+          .timeout(const Duration(seconds: 10));
       if (userDoc.exists) {
         final userData = userDoc.data();
         return userData?['merchantService']?.toString() ??
@@ -256,8 +261,11 @@ class _LoginScreenState extends State<LoginScreen> {
         final collectionName =
             service == 'marketplace' ? 'marketplace_merchants' : '${service}_merchants';
 
-        final merchantDoc =
-            await _firestore.collection(collectionName).doc(uid).get();
+        final merchantDoc = await _firestore
+            .collection(collectionName)
+            .doc(uid)
+            .get()
+            .timeout(const Duration(seconds: 8));
         if (merchantDoc.exists) {
           return service;
         }
@@ -271,7 +279,11 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<Map<String, dynamic>> _buildResultFromUser(User user) async {
     Map<String, dynamic> profile = {};
     try {
-      final snap = await _firestore.collection('users').doc(user.uid).get();
+      final snap = await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .get()
+          .timeout(const Duration(seconds: 12));
       if (snap.exists && snap.data() != null) {
         profile = Map<String, dynamic>.from(snap.data()!);
       }
@@ -300,7 +312,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     final role =
         (profile['role'] ?? 'customer').toString().toLowerCase();
-    final token = await user.getIdToken();
+    final token = await AuthHandler.getFirebaseToken();
     final rawEmail = user.email ?? _identifier.text.trim();
     final isPhoneAccount = rawEmail.endsWith('@phone.vero360.app');
     final displayEmail = isPhoneAccount ? '' : rawEmail;

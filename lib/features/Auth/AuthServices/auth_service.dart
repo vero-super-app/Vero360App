@@ -20,6 +20,7 @@ import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 enum DeleteAccountStatus { success, requiresRecentLogin, failed }
 
@@ -146,7 +147,11 @@ class AuthService {
   }) async {
     Map<String, dynamic> profile = {};
     try {
-      final snap = await _firestore.collection('users').doc(user.uid).get();
+      final snap = await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .get()
+          .timeout(const Duration(seconds: 12));
       if (snap.exists && snap.data() != null) {
         profile = Map<String, dynamic>.from(snap.data()!);
       }
@@ -159,7 +164,7 @@ class AuthService {
         .toString()
         .toLowerCase();
 
-    final token = await user.getIdToken();
+    final token = await AuthHandler.getFirebaseToken();
 
     // Avoid logging raw JWT values; they can be used to impersonate users.
     if (token != null && token.isNotEmpty && kDebugMode) {

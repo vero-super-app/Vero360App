@@ -454,7 +454,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final role = (_role == UserRole.merchant || _role == UserRole.driver)
         ? _roleString
         : roleFromProfile;
-    final token = await user.getIdToken();
+    final token = await AuthHandler.getFirebaseToken();
     final re = user.email ?? _identifierEmail;
     final responseEmail = profile['email']?.toString() ??
         (!re.endsWith('@phone.vero360.app') ? re : _identifierEmail);
@@ -483,7 +483,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   /// waiting for Firestore reads/writes. Uses current form state for fields.
   Future<Map<String, dynamic>> _buildQuickResultFromUser(User user) async {
     final role = _roleString;
-    final token = await user.getIdToken();
+    final token = await AuthHandler.getFirebaseToken();
     // Prefer explicit email from form, fall back to Firebase email.
     final rawEmail = user.email ?? _identifierEmail;
     final emailForUser = _identifierEmail.isNotEmpty ? _identifierEmail : rawEmail;
@@ -535,7 +535,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     // Ensure backend gets the new user's token (persist so ApiClient uses it).
-    final token = await user.getIdToken(true);
+    String? token;
+    try {
+      token = await user
+          .getIdToken(true)
+          .timeout(const Duration(seconds: 12));
+    } catch (_) {
+      token = await AuthHandler.getFirebaseToken();
+    }
     if (token != null && token.isNotEmpty) {
       await AuthHandler.persistTokenToSp(token);
     }

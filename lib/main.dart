@@ -7,7 +7,6 @@ import 'package:flutter/foundation.dart'
         kIsWeb,
         defaultTargetPlatform,
         TargetPlatform,
-        debugPrint,
         ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -19,7 +18,6 @@ import 'package:app_links/app_links.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 // HTTP + prefs
 import 'package:http/http.dart' as http;
@@ -40,18 +38,15 @@ import 'package:vero360_app/features/Restraurants/RestraurantPresenter/Restraura
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_request_overlay.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 
 // Services
 import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
-import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/messaging_initialization_service.dart';
-import 'package:vero360_app/GernalServices/websocket_messaging_service.dart';
-import 'package:vero360_app/GernalServices/websocket_manager.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
@@ -60,7 +55,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
-import 'package:vero360_app/GernalServices/driver_service.dart';
 
 final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
 
@@ -728,209 +722,32 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
   }
 
-  /// Fix emulator localhost:
-  /// Android emulator: 127.0.0.1 = emulator itself. Use 10.0.2.2 for host machine.
-  String _fixLocalhostIfNeeded(String base) {
-    if (kIsWeb) return base;
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      return base.replaceFirst(
-          'localhost', 'https://vero-backend-2.onrender.com');
-    }
-    return base;
-  }
-
   Future<void> _verifyRoleFromServerInBg() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = _readToken(prefs);
+    final token = RoleSessionService.readToken(prefs);
 
     if (token == null || token.trim().isEmpty) return;
 
-    try {
-      final resp = await http.get(
-        ApiConfig.endpoint('/users/me'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Accept': 'application/json'
-        },
-      ).timeout(const Duration(seconds: 6));
-
-      if (resp.statusCode == 200) {
-        final decoded = json.decode(resp.body);
-        final user = (decoded is Map && decoded['data'] is Map)
-            ? Map<String, dynamic>.from(decoded['data'])
-            : (decoded is Map
-                ? Map<String, dynamic>.from(decoded)
-                : <String, dynamic>{});
-
-        final backendRole = (user['role'] ?? '').toString().toLowerCase();
-        final cachedRole = (prefs.getString('user_role') ?? '').toLowerCase();
-
-        // Case 1: cached role says driver/merchant but backend says customer
-        // -> re-sync cached role to backend
-        if (cachedRole.isNotEmpty &&
-            cachedRole != 'customer' &&
-            backendRole == 'customer') {
-          await _resyncRoleToBackend(prefs, token, cachedRole);
-          return;
-        }
-
-        // Case 2: both cached and backend say customer, but Firestore
-        // (the registration source of truth) says driver/merchant.
-        // This happens when SharedPreferences was overwritten by a previous
-        // backend fetch before the re-sync could fix it.
-        if (backendRole == 'customer') {
-          final firestoreRole = await _getRoleFromFirestore();
-          if (firestoreRole != null &&
-              firestoreRole != 'customer' &&
-              firestoreRole != backendRole) {
-            // debugPrint(
-            //     '⚠️ Firestore says "$firestoreRole" but backend says "$backendRole". Re-syncing…');
-            await prefs.setString('user_role', firestoreRole);
-            await prefs.setString('role', firestoreRole);
-            await _resyncRoleToBackend(prefs, token, firestoreRole);
-            return;
-          }
-        }
-
-        await _persistUserToPrefs(prefs, user);
-
-        final merchant = _isMerchant(user);
-        final driver = _isDriver(user);
-
-        if (merchant && _currentShell != 'merchant') {
-          await _pushMerchant((user['email'] ?? '').toString());
-        } else if (!merchant && driver && _currentShell != 'driver') {
-          _pushDriver((user['email'] ?? '').toString());
-        } else if (!merchant && !driver && _currentShell != 'customer') {
-          _pushCustomer((user['email'] ?? '').toString());
-        }
-      } else if (resp.statusCode == 401 || resp.statusCode == 403) {
-        await _clearAuth(prefs);
-      }
-    } catch (_) {
-      // network hiccup: keep current shell
-    }
-  }
-
-  /// Read the user's role from Firestore (registration source of truth).
-  Future<String?> _getRoleFromFirestore() async {
-    try {
-      final fbUser = FirebaseAuth.instance.currentUser;
-      if (fbUser == null) return null;
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(fbUser.uid)
-          .get();
-      if (doc.exists && doc.data() != null) {
-        return (doc.data()!['role'] ?? '').toString().toLowerCase();
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  /// Backend has the wrong role (e.g. 'customer' when it should be 'driver').
-  /// Send PUT /users/me to correct it, then re-verify.
-  Future<void> _resyncRoleToBackend(
-      SharedPreferences prefs, String token, String correctRole) async {
-    try {
-      final body = json.encode({'role': correctRole});
-      final putResp = await http
-          .put(
-            ApiConfig.endpoint('/users/me'),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-            },
-            body: body,
-          )
-          .timeout(const Duration(seconds: 6));
-
-      if (putResp.statusCode >= 200 && putResp.statusCode < 300) {
-        debugPrint('✅ Re-synced role to backend: $correctRole');
-        // Re-read the updated user from backend
-        final getResp = await http.get(
-          ApiConfig.endpoint('/users/me'),
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Accept': 'application/json',
-          },
-        ).timeout(const Duration(seconds: 6));
-        if (getResp.statusCode == 200) {
-          final decoded = json.decode(getResp.body);
-          final user = (decoded is Map && decoded['data'] is Map)
-              ? Map<String, dynamic>.from(decoded['data'])
-              : (decoded is Map
-                  ? Map<String, dynamic>.from(decoded)
-                  : <String, dynamic>{});
-          await _persistUserToPrefs(prefs, user);
-
-          final merchant = _isMerchant(user);
-          final driver = _isDriver(user);
-          if (merchant && _currentShell != 'merchant') {
-            await _pushMerchant((user['email'] ?? '').toString());
-          } else if (!merchant && driver && _currentShell != 'driver') {
-            _pushDriver((user['email'] ?? '').toString());
-          } else if (!merchant && !driver && _currentShell != 'customer') {
-            _pushCustomer((user['email'] ?? '').toString());
-          }
-        }
-      }
-    } catch (e) {
-      // debugPrint('⚠️ Role re-sync failed: $e');
-    }
-  }
-
-  String? _readToken(SharedPreferences p) =>
-      p.getString('jwt_token') ??
-      p.getString('token') ??
-      p.getString('authToken');
-
-  bool _isMerchant(Map<String, dynamic> u) => RoleHelper.isMerchant(u);
-
-  bool _isDriver(Map<String, dynamic> u) => RoleHelper.isDriver(u);
-
-  Future<void> _persistUserToPrefs(
-      SharedPreferences prefs, Map<String, dynamic> u) async {
-    String join(String? a, String? b) {
-      final parts = [a, b]
-          .where((x) => x != null && x.trim().isNotEmpty)
-          .map((x) => x!.trim())
-          .toList();
-      return parts.isEmpty ? '' : parts.join(' ');
+    final result = await RoleSessionService.syncFromServer(
+      prefs: prefs,
+      token: token,
+    );
+    if (result == null) return;
+    if (result.isUnauthorized) {
+      await _clearAuth(prefs);
+      return;
     }
 
-    final name = (u['name'] ?? join(u['firstName'], u['lastName'])).toString();
-    final email = (u['email'] ?? u['userEmail'] ?? '').toString();
-    final phone = (u['phone'] ?? '').toString();
-    final pic = (u['profilepicture'] ?? u['profilePicture'] ?? '').toString();
-
-    await prefs.setString('fullName', name.isEmpty ? 'Guest User' : name);
-    await prefs.setString('name', name.isEmpty ? 'Guest User' : name);
-    await prefs.setString('email', email);
-    await prefs.setString('phone', phone);
-    await prefs.setString('profilepicture', pic);
-
-    // Determine role with proper priority: merchant > driver > customer
-    // Keep both 'role' and 'user_role' in sync so BottomNavbar and others stay correct after hot restart.
-    bool isMerchant = _isMerchant(u);
-    bool isDriver = !isMerchant && _isDriver(u);
-
-    if (isMerchant) {
-      await prefs.setString('user_role', 'merchant');
-      await prefs.setString('role', 'merchant');
-      await persistMerchantServiceFromApi(
-        prefs,
-        u['merchantService']?.toString() ??
-            u['serviceType']?.toString() ??
-            u['merchant_service']?.toString(),
-      );
-    } else if (isDriver) {
-      await prefs.setString('user_role', 'driver');
-      await prefs.setString('role', 'driver');
-    } else {
-      await prefs.setString('user_role', 'customer');
-      await prefs.setString('role', 'customer');
+    if (result.isMerchant && _currentShell != 'merchant') {
+      await _pushMerchant(result.email);
+    } else if (!result.isMerchant &&
+        result.isDriver &&
+        _currentShell != 'driver') {
+      _pushDriver(result.email);
+    } else if (!result.isMerchant &&
+        !result.isDriver &&
+        _currentShell != 'customer') {
+      _pushCustomer(result.email);
     }
   }
 
@@ -1201,15 +1018,6 @@ class AuthFlow {
         (route) => false,
       );
     }
-  }
-
-  static String _fixLocalhostIfNeeded(String base) {
-    if (kIsWeb) return base;
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      return base.replaceFirst(
-          'localhost', 'https://vero-backend-2.onrender.com');
-    }
-    return base;
   }
 
   static Future<void> onLoginSuccess(BuildContext ctx, String token) async {

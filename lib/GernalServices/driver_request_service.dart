@@ -9,6 +9,7 @@ import 'package:vero360_app/config/api_config.dart';
 /// Result of fetching pending rides (distinguishes empty list vs error).
 class PendingRidesFetchResult {
   final List<DriverRideRequest> requests;
+
   /// Set when HTTP failed or returned an error status (not for empty 200 list).
   final String? errorMessage;
 
@@ -36,6 +37,7 @@ class DriverRideRequest {
   final double estimatedDistance;
   final double estimatedFare;
   final String? passengerPhone;
+  final int? candidateTaxiId;
 
   DriverRideRequest({
     required this.id,
@@ -53,6 +55,7 @@ class DriverRideRequest {
     required this.estimatedDistance,
     required this.estimatedFare,
     this.passengerPhone,
+    this.candidateTaxiId,
   });
 
   Map<String, dynamic> toMap() {
@@ -72,6 +75,7 @@ class DriverRideRequest {
       'estimatedDistance': estimatedDistance,
       'estimatedFare': estimatedFare,
       'passengerPhone': passengerPhone,
+      'candidateTaxiId': candidateTaxiId,
     };
   }
 
@@ -109,6 +113,13 @@ class DriverRideRequest {
       return value.toString();
     }
 
+    int? parseNullableInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
     // Get passenger name from nested passenger object if available
     String getPassengerName(dynamic passengerData) {
       if (passengerData is Map && passengerData.containsKey('name')) {
@@ -136,6 +147,8 @@ class DriverRideRequest {
       estimatedDistance: parseDouble(map['estimatedDistance']),
       estimatedFare: parseDouble(map['estimatedFare']),
       passengerPhone: map['passengerPhone'],
+      candidateTaxiId: parseNullableInt(map['candidateTaxiId']) ??
+          parseNullableInt(map['taxiId']),
     );
   }
 
@@ -155,6 +168,7 @@ class DriverRideRequest {
     double? estimatedDistance,
     double? estimatedFare,
     String? passengerPhone,
+    int? candidateTaxiId,
   }) {
     return DriverRideRequest(
       id: id ?? this.id,
@@ -172,6 +186,7 @@ class DriverRideRequest {
       estimatedDistance: estimatedDistance ?? this.estimatedDistance,
       estimatedFare: estimatedFare ?? this.estimatedFare,
       passengerPhone: passengerPhone ?? this.passengerPhone,
+      candidateTaxiId: candidateTaxiId ?? this.candidateTaxiId,
     );
   }
 }

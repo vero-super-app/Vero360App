@@ -67,7 +67,7 @@ class RideShareHttpService {
       final storedToken = prefs.getString('jwt_token') ??
           prefs.getString('token') ??
           prefs.getString('jwt');
-      
+
       if (storedToken != null) {
         print('[RideShare] Using stored token from SharedPreferences');
         return storedToken;
@@ -102,7 +102,7 @@ class RideShareHttpService {
   Future<void> _initializeSocket() async {
     // Get auth token before connecting
     final token = await _getAuthToken();
-    
+
     socket = IO.io(
       ApiConfig.prod,
       IO.OptionBuilder()
@@ -252,17 +252,21 @@ class RideShareHttpService {
         try {
           final rideData = jsonDecode(response.body);
           final ride = Ride.fromJson(rideData);
-          
+
           // Check if ride was auto-cancelled due to no drivers
-          if (ride.status == RideStatus.cancelled && ride.cancellationReason == 'No drivers available in your area') {
-            print('[RideShareHttpService] Ride auto-cancelled: ${ride.cancellationReason}');
+          if (ride.status == RideStatus.cancelled &&
+              ride.cancellationReason == 'No drivers available in your area') {
+            print(
+                '[RideShareHttpService] Ride auto-cancelled: ${ride.cancellationReason}');
           } else if (ride.isCancelled) {
-            print('[RideShareHttpService] Ride returned as cancelled: ${ride.cancellationReason}');
+            print(
+                '[RideShareHttpService] Ride returned as cancelled: ${ride.cancellationReason}');
           }
-          
+
           return ride;
         } catch (parseError) {
-          print('[RideShareHttpService] Error parsing ride response: $parseError');
+          print(
+              '[RideShareHttpService] Error parsing ride response: $parseError');
           rethrow;
         }
       } else if (response.statusCode == 400) {
@@ -272,10 +276,12 @@ class RideShareHttpService {
           final message = errorData['message'] ?? 'Invalid request parameters';
           throw Exception(message);
         } catch (e) {
-          throw Exception('Failed to request ride: Invalid parameters - ${response.body}');
+          throw Exception(
+              'Failed to request ride: Invalid parameters - ${response.body}');
         }
       } else {
-        print('[RideShareHttpService] Ride creation failed: ${response.statusCode}');
+        print(
+            '[RideShareHttpService] Ride creation failed: ${response.statusCode}');
         print('[RideShareHttpService] Response: ${response.body}');
         throw Exception('Failed to request ride: ${response.statusCode}');
       }
@@ -402,7 +408,8 @@ class RideShareHttpService {
       if (response.statusCode == 200) {
         return Ride.fromJson(jsonDecode(response.body));
       } else {
-        throw Exception('Failed to mark driver arrived: ${response.statusCode}');
+        throw Exception(
+            'Failed to mark driver arrived: ${response.statusCode}');
       }
     } catch (e) {
       print('Error marking driver arrived');
@@ -464,12 +471,14 @@ class RideShareHttpService {
         body: jsonEncode(body),
       );
 
-      print('[RideShareHttpService] Complete ride response: ${response.statusCode}');
+      print(
+          '[RideShareHttpService] Complete ride response: ${response.statusCode}');
       if (response.statusCode == 200) {
         return Ride.fromJson(jsonDecode(response.body));
       } else {
         print('[RideShareHttpService] Error response: ${response.body}');
-        throw Exception('Failed to complete ride: ${response.statusCode} - ${response.body}');
+        throw Exception(
+            'Failed to complete ride: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
       print('Error completing ride');
@@ -502,11 +511,13 @@ class RideShareHttpService {
           print('[RideShareHttpService] Cancel response: $rideData');
           return Ride.fromJson(rideData);
         } catch (parseError) {
-          print('[RideShareHttpService] Error parsing cancel ride response: $parseError');
+          print(
+              '[RideShareHttpService] Error parsing cancel ride response: $parseError');
           rethrow;
         }
       } else {
-        throw Exception('Failed to cancel ride: ${response.statusCode} - ${response.body}');
+        throw Exception(
+            'Failed to cancel ride: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
       print('Error cancelling ride');
@@ -521,8 +532,17 @@ class RideShareHttpService {
   /// Get active rides for driver
   Future<List<Ride>> getActiveRidesForDriver(int driverId) async {
     try {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await http.get(
         ApiConfig.endpoint('/ride-share/drivers/$driverId/active-rides'),
+        headers: headers,
       );
 
       if (response.statusCode == 200) {
@@ -546,9 +566,11 @@ class RideShareHttpService {
 
   /// Subscribe to passenger ride tracking
   Future<void> subscribeToRideTracking(int rideId) async {
-    print('[RideShareHttpService] subscribeToRideTracking called for ride $rideId');
+    print(
+        '[RideShareHttpService] subscribeToRideTracking called for ride $rideId');
     await _ensureSocketInitialized();
-    print('[RideShareHttpService] Socket initialized, connected: ${socket.connected}');
+    print(
+        '[RideShareHttpService] Socket initialized, connected: ${socket.connected}');
 
     socket.emit('passenger:subscribe', {'rideId': rideId});
     print(
@@ -569,24 +591,22 @@ class RideShareHttpService {
   }
 
   /// Subscribe driver to send location updates
-  Future<void> subscribeDriverTracking(int rideId, int driverId, int vehicleId) async {
+  Future<void> subscribeDriverTracking(int rideId) async {
     await _ensureSocketInitialized();
     socket.emit('driver:subscribe', {
       'rideId': rideId,
-      'driverId': driverId,
-      'vehicleId': vehicleId,
     });
   }
 
   /// Update driver location via websocket
-  Future<void> updateDriverLocationWebSocket(int rideId, double latitude, double longitude) async {
+  Future<void> updateDriverLocationWebSocket(
+      int rideId, double latitude, double longitude) async {
     await _ensureSocketInitialized();
     // Event name must match the backend SubscribeMessage('driver:location') handler
     socket.emit('driver:location', {
       'rideId': rideId,
       'latitude': latitude,
       'longitude': longitude,
-      'timestamp': DateTime.now().toIso8601String(),
     });
   }
 
@@ -597,7 +617,8 @@ class RideShareHttpService {
         callback(Map<String, dynamic>.from(data));
       });
     } catch (e) {
-      print('[RideShareHttpService] Error registering driver location listener');
+      print(
+          '[RideShareHttpService] Error registering driver location listener');
     }
   }
 
@@ -642,7 +663,8 @@ class RideShareHttpService {
     try {
       _connectionStatusController.close();
     } catch (e) {
-      print('[RideShareHttpService] Error closing connection status controller');
+      print(
+          '[RideShareHttpService] Error closing connection status controller');
     }
     try {
       _driverLocationController.close();

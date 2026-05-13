@@ -78,13 +78,17 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     _searchController.clear();
 
     final currentLoc = ref.read(currentLocationProvider);
+    final pickupAddress = ref.read(pickupDisplayProvider).maybeWhen(
+          data: (pickup) => pickup.address,
+          orElse: () => 'Current Location',
+        );
 
     currentLoc.whenData((position) {
       if (position != null && dropoffPlace != null) {
         final pickupPlace = Place(
           id: 'current_location',
           name: 'Your Location',
-          address: 'Current Location',
+          address: pickupAddress,
           latitude: position.latitude,
           longitude: position.longitude,
           type: PlaceType.RECENT,
@@ -342,24 +346,31 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
         final currentLocation = ref.watch(currentLocationProvider);
         final lastKnown = ref.watch(lastKnownLocationProvider);
         final dropoffPlace = ref.watch(selectedDropoffPlaceProvider);
+        final resolvedPickupAddress =
+            ref.watch(pickupDisplayProvider).maybeWhen(
+                  data: (pickup) => pickup.address,
+                  orElse: () => 'Current Location',
+                );
 
         // Use live GPS if available, otherwise fall back to last persisted location
         final position = currentLocation.maybeWhen(
-          data: (p) => p,
-          orElse: () => null,
-        ) ?? lastKnown.maybeWhen(
-          data: (p) => p,
-          orElse: () => null,
-        );
+              data: (p) => p,
+              orElse: () => null,
+            ) ??
+            lastKnown.maybeWhen(
+              data: (p) => p,
+              orElse: () => null,
+            );
 
         if (position != null &&
             (_cachedPickupPlace == null ||
                 _cachedPickupPlace!.latitude != position.latitude ||
-                _cachedPickupPlace!.longitude != position.longitude)) {
+                _cachedPickupPlace!.longitude != position.longitude ||
+                _cachedPickupPlace!.address != resolvedPickupAddress)) {
           _cachedPickupPlace = Place(
             id: 'current_location',
             name: 'Your Location',
-            address: 'Current Location',
+            address: resolvedPickupAddress,
             latitude: position.latitude,
             longitude: position.longitude,
             type: PlaceType.RECENT,

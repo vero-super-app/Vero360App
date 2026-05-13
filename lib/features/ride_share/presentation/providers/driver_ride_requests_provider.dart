@@ -10,11 +10,17 @@ import 'dart:async';
 /// Model for incoming ride request from WebSocket
 class IncomingRideRequest {
   final int rideId;
+
   /// DB user id of the passenger (same as JWT user id when using backend auth).
   final int? passengerId;
+  final String passengerName;
+  final String? passengerPhone;
   final double pickupLatitude;
   final double pickupLongitude;
   final String? pickupAddress;
+  final double dropoffLatitude;
+  final double dropoffLongitude;
+  final String? dropoffAddress;
   final String vehicleClass;
   final double searchRadiusKm;
   final double estimatedFare;
@@ -25,9 +31,14 @@ class IncomingRideRequest {
   IncomingRideRequest({
     required this.rideId,
     this.passengerId,
+    required this.passengerName,
+    this.passengerPhone,
     required this.pickupLatitude,
     required this.pickupLongitude,
     this.pickupAddress,
+    required this.dropoffLatitude,
+    required this.dropoffLongitude,
+    this.dropoffAddress,
     required this.vehicleClass,
     required this.searchRadiusKm,
     required this.estimatedFare,
@@ -36,7 +47,8 @@ class IncomingRideRequest {
     required this.timestamp,
   });
 
-  static List<AvailableVehicle> _parseAvailableVehicles(Map<String, dynamic> json) {
+  static List<AvailableVehicle> _parseAvailableVehicles(
+      Map<String, dynamic> json) {
     final raw = json['availableVehicles'] ?? json['availableTaxis'];
     if (raw is! List) return [];
     return raw
@@ -49,9 +61,14 @@ class IncomingRideRequest {
     return IncomingRideRequest(
       rideId: json['rideId'] as int? ?? 0,
       passengerId: pid is int ? pid : int.tryParse(pid?.toString() ?? ''),
+      passengerName: json['passengerName'] as String? ?? 'Passenger',
+      passengerPhone: json['passengerPhone'] as String?,
       pickupLatitude: (json['pickupLatitude'] as num?)?.toDouble() ?? 0.0,
       pickupLongitude: (json['pickupLongitude'] as num?)?.toDouble() ?? 0.0,
       pickupAddress: json['pickupAddress'] as String?,
+      dropoffLatitude: (json['dropoffLatitude'] as num?)?.toDouble() ?? 0.0,
+      dropoffLongitude: (json['dropoffLongitude'] as num?)?.toDouble() ?? 0.0,
+      dropoffAddress: json['dropoffAddress'] as String?,
       vehicleClass: json['vehicleClass'] as String? ?? 'STANDARD',
       searchRadiusKm: (json['searchRadiusKm'] as num?)?.toDouble() ?? 5.0,
       estimatedFare: (json['estimatedFare'] as num?)?.toDouble() ?? 0.0,
@@ -61,6 +78,16 @@ class IncomingRideRequest {
           ? DateTime.tryParse(json['timestamp'].toString()) ?? DateTime.now()
           : DateTime.now(),
     );
+  }
+
+  int? recommendedTaxiIdForDriver(int? driverId) {
+    if (driverId == null) return null;
+    for (final vehicle in availableVehicles) {
+      if (vehicle.driverId == driverId) {
+        return vehicle.vehicleId;
+      }
+    }
+    return null;
   }
 }
 
@@ -113,7 +140,7 @@ class DriverRideRequestsWebSocketService {
       if (kDebugMode) {
         debugPrint('[DriverRideRequests] Firebase user present');
       }
-      
+
       String? token;
 
       if (firebaseUser != null) {
@@ -280,8 +307,7 @@ final driverRideRequestsStreamProvider =
 });
 
 /// Connection status of driver ride requests WebSocket
-final driverRideRequestsConnectionProvider =
-    StreamProvider<bool>((ref) {
+final driverRideRequestsConnectionProvider = StreamProvider<bool>((ref) {
   final service = ref.watch(_driverRideRequestsServiceProvider);
   return service.connectionStatusStream;
 });

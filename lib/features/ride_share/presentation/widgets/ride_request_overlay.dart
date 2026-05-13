@@ -10,8 +10,6 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/driver_requ
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
-final _shownRequestIds = <String>{};
-
 class RideRequestOverlay extends ConsumerStatefulWidget {
   final Widget child;
 
@@ -26,6 +24,7 @@ class RideRequestOverlay extends ConsumerStatefulWidget {
 
 class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
   DriverRideRequest? _activeRequest;
+  final Set<String> _shownRequestIds = <String>{};
 
   @override
   void initState() {
@@ -35,7 +34,8 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         try {
           ref.read(driverRideRequestsInitProvider);
         } catch (e) {
-          debugPrint('[RideRequestOverlay] Error initializing driver requests: $e');
+          debugPrint(
+              '[RideRequestOverlay] Error initializing driver requests: $e');
         }
       }
     });
@@ -66,7 +66,8 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
             }
           });
         } catch (e) {
-          debugPrint('[RideRequestOverlay] Error handling WebSocket request: $e');
+          debugPrint(
+              '[RideRequestOverlay] Error handling WebSocket request: $e');
         }
       },
     );
@@ -83,10 +84,24 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         try {
           next.whenData((combined) {
             if (!mounted) return;
+            final activePendingIds = combined.rides
+                .where((ride) {
+                  final status = ride.status.toLowerCase();
+                  return status == 'pending' || status == 'requested';
+                })
+                .map((ride) => ride.id)
+                .toSet();
+            _shownRequestIds.removeWhere(
+              (id) =>
+                  id != _activeRequest?.id && !activePendingIds.contains(id),
+            );
             for (final ride in combined.rides) {
               final status = ride.status.toLowerCase();
-              if ((status == 'pending' || status == 'requested') &&
-                  !_shownRequestIds.contains(ride.id)) {
+              if (status != 'pending' && status != 'requested') {
+                _forgetShownRequest(ride.id);
+                continue;
+              }
+              if (!_shownRequestIds.contains(ride.id)) {
                 _shownRequestIds.add(ride.id);
                 if (mounted) _showNotification(ride);
               }
@@ -109,7 +124,11 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
               rideRequest: _activeRequest!,
               ref: ref,
               onDismiss: () {
+                final requestId = _activeRequest?.id;
                 if (mounted) setState(() => _activeRequest = null);
+                if (requestId != null) {
+                  _forgetShownRequest(requestId);
+                }
               },
               onAccept: () {
                 final request = _activeRequest;
@@ -131,21 +150,30 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         return;
       }
 
+      int? candidateTaxiId;
+      try {
+        final driverProfile = await ref.read(myDriverProfileProvider.future);
+        final driverId = (driverProfile['id'] as num?)?.toInt();
+        candidateTaxiId = request.recommendedTaxiIdForDriver(driverId);
+      } catch (_) {}
+
       final driverRequest = DriverRideRequest(
         id: request.rideId.toString(),
         passengerId: request.passengerId?.toString() ?? '',
-        passengerName: 'Passenger',
+        passengerName: request.passengerName,
         pickupLat: request.pickupLatitude,
         pickupLng: request.pickupLongitude,
-        dropoffLat: 0.0,
-        dropoffLng: 0.0,
+        dropoffLat: request.dropoffLatitude,
+        dropoffLng: request.dropoffLongitude,
         pickupAddress: request.pickupAddress ?? 'Pickup Location',
-        dropoffAddress: 'Destination',
+        dropoffAddress: request.dropoffAddress ?? '',
         status: 'pending',
         createdAt: request.timestamp,
         estimatedTime: 0,
         estimatedDistance: request.estimatedDistance,
         estimatedFare: request.estimatedFare,
+        passengerPhone: request.passengerPhone,
+        candidateTaxiId: candidateTaxiId,
       );
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -164,7 +192,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
             '[RideRequestOverlay] Blocking notification — not a driver session');
         return;
       }
-      
+
       ref.read(rideNotificationServiceProvider).addNotification(request);
       setState(() => _activeRequest = request);
     } catch (e) {
@@ -184,9 +212,9 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         if (!mounted) return;
 
         // Resolve taxiId from the driver's taxis array
-        int? taxiId;
+        int? taxiId = request.candidateTaxiId;
         final taxis = driver['taxis'];
-        if (taxis is List && taxis.isNotEmpty) {
+        if (taxiId == null && taxis is List && taxis.isNotEmpty) {
           taxiId = (taxis[0]['id'] as num?)?.toInt();
         }
 
@@ -198,13 +226,20 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
               driverId: (driver['id'] ?? '').toString(),
               driverName: driver['user']?['name'] ?? driver['name'] ?? 'Driver',
               driverPhone: driver['user']?['phone'] ?? driver['phone'] ?? '',
-              driverAvatar: driver['user']?['profilepicture'] ?? driver['profilepicture'],
+              driverAvatar:
+                  driver['user']?['profilepicture'] ?? driver['profilepicture'],
               taxiId: taxiId,
               onAccepted: () {
-                ref.read(rideNotificationServiceProvider).removeNotification(request.id);
+                ref
+                    .read(rideNotificationServiceProvider)
+                    .removeNotification(request.id);
+                _forgetShownRequest(request.id);
                 if (navigatorContext.mounted) {
                   Navigator.pop(navigatorContext);
                 }
+              },
+              onRejected: () {
+                _forgetShownRequest(request.id);
               },
             ),
           );
@@ -213,6 +248,10 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         }
       });
     });
+  }
+
+  void _forgetShownRequest(String requestId) {
+    _shownRequestIds.remove(requestId);
   }
 
   BuildContext? _findNavigatorContext() {
@@ -226,6 +265,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         }
         element.visitChildren(visitor);
       }
+
       (context as Element).visitChildren(visitor);
     } catch (_) {}
     return navContext;

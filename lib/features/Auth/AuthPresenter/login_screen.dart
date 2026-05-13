@@ -13,7 +13,6 @@ import 'package:vero360_app/features/Restraurants/RestraurantPresenter/Restraura
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
@@ -222,13 +221,6 @@ class _LoginScreenState extends State<LoginScreen> {
            (route) => false,
          );
        }
-     } else if (role == 'driver') {
-       Navigator.of(context).pushAndRemoveUntil(
-         MaterialPageRoute(
-           builder: (_) => const DriverDashboard(),
-         ),
-         (route) => false,
-       );
      } else {
        Navigator.of(context).pushAndRemoveUntil(
          MaterialPageRoute(

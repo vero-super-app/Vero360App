@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
-import 'package:vero360_app/Home/driver_homepage.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -162,9 +161,10 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _isMerchant = raw == 'merchant';
     _isDriver = raw == 'driver';
 
-    final homePage = _isDriver
-        ? Vero360DriverHomepage(email: widget.email)
-        : Vero360Homepage(email: widget.email);
+    final homePage = Vero360Homepage(
+      email: widget.email,
+      isDriverHome: _isDriver,
+    );
 
     _pages = [
       homePage,

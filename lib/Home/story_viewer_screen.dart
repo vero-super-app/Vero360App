@@ -12,7 +12,7 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketP
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
+import 'package:vero360_app/features/ride_share/ride_share_entry_resolver.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 
 class StoryViewerScreen extends StatefulWidget {
@@ -422,10 +422,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         primaryLabel = 'Book now';
         onPrimary = () {
           Navigator.of(context).pop();
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => const RideShareMapScreen(),
-            ),
+          RideShareEntryResolver.open(
+            context,
+            isDriverHome: false,
           );
         };
         break;

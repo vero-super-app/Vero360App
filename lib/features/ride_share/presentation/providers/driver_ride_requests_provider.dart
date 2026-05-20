@@ -318,13 +318,15 @@ typedef CombinedDriverRidesState = ({
   String? pollErrorMessage,
 });
 
-/// Combined stream of ride requests from both WebSocket and HTTP polling
+/// Combined stream of ride requests from both WebSocket and HTTP polling.
+/// HTTP poll interval is relaxed to reduce DB load when Redis backs pending-rides;
+/// WebSocket still delivers requests in real time.
 final combinedDriverRideRequestsProvider =
     StreamProvider<CombinedDriverRidesState>((ref) {
   ref.watch(driverRideRequestsInitProvider);
 
   return Stream.periodic(
-    const Duration(seconds: 3),
+    const Duration(seconds: 12),
     (_) => DriverRequestService.getIncomingRequestsDetailed(),
   ).asyncExpand((future) => Stream.fromFuture(future)).map((result) {
     return (

@@ -1,4 +1,5 @@
 // address.dart
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -120,6 +121,13 @@ class _ToShipPageState extends State<ToShipPage> {
 
   Future<List<OrderItem>> _loadOrdersWithMerchantPhones() async {
     final list = await _svc.getMyOrders();
+    final merchantUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (merchantUid.isNotEmpty) {
+      unawaited(OrderEscrowService.processDueAutoReleasesForMerchant(
+        merchantUid,
+        merchantOrders: list,
+      ));
+    }
     try {
       final buyerPhones = await BuyerPhoneResolver.resolveForOrders(list);
       final phones = await MerchantPhoneResolver.resolveForOrders(list);

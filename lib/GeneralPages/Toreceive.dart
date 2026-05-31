@@ -140,10 +140,7 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
 
   Future<_DeliveredPayload> _loadPayload() async {
     final orders = await _svc.getMyOrders(status: OrderStatus.delivered);
-    for (final o in orders) {
-      await OrderEscrowService.repairBuyerUidIfNeeded(o);
-      await OrderEscrowService.repairDeliveredTimestampIfNeeded(o);
-    }
+    await OrderEscrowService.processDueAutoReleasesForOrders(orders);
     final ids = orders.map((e) => e.id);
     final deliveryMeta = await DeliveryProofService.getDeliveryMetadata(ids);
     final buyerPhonesByOrderId =

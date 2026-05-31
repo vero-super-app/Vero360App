@@ -26,7 +26,7 @@ class FoodPage extends StatefulWidget {
 
 class _FoodPageState extends State<FoodPage> {
   // ── Brand palette ─────────────────────────────────────────────────────────
-  static const Color _primaryRed   = Color(0xFFC62828);
+  static const Color _veroOrange   = Color(0xFFFF8A00);
   static const Color _ink          = Color(0xFF1A1109);
   static const Color _pageBg       = Color(0xFFF8F8F8);
   static const Color _cardBg       = Colors.white;
@@ -241,7 +241,7 @@ class _FoodPageState extends State<FoodPage> {
             _sheetOption(
               ctx: ctx,
               icon: Icons.camera_alt_outlined,
-              color: _primaryRed,
+              color: _veroOrange,
               label: 'Use camera',
               onTap: () async {
                 Navigator.pop(ctx);
@@ -350,7 +350,7 @@ class _FoodPageState extends State<FoodPage> {
                 value: radius.clamp(5.0, 60.0),
                 min: 5, max: 60, divisions: 11,
                 label: '${radius.round()} km',
-                activeColor: _primaryRed,
+                activeColor: _veroOrange,
                 onChanged: (v) => setModal(() => radius = v),
               ),
               const SizedBox(height: 8),
@@ -360,7 +360,7 @@ class _FoodPageState extends State<FoodPage> {
                   setState(() { _radiusKm = radius; _future = _loadAll(); });
                 },
                 style: FilledButton.styleFrom(
-                  backgroundColor: _primaryRed, foregroundColor: Colors.white,
+                  backgroundColor: _veroOrange, foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14)),
@@ -383,7 +383,7 @@ class _FoodPageState extends State<FoodPage> {
         child: Row(children: [
           const SizedBox(
             width: 18, height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2, color: _primaryRed),
+            child: CircularProgressIndicator(strokeWidth: 2, color: _veroOrange),
           ),
           const SizedBox(width: 10),
           Text('Getting your location…',
@@ -400,13 +400,13 @@ class _FoodPageState extends State<FoodPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: _primaryRed.withOpacity(0.06),
+            color: _veroOrange.withOpacity(0.06),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _primaryRed.withOpacity(0.18)),
+            border: Border.all(color: _veroOrange.withOpacity(0.18)),
           ),
           child: Row(
             children: [
-              Icon(Icons.my_location_rounded, color: _primaryRed, size: 18),
+              Icon(Icons.my_location_rounded, color: _veroOrange, size: 18),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -414,13 +414,13 @@ class _FoodPageState extends State<FoodPage> {
                       ? 'Near $label · prioritising nearby food'
                       : 'Using GPS · prioritising food near you',
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                      color: _primaryRed.withOpacity(0.9)),
+                      color: _veroOrange.withOpacity(0.9)),
                 ),
               ),
               GestureDetector(
                 onTap: _initLocation,
                 child: Icon(Icons.refresh_rounded,
-                    color: _primaryRed.withOpacity(0.7), size: 18),
+                    color: _veroOrange.withOpacity(0.7), size: 18),
               ),
             ],
           ),
@@ -451,7 +451,7 @@ class _FoodPageState extends State<FoodPage> {
               ),
               Text('Enable',
                   style: TextStyle(fontWeight: FontWeight.w800,
-                      color: _primaryRed, fontSize: 12)),
+                      color: _veroOrange, fontSize: 12)),
             ],
           ),
         ),
@@ -465,7 +465,7 @@ class _FoodPageState extends State<FoodPage> {
       children: [
         Expanded(child: _buildSearchField()),
         const SizedBox(width: 12),
-        _FilterButton(onTap: _showDiscoverySheet, color: _primaryRed),
+        _FilterButton(onTap: _showDiscoverySheet, color: _veroOrange),
       ],
     );
   }
@@ -488,13 +488,13 @@ class _FoodPageState extends State<FoodPage> {
         onSubmitted: _onSubmit,
         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500,
             color: Color(0xFF1A1D26)),
-        cursorColor: _primaryRed,
+        cursorColor: _veroOrange,
         decoration: InputDecoration(
           hintText: 'Search food or restaurant…',
           hintStyle: TextStyle(color: Colors.grey.shade400,
               fontWeight: FontWeight.w400, fontSize: 14),
           prefixIcon: const Icon(Icons.search_rounded,
-              color: Color(0xFFC62828), size: 22),
+              color: _veroOrange, size: 22),
           suffixIcon: Padding(
             padding: const EdgeInsets.only(right: 6),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -504,7 +504,7 @@ class _FoodPageState extends State<FoodPage> {
                       color: Colors.grey.shade500, size: 18),
                   onPressed: () { _searchCtrl.clear(); _onSubmit(''); },
                 ),
-              _CameraButton(onTap: _showPhotoPickerSheet, color: _primaryRed),
+              _CameraButton(onTap: _showPhotoPickerSheet, color: _veroOrange),
             ]),
           ),
           filled: true, fillColor: Colors.white,
@@ -517,7 +517,7 @@ class _FoodPageState extends State<FoodPage> {
               borderSide: BorderSide(color: _divider, width: 1)),
           focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: _primaryRed, width: 1.5)),
+              borderSide: const BorderSide(color: _veroOrange, width: 1.5)),
         ),
       ),
     );
@@ -541,11 +541,11 @@ class _FoodPageState extends State<FoodPage> {
               duration: const Duration(milliseconds: 200),
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               decoration: BoxDecoration(
-                color: sel ? _primaryRed : Colors.white,
+                color: sel ? _veroOrange : Colors.white,
                 borderRadius: BorderRadius.circular(99),
-                border: Border.all(color: sel ? _primaryRed : _divider),
+                border: Border.all(color: sel ? _veroOrange : _divider),
                 boxShadow: sel
-                    ? [BoxShadow(color: _primaryRed.withOpacity(0.30),
+                    ? [BoxShadow(color: _veroOrange.withOpacity(0.30),
                         blurRadius: 12, offset: const Offset(0, 4))]
                     : [BoxShadow(color: Colors.black.withOpacity(0.04),
                         blurRadius: 6, offset: const Offset(0, 2))],
@@ -611,7 +611,7 @@ class _FoodPageState extends State<FoodPage> {
                       TextSpan(text: 'Choose Your\n'),
                       TextSpan(text: 'Favorite '),
                       TextSpan(text: 'Food',
-                          style: TextStyle(color: _primaryRed)),
+                          style: TextStyle(color: _veroOrange)),
                     ],
                   ),
                 ),
@@ -632,14 +632,14 @@ class _FoodPageState extends State<FoodPage> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  color: _primaryRed.withOpacity(0.08),
+                  color: _veroOrange.withOpacity(0.08),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: _primaryRed.withOpacity(0.22)),
+                  border: Border.all(color: _veroOrange.withOpacity(0.22)),
                 ),
                 child: Row(
                   children: [
                     const Icon(Icons.image_search_rounded,
-                        size: 18, color: _primaryRed),
+                        size: 18, color: _veroOrange),
                     const SizedBox(width: 8),
                     Text('Showing results similar to your photo',
                         style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
@@ -656,7 +656,7 @@ class _FoodPageState extends State<FoodPage> {
           // Content
           Expanded(
             child: RefreshIndicator(
-              color: _primaryRed,
+              color: _veroOrange,
               onRefresh: _refresh,
               child: FutureBuilder<List<FoodModel>>(
                 future: _future,
@@ -688,7 +688,7 @@ class _FoodPageState extends State<FoodPage> {
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(0, 16, 0, 28),
                     children: [
-                      _SectionHeader(title: 'Popular Food', accent: _primaryRed,
+                      _SectionHeader(title: 'Popular Food', accent: _veroOrange,
                           ink: _ink, onSeeAll: () {}),
                       const SizedBox(height: 4),
                       SizedBox(
@@ -701,7 +701,7 @@ class _FoodPageState extends State<FoodPage> {
                           itemBuilder: (_, i) => _FoodCard(
                             item: popular[i],
                             userLat: p?.latitude, userLng: p?.longitude,
-                            accent: _primaryRed, ink: _ink,
+                            accent: _veroOrange, ink: _ink,
                             onTap: () => Navigator.push(context,
                                 MaterialPageRoute(builder: (_) =>
                                     FoodDetailsPage(foodItem: popular[i]))),
@@ -709,7 +709,7 @@ class _FoodPageState extends State<FoodPage> {
                         ),
                       ),
                       const SizedBox(height: 24),
-                      _SectionHeader(title: 'Nearest', accent: _primaryRed,
+                      _SectionHeader(title: 'Nearest', accent: _veroOrange,
                           ink: _ink, onSeeAll: () {}),
                       const SizedBox(height: 4),
                       SizedBox(
@@ -722,7 +722,7 @@ class _FoodPageState extends State<FoodPage> {
                           itemBuilder: (_, i) => _FoodCard(
                             item: nearest[i],
                             userLat: p?.latitude, userLng: p?.longitude,
-                            accent: _primaryRed, ink: _ink,
+                            accent: _veroOrange, ink: _ink,
                             onTap: () => Navigator.push(context,
                                 MaterialPageRoute(builder: (_) =>
                                     FoodDetailsPage(foodItem: nearest[i]))),
@@ -785,7 +785,7 @@ class _FoodPageState extends State<FoodPage> {
           child: FilledButton.icon(
             onPressed: _refresh,
             style: FilledButton.styleFrom(
-              backgroundColor: _primaryRed,
+              backgroundColor: _veroOrange,
               padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14)),

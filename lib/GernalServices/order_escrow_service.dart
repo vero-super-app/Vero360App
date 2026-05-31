@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:vero360_app/GeneralModels/order_model.dart';
+import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
@@ -147,7 +148,13 @@ class OrderEscrowService {
   }
 
   /// Call when the merchant marks the order as delivered (starts the 5-day window).
-  static Future<void> markDelivered(String orderId) async {
+  ///
+  /// [deliveredAt] defaults to now; pass an earlier date when repairing old shipments
+  /// so auto-release can run immediately if the window has already passed.
+  static Future<void> markDelivered(
+    String orderId, {
+    DateTime? deliveredAt,
+  }) async {
     final snap = await _doc(orderId).get();
     if (!snap.exists) return;
 
@@ -156,14 +163,31 @@ class OrderEscrowService {
     if (data['status'] != 'held') return;
     if (data['deliveredAt'] != null) return;
 
-    final now = DateTime.now();
-    final due = now.add(const Duration(days: escrowAutoReleaseDays));
+    final shipped = deliveredAt ?? DateTime.now();
+    final due = shipped.add(const Duration(days: escrowAutoReleaseDays));
 
     await _doc(orderId).update({
-      'deliveredAt': Timestamp.fromDate(now),
+      'deliveredAt': Timestamp.fromDate(shipped),
       'releaseDueAt': Timestamp.fromDate(due),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  /// Best-effort shipment time for escrow repair (proof upload time, else order date).
+  static Future<DateTime?> _resolveShippedAtForOrder(OrderItem o) async {
+    try {
+      final proofSnap = await _db
+          .collection(DeliveryProofService.collection)
+          .doc(o.id)
+          .get();
+      if (proofSnap.exists) {
+        final u = proofSnap.data()?['updatedAt'];
+        if (u is Timestamp) return u.toDate();
+      }
+    } catch (e) {
+      debugPrint('[OrderEscrow] proof read ${o.id}: $e');
+    }
+    return o.orderDate;
   }
 
   /// If the order is delivered in the API but escrow still has no [deliveredAt], repair.
@@ -175,7 +199,80 @@ class OrderEscrowService {
     if (data == null) return;
     if (data['status'] != 'held') return;
     if (data['deliveredAt'] != null) return;
-    await markDelivered(o.id);
+    final shippedAt = await _resolveShippedAtForOrder(o);
+    await markDelivered(o.id, deliveredAt: shippedAt);
+  }
+
+  /// Releases escrow when [releaseDueAt] has passed. Returns true if funds were credited.
+  static Future<bool> tryAutoReleaseIfDue(String orderId) async {
+    final esc = await fetchEscrow(orderId);
+    if (esc == null || !esc.isHeld) return false;
+    if (esc.deliveredAt == null || esc.releaseDueAt == null) return false;
+    if (DateTime.now().isBefore(esc.releaseDueAt!)) return false;
+    await releaseFunds(orderId: orderId, buyerConfirmed: false);
+    return true;
+  }
+
+  /// Buyer order list: repair timestamps, then auto-release any holds past due.
+  static Future<void> processDueAutoReleasesForOrders(Iterable<OrderItem> orders) async {
+    final candidates = orders
+        .where((o) =>
+            o.status == OrderStatus.delivered &&
+            o.paymentStatus == PaymentStatus.paid)
+        .toList();
+    if (candidates.isEmpty) return;
+
+    for (final o in candidates) {
+      await repairBuyerUidIfNeeded(o);
+      await repairDeliveredTimestampIfNeeded(o);
+    }
+
+    for (final o in candidates) {
+      try {
+        await tryAutoReleaseIfDue(o.id);
+      } catch (e) {
+        debugPrint('[OrderEscrow] auto-release ${o.id}: $e');
+      }
+    }
+  }
+
+  /// Merchant wallet / ship screen: repair delivery timestamps from [merchantOrders],
+  /// then release all held rows for [merchantUid] that are past due.
+  static Future<int> processDueAutoReleasesForMerchant(
+    String merchantUid, {
+    Iterable<OrderItem>? merchantOrders,
+  }) async {
+    final uid = merchantUid.trim();
+    if (uid.isEmpty) return 0;
+
+    if (merchantOrders != null) {
+      for (final o in merchantOrders) {
+        if (o.status != OrderStatus.delivered) continue;
+        final esc = await fetchEscrow(o.id);
+        if (esc != null &&
+            esc.merchantUid.isNotEmpty &&
+            esc.merchantUid != uid) {
+          continue;
+        }
+        await repairDeliveredTimestampIfNeeded(o);
+      }
+    }
+
+    final qs = await _db
+        .collection(_collection)
+        .where('merchantUid', isEqualTo: uid)
+        .where('status', isEqualTo: 'held')
+        .get();
+
+    var released = 0;
+    for (final doc in qs.docs) {
+      try {
+        if (await tryAutoReleaseIfDue(doc.id)) released++;
+      } catch (e) {
+        debugPrint('[OrderEscrow] merchant auto-release ${doc.id}: $e');
+      }
+    }
+    return released;
   }
 
   /// Older holds may lack [buyerUid]. When the signed-in user matches the order’s
@@ -470,6 +567,11 @@ class OrderEscrowSnapshot {
 
   bool get isHeld => status == 'held';
   bool get isReleased => status == 'released' || status == 'auto_released';
+
+  bool get isAutoReleaseDue {
+    if (!isHeld || releaseDueAt == null) return false;
+    return !DateTime.now().isBefore(releaseDueAt!);
+  }
 
   factory OrderEscrowSnapshot.fromMap(String orderId, Map<String, dynamic> m) {
     DateTime? ts(dynamic v) {

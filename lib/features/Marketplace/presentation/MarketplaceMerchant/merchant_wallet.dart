@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/GeneralModels/order_model.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet_transactions_page.dart';
 
@@ -77,6 +80,20 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
   /// Marketplace orders and paid accommodation stays both write `order_escrow`
   /// so incoming stay payments appear in escrow here.
+  /// Credits wallet for marketplace holds past the 5-day window (buyer app is not required).
+  Future<void> _processDueEscrowReleases() async {
+    try {
+      List<OrderItem>? orders;
+      try {
+        orders = await OrderService().getMyOrders();
+      } catch (_) {}
+      await OrderEscrowService.processDueAutoReleasesForMerchant(
+        widget.merchantId,
+        merchantOrders: orders,
+      );
+    } catch (_) {}
+  }
+
   void _setupEscrowHeldStream() {
     _escrowSubscription?.cancel();
     _escrowSubscription = _firestore
@@ -100,6 +117,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
   Future<void> _initializeWallet() async {
     try {
+      await _processDueEscrowReleases();
+
       // Get or create wallet
       final wallet = await FirebaseWalletService.getOrCreateWallet(
         merchantId: widget.merchantId,

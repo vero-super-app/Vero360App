@@ -222,6 +222,8 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   Future<void> _hydrateEscrow(List<OrderItem> orders) async {
     if (orders.isEmpty) return;
     try {
+      await OrderEscrowService.processDueAutoReleasesForOrders(orders);
+
       final candidates = orders
           .where((o) =>
               o.status == OrderStatus.delivered &&
@@ -229,26 +231,8 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
           .toList();
       if (candidates.isEmpty) return;
 
-      for (final o in candidates) {
-        await OrderEscrowService.repairBuyerUidIfNeeded(o);
-        await OrderEscrowService.repairDeliveredTimestampIfNeeded(o);
-      }
-
-      var map = await OrderEscrowService.fetchEscrowForOrdersResolved(candidates);
-
-      for (final o in candidates) {
-        final esc = map[o.id];
-        if (esc == null || !esc.isHeld) continue;
-        if (esc.deliveredAt == null || esc.releaseDueAt == null) continue;
-        if (DateTime.now().isBefore(esc.releaseDueAt!)) continue;
-        try {
-          await OrderEscrowService.releaseFunds(
-            orderId: o.id,
-            buyerConfirmed: false,
-          );
-          map[o.id] = await OrderEscrowService.fetchEscrow(o.id);
-        } catch (_) {}
-      }
+      final map =
+          await OrderEscrowService.fetchEscrowForOrdersResolved(candidates);
 
       if (!mounted) return;
       setState(() {

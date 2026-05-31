@@ -9,6 +9,7 @@ import 'package:vero360_app/config/api_config.dart';
 /// Result of fetching pending rides (distinguishes empty list vs error).
 class PendingRidesFetchResult {
   final List<DriverRideRequest> requests;
+
   /// Set when HTTP failed or returned an error status (not for empty 200 list).
   final String? errorMessage;
 
@@ -36,6 +37,7 @@ class DriverRideRequest {
   final double estimatedDistance;
   final double estimatedFare;
   final String? passengerPhone;
+  final int? candidateTaxiId;
 
   DriverRideRequest({
     required this.id,
@@ -53,6 +55,7 @@ class DriverRideRequest {
     required this.estimatedDistance,
     required this.estimatedFare,
     this.passengerPhone,
+    this.candidateTaxiId,
   });
 
   Map<String, dynamic> toMap() {
@@ -72,6 +75,7 @@ class DriverRideRequest {
       'estimatedDistance': estimatedDistance,
       'estimatedFare': estimatedFare,
       'passengerPhone': passengerPhone,
+      'candidateTaxiId': candidateTaxiId,
     };
   }
 
@@ -109,6 +113,13 @@ class DriverRideRequest {
       return value.toString();
     }
 
+    int? parseNullableInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
     // Get passenger name from nested passenger object if available
     String getPassengerName(dynamic passengerData) {
       if (passengerData is Map && passengerData.containsKey('name')) {
@@ -136,6 +147,8 @@ class DriverRideRequest {
       estimatedDistance: parseDouble(map['estimatedDistance']),
       estimatedFare: parseDouble(map['estimatedFare']),
       passengerPhone: map['passengerPhone'],
+      candidateTaxiId: parseNullableInt(map['candidateTaxiId']) ??
+          parseNullableInt(map['taxiId']),
     );
   }
 
@@ -155,6 +168,7 @@ class DriverRideRequest {
     double? estimatedDistance,
     double? estimatedFare,
     String? passengerPhone,
+    int? candidateTaxiId,
   }) {
     return DriverRideRequest(
       id: id ?? this.id,
@@ -172,6 +186,7 @@ class DriverRideRequest {
       estimatedDistance: estimatedDistance ?? this.estimatedDistance,
       estimatedFare: estimatedFare ?? this.estimatedFare,
       passengerPhone: passengerPhone ?? this.passengerPhone,
+      candidateTaxiId: candidateTaxiId ?? this.candidateTaxiId,
     );
   }
 }
@@ -189,14 +204,7 @@ class DriverRequestService {
   /// Same as [getIncomingRequests] but surfaces HTTP failures for UI messaging.
   static Future<PendingRidesFetchResult> getIncomingRequestsDetailed() async {
     try {
-      final token = await _getAuthToken();
-
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
+      final headers = await _authorizedJsonHeaders();
 
       final url = ApiConfig.endpoint('$_baseUrl/pending-rides');
       final response = await http.get(url, headers: headers);
@@ -266,8 +274,10 @@ class DriverRequestService {
   /// Get a single ride request details
   static Future<DriverRideRequest?> getRideRequest(String rideId) async {
     try {
+      final headers = await _authorizedJsonHeaders();
       final response = await http.get(
         ApiConfig.endpoint('$_baseUrl/rides/$rideId'),
+        headers: headers,
       );
 
       if (response.statusCode == 200) {
@@ -295,14 +305,7 @@ class DriverRequestService {
     int? taxiId,
   }) async {
     try {
-      final token = await _getAuthToken();
-
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
+      final headers = await _authorizedJsonHeaders();
 
       final body = <String, dynamic>{
         'taxiId': taxiId,
@@ -324,58 +327,63 @@ class DriverRequestService {
     }
   }
 
-  /// Reject a ride request
+  /// There is no backend "reject" route; dismissing is a local UI action only.
   static Future<void> rejectRideRequest(String rideId) async {
-    try {
-      final token = await _getAuthToken();
-
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await http.patch(
-        ApiConfig.endpoint('$_baseUrl/rides/$rideId/reject'),
-        headers: headers,
-      );
-
-      if (response.statusCode != 200 && response.statusCode != 204) {
-        throw Exception('Failed to reject ride');
-      }
-    } catch (e) {
-      print('Error rejecting ride request: $e');
-      rethrow;
-    }
+    return;
   }
 
-  /// Update ride status (arrived, in_progress, completed)
+  /// Update ride status using the backend's real ride lifecycle routes.
   static Future<void> updateRideStatus({
     required String rideId,
     required String status,
     Map<String, dynamic>? additionalData,
   }) async {
     try {
-      final token = await _getAuthToken();
+      final normalizedStatus = status.trim().toUpperCase();
+      final headers = await _authorizedJsonHeaders();
 
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
+      late final http.Response response;
+      switch (normalizedStatus) {
+        case 'ARRIVED':
+        case 'DRIVER_ARRIVED':
+          response = await http.patch(
+            ApiConfig.endpoint('$_baseUrl/rides/$rideId/driver-arrived'),
+            headers: headers,
+          );
+          break;
+        case 'START':
+        case 'STARTED':
+        case 'IN_PROGRESS':
+          response = await http.patch(
+            ApiConfig.endpoint('$_baseUrl/rides/$rideId/start'),
+            headers: headers,
+          );
+          break;
+        case 'COMPLETE':
+        case 'COMPLETED':
+          response = await http.patch(
+            ApiConfig.endpoint('$_baseUrl/rides/$rideId/complete'),
+            headers: headers,
+            body: jsonEncode({
+              if (additionalData != null) ...additionalData,
+            }),
+          );
+          break;
+        case 'CANCEL':
+        case 'CANCELLED':
+          response = await http.patch(
+            ApiConfig.endpoint('$_baseUrl/rides/$rideId/cancel'),
+            headers: headers,
+            body: jsonEncode({
+              'reason': additionalData?['reason'] ?? 'Ride cancelled',
+            }),
+          );
+          break;
+        default:
+          throw UnsupportedError(
+            'Unsupported ride status transition: $status',
+          );
       }
-
-      final body = <String, dynamic>{'status': status};
-      if (additionalData != null) {
-        body.addAll(additionalData);
-      }
-
-      final response = await http.patch(
-        ApiConfig.endpoint('$_baseUrl/rides/$rideId/status'),
-        headers: headers,
-        body: jsonEncode(body),
-      );
 
       if (response.statusCode != 200 && response.statusCode != 204) {
         throw Exception('Failed to update ride status');
@@ -391,8 +399,10 @@ class DriverRequestService {
     String driverId,
   ) async {
     try {
+      final headers = await _authorizedJsonHeaders();
       final response = await http.get(
         ApiConfig.endpoint('$_baseUrl/drivers/$driverId/active-rides'),
+        headers: headers,
       );
 
       if (response.statusCode == 200) {
@@ -435,11 +445,10 @@ class DriverRequestService {
     required double finalFare,
   }) async {
     try {
+      final headers = await _authorizedJsonHeaders();
       final response = await http.patch(
         ApiConfig.endpoint('$_baseUrl/rides/$rideId/complete'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: headers,
         body: jsonEncode({
           'actualDistance': actualDistance,
           'actualTime': actualTime,
@@ -462,11 +471,10 @@ class DriverRequestService {
     required String reason,
   }) async {
     try {
+      final headers = await _authorizedJsonHeaders();
       final response = await http.patch(
         ApiConfig.endpoint('$_baseUrl/rides/$rideId/cancel'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: headers,
         body: jsonEncode({
           'reason': reason,
         }),
@@ -510,5 +518,18 @@ class DriverRequestService {
       print('Error reading auth token: $e');
       return null;
     }
+  }
+
+  static Future<Map<String, String>> _authorizedJsonHeaders() async {
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+    };
+
+    final token = await _getAuthToken();
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+
+    return headers;
   }
 }

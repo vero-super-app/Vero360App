@@ -74,7 +74,9 @@ class Vehicle {
     return Vehicle(
       id: parseInt(json['id']),
       driverId: parseInt(json['driverId']),
-      vehicleClass: json['vehicleClass'] as String? ?? json['taxiClass'] as String? ?? 'STANDARD',
+      vehicleClass: json['vehicleClass'] as String? ??
+          json['taxiClass'] as String? ??
+          'STANDARD',
       make: json['make'] as String? ?? '',
       model: json['model'] as String? ?? '',
       year: parseInt(json['year']),
@@ -147,9 +149,10 @@ class DriverInfo {
     // Handle nested user object from backend
     var userData = json;
     if (json.containsKey('user') && json['user'] is Map) {
-      userData = (json['user'] as Map<String, dynamic>)..addAll(json);
+      userData = Map<String, dynamic>.from(json['user'] as Map)
+        ..addAll(Map<String, dynamic>.from(json));
     }
-    
+
     // Helper to safely parse numbers
     double parseDouble(dynamic value) {
       if (value is num) return value.toDouble();
@@ -162,11 +165,11 @@ class DriverInfo {
       if (value is String) return int.tryParse(value) ?? 0;
       return 0;
     }
-    
+
     // Handle both firstName/lastName and name field
     String firstName = userData['firstName'] as String? ?? '';
     String lastName = userData['lastName'] as String? ?? '';
-    
+
     if (firstName.isEmpty && lastName.isEmpty && userData.containsKey('name')) {
       // If firstName/lastName are missing, try to split "name" field
       final fullName = userData['name'] as String? ?? '';
@@ -174,7 +177,7 @@ class DriverInfo {
       firstName = parts.isNotEmpty ? parts[0] : 'Driver';
       lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
     }
-    
+
     return DriverInfo(
       id: parseInt(json['id']),
       firstName: firstName.isEmpty ? 'Driver' : firstName,
@@ -182,11 +185,15 @@ class DriverInfo {
       phone: userData['phone'] as String?,
       rating: parseDouble(userData['rating']),
       completedRides: parseInt(userData['completedRides']),
-      vehicleType: json['vehicleType'] as String? ?? userData['vehicleClass'] as String?,
-      vehiclePlate: json['vehiclePlate'] as String? ?? json['licensePlate'] as String?,
+      vehicleType:
+          json['vehicleType'] as String? ?? userData['vehicleClass'] as String?,
+      vehiclePlate:
+          json['vehiclePlate'] as String? ?? json['licensePlate'] as String?,
       latitude: parseDouble(json['latitude']),
       longitude: parseDouble(json['longitude']),
-      avatar: userData['avatar'] as String? ?? '',
+      avatar: userData['avatar'] as String? ??
+          userData['profilepicture'] as String? ??
+          '',
     );
   }
 
@@ -285,6 +292,28 @@ class Ride {
       return fallback ?? DateTime.now();
     }
 
+    Map<String, dynamic>? extractDriverJson() {
+      final directDriver = json['driver'];
+      if (directDriver is Map<String, dynamic>) {
+        return directDriver;
+      }
+      if (directDriver is Map) {
+        return Map<String, dynamic>.from(directDriver);
+      }
+
+      final taxi = json['taxi'];
+      if (taxi is Map && taxi['driver'] is Map) {
+        return Map<String, dynamic>.from(taxi['driver'] as Map);
+      }
+
+      final vehicle = json['vehicle'];
+      if (vehicle is Map && vehicle['driver'] is Map) {
+        return Map<String, dynamic>.from(vehicle['driver'] as Map);
+      }
+
+      return null;
+    }
+
     try {
       return Ride(
         id: parseInt(json['id'] ?? json['rideId']) ?? 0,
@@ -302,16 +331,13 @@ class Ride {
             ? parseDouble(json['actualDistance'])
             : null,
         estimatedFare: parseDouble(json['estimatedFare']),
-        actualFare: json['actualFare'] != null
-            ? parseDouble(json['actualFare'])
-            : null,
+        actualFare:
+            json['actualFare'] != null ? parseDouble(json['actualFare']) : null,
         status: json['status'] as String? ?? 'REQUESTED',
-        startTime: json['startTime'] != null
-            ? parseDateTime(json['startTime'])
-            : null,
-        endTime: json['endTime'] != null
-            ? parseDateTime(json['endTime'])
-            : null,
+        startTime:
+            json['startTime'] != null ? parseDateTime(json['startTime']) : null,
+        endTime:
+            json['endTime'] != null ? parseDateTime(json['endTime']) : null,
         cancellationReason: json['cancellationReason'] as String?,
         passengerNotes: json['passengerNotes'] as String?,
         createdAt: parseDateTime(json['createdAt']),
@@ -322,9 +348,10 @@ class Ride {
                 ? Vehicle.fromJson(json['vehicle'] as Map<String, dynamic>)
                 : null),
         driver: () {
-          if (json['driver'] != null && json['driver'] is Map) {
+          final driverJson = extractDriverJson();
+          if (driverJson != null) {
             try {
-              return DriverInfo.fromJson(json['driver'] as Map<String, dynamic>);
+              return DriverInfo.fromJson(driverJson);
             } catch (e) {
               print('[Ride.fromJson] Error parsing driver: $e');
               return null;
@@ -394,8 +421,8 @@ class FareEstimate {
     return FareEstimate(
       estimatedFare: (json['estimatedFare'] as num).toDouble(),
       estimatedDistance: (json['estimatedDistance'] as num).toDouble(),
-      breakdown: FareBreakdown.fromJson(
-          json['breakdown'] as Map<String, dynamic>),
+      breakdown:
+          FareBreakdown.fromJson(json['breakdown'] as Map<String, dynamic>),
     );
   }
 

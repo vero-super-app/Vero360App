@@ -124,7 +124,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
     }
   }
 
-  Future<void> _rejectRequest() async {
+  Future<void> _dismissRequest() async {
     setState(() => _isRejecting = true);
 
     try {
@@ -136,7 +136,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Ride request rejected'),
+            content: const Text('Ride request dismissed'),
             backgroundColor: Colors.orange.shade600,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -378,7 +378,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                     height: 56,
                     child: OutlinedButton.icon(
                       onPressed:
-                          _isAccepting || _isRejecting ? null : _rejectRequest,
+                          _isAccepting || _isRejecting ? null : _dismissRequest,
                       style: OutlinedButton.styleFrom(
                         side: BorderSide(
                           color: _isRejecting ? Colors.grey : primaryColor,
@@ -402,7 +402,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
                             )
                           : const Icon(Icons.close_outlined),
                       label: Text(
-                        _isRejecting ? 'Rejecting...' : 'Reject Ride',
+                        _isRejecting ? 'Dismissing...' : 'Dismiss Request',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,

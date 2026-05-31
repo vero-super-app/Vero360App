@@ -17,7 +17,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/Quickservices/social.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_screen.dart';
+import 'package:vero360_app/features/ride_share/ride_share_entry_resolver.dart';
 
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
@@ -150,7 +150,12 @@ const List<DigitalProduct> kDigitalProducts = [
 ═══════════════════════════════════════════════════ */
 class Vero360Homepage extends ConsumerStatefulWidget {
   final String email;
-  const Vero360Homepage({super.key, required this.email});
+  final bool isDriverHome;
+  const Vero360Homepage({
+    super.key,
+    required this.email,
+    this.isDriverHome = false,
+  });
 
   @override
   ConsumerState<Vero360Homepage> createState() => _Vero360HomepageState();
@@ -374,9 +379,13 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                     child: _ServicesCard(
                       items:    kQuickServices,
                       tileKeys: _serviceTileKeys,
-                      onOpen: (key) => key == 'taxi'
-                          ? _openService(key)
-                          : _openServiceStatic(context, key),
+                      onOpen: (key) => RideShareEntryResolver.isRideShareServiceKey(key)
+                          ? _openRideShareEntry()
+                          : _openServiceStatic(
+                              context,
+                              key,
+                              isDriverHome: widget.isDriverHome,
+                            ),
                     ),
                   ),
                 ),
@@ -386,7 +395,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   child: Padding(
                     padding: const EdgeInsets.only(top: 24),
                     child: _NearbySection(
-                      onOpenService: (key) => _openServiceStatic(context, key),
+                      onOpenService: (key) => _openServiceStatic(
+                        context,
+                        key,
+                        isDriverHome: widget.isDriverHome,
+                      ),
                     ),
                   ),
                 ),
@@ -462,19 +475,28 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       delegate: QuickServiceSearchDelegate(services: kQuickServices),
     );
     if (picked != null) {
-      picked.keyId == 'taxi'
-          ? _openService(picked.keyId)
-          : _openServiceStatic(context, picked.keyId);
+      RideShareEntryResolver.isRideShareServiceKey(picked.keyId)
+          ? _openRideShareEntry()
+          : _openServiceStatic(
+              context,
+              picked.keyId,
+              isDriverHome: widget.isDriverHome,
+            );
     }
   }
 
-  void _openService(String key) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const RideShareMapScreen()),
+  void _openRideShareEntry() {
+    RideShareEntryResolver.open(
+      context,
+      isDriverHome: widget.isDriverHome,
     );
   }
 
-  static void _openServiceStatic(BuildContext context, String key) {
+  static void _openServiceStatic(
+    BuildContext context,
+    String key, {
+    bool isDriverHome = false,
+  }) {
     Widget page;
     switch (key) {
       case 'mainmarketplace':
@@ -495,7 +517,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
         break;
       case 'taxi':
       case 'car_hire':
-        page = const RideShareMapScreen();
+      case 'ride':
+      case 'ride_share':
+        page = RideShareEntryResolver.buildLandingPage(
+          isDriverHome: isDriverHome,
+        );
         break;
       case 'Vero Chat':
         page = const SocialPage();

@@ -1,14 +1,14 @@
 import 'dart:convert';
 import 'dart:ui' as ui;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
-import 'package:vero360_app/Home/driver_homepage.dart';
-import 'package:vero360_app/config/api_config.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 
@@ -32,13 +32,8 @@ import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourie
 // ─────────────────────────────────────────────
 const _kOrange      = Color(0xFFFF8A00);
 const _kOrangeDark  = Color(0xFFE07000);
-const _kOrangeDeep  = Color(0xFFC05800);
-const _kOrangeGlow  = Color(0x40FF8A00);
 const _kOrangeLight = Color(0xFFFFF0D9);
-const _kNavBg       = Colors.white;
-const _kNavBgDark   = Color(0xFF1A1A1A);
 const _kIconOff     = Color(0xFFAAAAAA);
-const _kLabelOff    = Color(0xFF999999);
 
 class Bottomnavbar extends StatefulWidget {
   const Bottomnavbar({
@@ -150,11 +145,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     try {
       final fbUser = FirebaseAuth.instance.currentUser;
       if (fbUser == null) return null;
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(fbUser.uid)
-          .get()
-          .timeout(const Duration(seconds: 10));
+      final doc = await FirebaseFirestore.instance.collection('users').doc(fbUser.uid).get();
       if (doc.exists && doc.data() != null) return (doc.data()!['role'] ?? '').toString().toLowerCase();
     } catch (_) {}
     return null;
@@ -166,9 +157,10 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _isMerchant = raw == 'merchant';
     _isDriver = raw == 'driver';
 
-    final homePage = _isDriver
-        ? Vero360DriverHomepage(email: widget.email)
-        : Vero360Homepage(email: widget.email);
+    final homePage = Vero360Homepage(
+      email: widget.email,
+      isDriverHome: _isDriver,
+    );
 
     _pages = [
       homePage,
@@ -532,7 +524,6 @@ class _VeroNavButtonState extends State<_VeroNavButton>
   // Selection animations
   late Animation<double>  _pillScale;
   late Animation<double>  _pillOpacity;
-  late Animation<double>  _iconBounce;
   late Animation<double>  _labelFade;
   late Animation<Offset>  _labelSlide;
   late Animation<double>  _iconShift;   // icon moves up when selected
@@ -558,7 +549,6 @@ class _VeroNavButtonState extends State<_VeroNavButton>
     _pillOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _ctrl, curve: const Interval(0.0, 0.4, curve: Curves.easeOut)),
     );
-    _iconBounce = Tween<double>(begin: 1.0, end: 1.0).animate(_ctrl); // handled via iconShift
     _labelFade = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _ctrl, curve: const Interval(0.35, 0.85, curve: Curves.easeOut)),
     );

@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import 'package:vero360_app/features/ride_share/presentation/pages/driver_dashboard.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
@@ -345,11 +344,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           (route) => false,
         );
       }
-    } else if (role == 'driver') {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const DriverDashboard()),
-        (route) => false,
-      );
     } else {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(

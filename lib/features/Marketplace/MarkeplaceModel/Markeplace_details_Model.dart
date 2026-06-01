@@ -14,7 +14,7 @@ class MarketplaceDetailModel {
     required this.location,
     required this.price,
     required this.description,
-    this.comment,
+    this.comment, required String category, required List<String> gallery, required List<String> videos, String? sellerUserId, String? merchantId, String? merchantName, String? serviceType,
   });
 
   factory MarketplaceDetailModel.fromJson(Map<String, dynamic> json) {
@@ -25,7 +25,7 @@ class MarketplaceDetailModel {
       price: (json['price'] ?? 0).toDouble(),
       location: json['Location'] ?? 'Unknown Location',
       description: json['description'] ?? 'No description available.',
-      comment: json['comment'] ?? '',
+      comment: json['comment'] ?? '', category: '', gallery: [], videos: [],
     );
   }
 }

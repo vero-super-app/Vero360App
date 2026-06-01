@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart';
@@ -13,11 +14,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 
 import 'package:vero360_app/features/Marketplace/presentation/pages/myshop.dart';
-import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 
 import '../../../../utils/toasthelper.dart';
@@ -168,7 +171,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   Future<String?> _getNestUserId() async {
     try {
       final sp = await SharedPreferences.getInstance();
-      final token = sp.getString('jwt') ?? sp.getString('token');
+      final token = sp.getString('jwt_token') ??
+          sp.getString('jwt') ??
+          sp.getString('token');
       if (token == null || token.isEmpty) return null;
 
       final parts = token.split('.');
@@ -235,16 +240,25 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       final sellerId = await _getNestUserId();
       final fbUid = await _firebaseUid();
 
+      // Must match _create(): merchantId is saved as Firebase UID when signed in.
       Query<Map<String, dynamic>> query =
           _db.collection('marketplace_items');
 
       if (_postsFoodWithoutShop && fbUid != null && fbUid.isNotEmpty) {
         query = query.where('merchantId', isEqualTo: fbUid);
-      } else if (sellerId != null) {
+      } else if (fbUid != null && fbUid.isNotEmpty) {
+        query = query.where('merchantId', isEqualTo: fbUid);
+      } else if (sellerId != null && sellerId.isNotEmpty) {
         query = query.where('sellerUserId', isEqualTo: sellerId);
       }
 
-      final snap = await query.get();
+      // Prefer server so we do not show cache-only posts that vanish after logout.
+      QuerySnapshot<Map<String, dynamic>> snap;
+      try {
+        snap = await query.get(const GetOptions(source: Source.server));
+      } catch (_) {
+        snap = await query.get();
+      }
 
       _items =
           snap.docs.map((doc) => {...doc.data(), 'id': doc.id}).toList();
@@ -342,8 +356,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       sellerUserId: item['sellerUserId'] as String?,
       merchantId: item['merchantId'] as String?, // NEW
       merchantName: item['merchantName'] as String?, // NEW
-      serviceType: item['serviceType'] as String?, // NEW
-      // isActive / createdAt are NOT part of the constructor in this model
+      serviceType: (item['serviceType'] as String?) ?? 'marketplace',
     );
   }
 
@@ -474,6 +487,32 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
   }
 
+  String _firestoreWriteErrorMessage(Object e) {
+    if (e is FirebaseException) {
+      final detail = '${e.message ?? ''}'.toLowerCase();
+      if (detail.contains('does not exist') ||
+          detail.contains('datastore/setup')) {
+        return 'Firestore is not set up for this Firebase project. '
+            'Open Firebase Console → Firestore → Create database, then try again.';
+      }
+      switch (e.code) {
+        case 'permission-denied':
+          return 'Firestore blocked this save (security rules). In Firebase Console '
+              'open Firestore → Rules for your database and allow signed-in users to '
+              'write marketplace_items. See firebase/firestore.rules in the project.';
+        case 'unavailable':
+          return 'Firestore is unavailable. Create the Firestore database in '
+              'Firebase Console or check your internet connection.';
+        default:
+          return 'Firestore error (${e.code}). ${e.message ?? 'Please try again.'}';
+      }
+    }
+    if (e is StateError) {
+      return e.message;
+    }
+    return 'Failed to post item. Please try again.';
+  }
+
   // ---------------- create ----------------
   Future<void> _create() async {
     if (!_form.currentState!.validate()) return;
@@ -529,135 +568,194 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       }
     }
 
+    if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please fill all required fields',
+        isSuccess: false,
+        errorMessage: 'Validation',
+      );
+      return;
+    }
+
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'You must be signed in with Firebase to post. Use the same login '
+        '(email/Google) you use for the app, then try again.',
+        isSuccess: false,
+        errorMessage: 'Not signed in',
+      );
+      return;
+    }
+    await AuthHandler.refreshFirebaseTokenIfSignedIn();
+
     setState(() => _submitting = true);
 
     try {
       final sellerId = await _getNestUserId();
-      final firebaseUid = await _firebaseUid();
+      final firebaseUid = firebaseUser?.uid ??
+          (await SharedPreferences.getInstance()).getString('uid') ??
+          merchantIdFromShop();
       final merchantId = _myShop!['id'].toString();
       final merchantName =
           (_myShop!['businessName'] ?? 'Food seller').toString();
       final effectiveSellerId = _postsFoodWithoutShop
-          ? (firebaseUid ?? sellerId ?? merchantId)
-          : (sellerId ?? 'unknown');
+          ? (firebaseUid.isNotEmpty ? firebaseUid : (sellerId ?? merchantId))
+          : (sellerId ?? firebaseUid);
       const serviceType = 'marketplace';
 
-      if ((_category ?? '') == 'food') {
-        try {
-          final nestSvc = MarketplaceService();
-          final coverUrl = await nestSvc.uploadBytes(
-            _cover!.bytes,
-            filename: _cover!.filename,
-          );
-          final galleryUrls = <String>[];
-          for (final g in _gallery.take(8)) {
-            galleryUrls.add(
-              await nestSvc.uploadBytes(g.bytes, filename: g.filename),
-            );
-          }
-          await nestSvc.createItem(
-            MarketplaceItem(
-              name: _name.text.trim(),
-              price: double.tryParse(_price.text.trim()) ?? 0,
-              image: coverUrl,
-              location: _location.text.trim(),
-              description:
-                  _desc.text.trim().isEmpty ? null : _desc.text.trim(),
-              isActive: _isActive,
-              category: 'food',
-              gallery: galleryUrls.isEmpty ? null : galleryUrls,
-              sellerUserId: effectiveSellerId,
-              merchantId: merchantId,
-              merchantName: merchantName,
-              serviceType: serviceType,
-              latitude: _listingLat,
-              longitude: _listingLng,
-            ),
-          );
-          if (!mounted) return;
-          ToastHelper.showCustomToast(
-            context,
-            'Food item posted — customers nearby will see it.',
-            isSuccess: true,
-            errorMessage: 'Created',
-          );
-          _resetAfterCreate();
-          await _loadItems();
-          _tabs.animateTo(1);
-          return;
-        } catch (e) {
-          print('Food API post failed, using Firestore: $e');
-        }
-      }
-
-      String coverBase64;
-      List<String> galleryBase64 = [];
-      List<String> videoBase64 = [];
+      final svc = MarketplaceService();
+      String? coverUrl;
+      String? coverBase64;
+      String? coverHash;
+      final galleryUrls = <String>[];
+      final galleryBase64 = <String>[];
+      final galleryHashes = <String>[];
+      final videoUrls = <String>[];
+      var videosSkipped = false;
 
       try {
-        coverBase64 = await _encodeMediaAsBase64(_cover!);
-        galleryBase64 = await _encodeAll(_gallery);
-        videoBase64 = await _encodeAll(_videos);
-      } catch (e) {
-        ToastHelper.showCustomToast(
-          context,
-          'Image encoding failed: $e',
-          isSuccess: false,
-          errorMessage: 'Upload failed',
+        coverUrl = await svc.uploadBytes(
+          _cover!.bytes,
+          filename: _cover!.filename,
+          mimeType: _cover!.mime,
         );
-        return;
+        coverHash = await svc.computeVisualHash(_cover!.bytes);
+        for (final g in _gallery.take(8)) {
+          galleryUrls.add(
+            await svc.uploadBytes(
+              g.bytes,
+              filename: g.filename,
+              mimeType: g.mime,
+            ),
+          );
+          final gHash = await svc.computeVisualHash(g.bytes);
+          if (gHash != null) galleryHashes.add(gHash);
+        }
+        for (final v in _videos.take(3)) {
+          if (v.bytes.length > 25 * 1024 * 1024) {
+            videosSkipped = true;
+            continue;
+          }
+          videoUrls.add(
+            await svc.uploadBytes(
+              v.bytes,
+              filename: v.filename,
+              mimeType: v.mime,
+            ),
+          );
+        }
+      } catch (uploadErr) {
+        debugPrint(
+          'Upload failed, using compact Firestore fallback: $uploadErr',
+        );
+        if (_cover!.bytes.length > 450000) {
+          throw StateError(
+            'Image upload failed and the photo is too large to save offline. '
+            'Check your internet connection and that the server at ${await ApiConfig.readBase()} is running.',
+          );
+        }
+        coverBase64 = base64Encode(_cover!.bytes);
+        coverHash = await svc.computeVisualHash(_cover!.bytes);
+        for (final g in _gallery.take(4)) {
+          if (g.bytes.length > 200000) continue;
+          galleryBase64.add(base64Encode(g.bytes));
+          final gHash = await svc.computeVisualHash(g.bytes);
+          if (gHash != null) galleryHashes.add(gHash);
+        }
+        if (_videos.isNotEmpty) videosSkipped = true;
       }
 
-      print('Creating item with merchant info:');
-      print('  Merchant ID: $merchantId');
-      print('  Merchant Name: $merchantName');
-      print('  Service Type: $serviceType');
+      final imageHashes = <String>{
+        if (coverHash != null) coverHash,
+        ...galleryHashes,
+      }.toList();
 
-      final data = {
+      final data = <String, dynamic>{
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? 0,
-        'image': coverBase64,
+        if (coverUrl != null) 'imageUrl': coverUrl,
+        if (coverBase64 != null) 'image': coverBase64,
+        if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
+        if (galleryBase64.isNotEmpty) 'gallery': galleryBase64,
+        if (videoUrls.isNotEmpty) 'videos': videoUrls,
+        if (coverHash != null) 'imageHash': coverHash,
+        if (galleryHashes.isNotEmpty) 'galleryHashes': galleryHashes,
+        if (imageHashes.isNotEmpty) 'imageHashes': imageHashes,
         'description':
             _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         'location': _location.text.trim(),
         'isActive': _isActive,
         'category': _category ?? 'other',
-        'gallery': galleryBase64,
-        'videos': videoBase64,
         'createdAt': FieldValue.serverTimestamp(),
         'sellerUserId': effectiveSellerId,
-        'merchantId': merchantId,
+        'merchantId': firebaseUid.isNotEmpty ? firebaseUid : merchantId,
         'merchantName': merchantName,
         'serviceType': serviceType,
         if (_listingLat != null) 'latitude': _listingLat,
         if (_listingLng != null) 'longitude': _listingLng,
       };
 
+      debugPrint('Writing marketplace_items to Firestore…');
       final docRef = await _db.collection('marketplace_items').add(data);
+      try {
+        await docRef.get(const GetOptions(source: Source.server));
+      } on FirebaseException catch (e) {
+        throw FirebaseException(
+          plugin: e.plugin,
+          code: e.code,
+          message: e.message ??
+              'Could not confirm save on Firestore server. '
+              'Create the Firestore database in Firebase Console, then try again.',
+        );
+      }
+      debugPrint('Firestore write OK (server): ${docRef.id}');
 
-      print('Item created with ID: ${docRef.id}');
-
+      if (!mounted) return;
+      var successMsg =
+          'Item Posted Successfully!\nFunds will go to your merchant wallet.';
+      if (videosSkipped) {
+        successMsg +=
+            '\nVideos were not saved (requires backend upload). Post photos first or retry when online.';
+      }
       ToastHelper.showCustomToast(
         context,
-        'Item Posted Successfully!\nFunds will go to your merchant wallet.',
+        successMsg,
         isSuccess: true,
         errorMessage: 'Created',
       );
 
       _resetAfterCreate();
-
       await _loadItems();
       _tabs.animateTo(1);
-    } catch (e) {
+    } on FirebaseException catch (e) {
+      debugPrint('Firestore error: ${e.code} ${e.message}');
+      if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Create failed: $e',
+        _firestoreWriteErrorMessage(e),
+        isSuccess: false,
+        errorMessage: 'Create failed',
+      );
+    } catch (e) {
+      debugPrint('Create failed: $e');
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        _firestoreWriteErrorMessage(e),
         isSuccess: false,
         errorMessage: 'Create failed',
       );
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  String merchantIdFromShop() {
+    final id = _myShop?['id'];
+    return id?.toString() ?? '';
   }
 
   // ---------------- location helpers ----------------

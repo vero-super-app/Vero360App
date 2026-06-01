@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:crypto/crypto.dart' show sha256;
@@ -35,7 +36,7 @@ import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 // Add login screen import (using your correct path)
-import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 import 'package:vero360_app/Home/homepage.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
@@ -1923,6 +1924,24 @@ class _MarketplaceMerchantDashboardState
     setState(() => _gallery.removeAt(index));
   }
 
+  String _firestoreWriteErrorMessage(Object e) {
+    if (e is FirebaseException) {
+      switch (e.code) {
+        case 'permission-denied':
+          return 'Firestore blocked this save (security rules). Update Firestore Rules '
+              'in Firebase Console — see firebase/firestore.rules in the project.';
+        case 'unavailable':
+          return 'Firestore is offline. Check your internet and try again.';
+        default:
+          return 'Firestore error (${e.code}). Please try again.';
+      }
+    }
+    if (e is StateError) {
+      return e.message;
+    }
+    return 'Failed to post item. Please try again.';
+  }
+
   // ----------------- CREATE item -----------------
   Future<void> _create() async {
     if (_cover == null) {
@@ -1934,39 +1953,66 @@ class _MarketplaceMerchantDashboardState
       return;
     }
 
+    final user = _auth.currentUser;
+    await AuthHandler.refreshFirebaseTokenIfSignedIn();
+
     setState(() => _submitting = true);
 
     try {
-      final firebaseUid = _auth.currentUser?.uid ?? _uid;
-      // if (firebaseUid.trim().isEmpty) {
-      //   _toastErr('Please login first');
-      //   return;
-      // }
-
+      final firebaseUid = user?.uid ?? _uid;
+      if (firebaseUid.trim().isEmpty) {
+        _toastErr('Missing user id — sign in and try again.');
+        return;
+      }
       final sellerId = await _getNestUserId();
       final merchantDisplay = _displayBusinessName();
+      final effectiveSellerId =
+          (sellerId != null && sellerId.trim().isNotEmpty)
+              ? sellerId.trim()
+              : firebaseUid;
 
-      // ✅ Upload images first (NO base64 in Firestore)
       final svc = MarketplaceService();
-
-      final coverUrl = await svc.uploadBytes(
-        _cover!.bytes,
-        filename: _cover!.filename ?? 'cover.jpg',
-        mimeType: _cover!.mime,
-      );
-      final coverHash = await svc.computeVisualHash(_cover!.bytes);
-
+      String? coverUrl;
+      String? coverBase64;
+      String? coverHash;
       final galleryUrls = <String>[];
+      final galleryBase64 = <String>[];
       final galleryHashes = <String>[];
-      for (final m in _gallery) {
-        final url = await svc.uploadBytes(
-          m.bytes,
-          filename: m.filename.isNotEmpty ? m.filename : 'gallery.jpg',
-          mimeType: m.mime,
+
+      // Prefer backend upload URLs; fall back to base64 in Firestore if server is unreachable.
+      try {
+        coverUrl = await svc.uploadBytes(
+          _cover!.bytes,
+          filename: _cover!.filename ?? 'cover.jpg',
+          mimeType: _cover!.mime,
         );
-        galleryUrls.add(url);
-        final gHash = await svc.computeVisualHash(m.bytes);
-        if (gHash != null) galleryHashes.add(gHash);
+        coverHash = await svc.computeVisualHash(_cover!.bytes);
+
+        for (final m in _gallery) {
+          final url = await svc.uploadBytes(
+            m.bytes,
+            filename: m.filename.isNotEmpty ? m.filename : 'gallery.jpg',
+            mimeType: m.mime,
+          );
+          galleryUrls.add(url);
+          final gHash = await svc.computeVisualHash(m.bytes);
+          if (gHash != null) galleryHashes.add(gHash);
+        }
+      } catch (uploadErr) {
+        debugPrint('Backend upload failed, saving to Firestore as base64: $uploadErr');
+        if (_cover!.bytes.length > 450000) {
+          throw StateError(
+            'Image upload failed and the photo is too large to save offline. '
+            'Check internet and that your backend server is running.',
+          );
+        }
+        coverBase64 = base64Encode(_cover!.bytes);
+        coverHash = await svc.computeVisualHash(_cover!.bytes);
+        for (final m in _gallery) {
+          galleryBase64.add(base64Encode(m.bytes));
+          final gHash = await svc.computeVisualHash(m.bytes);
+          if (gHash != null) galleryHashes.add(gHash);
+        }
       }
 
       final imageHashes = <String>{
@@ -1974,32 +2020,29 @@ class _MarketplaceMerchantDashboardState
         ...galleryHashes,
       }.toList();
 
-      final data = {
+      final data = <String, dynamic>{
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? 0,
-
-        // ✅ store URLs only
-        'imageUrl': coverUrl,
-        'galleryUrls': galleryUrls,
-        'imageHash': coverHash,
-        'galleryHashes': galleryHashes,
-        'imageHashes': imageHashes,
-
+        if (coverUrl != null) 'imageUrl': coverUrl,
+        if (coverBase64 != null) 'image': coverBase64,
+        if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
+        if (galleryBase64.isNotEmpty) 'gallery': galleryBase64,
+        if (coverHash != null) 'imageHash': coverHash,
+        if (galleryHashes.isNotEmpty) 'galleryHashes': galleryHashes,
+        if (imageHashes.isNotEmpty) 'imageHashes': imageHashes,
         'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         'location': _location.text.trim(),
         'isActive': _isActive,
         'category': _category ?? 'other',
-
         'createdAt': FieldValue.serverTimestamp(),
-        'sellerUserId': (sellerId != null && sellerId.trim().isNotEmpty)
-            ? sellerId.trim()
-            : 'unknown',
+        'sellerUserId': effectiveSellerId,
         'merchantId': firebaseUid,
         'merchantName': merchantDisplay,
         'serviceType': 'marketplace',
       };
 
       await _firestore.collection('marketplace_items').add(data);
+      debugPrint('Firestore write OK → marketplace_items');
 
       if (!mounted) return;
       _toastOk('Item Posted Successfully!');
@@ -2016,10 +2059,14 @@ class _MarketplaceMerchantDashboardState
       setState(() {});
       await _loadItems();
       _marketplaceTabs.animateTo(2);
+    } on FirebaseException catch (e) {
+      debugPrint('Create item Firestore error: ${e.code} ${e.message}');
+      if (!mounted) return;
+      _toastErr(_firestoreWriteErrorMessage(e));
     } catch (e) {
       debugPrint('Create item error: $e');
       if (!mounted) return;
-      _toastErr('Failed to post item. Please try again.');
+      _toastErr(_firestoreWriteErrorMessage(e));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

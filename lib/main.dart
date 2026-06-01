@@ -107,7 +107,7 @@ Future<void> main() async {
         projectId: "vero360app-ca423",
         storageBucket: "vero360app-ca423.firebasestorage.app",
         messagingSenderId: "1010595167807",
-        appId: "1:1010595167807:android:f63d7c7959bdb2891dc28a",
+        appId: "1:1010595167807:android:87af3098cda575fd1dc28a",
       ),
     );
     // debugPrint("Firebase initialized ✅");
@@ -115,7 +115,7 @@ Future<void> main() async {
     // Register background handler FIRST (important for FCM)
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   } catch (e) {
-    // debugPrint("Firebase init error: $e");
+    debugPrint('Firebase init error: $e');
   }
 
   runApp(

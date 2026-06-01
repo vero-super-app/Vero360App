@@ -1,0 +1,59 @@
+rules_version = '2';
+
+// Deploy in Firebase Console → Firestore → Rules (pick the SAME database your app uses:
+// "(default)" or "verodb"). Or: firebase deploy --only firestore:rules
+//
+// App writes marketplace_items with merchantId = Firebase Auth UID.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isMarketplaceOwner(data) {
+      return isSignedIn() && (
+        data.merchantId == request.auth.uid ||
+        data.sellerUserId == request.auth.uid
+      );
+    }
+
+    match /marketplace_items/{itemId} {
+      allow read: if true;
+      allow create: if isMarketplaceOwner(request.resource.data);
+      allow update, delete: if isMarketplaceOwner(resource.data);
+    }
+
+    match /merchant_stories/{storyId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.merchantId == request.auth.uid;
+      allow update, delete: if isSignedIn()
+        && resource.data.merchantId == request.auth.uid;
+    }
+
+    match /merchant_wallets/{merchantId} {
+      allow read, write: if isSignedIn() && merchantId == request.auth.uid;
+    }
+
+    match /marketplace_merchants/{merchantId} {
+      allow read: if true;
+      allow write: if isSignedIn() && merchantId == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && userId == request.auth.uid;
+    }
+
+    match /orders/{orderId} {
+      allow read, create, update: if isSignedIn();
+    }
+
+    // Other app collections (chat, notifications, etc.) — signed-in users only.
+    match /{document=**} {
+      allow read, write: if isSignedIn();
+    }
+  }
+}

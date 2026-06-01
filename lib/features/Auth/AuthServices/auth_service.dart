@@ -221,7 +221,14 @@ class AuthService {
     }
   }
 
-  Future<void> _ensureFirebaseMirrorForBackendUser({
+  static String _firebaseEmailForIdentifier(String identifier) {
+    final trimmed = identifier.trim();
+    if (trimmed.contains('@')) return trimmed;
+    final digits = trimmed.replaceAll(RegExp(r'\D'), '');
+    return '$digits@phone.vero360.app';
+  }
+
+  Future<User?> _ensureFirebaseMirrorForBackendUser({
     required String email,
     required String password,
     Map<String, dynamic>? backendUser,
@@ -237,7 +244,7 @@ class AuthService {
           role: (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
           merchantData: merchantData,
         );
-        return;
+        return current;
       }
 
       try {
@@ -253,6 +260,7 @@ class AuthService {
           role: (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
           merchantData: merchantData,
         );
+        return cred.user;
       } on FirebaseAuthException catch (e) {
         if (e.code == 'user-not-found') {
           final cred = await _firebaseAuth.createUserWithEmailAndPassword(
@@ -268,9 +276,16 @@ class AuthService {
                 (backendUser?['role'] ?? backendUser?['userRole'])?.toString(),
             merchantData: merchantData,
           );
+          return cred.user;
+        }
+        if (kDebugMode) {
+          debugPrint('[Auth] Firebase mirror failed: ${e.code} ${e.message}');
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Auth] Firebase mirror error: $e');
+    }
+    return null;
   }
 
   // -------------------- Login (Backend first, Firebase fallback for email) --------------------
@@ -319,26 +334,43 @@ class AuthService {
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       _toast(context, 'Signed in');
       final normalized = _normalizeBackendAuthResponse(data);
+      final user = normalized['user'] as Map<String, dynamic>?;
+      final roleLc =
+          (user?['role'] ?? user?['userRole'] ?? '').toString().toLowerCase();
 
-      if (trimmedId.contains('@')) {
-        final user = normalized['user'] as Map<String, dynamic>?;
-        final roleLc =
-            (user?['role'] ?? user?['userRole'] ?? '').toString().toLowerCase();
+      Map<String, dynamic>? merchantData;
+      if (roleLc == 'merchant') {
+        merchantData = {
+          'merchantService': user?['merchantService'],
+          'businessName': user?['businessName'],
+          'businessAddress': user?['businessAddress'],
+        };
+      }
 
-        Map<String, dynamic>? merchantData;
-        if (roleLc == 'merchant') {
-          merchantData = {
-            'merchantService': user?['merchantService'],
-            'businessName': user?['businessName'],
-            'businessAddress': user?['businessAddress'],
-          };
-        }
+      // Firestore requires Firebase Auth — mirror backend account before returning.
+      final firebaseEmail = _firebaseEmailForIdentifier(trimmedId);
+      final fbUser = await _ensureFirebaseMirrorForBackendUser(
+        email: firebaseEmail,
+        password: password,
+        backendUser: user,
+        merchantData: merchantData,
+      );
 
-        _ensureFirebaseMirrorForBackendUser(
-          email: trimmedId,
-          password: password,
-          backendUser: user,
+      if (fbUser != null) {
+        return _buildFirebaseAuthResult(
+          fbUser,
+          fallbackName: user?['name']?.toString(),
+          fallbackPhone: user?['phone']?.toString(),
+          fallbackRole: roleLc,
           merchantData: merchantData,
+        );
+      }
+
+      if (showErrorToast) {
+        _toast(
+          context,
+          'Signed in, but Firebase sync failed. Sign out and sign in again to save data.',
+          ok: false,
         );
       }
 

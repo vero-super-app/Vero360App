@@ -152,7 +152,7 @@ class StoryService {
       }
     }
 
-    await _firestore.collection(_collection).add({
+    final docRef = await _firestore.collection(_collection).add({
       'merchantId': merchantId,
       'merchantName': merchantName,
       'merchantImageUrl': merchantImageUrl,
@@ -169,6 +169,14 @@ class StoryService {
       'createdAt': Timestamp.fromDate(now),
       'expiresAt': Timestamp.fromDate(expiresAt),
     });
+    try {
+      await docRef.get(const GetOptions(source: Source.server));
+    } on FirebaseException catch (e) {
+      throw Exception(
+        'Story was not saved on the server (${e.code}). '
+        'In Firebase Console, create a Firestore database for this project, then try again.',
+      );
+    }
   }
 
   /// Post multiple stories in one batch (e.g. multiple slides with captions).

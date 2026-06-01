@@ -89,4 +89,26 @@ class AuthHandler {
   static Future<void> logout() async {
     await _firebaseAuth.signOut();
   }
+
+  /// Refreshes Firebase ID token when a session exists (helps Firestore attach auth).
+  /// Does not throw — callers should still attempt the Firestore write.
+  static Future<void> refreshFirebaseTokenIfSignedIn() async {
+    final user = _firebaseAuth.currentUser;
+    if (user == null) return;
+    try {
+      await user.getIdToken(true);
+    } catch (_) {}
+  }
+
+  /// Throws only when a Firebase user is required by app logic (not Firestore rules).
+  static Future<User> requireUserForFirestore() async {
+    final user = _firebaseAuth.currentUser;
+    if (user == null) {
+      throw StateError(
+        'Not signed in to Firebase. Sign out and sign in again, then retry.',
+      );
+    }
+    await user.getIdToken(true);
+    return user;
+  }
 }

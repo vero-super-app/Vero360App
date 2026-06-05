@@ -262,6 +262,8 @@ class NotificationService {
 
       if (res.statusCode >= 200 && res.statusCode < 300) {
         if (kDebugMode) debugPrint("FCM token registered with backend ✅");
+      } else if (res.statusCode == 409) {
+        if (kDebugMode) debugPrint("FCM token already registered ✅");
       } else if (kDebugMode) {
         debugPrint("FCM token register failed: ${res.statusCode}");
       }

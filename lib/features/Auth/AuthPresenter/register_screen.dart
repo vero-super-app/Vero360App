@@ -50,11 +50,11 @@ const List<MerchantService> kMerchantServices = [
     name: 'Marketplace',
     icon: Icons.store_rounded,
   ),
-  MerchantService(
-    key: 'food',
-    name: 'Food & Restaurants',
-    icon: Icons.restaurant_rounded,
-  ),
+  // MerchantService(
+  //   key: 'food',
+  //   name: 'Food & Restaurants',
+  //   icon: Icons.restaurant_rounded,
+  // ),
   MerchantService(
     key: 'accommodation',
     name: 'Accommodation',
@@ -300,8 +300,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     }
 
-    final role =
+    var role =
         (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
+    // Registration chip selection wins over API/Firestore defaults (backend often
+    // creates "customer" before PUT /users/me succeeds).
+    if (_role == UserRole.merchant || _role == UserRole.driver) {
+      role = _roleString;
+    } else if (role.isEmpty) {
+      role = 'customer';
+    }
     await prefs.setString('role', role);
     await prefs.setString('user_role', role);
     await prefs.setBool('is_merchant', role == 'merchant');
@@ -502,33 +509,54 @@ class _RegisterScreenState extends State<RegisterScreen> {
     };
   }
 
+  /// Short delay so the auth guard can create the API user. Avoid polling GET
+  /// /users/me here — the backend getMe handler auto-creates a driver row and
+  /// repeated calls cause duplicate-key errors.
+  Future<void> _waitForBackendUserRecord() async {
+    await Future.delayed(const Duration(seconds: 2));
+  }
+
+  Future<bool> _putUsersMe(
+    Map<String, dynamic> body, {
+    required String logLabel,
+  }) async {
+    try {
+      final res = await ApiClient.put(
+        '/users/me',
+        body: jsonEncode(body),
+        timeout: const Duration(seconds: 10),
+      );
+      final ok = res.statusCode >= 200 && res.statusCode < 300;
+      if (kDebugMode) {
+        // ignore: avoid_print
+        print('[Register] PUT /users/me ($logLabel) => ${res.statusCode}');
+      }
+      return ok;
+    } catch (e) {
+      if (kDebugMode) {
+        // ignore: avoid_print
+        print('[Register] PUT /users/me ($logLabel) failed: $e');
+      }
+      return false;
+    }
+  }
+
   /// Syncs the chosen role (and merchant data) to the backend so the API user
-  /// is created/updated as merchant. Uses PUT /users/me (backend uses Put, not Patch).
-  /// When form fields are empty (e.g. after Google/Apple sign-in), uses [user] email/displayName.
+  /// record matches registration. Uses PUT /users/me.
   /// Returns true if sync succeeded (2xx), false otherwise.
-  Future<bool> _syncProfileToBackend(User user) async {
+  Future<bool> _syncProfileToBackend(
+    User user, {
+    bool showUserFeedback = false,
+  }) async {
     final role = _roleString;
     final name = _name.text.trim().isEmpty
         ? (user.displayName ?? user.email ?? '')
         : _name.text.trim();
-    // When user signed up with phone only, don't send synthetic auth email to backend.
     final rawEmail = _identifierEmail.isEmpty
         ? (user.email ?? '')
         : _identifierEmail;
     final email = rawEmail.endsWith('@phone.vero360.app') ? '' : rawEmail;
-    final body = <String, dynamic>{
-      'name': name,
-      'email': email,
-      'phone': _identifierPhone,
-      'role': role,
-    };
-    if (_role == UserRole.merchant) {
-      body['merchantService'] = _selectedMerchantService?.key;
-      body['businessName'] = _businessName.text.trim();
-      body['businessAddress'] = _businessAddress.text.trim();
-    }
 
-    // Ensure backend gets the new user's token (persist so ApiClient uses it).
     String? token;
     try {
       token = await user
@@ -541,36 +569,55 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await AuthHandler.persistTokenToSp(token);
     }
 
+    await _waitForBackendUserRecord();
+
     try {
-      final res = await ApiClient.put(
-        '/users/me',
-        body: jsonEncode(body),
-        timeout: const Duration(seconds: 10),
-      );
-      final ok = res.statusCode >= 200 && res.statusCode < 300;
-      if (kDebugMode) {
-        // ignore: avoid_print
-        print('[Register] PUT /users/me (role: $role) => ${res.statusCode}');
+      // Minimal payload first — full profile updates often 500 right after signup.
+      if (_role == UserRole.driver || _role == UserRole.merchant) {
+        if (await _putUsersMe({'role': role}, logLabel: 'role-only')) {
+          return true;
+        }
       }
-      if (!ok && mounted) {
+
+      // Never send phone: '' — Postgres unique on phone treats '' as a value.
+      final body = <String, dynamic>{'role': role};
+      if (name.trim().isNotEmpty) body['name'] = name.trim();
+      if (email.trim().isNotEmpty) body['email'] = email.trim();
+      final phone = _identifierPhone.trim();
+      if (phone.isNotEmpty) body['phone'] = phone;
+      if (_role == UserRole.merchant) {
+        if (_selectedMerchantService != null) {
+          body['merchantService'] = _selectedMerchantService!.key;
+        }
+        final bn = _businessName.text.trim();
+        final ba = _businessAddress.text.trim();
+        if (bn.isNotEmpty) body['businessName'] = bn;
+        if (ba.isNotEmpty) body['businessAddress'] = ba;
+      }
+
+      if (await _putUsersMe(body, logLabel: 'full-profile')) {
+        return true;
+      }
+
+      if (showUserFeedback && mounted) {
         ToastHelper.showCustomToast(
           context,
-          'Profile sync failed (${res.statusCode}). Role may show as customer.',
-          isSuccess: false,
+          'Account created. Driver mode is active in the app; the server could not save your role yet (error 500).',
+          isSuccess: true,
           errorMessage: '',
         );
       }
-      return ok;
+      return false;
     } catch (e) {
       if (kDebugMode) {
         // ignore: avoid_print
         print('[Register] PUT /users/me failed: $e');
       }
-      if (mounted) {
+      if (showUserFeedback && mounted) {
         ToastHelper.showCustomToast(
           context,
-          'Could not sync role to server. Check connection and try again from Profile.',
-          isSuccess: false,
+          'Account created. Driver mode is active in the app; server role sync failed — try again from Profile later.',
+          isSuccess: true,
           errorMessage: '',
         );
       }
@@ -578,16 +625,52 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// Retry syncing role to backend after a short delay (handles guard creating user with default role on first request).
+  /// Persists the selected role to Firestore so later server syncs can recover
+  /// when PUT /users/me fails or the API still reports "customer".
+  Future<void> _persistRoleToFirestore(User user) async {
+    try {
+      await _firestore.collection('users').doc(user.uid).set(
+        {
+          'role': _roleString,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+    } catch (_) {}
+  }
+
+  /// Retry syncing role to backend (handles guard creating user with default role on first request).
   void _retrySyncRoleToBackend(User user) {
-    Future.delayed(const Duration(seconds: 2), () async {
+    unawaited(_retrySyncRoleToBackendLoop(user));
+  }
+
+  Future<void> _retrySyncRoleToBackendLoop(User user) async {
+    const delays = [
+      Duration(seconds: 2),
+      Duration(seconds: 5),
+      Duration(seconds: 10),
+    ];
+    for (final delay in delays) {
+      await Future.delayed(delay);
       if (!mounted) return;
-      final ok = await _syncProfileToBackend(user);
-      if (kDebugMode && ok) {
-        // ignore: avoid_print
-        print('[Register] Retry PUT /users/me succeeded');
+      await _persistRoleToFirestore(user);
+      final ok = await _syncProfileToBackend(user, showUserFeedback: false);
+      if (ok) {
+        if (kDebugMode) {
+          // ignore: avoid_print
+          print('[Register] Retry PUT /users/me succeeded');
+        }
+        return;
       }
-    });
+    }
+    if (mounted && (_role == UserRole.driver || _role == UserRole.merchant)) {
+      ToastHelper.showCustomToast(
+        context,
+        'Account created. ${_roleString == 'driver' ? 'Driver' : 'Merchant'} mode is active; server role sync is still pending.',
+        isSuccess: true,
+        errorMessage: '',
+      );
+    }
   }
 
   // ---------- Firebase-only registration ----------
@@ -694,7 +777,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'completedOrders': 0,
         };
 
-        await _firestore.collection('users').doc(user.uid).set(userData);
+        await _firestore.collection('users').doc(user.uid).set(
+              userData,
+              SetOptions(merge: true),
+            );
 
         final collectionName = _selectedMerchantService!.key == 'marketplace'
             ? 'marketplace_merchants'
@@ -704,8 +790,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
             .doc(user.uid)
             .set(merchantProfile);
       } else {
-        await _firestore.collection('users').doc(user.uid).set(userData);
+        await _firestore.collection('users').doc(user.uid).set(
+              userData,
+              SetOptions(merge: true),
+            );
       }
+
+      await AuthHandler.refreshFirebaseTokenIfSignedIn();
+      await _persistRoleToFirestore(user);
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('uid', user.uid);
@@ -734,9 +826,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       // Sync role to backend so the API user record matches the chosen role.
-      // Both merchants and drivers need the retry to ensure the backend profile is created.
-      await _syncProfileToBackend(user);
-      if (_role == UserRole.merchant || _role == UserRole.driver) {
+      final synced = await _syncProfileToBackend(user, showUserFeedback: false);
+      if (!synced &&
+          (_role == UserRole.merchant || _role == UserRole.driver)) {
         _retrySyncRoleToBackend(user);
       }
 

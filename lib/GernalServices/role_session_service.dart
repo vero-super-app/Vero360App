@@ -152,7 +152,13 @@ class RoleSessionService {
     await _putRoleToBackend(token, correctRole, timeout);
 
     final refreshed = await _fetchCurrentUser(token, timeout);
-    final resolvedUser = refreshed.user ?? correctedUser;
+    var resolvedUser = refreshed.user ?? correctedUser;
+    final resolvedRole =
+        (resolvedUser['role'] ?? '').toString().toLowerCase();
+    if (resolvedRole != correctRole) {
+      resolvedUser = Map<String, dynamic>.from(resolvedUser)
+        ..['role'] = correctRole;
+    }
 
     await persistUserToPrefs(prefs, resolvedUser);
     return RoleSyncResult.user(resolvedUser);

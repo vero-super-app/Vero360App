@@ -1,8 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File;
-
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/painting.dart';
@@ -16,8 +13,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 import 'package:local_auth/local_auth.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -2593,53 +2589,20 @@ class PolicyPage extends StatelessWidget {
   static const String _merchantTermsAsset =
       'assets/documents/Vero360_Merchant_Terms_Conditions.pdf';
 
-  Future<void> _openAssetPdf(
+  void _openAssetPdf(
     BuildContext context, {
     required String assetPath,
-    required String fileName,
-  }) async {
-    if (kIsWeb) {
-      if (context.mounted) {
-        ToastHelper.showCustomToast(
-          context,
-          'PDF files are bundled in the Android/iOS app.',
-          isSuccess: false,
-          errorMessage: '',
-        );
-      }
-      return;
-    }
-    try {
-      final data = await rootBundle.load(assetPath);
-      final bytes = data.buffer.asUint8List();
-      final dir = await getTemporaryDirectory();
-      final path = p.join(dir.path, fileName);
-      final file = File(path);
-      await file.writeAsBytes(bytes, flush: true);
-
-      final uri = Uri.file(file.path);
-      final canOpen = await canLaunchUrl(uri);
-      if (canOpen) {
-        await launchUrl(
-          uri,
-          mode: LaunchMode.externalApplication,
-        );
-        return;
-      }
-      await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'application/pdf', name: fileName)],
-        subject: fileName,
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ToastHelper.showCustomToast(
-          context,
-          'Could not open document',
-          isSuccess: false,
-          errorMessage: e.toString(),
-        );
-      }
-    }
+    required String title,
+  }) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _AssetPdfViewerPage(
+          assetPath: assetPath,
+          title: title,
+        ),
+      ),
+    );
   }
 
   Widget _docTile(
@@ -2648,7 +2611,6 @@ class PolicyPage extends StatelessWidget {
     required String title,
     required String subtitle,
     required String assetPath,
-    required String fileName,
   }) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -2663,11 +2625,11 @@ class PolicyPage extends StatelessWidget {
       ),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
       subtitle: Text(subtitle),
-      trailing: const Icon(Icons.download_outlined),
+      trailing: const Icon(Icons.open_in_new_rounded),
       onTap: () => _openAssetPdf(
             context,
             assetPath: assetPath,
-            fileName: fileName,
+            title: title,
           ),
     );
   }
@@ -2782,7 +2744,7 @@ class PolicyPage extends StatelessWidget {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'Download or open legal documents:',
+                  'Tap to open legal documents:',
                   style: TextStyle(height: 1.35),
                 ),
                 SizedBox(height: 10),
@@ -2792,7 +2754,6 @@ class PolicyPage extends StatelessWidget {
                   title: 'Platform Agreement & Policy',
                   subtitle: 'Vero360 platform agreement (PDF)',
                   assetPath: _platformAgreementAsset,
-                  fileName: 'Vero360_Platform_Agreement_Policy.pdf',
                 ),
                 _docTile(
                   context,
@@ -2800,7 +2761,6 @@ class PolicyPage extends StatelessWidget {
                   title: 'Privacy Policy',
                   subtitle: 'Vero360 privacy policy (PDF)',
                   assetPath: _privacyPolicyAsset,
-                  fileName: 'Vero360_Privacy_Policy.pdf',
                 ),
                 _docTile(
                   context,
@@ -2808,7 +2768,6 @@ class PolicyPage extends StatelessWidget {
                   title: 'Merchant Terms & Conditions',
                   subtitle: 'Merchant terms (PDF)',
                   assetPath: _merchantTermsAsset,
-                  fileName: 'Vero360_Merchant_Terms_Conditions.pdf',
                 ),
 
                 SizedBox(height: 18),
@@ -2827,6 +2786,130 @@ class PolicyPage extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AssetPdfViewerPage extends StatefulWidget {
+  const _AssetPdfViewerPage({
+    required this.assetPath,
+    required this.title,
+  });
+
+  final String assetPath;
+  final String title;
+
+  @override
+  State<_AssetPdfViewerPage> createState() => _AssetPdfViewerPageState();
+}
+
+class _AssetPdfViewerPageState extends State<_AssetPdfViewerPage> {
+  PdfControllerPinch? _pdfController;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _openPdf();
+  }
+
+  Future<void> _openPdf() async {
+    try {
+      final controller = PdfControllerPinch(
+        document: PdfDocument.openAsset(widget.assetPath),
+      );
+      if (!mounted) {
+        controller.dispose();
+        return;
+      }
+      setState(() {
+        _pdfController = controller;
+        _loading = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _pdfController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F5F7),
+      appBar: AppBar(
+        backgroundColor: kBrandOrange,
+        foregroundColor: Colors.white,
+        title: Text(
+          widget.title,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+      body: _error != null
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Could not open document',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.black54),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: () {
+                        _pdfController?.dispose();
+                        setState(() {
+                          _loading = true;
+                          _error = null;
+                          _pdfController = null;
+                        });
+                        _openPdf();
+                      },
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Try again'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: kBrandOrange,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : Stack(
+              children: [
+                if (_pdfController != null)
+                  PdfViewPinch(controller: _pdfController!)
+                else
+                  const SizedBox.expand(),
+                if (_loading)
+                  const Center(child: CircularProgressIndicator()),
+              ],
+            ),
     );
   }
 }

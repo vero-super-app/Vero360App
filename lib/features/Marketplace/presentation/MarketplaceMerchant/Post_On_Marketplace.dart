@@ -329,7 +329,10 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => MarketplaceEditPage(item: marketplaceItem),
+        builder: (_) => MarketplaceEditPage(
+          item: marketplaceItem,
+          firestoreId: item['id']?.toString(),
+        ),
       ),
     );
     if (changed == true) {
@@ -337,25 +340,59 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     }
   }
 
+  String _coverImageFromItem(Map<String, dynamic> item) {
+    String? take(dynamic v) {
+      final t = (v ?? '').toString().trim();
+      return t.isEmpty ? null : t;
+    }
+    return take(item['imageUrl']) ??
+        take(item['image']) ??
+        take(item['photo']) ??
+        '';
+  }
+
+  List<String> _galleryFromItem(Map<String, dynamic> item) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final field in [item['galleryUrls'], item['gallery']]) {
+      if (field is! List) continue;
+      for (final e in field) {
+        final s = e.toString().trim();
+        if (s.isEmpty || seen.contains(s)) continue;
+        seen.add(s);
+        out.add(s);
+      }
+    }
+    return out;
+  }
+
+  int _stableIdFromFirestore(String s) {
+    if (s.isEmpty) return 0;
+    var hash = 0;
+    for (final code in s.codeUnits) {
+      hash = (hash * 31 + code) & 0x7fffffff;
+    }
+    return hash == 0 ? 1 : hash;
+  }
+
   // Helper to create MarketplaceDetailModel from Map
   MarketplaceDetailModel _createMarketplaceDetailModel(
       Map<String, dynamic> item) {
+    final docId = item['id']?.toString() ?? '';
     return MarketplaceDetailModel(
-      // Firestore doc id is string, model expects int → just use 0 here
-      id: 0,
+      id: _stableIdFromFirestore(docId),
       name: item['name'] as String? ?? '',
-      image: item['image'] as String? ?? '',
+      image: _coverImageFromItem(item),
       price: (item['price'] as num?)?.toDouble() ?? 0.0,
       description: item['description'] as String? ?? '',
       location: item['location'] as String? ?? '',
       category: (item['category'] as String?) ?? 'other',
-      gallery: (item['gallery'] as List<dynamic>?)?.cast<String>() ??
-          const [],
+      gallery: _galleryFromItem(item),
       videos: (item['videos'] as List<dynamic>?)?.cast<String>() ??
           const [],
       sellerUserId: item['sellerUserId'] as String?,
-      merchantId: item['merchantId'] as String?, // NEW
-      merchantName: item['merchantName'] as String?, // NEW
+      merchantId: item['merchantId'] as String?,
+      merchantName: item['merchantName'] as String?,
       serviceType: (item['serviceType'] as String?) ?? 'marketplace',
     );
   }
@@ -1848,7 +1885,12 @@ class _ManageCard extends StatelessWidget {
   }
 
   Widget _buildImage() {
-    final dynamic raw = item['image'];
+    String? take(dynamic v) {
+      final t = (v ?? '').toString().trim();
+      return t.isEmpty ? null : t;
+    }
+
+    final raw = take(item['imageUrl']) ?? take(item['image']);
 
     Widget placeholder() {
       return Container(
@@ -1862,11 +1904,10 @@ class _ManageCard extends StatelessWidget {
       );
     }
 
-    if (raw is! String || raw.isEmpty) {
+    if (raw == null) {
       return placeholder();
     }
 
-    // If it's a URL
     if (raw.startsWith('http')) {
       return Image.network(
         raw,
@@ -1875,9 +1916,9 @@ class _ManageCard extends StatelessWidget {
       );
     }
 
-    // Otherwise, try to treat as base64
     try {
-      final bytes = base64Decode(raw);
+      final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+      final bytes = base64Decode(base64Part);
       return Image.memory(
         bytes,
         fit: BoxFit.cover,

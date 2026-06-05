@@ -1,6 +1,9 @@
 // lib/services/auth_storage.dart
 import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 class AuthStorage {
@@ -18,6 +21,52 @@ class AuthStorage {
       if (v != null && v.isNotEmpty) return true;
     }
     return false;
+  }
+
+  static const _messagingFirebaseUidKey = 'messaging_firebase_uid';
+
+  /// Sync numeric backend user id from GET /users/me for the current Firebase user.
+  static Future<int?> syncBackendUserIdFromMe() async {
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null) return null;
+
+    final token = await AuthHandler.getFirebaseToken();
+    if (token == null || token.isEmpty) return null;
+
+    final sp = await SharedPreferences.getInstance();
+    final storedUid = sp.getString(_messagingFirebaseUidKey);
+    if (storedUid != null && storedUid != firebaseUser.uid) {
+      await sp.remove('userId');
+      await sp.remove('user_id');
+    }
+    await sp.setString(_messagingFirebaseUidKey, firebaseUser.uid);
+
+    try {
+      await ApiConfig.init();
+      final res = await http.get(
+        ApiConfig.endpoint('/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (res.statusCode != 200) return null;
+      final json = jsonDecode(res.body);
+      if (json is! Map<String, dynamic>) return null;
+      final data = json['data'] is Map<String, dynamic>
+          ? json['data'] as Map<String, dynamic>
+          : json;
+      final rawId = data['id'] ?? data['userId'];
+      if (rawId == null) return null;
+      final id = rawId is int ? rawId : int.tryParse(rawId.toString());
+      if (id == null || id <= 0) return null;
+      await sp.setInt('userId', id);
+      await sp.setInt('user_id', id);
+      return id;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Try to get numeric userId from JWT or SharedPreferences

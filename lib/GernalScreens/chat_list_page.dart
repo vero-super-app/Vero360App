@@ -225,15 +225,18 @@ class _ChatListPageState extends State<ChatListPage> {
                 var name = otherParticipant.name.trim();
                 if (name.isEmpty || name.toLowerCase() == 'user') {
                   final email = otherParticipant.email.trim();
-                  if (email.isNotEmpty) {
+                  if (email.contains('@') && !email.startsWith('+firebase_')) {
                     name = email.split('@').first;
+                  } else if (t.name != null && t.name!.trim().isNotEmpty) {
+                    name = t.name!.trim();
                   }
                 }
                 final avatarUrl = otherParticipant.profilePicture ?? '';
 
-                final subtitle = t.type == 'direct'
-                    ? 'Tap to chat'
-                    : (t.name ?? 'Group chat');
+                final preview = (t.lastMessagePreview ?? '').trim();
+                final subtitle = preview.isNotEmpty
+                    ? preview
+                    : (t.type == 'direct' ? 'Tap to chat' : (t.name ?? 'Group chat'));
 
                 return _ChatRow(
                   name: name.isEmpty ? 'Contact' : name,

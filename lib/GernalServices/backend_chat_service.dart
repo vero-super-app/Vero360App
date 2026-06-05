@@ -5,8 +5,6 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
-import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
-
 class BackendChatThread {
   final String id;
   final String type; // 'direct' or 'group'
@@ -20,6 +18,7 @@ class BackendChatThread {
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<ChatParticipant> participants;
+  final String? lastMessagePreview;
 
   BackendChatThread({
     required this.id,
@@ -30,6 +29,7 @@ class BackendChatThread {
     this.isArchived = false,
     required this.participantCount,
     this.lastMessageAt,
+    this.lastMessagePreview,
     required this.unreadCount,
     required this.createdAt,
     required this.updatedAt,
@@ -59,6 +59,7 @@ class BackendChatThread {
               ? DateTime.parse(json['updatedAt'].toString())
               : null),
       unreadCount: (json['unreadCount'] as int?) ?? 0,
+      lastMessagePreview: json['lastMessagePreview']?.toString(),
       createdAt: DateTime.parse(
           json['createdAt']?.toString() ?? DateTime.now().toIso8601String()),
       updatedAt: DateTime.parse(
@@ -171,8 +172,9 @@ class BackendChatService {
     _threadsRefreshController.add(null);
   }
 
+  static const _messagingFirebaseUidKey = 'messaging_firebase_uid';
+
   static Future<void> ensureAuth() async {
-    // Ensure ApiConfig is initialized
     await ApiConfig.init();
 
     final user = FirebaseAuth.instance.currentUser;
@@ -181,60 +183,79 @@ class BackendChatService {
     }
 
     _authToken = await user.getIdToken();
-
     if (_authToken == null || _authToken!.isEmpty) {
       throw Exception('Failed to get Firebase ID token');
     }
 
-    // Get userId from SharedPreferences, or from JWT, or from GET /users/me
     final sp = await SharedPreferences.getInstance();
-    int? userId = sp.getInt('userId') ?? sp.getInt('user_id');
-    if (userId == null) {
-      userId = await AuthStorage.userIdFromToken();
-      if (userId != null) {
-        await sp.setInt('userId', userId);
-        await sp.setInt('user_id', userId);
-      }
+    final storedUid = sp.getString(_messagingFirebaseUidKey);
+    if (storedUid != null && storedUid != user.uid) {
+      await sp.remove('userId');
+      await sp.remove('user_id');
     }
-    if (userId == null && _authToken != null && _authToken!.isNotEmpty) {
-      // Firebase JWT has string sub (UID); fetch numeric id from backend
-      try {
-        final meUrl = ApiConfig.endpoint('/users/me');
-        final response = await http.get(
-          meUrl,
-          headers: {'Authorization': _authHeader},
-        ).timeout(const Duration(seconds: 10));
-        if (response.statusCode == 200) {
-          final json = jsonDecode(response.body) as Map<String, dynamic>?;
-          if (json != null) {
-            final data = json['data'] is Map<String, dynamic>
-                ? json['data'] as Map<String, dynamic>
-                : json;
-            final rawId = data['id'] ?? data['userId'];
-            if (rawId != null) {
-              userId = rawId is int ? rawId : int.tryParse(rawId.toString());
-              if (userId != null) {
-                await sp.setInt('userId', userId);
-                await sp.setInt('user_id', userId);
-              }
-            }
-          }
-        }
-      } catch (e) {
-        print('[BackendChatService] Failed to fetch /users/me for userId: $e');
-      }
-    }
+    await sp.setString(_messagingFirebaseUidKey, user.uid);
+
+    final userId = await _fetchNumericUserIdFromMe();
     if (userId == null) {
-      print(
-          '[BackendChatService] WARNING: userId not found in SharedPreferences');
-      print(
-          '[BackendChatService] Make sure to call: SharedPreferences.getInstance().setInt("userId", <numeric_id>)');
-      print('[BackendChatService] after user login with your backend');
-      throw Exception('User ID not set in SharedPreferences. '
-          'Backend must provide numeric userId after authentication.');
+      throw Exception(
+        'Could not resolve your account on the server. Please log in again.',
+      );
     }
 
+    await sp.setInt('userId', userId);
+    await sp.setInt('user_id', userId);
     _userId = userId;
+  }
+
+  /// Always load numeric DB user id for the current Firebase session.
+  static Future<int?> _fetchNumericUserIdFromMe() async {
+    if (_authToken == null || _authToken!.isEmpty) return null;
+    try {
+      final response = await http.get(
+        ApiConfig.endpoint('/users/me'),
+        headers: {'Authorization': _authHeader},
+      ).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return null;
+      final json = jsonDecode(response.body);
+      if (json is! Map<String, dynamic>) return null;
+      final data = json['data'] is Map<String, dynamic>
+          ? json['data'] as Map<String, dynamic>
+          : json;
+      final rawId = data['id'] ?? data['userId'];
+      if (rawId == null) return null;
+      return rawId is int ? rawId : int.tryParse(rawId.toString());
+    } catch (e) {
+      print('[BackendChatService] Failed to fetch /users/me: $e');
+      return null;
+    }
+  }
+
+  /// Resolve a marketplace / listing seller to a numeric backend user id.
+  static Future<int?> resolvePeerUserId({
+    int? ownerId,
+    String? sellerUserId,
+    String? serviceProviderId,
+    String? merchantId,
+  }) async {
+    await ensureAuth();
+
+    if (ownerId != null && ownerId > 0) return ownerId;
+
+    final candidates = [sellerUserId, serviceProviderId, merchantId];
+    for (final candidate in candidates) {
+      if (candidate == null || candidate.trim().isEmpty) continue;
+      final trimmed = candidate.trim();
+      final numeric = int.tryParse(trimmed);
+      if (numeric != null && numeric > 0) return numeric;
+    }
+
+    for (final candidate in candidates) {
+      if (candidate == null || candidate.trim().isEmpty) continue;
+      final uid = await getUserIdByFirebaseUid(candidate.trim());
+      if (uid != null && uid > 0) return uid;
+    }
+
+    return null;
   }
 
   static Future<int> getUserId() async {
@@ -249,7 +270,9 @@ class BackendChatService {
 
     try {
       // Try to get the user by their Firebase UID
-      final url = Uri.parse('${ApiConfig.prod}/vero/users?firebaseUid=$firebaseUid');
+      final url = ApiConfig.endpoint('/users').replace(
+        queryParameters: {'firebaseUid': firebaseUid},
+      );
       final response = await http.get(
         url,
         headers: {'Authorization': _authHeader},
@@ -488,7 +511,8 @@ class BackendChatService {
             },
             body: jsonEncode({
               'type': 'direct',
-              'participantIds': [_userId, peerUserId],
+              // Backend pairs authenticated user with this peer id
+              'participantIds': [peerUserId],
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -564,7 +588,7 @@ class BackendChatService {
           final chat = await ensureChat(peerUserId: userId);
 
           // Send message
-          final msg = await sendMessage(
+          await sendMessage(
             chatId: chat.id,
             content: testMessage,
             type: 'text',

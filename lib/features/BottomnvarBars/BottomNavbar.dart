@@ -20,6 +20,7 @@ import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 
 // Merchant dashboards
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
@@ -77,6 +78,13 @@ class _BottomnavbarState extends State<Bottomnavbar>
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      LocationPermissionHelper.onAppResumed();
+    }
+  }
+
   bool _tabIsProtected(int index) => index >= 2;
 
   Future<void> _initialize() async {
@@ -86,7 +94,16 @@ class _BottomnavbarState extends State<Bottomnavbar>
     } catch (e, st) {
       assert(() { debugPrint('BottomNavbar._initialize: $e\n$st'); return true; }());
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        if (_isDriver) {
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            if (!mounted) return;
+            if (LocationPermissionHelper.isKnownGranted) return;
+            await LocationPermissionHelper.ensureLocationAccess(context);
+          });
+        }
+      }
     }
   }
 

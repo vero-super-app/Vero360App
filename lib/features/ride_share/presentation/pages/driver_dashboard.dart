@@ -17,6 +17,7 @@ import 'create_taxi_screen.dart';
 import 'edit_taxi_screen.dart';
 import 'ride_history_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
   const DriverDashboard({super.key});
@@ -42,12 +43,13 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _ensureDriverActive();
-        _startLocationBroadcasting();
-        _startMapCentering();
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await LocationPermissionHelper.ensureLocationAccess(context);
+      if (!mounted) return;
+      _ensureDriverActive();
+      _startLocationBroadcasting();
+      _startMapCentering();
     });
   }
 
@@ -70,14 +72,21 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
         _resumeLocationAfterForeground = true;
       }
       _stopLocationBroadcasting();
-    } else if (state == AppLifecycleState.resumed &&
-        _resumeLocationAfterForeground) {
-      _resumeLocationAfterForeground = false;
-      Future.microtask(() {
-        if (mounted) {
-          _startLocationBroadcasting();
-        }
-      });
+    } else if (state == AppLifecycleState.resumed) {
+      LocationPermissionHelper.onAppResumed();
+      if (_resumeLocationAfterForeground) {
+        _resumeLocationAfterForeground = false;
+        Future.microtask(() async {
+          if (!mounted) return;
+          await LocationPermissionHelper.ensureLocationAccess(
+            context,
+            forceRefresh: true,
+          );
+          if (mounted) {
+            _startLocationBroadcasting();
+          }
+        });
+      }
     }
   }
 
@@ -113,12 +122,16 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
     _locationBroadcastTimer =
         Timer.periodic(const Duration(seconds: 5), (_) async {
       try {
-        final position = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-            timeLimit: Duration(seconds: 5),
-          ),
+        final position =
+            await LocationPermissionHelper.getCurrentPositionIfGranted(
+          timeLimit: const Duration(seconds: 5),
         );
+        if (position == null) {
+          if (mounted) {
+            await LocationPermissionHelper.promptIfBlocked(context);
+          }
+          return;
+        }
 
         // Update last position for map centering
         _lastPosition = position;
@@ -162,6 +175,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       } catch (e) {
         if (kDebugMode) {
           print('[DriverDashboard] Error getting position: $e');
+        }
+        if (mounted) {
+          await LocationPermissionHelper.promptIfBlocked(context);
         }
       }
     });

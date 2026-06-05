@@ -15,9 +15,9 @@ class ApiConfig {
   /// - For physical device: use your PC's LAN IP, e.g. http://192.168.1.x:3000
   static const String _defaultProdRoot =
       // 'http://67.217.59.237:3000';
-      'http://67.211.220.69:3000';  
+      // 'http://67.211.220.69:3000';
       //  'https://7f74-102-70-95-217.ngrok-free.app ';
-     // 'https://unbigamous-unappositely-kory.ngrok-free.dev';
+      'https://unbigamous-unappositely-kory.ngrok-free.dev';
 
   // static const String _defaultProdRoot =
   // 'http://10.0.2.2:3000'; // Android emulator localhost

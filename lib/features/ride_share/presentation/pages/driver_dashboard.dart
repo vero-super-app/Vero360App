@@ -15,6 +15,8 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/notificatio
 import 'driver_request_screen.dart';
 import 'create_taxi_screen.dart';
 import 'edit_taxi_screen.dart';
+import 'ride_history_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
   const DriverDashboard({super.key});
@@ -23,7 +25,8 @@ class DriverDashboard extends ConsumerStatefulWidget {
   ConsumerState<DriverDashboard> createState() => _DriverDashboardState();
 }
 
-class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsBindingObserver {
+class _DriverDashboardState extends ConsumerState<DriverDashboard>
+    with WidgetsBindingObserver {
   static const Color primaryColor = Color(0xFFFF8A00);
   GoogleMapController? mapController;
   Timer? _locationBroadcastTimer;
@@ -31,6 +34,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
   final DriverService _driverService = DriverService();
   bool _isOnline = false;
   Position? _lastPosition;
+
   /// After [paused]/[detached], restore "Go Online" when user returns — not for [inactive].
   bool _resumeLocationAfterForeground = false;
 
@@ -83,7 +87,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
     try {
       final driverProfile = await ref.read(myDriverProfileProvider.future);
       if (driverProfile['id'] != null) {
-        await _driverService.activateDriver(int.parse(driverProfile['id'].toString()));
+        await _driverService
+            .activateDriver(int.parse(driverProfile['id'].toString()));
         if (kDebugMode) {
           print('[DriverDashboard] ✓ Driver activated successfully');
         }
@@ -100,7 +105,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
     if (_isOnline) return; // Already broadcasting
 
     setState(() => _isOnline = true);
-    
+
     // Set taxi availability when going online
     _setTaxiAvailability(true);
 
@@ -128,9 +133,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
             return;
           }
 
-          var taxiId = driver['taxis']?.isNotEmpty == true
-              ? driver['taxis'][0]['id']
-              : null;
+          var taxiId = _primaryTaxiId(driver);
 
           if (kDebugMode) {
             print(
@@ -169,18 +172,16 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
     _locationBroadcastTimer?.cancel();
     _locationBroadcastTimer = null;
     setState(() => _isOnline = false);
-    
+
     // Set taxi unavailable when going offline
     _setTaxiAvailability(false);
   }
-  
+
   /// Helper to sync online/offline status with taxi availability
   Future<void> _setTaxiAvailability(bool isAvailable) async {
     try {
       final driverProfile = await ref.read(myDriverProfileProvider.future);
-      final taxiId = driverProfile['taxis']?.isNotEmpty == true
-          ? driverProfile['taxis'][0]['id']
-          : null;
+      final taxiId = _primaryTaxiId(driverProfile);
 
       if (taxiId != null) {
         await _driverService.setTaxiAvailability(
@@ -405,24 +406,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
                         ),
                       ),
 
-                      // Profile Card
                       Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: _buildProfileCard(ref),
-                      ),
-
-                      // Stats Section
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: _buildStatsSection(ref),
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // Quick Actions
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: _buildActionsSection(context),
+                        padding: const EdgeInsets.symmetric(horizontal: 0),
+                        child: _buildBottomSheetContent(context, ref),
                       ),
 
                       const SizedBox(height: 24),
@@ -446,15 +432,67 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
     );
   }
 
-  Widget _buildProfileCard(WidgetRef ref) {
+  Widget _buildBottomSheetContent(BuildContext context, WidgetRef ref) {
     final driverProfile = ref.watch(myDriverProfileProvider);
 
     return driverProfile.when(
-      data: (driver) {
-        // Check if driver profile is empty or invalid
-        if (driver.isEmpty || driver['id'] == null) {
-          return _buildNoDriverProfile();
+      loading: () => const DriverDashboardSheetSkeleton(),
+      error: (error, stack) {
+        final errorStr = error.toString().toLowerCase();
+        if (errorStr.contains('404') || errorStr.contains('not found')) {
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: _buildNoDriverProfile(),
+          );
         }
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Icon(Icons.error_outline, color: Colors.red.shade400, size: 32),
+              const SizedBox(height: 8),
+              Text(
+                'Error loading profile',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+      data: (driver) {
+        if (driver.isEmpty || driver['id'] == null) {
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: _buildNoDriverProfile(),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: _buildProfileCardContent(driver),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildStatsSectionContent(driver),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildActionsSectionContent(context, driver),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildProfileCardContent(Map<String, dynamic> driver) {
         return Container(
           decoration: BoxDecoration(
             color: Colors.grey[50],
@@ -592,42 +630,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
             ),
           ),
         );
-      },
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: CircularProgressIndicator(),
-      ),
-      error: (error, stack) {
-        // If driver profile doesn't exist, show create profile option
-        final errorStr = error.toString().toLowerCase();
-        if (errorStr.contains('404') || errorStr.contains('not found')) {
-          return _buildNoDriverProfile();
-        }
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Icon(Icons.error_outline, color: Colors.red.shade400, size: 32),
-              const SizedBox(height: 8),
-              Text(
-                'Error loading profile',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey[700],
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                error.toString(),
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   Widget _buildNoDriverProfile() {
@@ -748,53 +750,56 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
     return false;
   }
 
-  Widget _buildStatsSection(WidgetRef ref) {
-    final driverProfile = ref.watch(myDriverProfileProvider);
+  /// One vehicle per driver — returns the registered vehicle if any.
+  Map<String, dynamic>? _primaryTaxi(Map<String, dynamic> driver) {
+    final raw = driver['taxis'];
+    if (raw is! List || raw.isEmpty) return null;
+    final first = raw.first;
+    if (first is Map) return Map<String, dynamic>.from(first);
+    return null;
+  }
 
-    return driverProfile.when(
-      data: (driver) {
-        // Handle missing or invalid driver profile
-        if (driver.isEmpty || driver['id'] == null) {
-          return const SizedBox.shrink();
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  int? _primaryTaxiId(Map<String, dynamic> driver) {
+    final taxi = _primaryTaxi(driver);
+    if (taxi == null) return null;
+    return int.tryParse('${taxi['id']}');
+  }
+
+  Widget _buildStatsSectionContent(Map<String, dynamic> driver) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(bottom: 12),
+          child: Text(
+            'Performance',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Colors.black87,
+            ),
+          ),
+        ),
+        Row(
           children: [
-            const Padding(
-              padding: EdgeInsets.only(bottom: 12),
-              child: Text(
-                'Performance',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black87,
-                ),
+            Expanded(
+              child: _buildStatCard(
+                'Completed',
+                '${_getNumericValue(driver['completedRides'])}',
+                Colors.green,
               ),
             ),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildStatCard(
-                    'Completed',
-                    '${_getNumericValue(driver['completedRides'])}',
-                    Colors.green,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildStatCard(
-                    'Cancelled',
-                    '${_getNumericValue(driver['cancelledRides'])}',
-                    Colors.red,
-                  ),
-                ),
-              ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                'Cancelled',
+                '${_getNumericValue(driver['cancelledRides'])}',
+                Colors.red,
+              ),
             ),
           ],
-        );
-      },
-      loading: () => const SizedBox.shrink(),
-      error: (error, stack) => const SizedBox.shrink(),
+        ),
+      ],
     );
   }
 
@@ -832,11 +837,10 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
     );
   }
 
-  Widget _buildActionsSection(BuildContext context) {
-    final driverProfile = ref.watch(myDriverProfileProvider);
-
-    return driverProfile.when(
-      data: (driver) {
+  Widget _buildActionsSectionContent(
+    BuildContext context,
+    Map<String, dynamic> driver,
+  ) {
         final isVerified = _getBoolValue(driver['isVerified']);
         final hasTaxis =
             driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
@@ -895,7 +899,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
                     child: ElevatedButton.icon(
                       onPressed: () => _showCreateTaxiDialog(context),
                       icon: const Icon(Icons.add_circle_outline),
-                      label: const Text('Create Taxi'),
+                      label: const Text('Register Vehicle'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.orange,
                         foregroundColor: Colors.white,
@@ -916,10 +920,14 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton.icon(
-                      onPressed: () =>
-                          _showTaxiDetailsDialog(context, driver['taxis'][0]),
+                      onPressed: () {
+                        final taxi = _primaryTaxi(driver);
+                        if (taxi != null) {
+                          _showTaxiDetailsDialog(context, taxi);
+                        }
+                      },
                       icon: const Icon(Icons.directions_car),
-                      label: const Text('Manage Taxi'),
+                      label: const Text('Manage Vehicle'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.purple,
                         foregroundColor: Colors.white,
@@ -1059,42 +1067,72 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
                 ),
               ),
             ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const RideHistoryScreen(
+                        mode: RideHistoryMode.driver,
+                      ),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.history_rounded),
+                label: const Text('Trip History & Earnings'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: primaryColor,
+                  side: const BorderSide(color: primaryColor),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
           ],
         );
-      },
-      loading: () => const SizedBox.shrink(),
-      error: (error, stack) => const SizedBox.shrink(),
-    );
   }
 
   void _showCreateTaxiDialog(BuildContext context) {
+    final driver = ref.read(myDriverProfileProvider).value;
+    if (driver != null && _primaryTaxi(driver) != null) {
+      ToastHelper.showCustomToast(
+        context,
+        'You already have a registered vehicle',
+        isSuccess: false,
+        errorMessage: 'Edit your existing vehicle in Driver Center.',
+      );
+      return;
+    }
+
     Navigator.of(context)
         .push(
-          MaterialPageRoute(
-            builder: (_) => const CreateTaxiScreen(),
-          ),
-        )
+      MaterialPageRoute(
+        builder: (_) => const CreateTaxiScreen(),
+      ),
+    )
         .then((result) {
-          if (result == true && mounted) {
-            ref.refresh(myDriverProfileProvider);
-          }
-        });
+      if (result == true && mounted) {
+        ref.refresh(myDriverProfileProvider);
+      }
+    });
   }
-
-
 
   void _showTaxiDetailsDialog(BuildContext context, Map<String, dynamic> taxi) {
     Navigator.of(context)
         .push(
-          MaterialPageRoute(
-            builder: (_) => EditTaxiScreen(taxi: taxi),
-          ),
-        )
+      MaterialPageRoute(
+        builder: (_) => EditTaxiScreen(taxi: taxi),
+      ),
+    )
         .then((result) {
-          if (result == true && mounted) {
-            ref.refresh(myDriverProfileProvider);
-          }
-        });
+      if (result == true && mounted) {
+        ref.refresh(myDriverProfileProvider);
+      }
+    });
   }
 
   void _showVerifyDriverDialog(BuildContext context, int driverId) {
@@ -1197,9 +1235,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
   ) async {
     try {
       final driverProfile = await ref.read(myDriverProfileProvider.future);
-      final taxiId = driverProfile['taxis']?.isNotEmpty == true
-          ? driverProfile['taxis'][0]['id']
-          : null;
+      final taxiId = _primaryTaxiId(driverProfile);
 
       if (taxiId != null) {
         // Call dev endpoint for manual toggle
@@ -1211,7 +1247,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
           ref.refresh(myDriverProfileProvider);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Taxi set to ${isAvailable ? 'available' : 'unavailable'}\nReason: $reason'),
+              content: Text(
+                  'Taxi set to ${isAvailable ? 'available' : 'unavailable'}\nReason: $reason'),
               backgroundColor: isAvailable ? Colors.green : Colors.red,
               behavior: SnackBarBehavior.floating,
               margin: const EdgeInsets.all(16),
@@ -1261,12 +1298,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
 
       // Extract taxi ID from taxis list
       int? taxiId;
-      if (driverProfile['taxis'] is List &&
-          (driverProfile['taxis'] as List).isNotEmpty) {
-        final taxiData = driverProfile['taxis'][0];
-        if (taxiData is Map && taxiData.containsKey('id')) {
-          taxiId = taxiData['id'] as int?;
-        }
+      final primaryTaxi = _primaryTaxi(driverProfile);
+      if (primaryTaxi != null && primaryTaxi.containsKey('id')) {
+        taxiId = int.tryParse('${primaryTaxi['id']}');
       }
 
       if (kDebugMode) {

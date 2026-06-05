@@ -11,6 +11,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 
 class RideCompletionScreen extends StatefulWidget {
@@ -152,6 +153,7 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
           );
 
           if (paymentResult == true) {
+            await _recordRidePaymentOnBackend(ride.id, txRef);
             await _creditDriverWallet(ride);
             onDone();
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -191,6 +193,18 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
           ),
         );
       } catch (_) {}
+    }
+  }
+
+  Future<void> _recordRidePaymentOnBackend(int rideId, String txRef) async {
+    try {
+      final http = RideShareHttpService();
+      await http.confirmRidePayment(rideId, txRef);
+      http.dispose();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[RidePayment] Backend payment record failed: $e');
+      }
     }
   }
 

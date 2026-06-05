@@ -17,6 +17,7 @@ import 'package:vero360_app/features/Accomodation/Presentation/pages/Accomodatio
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
@@ -262,6 +263,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     await prefs.setString('token', token);
     await prefs.setString('jwt_token', token);
+
+    await AuthStorage.syncBackendUserIdFromMe();
 
     Map<String, dynamic> user = {};
     final rawUser = resp['user'];

@@ -213,11 +213,16 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       driverProfile.whenData((driver) {
         if (!mounted) return;
 
-        // Resolve taxiId from the driver's taxis array
+        // One vehicle per driver — use the registered vehicle.
         int? taxiId = request.candidateTaxiId;
-        final taxis = driver['taxis'];
-        if (taxiId == null && taxis is List && taxis.isNotEmpty) {
-          taxiId = (taxis[0]['id'] as num?)?.toInt();
+        if (taxiId == null) {
+          final taxis = driver['taxis'];
+          if (taxis is List && taxis.isNotEmpty) {
+            final first = taxis.first;
+            if (first is Map) {
+              taxiId = (first['id'] as num?)?.toInt();
+            }
+          }
         }
 
         try {

@@ -499,42 +499,18 @@ class _DetailsPageState extends State<DetailsPage> {
     if (!await _requireLogin()) return;
 
     try {
-      // Try multiple ID sources (serviceProviderId, sellerUserId, merchantId)
-      final idCandidates = [
-        item.serviceProviderId,
-        item.sellerUserId,
-        item.merchantId,
-      ];
+      final ownerId = int.tryParse((item.sellerUserId ?? '').trim());
+      final sellerId = await BackendChatService.resolvePeerUserId(
+        ownerId: ownerId,
+        sellerUserId: item.sellerUserId,
+        serviceProviderId: item.serviceProviderId,
+        merchantId: item.merchantId,
+      );
 
       if (kDebugMode) {
-        debugPrint('[_openChat] Available IDs - serviceProviderId: ${item.serviceProviderId}, sellerUserId: ${item.sellerUserId}, merchantId: ${item.merchantId}');
-      }
-
-      int? sellerId;
-      String? firebaseUidToLookup;
-
-      // First try numeric IDs
-      for (final candidate in idCandidates) {
-        if (candidate != null && candidate.isNotEmpty) {
-          sellerId = int.tryParse(candidate.trim());
-          if (sellerId != null && sellerId > 0) {
-            if (kDebugMode) debugPrint('[_openChat] Using numeric seller ID: $sellerId');
-            break;
-          }
-          // If not numeric, might be Firebase UID
-          if (firebaseUidToLookup == null) {
-            firebaseUidToLookup = candidate.trim();
-          }
-        }
-      }
-
-      // If no numeric ID found, try to fetch using Firebase UID
-      if ((sellerId == null || sellerId <= 0) && firebaseUidToLookup != null) {
-        if (kDebugMode) debugPrint('[_openChat] Trying to fetch numeric ID for Firebase UID: $firebaseUidToLookup');
-        sellerId = await BackendChatService.getUserIdByFirebaseUid(firebaseUidToLookup);
-        if (sellerId != null && sellerId > 0) {
-          if (kDebugMode) debugPrint('[_openChat] Got numeric seller ID from Firebase UID lookup: $sellerId');
-        }
+        debugPrint(
+          '[_openChat] Resolved sellerId=$sellerId (sellerUserId=${item.sellerUserId}, merchantId=${item.merchantId})',
+        );
       }
 
       if (sellerId == null || sellerId <= 0) {
@@ -543,8 +519,7 @@ class _DetailsPageState extends State<DetailsPage> {
         return;
       }
 
-      // Get current user ID (checks SharedPreferences first, then JWT)
-      final myId = await AuthStorage.userIdFromToken();
+      final myId = await BackendChatService.getUserId();
       if (kDebugMode) {
         debugPrint('[_openChat] Current user ID: $myId');
       }
@@ -567,7 +542,7 @@ class _DetailsPageState extends State<DetailsPage> {
 
       // Create or get existing chat via backend API, then navigate to full chat page
       final chat = await BackendChatService.ensureChat(
-        peerUserId: sellerId!,
+        peerUserId: sellerId,
         peerName: sellerName,
         peerAvatar: sellerAvatar,
       );

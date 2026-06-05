@@ -322,7 +322,8 @@ class MarketplaceDetailModel {
       sellerBusinessName: data['sellerBusinessName']?.toString(), sellerOpeningHours: data['sellerOpeningHours']?.toString(),
       sellerStatus: data['sellerStatus']?.toString(), sellerBusinessDescription: data['sellerBusinessDescription']?.toString(),
       sellerRating: sellerRating, sellerLogoUrl: data['sellerLogoUrl']?.toString(),
-      serviceProviderId: data['serviceProviderId']?.toString(), sellerUserId: data['sellerUserId']?.toString(),
+      serviceProviderId: data['serviceProviderId']?.toString(),
+      sellerUserId: (data['sellerUserId'] ?? data['ownerId'])?.toString(),
       merchantId: data['merchantId']?.toString(), merchantName: data['merchantName']?.toString(),
       serviceType: data['serviceType']?.toString() ?? 'marketplace',
     );
@@ -992,27 +993,13 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
     try {
       // Resolve seller numeric ID from available fields
-      final idCandidates = [
-        item.serviceProviderId,
-        item.sellerUserId,
-        item.merchantId,
-      ];
-
-      int? sellerId;
-      String? firebaseUidToLookup;
-
-      for (final candidate in idCandidates) {
-        if (candidate != null && candidate.trim().isNotEmpty) {
-          sellerId = int.tryParse(candidate.trim());
-          if (sellerId != null && sellerId > 0) break;
-          firebaseUidToLookup ??= candidate.trim();
-        }
-      }
-
-      // If no numeric ID, try resolving Firebase UID via backend
-      if ((sellerId == null || sellerId <= 0) && firebaseUidToLookup != null) {
-        sellerId = await BackendChatService.getUserIdByFirebaseUid(firebaseUidToLookup);
-      }
+      final ownerId = int.tryParse((item.sellerUserId ?? '').trim());
+      final sellerId = await BackendChatService.resolvePeerUserId(
+        ownerId: ownerId,
+        sellerUserId: item.sellerUserId,
+        serviceProviderId: item.serviceProviderId,
+        merchantId: item.merchantId,
+      );
 
       if (sellerId == null || sellerId <= 0) {
         if (!mounted) return;
@@ -1020,7 +1007,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         return;
       }
 
-      final myId = await AuthStorage.userIdFromToken();
+      final myId = await BackendChatService.getUserId();
       if (myId == null) {
         if (!mounted) return;
         ToastHelper.showCustomToast(context, 'Please log in to chat', isSuccess: false, errorMessage: '');

@@ -32,6 +32,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   final _picker = ImagePicker();
 
   bool _sending = false;
+  bool _loading = true;
+  String? _loadError;
   List<BackendChatMessage> _messages = [];
   Timer? _refreshTimer;
 
@@ -66,7 +68,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     try {
       await BackendChatService.ensureAuth();
       final userId = await BackendChatService.getUserId();
-      await _loadMessages();
+      await _loadMessages(silent: true);
+      await _markUnreadAsRead(userId);
 
       if (!mounted) return;
       setState(() {
@@ -75,27 +78,69 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       });
     } catch (e) {
       if (!mounted) return;
-      _toast('Error: ${e.toString()}');
+      setState(() {
+        _loading = false;
+        _loadError = _friendlyError(e);
+      });
+      _toast(_loadError!);
     }
   }
 
-  Future<void> _loadMessages() async {
+  String _friendlyError(Object e) {
+    final raw = e.toString().toLowerCase();
+    if (raw.contains('401') || raw.contains('unauthorized')) {
+      return 'Session expired. Please log in again.';
+    }
+    if (raw.contains('403') || raw.contains('forbidden') || raw.contains('participant')) {
+      return 'You do not have access to this chat.';
+    }
+    if (raw.contains('socket') || raw.contains('network') || raw.contains('timeout')) {
+      return 'Connection problem. Check your internet and try again.';
+    }
+    return 'Could not load messages. Pull to retry.';
+  }
+
+  Future<void> _loadMessages({bool silent = false}) async {
     try {
       final messages = await BackendChatService.getMessages(widget.peerId);
       if (!mounted) return;
-      // Sort by createdAt ascending so newest messages are at the end
       messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      setState(() => _messages = messages);
+      setState(() {
+        _messages = messages;
+        _loading = false;
+        _loadError = null;
+      });
 
-      // Scroll to bottom after loading
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scroll.hasClients && _scroll.position.maxScrollExtent > 0) {
           _scroll.jumpTo(_scroll.position.maxScrollExtent);
         }
       });
     } catch (e) {
-      print('[MessagePageBackendApi] Error loading messages: $e');
+      if (!mounted) return;
+      final msg = _friendlyError(e);
+      setState(() {
+        _loading = false;
+        if (!silent || _messages.isEmpty) _loadError = msg;
+      });
+      if (!silent) _toast(msg);
     }
+  }
+
+  Future<void> _markUnreadAsRead(int myUserId) async {
+    final unreadIds = _messages
+        .where((m) => !m.isMine(myUserId))
+        .map((m) => m.id)
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (unreadIds.isEmpty) return;
+    try {
+      await BackendChatService.markRead(
+        chatId: widget.peerId,
+        messageIds: unreadIds,
+      );
+      BackendChatService.refreshThreads();
+    } catch (_) {}
   }
 
   Future<void> _sendMessage() async {
@@ -113,6 +158,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       );
 
       await _loadMessages();
+      if (_myUserId != null) await _markUnreadAsRead(_myUserId!);
+      BackendChatService.refreshThreads();
 
       if (mounted) {
         setState(() => _sending = false);
@@ -226,9 +273,44 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           ],
         ),
       ),
-      body: _me == null
+      body: _me == null || _loading
           ? const Center(child: CircularProgressIndicator())
-          : Stack(
+          : _loadError != null && _messages.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.error_outline, size: 44, color: Colors.black54),
+                        const SizedBox(height: 12),
+                        Text(
+                          _loadError!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          onPressed: () {
+                            setState(() {
+                              _loading = true;
+                              _loadError = null;
+                            });
+                            _loadMessages();
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _brandOrange,
+                          ),
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : Stack(
               children: [
                 Positioned.fill(child: CustomPaint(painter: _ChatBgPainter())),
                 Column(

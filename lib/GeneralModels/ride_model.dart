@@ -215,6 +215,62 @@ class DriverInfo {
       };
 }
 
+class TripSummary {
+  final double fare;
+  final double distance;
+  final int durationMinutes;
+  final String pickup;
+  final String dropoff;
+  final double platformFee;
+  final double driverEarnings;
+  final String paymentStatus;
+  final String? counterpartyName;
+  final String? vehiclePlate;
+  final String? vehicleClass;
+
+  TripSummary({
+    required this.fare,
+    required this.distance,
+    required this.durationMinutes,
+    required this.pickup,
+    required this.dropoff,
+    required this.platformFee,
+    required this.driverEarnings,
+    required this.paymentStatus,
+    this.counterpartyName,
+    this.vehiclePlate,
+    this.vehicleClass,
+  });
+
+  factory TripSummary.fromJson(Map<String, dynamic> json) {
+    double parseDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+
+    int parseInt(dynamic value) {
+      if (value is int) return value;
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+
+    return TripSummary(
+      fare: parseDouble(json['fare']),
+      distance: parseDouble(json['distance']),
+      durationMinutes: parseInt(json['durationMinutes']),
+      pickup: json['pickup'] as String? ?? 'Pickup',
+      dropoff: json['dropoff'] as String? ?? 'Dropoff',
+      platformFee: parseDouble(json['platformFee']),
+      driverEarnings: parseDouble(json['driverEarnings']),
+      paymentStatus: json['paymentStatus'] as String? ?? 'pending',
+      counterpartyName: json['counterpartyName'] as String?,
+      vehiclePlate: json['vehiclePlate'] as String?,
+      vehicleClass: json['vehicleClass'] as String?,
+    );
+  }
+}
+
 class Ride {
   final int id;
   final int passengerId;
@@ -230,6 +286,11 @@ class Ride {
   final double? actualDistance;
   final double estimatedFare;
   final double? actualFare;
+  final double? platformFee;
+  final double? driverEarnings;
+  final String? paymentStatus;
+  final String? paymentTxRef;
+  final DateTime? paidAt;
   final String status;
   final DateTime? startTime;
   final DateTime? endTime;
@@ -239,6 +300,8 @@ class Ride {
   final DateTime updatedAt;
   final Vehicle? taxi;
   final DriverInfo? driver;
+  final String? passengerName;
+  final TripSummary? tripSummary;
 
   Ride({
     required this.id,
@@ -255,6 +318,11 @@ class Ride {
     this.actualDistance,
     required this.estimatedFare,
     this.actualFare,
+    this.platformFee,
+    this.driverEarnings,
+    this.paymentStatus,
+    this.paymentTxRef,
+    this.paidAt,
     required this.status,
     this.startTime,
     this.endTime,
@@ -264,6 +332,8 @@ class Ride {
     required this.updatedAt,
     this.taxi,
     this.driver,
+    this.passengerName,
+    this.tripSummary,
   });
 
   factory Ride.fromJson(Map<String, dynamic> json) {
@@ -333,6 +403,15 @@ class Ride {
         estimatedFare: parseDouble(json['estimatedFare']),
         actualFare:
             json['actualFare'] != null ? parseDouble(json['actualFare']) : null,
+        platformFee: json['platformFee'] != null
+            ? parseDouble(json['platformFee'])
+            : null,
+        driverEarnings: json['driverEarnings'] != null
+            ? parseDouble(json['driverEarnings'])
+            : null,
+        paymentStatus: json['paymentStatus'] as String?,
+        paymentTxRef: json['paymentTxRef'] as String?,
+        paidAt: json['paidAt'] != null ? parseDateTime(json['paidAt']) : null,
         status: json['status'] as String? ?? 'REQUESTED',
         startTime:
             json['startTime'] != null ? parseDateTime(json['startTime']) : null,
@@ -359,6 +438,18 @@ class Ride {
           }
           return null;
         }(),
+        passengerName: () {
+          final passenger = json['passenger'];
+          if (passenger is Map) {
+            return (passenger['name'] as String?)?.trim();
+          }
+          return null;
+        }(),
+        tripSummary: json['tripSummary'] is Map
+            ? TripSummary.fromJson(
+                json['tripSummary'] as Map<String, dynamic>,
+              )
+            : null,
       );
     } catch (e) {
       print('[Ride.fromJson] Error parsing ride from JSON: $e');
@@ -379,6 +470,18 @@ class Ride {
 
   String get fareDisplay => 'MK${estimatedFare.toStringAsFixed(2)}';
   String get distanceDisplay => '${estimatedDistance.toStringAsFixed(1)} km';
+
+  double get resolvedFare => actualFare ?? estimatedFare;
+  double get resolvedDistance => actualDistance ?? estimatedDistance;
+
+  String get routeLabel {
+    final from = (pickupAddress ?? '').trim();
+    final to = (dropoffAddress ?? '').trim();
+    if (from.isNotEmpty && to.isNotEmpty) return '$from → $to';
+    if (from.isNotEmpty) return from;
+    if (to.isNotEmpty) return to;
+    return 'Trip #$id';
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,

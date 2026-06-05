@@ -16,6 +16,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
@@ -161,6 +162,9 @@ class _LoginScreenState extends State<LoginScreen> {
       final numericId = int.tryParse(uid);
       if (numericId != null) await prefs.setInt('userId', numericId);
     }
+
+    // Always align numeric userId with backend /users/me for messaging
+    await AuthStorage.syncBackendUserIdFromMe();
 
     if (role == 'merchant') {
       String? merchantService = user['merchantService']?.toString() ??

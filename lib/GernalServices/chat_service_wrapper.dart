@@ -65,7 +65,7 @@ class ChatServiceWrapper {
       threadId: threadId,
       messageId: messageId,
       myAppId: myAppId,
-      newText: '',
+      newText: newContent,
     );
   }
 

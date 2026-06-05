@@ -160,11 +160,18 @@ class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final msg = e.toString();
+        final oneVehicleOnly = msg.contains('only register one vehicle') ||
+            msg.contains('already have a registered');
         ToastHelper.showCustomToast(
           context,
-          'Error creating taxi: $e',
+          oneVehicleOnly
+              ? 'One vehicle per driver'
+              : 'Could not register vehicle',
           isSuccess: false,
-          errorMessage: '',
+          errorMessage: oneVehicleOnly
+              ? 'Edit your existing vehicle instead of adding another.'
+              : msg.replaceFirst('Exception: ', ''),
         );
       }
     } finally {

@@ -5,6 +5,7 @@ import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_detail_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
 
 enum RideHistoryMode { passenger, driver }
 
@@ -101,9 +102,7 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
         future: _historyFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(color: _brandOrange),
-            );
+            return RideHistoryScreenSkeleton(showDriverEarnings: _isDriver);
           }
 
           if (snapshot.hasError) {
@@ -146,6 +145,10 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
                         FutureBuilder<DriverEarningsSummary>(
                           future: _earningsFuture,
                           builder: (context, earningsSnap) {
+                            if (earningsSnap.connectionState ==
+                                ConnectionState.waiting) {
+                              return const DriverEarningsCardSkeleton();
+                            }
                             final earnings = earningsSnap.data;
                             if (earnings == null) {
                               return const SizedBox.shrink();

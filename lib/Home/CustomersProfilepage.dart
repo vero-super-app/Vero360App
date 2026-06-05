@@ -35,6 +35,7 @@ import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_profile_hub_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -78,6 +79,10 @@ class _ProfilePageState extends State<ProfilePage> {
         mode: _isDriver ? RideHistoryMode.driver : RideHistoryMode.passenger,
       ),
     );
+  }
+
+  void _openDriverCenter() {
+    _openBottomSheet(const DriverProfileHubScreen());
   }
 
   Future<void> _loadUserData() async {
@@ -1129,6 +1134,83 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
+  Widget _driverCenterSection() {
+    if (!_isDriver) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+      child: Material(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: _openDriverCenter,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: _veroOrange.withValues(alpha: 0.25),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _veroOrange.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.local_taxi_rounded,
+                    color: _veroOrange,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Driver Center',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Profile, vehicle, payout & verification',
+                        style: TextStyle(
+                          color: Colors.black54,
+                          fontSize: 12.5,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: _veroOrange,
+                  size: 28,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _ordersQuickActions() {
     // Quick actions; use Wrap so "My VeroRide" can move to the next row
     // on smaller phones (e.g. S10) while still appearing in one row on
@@ -1181,7 +1263,12 @@ class _ProfilePageState extends State<ProfilePage> {
             Icons.local_taxi_rounded,
             _openRideHistory,
           ),
-     
+          if (_isDriver)
+            _orderAction(
+              'Driver Center',
+              Icons.manage_accounts_rounded,
+              _openDriverCenter,
+            ),
            _orderAction('My Food', Icons.restaurant, () {
             //_openBottomSheet(const MyBookingsPage());
           }),
@@ -1311,6 +1398,10 @@ class _ProfilePageState extends State<ProfilePage> {
         Icons.history_rounded,
         _openRideHistory,
       ),
+      if (_isDriver)
+        _DetailItem('Driver Center', Icons.local_taxi_outlined, () async {
+          _openDriverCenter();
+        }),
       _DetailItem('My Address', Icons.location_on, () {
         _openBottomSheet(const AddressPage());
       }),
@@ -1384,6 +1475,7 @@ class _ProfilePageState extends State<ProfilePage> {
           children: [
             _topProfileCard(),
             const SizedBox(height: 52), // space under the floating card
+            _driverCenterSection(),
             _ordersQuickActions(),
             _otherDetailsGrid(),
             // 👉 LATEST ARRIVALS (API)

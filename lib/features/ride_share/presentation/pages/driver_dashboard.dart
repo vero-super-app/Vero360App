@@ -15,6 +15,7 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/notificatio
 import 'driver_request_screen.dart';
 import 'create_taxi_screen.dart';
 import 'edit_taxi_screen.dart';
+import 'ride_history_screen.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
   const DriverDashboard({super.key});
@@ -1055,6 +1056,31 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> with WidgetsB
                       borderRadius: BorderRadius.circular(12),
                     ),
                     elevation: 0,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const RideHistoryScreen(
+                        mode: RideHistoryMode.driver,
+                      ),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.history_rounded),
+                label: const Text('Trip History & Earnings'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: primaryColor,
+                  side: const BorderSide(color: primaryColor),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
               ),

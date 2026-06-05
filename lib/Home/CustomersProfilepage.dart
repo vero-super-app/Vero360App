@@ -34,6 +34,7 @@ import 'package:vero360_app/Home/homepage.dart' show LatestArrivalsSection;
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/settings/Settings.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -58,6 +59,7 @@ class _ProfilePageState extends State<ProfilePage> {
   String profileUrl = "";
 
   bool _loading = false;
+  bool _isDriver = false;
 
   // demo wallet figures – replace with real values if you have them
   double balance = 450;
@@ -70,8 +72,20 @@ class _ProfilePageState extends State<ProfilePage> {
     _fetchCurrentUser();
   }
 
+  void _openRideHistory() {
+    _openBottomSheet(
+      RideHistoryScreen(
+        mode: _isDriver ? RideHistoryMode.driver : RideHistoryMode.passenger,
+      ),
+    );
+  }
+
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
+    final role =
+        (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
+            .toLowerCase()
+            .trim();
     String loadedName = prefs.getString('fullName') ??
         prefs.getString('name') ??
         'Guest User';
@@ -114,6 +128,7 @@ class _ProfilePageState extends State<ProfilePage> {
         phone = loadedPhone;
         this.address = address;
         profileUrl = loadedProfileUrl;
+        _isDriver = role == 'driver';
       });
     }
   }
@@ -1161,9 +1176,11 @@ class _ProfilePageState extends State<ProfilePage> {
             () => _openBottomSheet(const ToRefundPage()),
             badgeRoute: NotificationStore.kBadgeRefund,
           ),
-          _orderAction('VeroRide', Icons.local_taxi_rounded, () {
-            //_openBottomSheet(const MyBookingsPage());
-          }),
+          _orderAction(
+            _isDriver ? 'Trip Earnings' : 'VeroRide',
+            Icons.local_taxi_rounded,
+            _openRideHistory,
+          ),
      
            _orderAction('My Food', Icons.restaurant, () {
             //_openBottomSheet(const MyBookingsPage());
@@ -1289,6 +1306,11 @@ class _ProfilePageState extends State<ProfilePage> {
           profilePictureUrl: profileUrl,
         ));
       }),
+      _DetailItem(
+        _isDriver ? 'Trip History' : 'Ride History',
+        Icons.history_rounded,
+        _openRideHistory,
+      ),
       _DetailItem('My Address', Icons.location_on, () {
         _openBottomSheet(const AddressPage());
       }),

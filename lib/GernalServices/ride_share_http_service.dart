@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
+import 'package:vero360_app/GeneralModels/ride_history_model.dart';
 
 /// HTTP-based Ride Share Service replacing Firebase completely
 class RideShareHttpService {
@@ -318,43 +319,135 @@ class RideShareHttpService {
     }
   }
 
-  /// Get rides for authenticated user (passenger)
-  Future<List<Ride>> getMyRides() async {
+  Map<String, String> _authHeaders(String? token) {
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    return headers;
+  }
+
+  RideHistoryPage _parseRideHistoryResponse(dynamic data) {
+    if (data is Map<String, dynamic>) {
+      return RideHistoryPage.fromJson(data);
+    }
+    if (data is List) {
+      final rides = data
+          .map((r) => Ride.fromJson(r as Map<String, dynamic>))
+          .toList();
+      return RideHistoryPage(
+        rides: rides,
+        total: rides.length,
+        page: 1,
+        limit: rides.length,
+        summary: RideHistorySummary(
+          completedCount:
+              rides.where((r) => r.isCompleted).length,
+          cancelledCount:
+              rides.where((r) => r.isCancelled).length,
+          totalSpent: rides
+              .where((r) => r.isCompleted)
+              .fold<double>(0, (s, r) => s + r.resolvedFare),
+        ),
+      );
+    }
+    return RideHistoryPage(
+      rides: const [],
+      total: 0,
+      page: 1,
+      limit: 20,
+      summary: RideHistorySummary(completedCount: 0, cancelledCount: 0),
+    );
+  }
+
+  /// Get paginated ride history for authenticated passenger
+  Future<RideHistoryPage> getPassengerRideHistory({
+    String status = 'ALL',
+    int page = 1,
+    int limit = 20,
+  }) async {
     try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-
       final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
+      final uri = ApiConfig.endpoint('/ride-share/rides').replace(
+        queryParameters: {
+          'status': status,
+          'page': '$page',
+          'limit': '$limit',
+        },
+      );
       final response = await http.get(
-        ApiConfig.endpoint('/ride-share/rides'),
-        headers: headers,
+        uri,
+        headers: _authHeaders(token),
       );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is List) {
-          return (data)
-              .map((r) => Ride.fromJson(r as Map<String, dynamic>))
-              .toList();
-        } else if (data is Map && data.containsKey('rides')) {
-          final rides = data['rides'] as List;
-          return rides
-              .map((r) => Ride.fromJson(r as Map<String, dynamic>))
-              .toList();
-        }
-        return [];
-      } else {
-        throw Exception('Failed to get rides: ${response.statusCode}');
+        return _parseRideHistoryResponse(jsonDecode(response.body));
       }
+      throw Exception('Failed to get rides: ${response.statusCode}');
     } catch (e) {
-      print('Error getting rides');
+      print('Error getting passenger ride history');
       rethrow;
     }
+  }
+
+  /// Get paginated ride history for authenticated driver
+  Future<RideHistoryPage> getDriverRideHistory({
+    String status = 'ALL',
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final token = await _getAuthToken();
+      final uri =
+          ApiConfig.endpoint('/ride-share/drivers/me/rides').replace(
+        queryParameters: {
+          'status': status,
+          'page': '$page',
+          'limit': '$limit',
+        },
+      );
+      final response = await http.get(
+        uri,
+        headers: _authHeaders(token),
+      );
+
+      if (response.statusCode == 200) {
+        return _parseRideHistoryResponse(jsonDecode(response.body));
+      }
+      throw Exception('Failed to get driver rides: ${response.statusCode}');
+    } catch (e) {
+      print('Error getting driver ride history');
+      rethrow;
+    }
+  }
+
+  /// Get driver earnings summary by period
+  Future<DriverEarningsSummary> getDriverEarningsSummary() async {
+    try {
+      final token = await _getAuthToken();
+      final response = await http.get(
+        ApiConfig.endpoint('/ride-share/drivers/me/earnings/summary'),
+        headers: _authHeaders(token),
+      );
+
+      if (response.statusCode == 200) {
+        return DriverEarningsSummary.fromJson(
+          jsonDecode(response.body) as Map<String, dynamic>,
+        );
+      }
+      throw Exception(
+        'Failed to get driver earnings: ${response.statusCode}',
+      );
+    } catch (e) {
+      print('Error getting driver earnings summary');
+      rethrow;
+    }
+  }
+
+  /// Legacy alias — returns ride list from passenger history
+  Future<List<Ride>> getMyRides() async {
+    final page = await getPassengerRideHistory();
+    return page.rides;
   }
 
   /// Accept a ride (driver)
@@ -482,6 +575,28 @@ class RideShareHttpService {
       }
     } catch (e) {
       print('Error completing ride');
+      rethrow;
+    }
+  }
+
+  /// Confirm passenger payment for a completed ride
+  Future<Ride> confirmRidePayment(int rideId, String txRef) async {
+    try {
+      final token = await _getAuthToken();
+      final response = await http.patch(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/payment'),
+        headers: _authHeaders(token),
+        body: jsonEncode({'txRef': txRef}),
+      );
+
+      if (response.statusCode == 200) {
+        return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+      }
+      throw Exception(
+        'Failed to confirm ride payment: ${response.statusCode} - ${response.body}',
+      );
+    } catch (e) {
+      print('Error confirming ride payment');
       rethrow;
     }
   }

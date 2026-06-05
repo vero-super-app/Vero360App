@@ -454,6 +454,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   bool _aiSearchMode = false;
   bool _veroAiLoading = false;
   late Future<List<MarketplaceDetailModel>> _future;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _itemsSub;
 
   Set<String> _followedMerchantIdsCache = {};
   DateTime _followedMerchantIdsFetchedAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -645,10 +646,28 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
     _startSuggestionTimer();
     _refreshSearchSuggestionsFromProfile();
+    _startItemsListener();
+  }
+
+  void _startItemsListener() {
+    _itemsSub?.cancel();
+    _itemsSub = _firestore
+        .collection('marketplace_items')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen((snap) async {
+      if (!mounted) return;
+      if (_lastQuery.trim().isNotEmpty || _photoMode) return;
+      final result =
+          await _itemsFromDocs(snap.docs, category: _selectedCategory);
+      if (!mounted) return;
+      setState(() => _future = Future.value(result));
+    });
   }
 
   @override
   void dispose() {
+    _itemsSub?.cancel();
     _debounce?.cancel(); _suggestionTimer?.cancel();
     _searchCtrl.removeListener(_onSearchChanged);
     _searchCtrl.dispose(); _askQuestionCtrl.dispose();
@@ -766,37 +785,81 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         .toList();
   }
 
+  Future<List<MarketplaceDetailModel>> _itemsFromDocs(
+    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
+    String? category,
+  }) async {
+    final all = _excludeFood(
+      docs
+          .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
+          .where((item) => item.isActive)
+          .toList(),
+    );
+    if (category == null || category.isEmpty) {
+      final result = _forYouMode
+          ? await _rankByPersonalization(all)
+          : await _sortByNewest(all);
+      _setSuggestionsFromItems(result);
+      return result;
+    }
+    final c = category.toLowerCase();
+    final filtered =
+        all.where((item) => item.category.toLowerCase() == c).toList();
+    final result = _forYouMode
+        ? await _rankByPersonalization(filtered)
+        : await _sortByNewest(filtered);
+    _setSuggestionsFromItems(result);
+    return result;
+  }
+
   Future<List<MarketplaceDetailModel>> _loadAll({String? category}) async {
     setState(() { _loading = true; _photoMode = false; _selectedCategory = category; });
     try {
-      QuerySnapshot? snapshot;
       try {
-        snapshot = await _firestore.collection('marketplace_items').orderBy('createdAt', descending: true).get(const GetOptions(source: Source.cache));
-        if (snapshot.docs.isNotEmpty) {
-          final all = _excludeFood(snapshot.docs.map((doc) => MarketplaceDetailModel.fromFirestore(doc)).where((item) => item.isActive).toList());
-          if (category == null || category.isEmpty) { final result = _forYouMode ? await _rankByPersonalization(all) : await _sortByNewest(all); _setSuggestionsFromItems(result); return result; }
-          final c = category.toLowerCase();
-          final filtered = all.where((item) => item.category.toLowerCase() == c).toList();
-          final result = _forYouMode ? await _rankByPersonalization(filtered) : await _sortByNewest(filtered);
-          _setSuggestionsFromItems(result); return result;
-        }
-      } catch (_) {}
-      try {
-        snapshot = await _firestore.collection('marketplace_items').orderBy('createdAt', descending: true).get(const GetOptions(source: Source.server));
-        final all = _excludeFood(snapshot.docs.map((doc) => MarketplaceDetailModel.fromFirestore(doc)).where((item) => item.isActive).toList());
-        if (category == null || category.isEmpty) { final result = _forYouMode ? await _rankByPersonalization(all) : await _sortByNewest(all); _setSuggestionsFromItems(result); return result; }
-        final c = category.toLowerCase();
-        final filtered = all.where((item) => item.category.toLowerCase() == c).toList();
-        final result = _forYouMode ? await _rankByPersonalization(filtered) : await _sortByNewest(filtered);
-        _setSuggestionsFromItems(result); return result;
+        final snapshot = await _firestore
+            .collection('marketplace_items')
+            .orderBy('createdAt', descending: true)
+            .get(const GetOptions(source: Source.server));
+        return await _itemsFromDocs(snapshot.docs, category: category);
       } catch (serverError) {
+        try {
+          final cached = await _firestore
+              .collection('marketplace_items')
+              .orderBy('createdAt', descending: true)
+              .get(const GetOptions(source: Source.cache));
+          if (cached.docs.isNotEmpty) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: const Text('You are offline. Showing cached items.'),
+                backgroundColor: _kAmber,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ));
+            }
+            return await _itemsFromDocs(cached.docs, category: category);
+          }
+        } catch (_) {}
         final err = serverError.toString().toLowerCase();
-        if ((err.contains('unavailable') || err.contains('network') || err.contains('offline')) && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('You are offline. Showing cached items.'), backgroundColor: _kAmber, behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))));
+        if ((err.contains('unavailable') ||
+                err.contains('network') ||
+                err.contains('offline')) &&
+            mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text('Could not reach server. Pull to refresh.'),
+            backgroundColor: _kAmber,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ));
         }
         return [];
       }
-    } finally { if (mounted) setState(() => _loading = false); }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   Future<List<MarketplaceDetailModel>> _searchByName(String raw) async {

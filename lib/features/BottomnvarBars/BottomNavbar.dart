@@ -148,8 +148,17 @@ class _BottomnavbarState extends State<Bottomnavbar>
       }
       final isMerchant = RoleHelper.isMerchant(user);
       final isDriver = !isMerchant && RoleHelper.isDriver(user);
-      final newRole = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
-      if (cachedRole != newRole) { await prefs.setString('user_role', newRole); await prefs.setString('role', newRole); }
+      var newRole = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
+      // Keep local driver/merchant when backend still reports customer (PUT may have failed).
+      if (newRole == 'customer' &&
+          cachedRole.isNotEmpty &&
+          cachedRole != 'customer') {
+        newRole = cachedRole;
+      }
+      if (cachedRole != newRole) {
+        await prefs.setString('user_role', newRole);
+        await prefs.setString('role', newRole);
+      }
       if (mounted && (_isMerchant != isMerchant || _isDriver != isDriver)) { await _checkUserRoleAndSetup(); if (mounted) setState(() {}); }
     } catch (_) {}
   }

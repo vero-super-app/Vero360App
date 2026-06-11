@@ -39,6 +39,8 @@ import 'package:vero360_app/features/Accomodation/Presentation/pages/Accomodatio
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
+import 'package:vero360_app/app_nav_key.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/active_ride_controller.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_request_overlay.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
@@ -56,7 +58,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
-final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
+final GlobalKey<NavigatorState> navKey = appNavKey;
 
 /// Root merchant shell: must match [Bottomnavbar] / auth screens (prefs `merchant_service`).
 Widget merchantDashboardFromPrefs(String email, SharedPreferences prefs) {
@@ -84,10 +86,21 @@ void Function()? _onOnboardingGateCompletedHook;
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  // debugPrint("Background/terminated FCM message: ${message.messageId}");
 
-  // You can add minimal logic here (e.g. update local storage)
-  // Full display logic is already in NotificationService
+  final data = message.data;
+  if (data['type'] == 'ride_status' && data['rideId'] != null) {
+    final rideId = int.tryParse(data['rideId'].toString());
+    final status = data['status']?.toString() ?? '';
+    if (rideId != null &&
+        status.isNotEmpty &&
+        status != 'COMPLETED' &&
+        status != 'CANCELLED') {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('active_ride_id', rideId);
+      await prefs.setString('active_ride_role', 'passenger');
+      await prefs.setString('active_ride_status', status);
+    }
+  }
 }
 
 // ───────────────────────────────────────────────
@@ -798,9 +811,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final cartSvc = CartServiceProvider.getInstance();
 
     return ProviderScope(
-      child: _DriverStatusBootstrap(
-        child: MaterialApp(
-          navigatorKey: navKey,
+      child: ActiveRideResumeListener(
+        child: _DriverStatusBootstrap(
+          child: MaterialApp(
+            navigatorKey: appNavKey,
           debugShowCheckedModeBanner: false,
           title: 'Vero360',
           theme: ThemeData(
@@ -878,6 +892,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             }
           },
         ),
+      ),
       ),
     );
   }

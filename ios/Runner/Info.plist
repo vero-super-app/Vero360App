@@ -81,7 +81,14 @@
 	<!-- 🔸 Permissions -->
 	<!-- Location for "Use current location" in address form -->
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>We use your location to fill your address and show nearby places.</string>
+	<string>We use your location to fill your address, show nearby places, and share your position during active rides.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Vero needs background location during active trips so passengers can track your ride when the app is in the background.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>fetch</string>
+	</array>
 	<!-- Saving QR image to Photos -->
 	 <key>NSPhotoLibraryAddUsageDescription</key>
 <string>We save the QR image to your Photos.</string>

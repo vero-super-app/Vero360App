@@ -6,6 +6,7 @@ import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/websocket_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_messaging_sheet.dart';
@@ -39,8 +40,9 @@ class _PassengerRideTrackingScreenState
     // runs while the route's ConsumerWidget is still building.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      ref.read(rideLifecycleProvider.notifier).reset();
-      ref.read(rideLifecycleProvider.notifier).subscribeToRide(widget.rideId);
+      ref
+          .read(rideLifecycleProvider.notifier)
+          .subscribeToRideAsPassenger(widget.rideId);
     });
   }
 
@@ -74,6 +76,7 @@ class _PassengerRideTrackingScreenState
   @override
   Widget build(BuildContext context) {
     final lifecycleState = ref.watch(rideLifecycleProvider);
+    final liveDriverLocation = ref.watch(driverLocationProvider).value;
 
     final Ride? ride = switch (lifecycleState) {
       RideActive(:final ride) => ride,
@@ -155,8 +158,9 @@ class _PassengerRideTrackingScreenState
           )
         : null;
 
-    final LatLng? driverLatLng =
-        (ride?.driver?.latitude != null && ride?.driver?.longitude != null)
+    final LatLng? driverLatLng = liveDriverLocation != null
+        ? LatLng(liveDriverLocation.latitude, liveDriverLocation.longitude)
+        : (ride?.driver?.latitude != null && ride?.driver?.longitude != null)
             ? LatLng(ride!.driver!.latitude!, ride.driver!.longitude!)
             : null;
 

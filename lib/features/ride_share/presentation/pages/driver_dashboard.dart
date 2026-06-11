@@ -18,6 +18,8 @@ import 'edit_taxi_screen.dart';
 import 'ride_history_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
   const DriverDashboard({super.key});
@@ -71,7 +73,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       if (_isOnline) {
         _resumeLocationAfterForeground = true;
       }
-      _stopLocationBroadcasting();
+      _pauseDashboardLocationBroadcast();
     } else if (state == AppLifecycleState.resumed) {
       LocationPermissionHelper.onAppResumed();
       if (_resumeLocationAfterForeground) {
@@ -183,14 +185,33 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
     });
   }
 
-  /// Stop broadcasting driver location
-  void _stopLocationBroadcasting() {
+  /// Stop dashboard timer only — keeps taxi available during an active trip.
+  void _pauseDashboardLocationBroadcast() {
     _locationBroadcastTimer?.cancel();
     _locationBroadcastTimer = null;
-    setState(() => _isOnline = false);
+    if (mounted) setState(() => _isOnline = false);
 
-    // Set taxi unavailable when going offline
-    _setTaxiAvailability(false);
+    final lifecycle = ref.read(rideLifecycleProvider);
+    final hasActiveTrip = lifecycle is RideActive &&
+        (lifecycle.isAccepted ||
+            lifecycle.isDriverArrived ||
+            lifecycle.isInProgress);
+    if (!hasActiveTrip) {
+      _setTaxiAvailability(false);
+    }
+  }
+
+  /// Stop broadcasting driver location and mark taxi offline.
+  void _stopLocationBroadcasting() {
+    _pauseDashboardLocationBroadcast();
+    final lifecycle = ref.read(rideLifecycleProvider);
+    final hasActiveTrip = lifecycle is RideActive &&
+        (lifecycle.isAccepted ||
+            lifecycle.isDriverArrived ||
+            lifecycle.isInProgress);
+    if (!hasActiveTrip) {
+      _setTaxiAvailability(false);
+    }
   }
 
   /// Helper to sync online/offline status with taxi availability

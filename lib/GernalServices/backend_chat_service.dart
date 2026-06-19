@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:async/async.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -70,6 +69,38 @@ class BackendChatThread {
           [],
     );
   }
+
+  BackendChatThread copyWith({
+    String? id,
+    String? type,
+    String? name,
+    String? description,
+    String? avatarUrl,
+    bool? isArchived,
+    int? participantCount,
+    DateTime? lastMessageAt,
+    int? unreadCount,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    List<ChatParticipant>? participants,
+    String? lastMessagePreview,
+  }) {
+    return BackendChatThread(
+      id: id ?? this.id,
+      type: type ?? this.type,
+      name: name ?? this.name,
+      description: description ?? this.description,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      isArchived: isArchived ?? this.isArchived,
+      participantCount: participantCount ?? this.participantCount,
+      lastMessageAt: lastMessageAt ?? this.lastMessageAt,
+      unreadCount: unreadCount ?? this.unreadCount,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      participants: participants ?? this.participants,
+      lastMessagePreview: lastMessagePreview ?? this.lastMessagePreview,
+    );
+  }
 }
 
 class BackendChatMessage {
@@ -85,6 +116,7 @@ class BackendChatMessage {
   final List<Map<String, dynamic>>? attachments;
   final List<Map<String, dynamic>>? tags;
   final Map<String, dynamic>? sender;
+  final String? clientMessageId;
 
   BackendChatMessage({
     required this.id,
@@ -99,6 +131,7 @@ class BackendChatMessage {
     this.attachments,
     this.tags,
     this.sender,
+    this.clientMessageId,
   });
 
   bool isMine(int myUserId) => senderId == myUserId;
@@ -128,6 +161,7 @@ class BackendChatMessage {
       sender: json['sender'] is Map
           ? Map<String, dynamic>.from(json['sender'] as Map)
           : null,
+      clientMessageId: json['clientMessageId']?.toString(),
     );
   }
 }
@@ -162,10 +196,109 @@ class BackendChatService {
 
   static String? _authToken;
   static int? _userId;
+  static String? _cachedFirebaseUid;
+  static DateTime? _tokenFetchedAt;
+  static const Duration _tokenTtl = Duration(minutes: 50);
 
   // Stream controller for threads refresh
   static final _threadsRefreshController = StreamController<void>.broadcast();
   static Stream<void> get _threadsRefresh => _threadsRefreshController.stream;
+
+  static final _threadsLiveController =
+      StreamController<List<BackendChatThread>>.broadcast();
+  static List<BackendChatThread> _cachedThreads = [];
+  static bool _threadsWatchReady = false;
+  static Timer? _threadsFallbackPollTimer;
+  static String? _activeChatId;
+  static bool _wsConnected = false;
+
+  /// Chat currently open in [MessagePageBackendApi] (suppresses unread bump).
+  static void setActiveChatId(String? chatId) => _activeChatId = chatId;
+
+  static void notifyWsConnected(bool connected) {
+    _wsConnected = connected;
+    if (connected) {
+      _threadsFallbackPollTimer?.cancel();
+      _threadsFallbackPollTimer = null;
+    } else {
+      _ensureThreadsFallbackPoll();
+    }
+  }
+
+  /// Apply a real-time message to the in-memory thread list.
+  static void notifyRealtimeMessage(BackendChatMessage message) {
+    if (!_threadsWatchReady || _cachedThreads.isEmpty) {
+      refreshThreads();
+      return;
+    }
+
+    final myId = _userId;
+    if (myId == null) return;
+
+    final preview = (message.content ?? '').trim();
+    final previewText = preview.isEmpty
+        ? null
+        : (preview.length > 80 ? '${preview.substring(0, 80)}…' : preview);
+
+    final idx = _cachedThreads.indexWhere((t) => t.id == message.chatId);
+    if (idx < 0) {
+      refreshThreads();
+      return;
+    }
+
+    final old = _cachedThreads[idx];
+    final bumpUnread =
+        !message.isMine(myId) && message.chatId != _activeChatId;
+    final updated = old.copyWith(
+      lastMessagePreview: previewText ?? old.lastMessagePreview,
+      updatedAt: message.createdAt,
+      lastMessageAt: message.createdAt,
+      unreadCount: bumpUnread ? old.unreadCount + 1 : old.unreadCount,
+    );
+
+    _cachedThreads.removeAt(idx);
+    _cachedThreads.insert(0, updated);
+    _emitCachedThreads();
+  }
+
+  static void clearThreadUnread(String chatId) {
+    final idx = _cachedThreads.indexWhere((t) => t.id == chatId);
+    if (idx < 0) return;
+    _cachedThreads[idx] = _cachedThreads[idx].copyWith(unreadCount: 0);
+    _emitCachedThreads();
+  }
+
+  static void _emitCachedThreads() {
+    if (!_threadsLiveController.isClosed) {
+      _threadsLiveController.add(List<BackendChatThread>.from(_cachedThreads));
+    }
+  }
+
+  static Future<void> _reloadThreadCache() async {
+    _cachedThreads = await getThreads();
+    _threadsWatchReady = true;
+    _emitCachedThreads();
+  }
+
+  static void _ensureThreadsFallbackPoll() {
+    if (_threadsFallbackPollTimer != null || _wsConnected) return;
+    _threadsFallbackPollTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (_wsConnected) return;
+      unawaited(_reloadThreadCache());
+    });
+  }
+
+  static Future<void> _ensureThreadsWatchInitialized() async {
+    if (_threadsWatchReady) return;
+
+    await _reloadThreadCache();
+
+    _threadsRefresh.listen((_) {
+      unawaited(_reloadThreadCache());
+    });
+
+    _ensureThreadsFallbackPoll();
+  }
 
   /// Notify all listeners to refresh threads (called after sending a message)
   static void refreshThreads() {
@@ -174,7 +307,19 @@ class BackendChatService {
 
   static const _messagingFirebaseUidKey = 'messaging_firebase_uid';
 
-  static Future<void> ensureAuth() async {
+  /// Socket.IO namespace URL for real-time messaging.
+  static String get messagingWsUrl {
+    final root = ApiConfig.prod.replaceAll(RegExp(r'/+$'), '');
+    return '$root/messaging';
+  }
+
+  /// Current Firebase ID token (call [ensureAuth] first).
+  static Future<String> getAuthToken() async {
+    await ensureAuth();
+    return _authToken!;
+  }
+
+  static Future<void> ensureAuth({bool forceRefresh = false}) async {
     await ApiConfig.init();
 
     final user = FirebaseAuth.instance.currentUser;
@@ -182,18 +327,40 @@ class BackendChatService {
       throw Exception('User not authenticated with Firebase');
     }
 
-    _authToken = await user.getIdToken();
-    if (_authToken == null || _authToken!.isEmpty) {
-      throw Exception('Failed to get Firebase ID token');
-    }
-
     final sp = await SharedPreferences.getInstance();
     final storedUid = sp.getString(_messagingFirebaseUidKey);
     if (storedUid != null && storedUid != user.uid) {
       await sp.remove('userId');
       await sp.remove('user_id');
+      _userId = null;
+      _authToken = null;
+      _tokenFetchedAt = null;
     }
+
+    final cacheValid = !forceRefresh &&
+        _authToken != null &&
+        _authToken!.isNotEmpty &&
+        _userId != null &&
+        _cachedFirebaseUid == user.uid &&
+        _tokenFetchedAt != null &&
+        DateTime.now().difference(_tokenFetchedAt!) < _tokenTtl;
+
+    if (cacheValid) return;
+
+    _authToken = await user.getIdToken(forceRefresh);
+    if (_authToken == null || _authToken!.isEmpty) {
+      throw Exception('Failed to get Firebase ID token');
+    }
+
     await sp.setString(_messagingFirebaseUidKey, user.uid);
+    _cachedFirebaseUid = user.uid;
+    _tokenFetchedAt = DateTime.now();
+
+    final cachedUserId = sp.getInt('userId') ?? sp.getInt('user_id');
+    if (cachedUserId != null && cachedUserId > 0) {
+      _userId = cachedUserId;
+      return;
+    }
 
     final userId = await _fetchNumericUserIdFromMe();
     if (userId == null) {
@@ -207,6 +374,20 @@ class BackendChatService {
     _userId = userId;
   }
 
+  /// Clear in-memory auth cache (e.g. on sign-out).
+  static void clearAuthCache() {
+    _authToken = null;
+    _userId = null;
+    _cachedFirebaseUid = null;
+    _tokenFetchedAt = null;
+    _cachedThreads = [];
+    _threadsWatchReady = false;
+    _activeChatId = null;
+    _wsConnected = false;
+    _threadsFallbackPollTimer?.cancel();
+    _threadsFallbackPollTimer = null;
+  }
+
   /// Always load numeric DB user id for the current Firebase session.
   static Future<int?> _fetchNumericUserIdFromMe() async {
     if (_authToken == null || _authToken!.isEmpty) return null;
@@ -214,7 +395,7 @@ class BackendChatService {
       final response = await http.get(
         ApiConfig.endpoint('/users/me'),
         headers: {'Authorization': _authHeader},
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(_lookupTimeout);
       if (response.statusCode != 200) return null;
       final json = jsonDecode(response.body);
       if (json is! Map<String, dynamic>) return null;
@@ -230,6 +411,8 @@ class BackendChatService {
     }
   }
 
+  static const Duration _lookupTimeout = Duration(seconds: 5);
+
   /// Resolve a marketplace / listing seller to a numeric backend user id.
   static Future<int?> resolvePeerUserId({
     int? ownerId,
@@ -244,18 +427,178 @@ class BackendChatService {
     final candidates = [sellerUserId, serviceProviderId, merchantId];
     for (final candidate in candidates) {
       if (candidate == null || candidate.trim().isEmpty) continue;
-      final trimmed = candidate.trim();
-      final numeric = int.tryParse(trimmed);
+      final numeric = int.tryParse(candidate.trim());
       if (numeric != null && numeric > 0) return numeric;
     }
 
     for (final candidate in candidates) {
       if (candidate == null || candidate.trim().isEmpty) continue;
-      final uid = await getUserIdByFirebaseUid(candidate.trim());
+      final trimmed = candidate.trim();
+      if (!_looksLikeFirebaseUid(trimmed)) continue;
+      final uid = await getUserIdByFirebaseUid(trimmed);
       if (uid != null && uid > 0) return uid;
     }
 
     return null;
+  }
+
+  /// Resolve marketplace listing seller → numeric backend user id.
+  static Future<int?> resolveMarketplaceSeller({
+    int? sqlItemId,
+    int? ownerId,
+    String? sellerUserId,
+    String? serviceProviderId,
+    String? merchantId,
+  }) async {
+    await ensureAuth();
+
+    if (ownerId != null && ownerId > 0) return ownerId;
+
+    for (final raw in [sellerUserId, merchantId, serviceProviderId]) {
+      if (raw == null || raw.trim().isEmpty) continue;
+      final numeric = int.tryParse(raw.trim());
+      if (numeric != null && numeric > 0) return numeric;
+    }
+
+    final lookups = <Future<int?>>[];
+
+    if (sqlItemId != null && sqlItemId > 0) {
+      lookups.add(_ownerIdFromMarketplaceItem(sqlItemId, quiet: true));
+    }
+
+    if (serviceProviderId != null && serviceProviderId.trim().isNotEmpty) {
+      lookups.add(_userIdFromServiceProvider(serviceProviderId.trim(), quiet: true));
+    }
+
+    for (final raw in [sellerUserId, merchantId]) {
+      if (raw == null || raw.trim().isEmpty) continue;
+      final trimmed = raw.trim();
+      if (_looksLikeFirebaseUid(trimmed)) {
+        lookups.add(getUserIdByFirebaseUid(trimmed, quiet: true));
+      }
+    }
+
+    if (lookups.isEmpty) return null;
+
+    return _firstSuccessfulId(lookups);
+  }
+
+  /// Returns the first positive id from [futures], without waiting for slower ones.
+  static Future<int?> _firstSuccessfulId(List<Future<int?>> futures) {
+    if (futures.isEmpty) return Future.value(null);
+    final completer = Completer<int?>();
+    var remaining = futures.length;
+    for (final future in futures) {
+      future
+          .then((id) {
+            if (!completer.isCompleted && id != null && id > 0) {
+              completer.complete(id);
+            }
+          })
+          .catchError((_) {})
+          .whenComplete(() {
+            remaining--;
+            if (remaining == 0 && !completer.isCompleted) {
+              completer.complete(null);
+            }
+          });
+    }
+    return completer.future;
+  }
+
+  /// Resolve seller and create/open a direct chat (bounded time).
+  static Future<BackendChatThread> startMerchantChat({
+    int? sqlItemId,
+    int? ownerId,
+    String? sellerUserId,
+    String? serviceProviderId,
+    String? merchantId,
+    required int myUserId,
+  }) async {
+    final sellerId = await resolveMarketplaceSeller(
+      sqlItemId: sqlItemId,
+      ownerId: ownerId,
+      sellerUserId: sellerUserId,
+      serviceProviderId: serviceProviderId,
+      merchantId: merchantId,
+    ).timeout(
+      const Duration(seconds: 12),
+      onTimeout: () => null,
+    );
+
+    if (sellerId == null || sellerId <= 0) {
+      throw Exception(
+        'Seller chat unavailable — could not link this listing to a seller account.',
+      );
+    }
+    if (sellerId == myUserId) {
+      throw Exception('This is your own listing');
+    }
+
+    return ensureChat(peerUserId: sellerId).timeout(
+      const Duration(seconds: 12),
+      onTimeout: () => throw Exception(
+        'Chat server is not responding. Check your connection and try again.',
+      ),
+    );
+  }
+
+  static bool _looksLikeFirebaseUid(String value) {
+    return RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(value);
+  }
+
+  static int? _parseNumericId(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is int) return raw > 0 ? raw : null;
+    return int.tryParse(raw.toString());
+  }
+
+  static Future<int?> _ownerIdFromMarketplaceItem(int itemId, {bool quiet = false}) async {
+    try {
+      final response = await http.get(
+        ApiConfig.endpoint('/marketplace/$itemId'),
+        headers: {'Authorization': _authHeader, 'Accept': 'application/json'},
+      ).timeout(_lookupTimeout);
+
+      if (response.statusCode != 200) return null;
+      final json = jsonDecode(response.body);
+      if (json is! Map) return null;
+      final data = json['data'] is Map ? json['data'] as Map : json;
+      return _parseNumericId(data['ownerId']);
+    } catch (e) {
+      if (!quiet) {
+        print('[BackendChatService] marketplace owner lookup failed: $e');
+      }
+      return null;
+    }
+  }
+
+  static Future<int?> _userIdFromServiceProvider(
+    String serviceProviderId, {
+    bool quiet = false,
+  }) async {
+    try {
+      final response = await http.get(
+        ApiConfig.endpoint('/serviceprovider/search/$serviceProviderId'),
+        headers: {'Authorization': _authHeader, 'Accept': 'application/json'},
+      ).timeout(_lookupTimeout);
+
+      if (response.statusCode != 200) return null;
+      final json = jsonDecode(response.body);
+      if (json is! Map) return null;
+
+      final data = json['data'] is Map ? json['data'] as Map : json;
+      final user = data['user'];
+      if (user is Map) {
+        return _parseNumericId(user['id']);
+      }
+      return _parseNumericId(data['userID'] ?? data['userId']);
+    } catch (e) {
+      if (!quiet) {
+        print('[BackendChatService] service provider lookup failed: $e');
+      }
+      return null;
+    }
   }
 
   static Future<int> getUserId() async {
@@ -264,7 +607,10 @@ class BackendChatService {
   }
 
   /// Get numeric user ID by Firebase UID (for looking up seller/merchant IDs)
-  static Future<int?> getUserIdByFirebaseUid(String firebaseUid) async {
+  static Future<int?> getUserIdByFirebaseUid(
+    String firebaseUid, {
+    bool quiet = false,
+  }) async {
     if (firebaseUid.isEmpty) return null;
     await ensureAuth();
 
@@ -276,7 +622,7 @@ class BackendChatService {
       final response = await http.get(
         url,
         headers: {'Authorization': _authHeader},
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(_lookupTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
@@ -290,7 +636,9 @@ class BackendChatService {
         }
       }
     } catch (e) {
-      print('[BackendChatService] Error fetching user by Firebase UID: $e');
+      if (!quiet) {
+        print('[BackendChatService] Error fetching user by Firebase UID: $e');
+      }
     }
     return null;
   }
@@ -308,7 +656,7 @@ class BackendChatService {
       final response = await http.get(
         Uri.parse('$_baseUrl/chats?page=$page&pageSize=$pageSize'),
         headers: {'Authorization': _authHeader},
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(_lookupTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
@@ -327,23 +675,18 @@ class BackendChatService {
     }
   }
 
-  /// Stream of user's chat threads (polling-based + manual refresh)
-  static Stream<List<BackendChatThread>> threadsStream({
-    Duration pollInterval = const Duration(seconds: 5),
-  }) {
-    return StreamGroup.merge([
-      // Regular polling
-      Stream.periodic(pollInterval, (_) async {
-        return await getThreads();
-      }).asyncMap((future) => future),
-      // Manual refresh events
-      _threadsRefresh.asyncMap((_) async {
-        return await getThreads();
-      }),
-    ]).handleError((error) {
-      print('[BackendChatService] Stream error: $error');
-    });
+  /// Live thread list: initial REST load, WebSocket patches, manual refresh.
+  static Stream<List<BackendChatThread>> watchThreads() async* {
+    await _ensureThreadsWatchInitialized();
+    yield List<BackendChatThread>.from(_cachedThreads);
+    yield* _threadsLiveController.stream;
   }
+
+  /// @deprecated Use [watchThreads] — kept for older call sites.
+  static Stream<List<BackendChatThread>> threadsStream({
+    Duration pollInterval = const Duration(seconds: 60),
+  }) =>
+      watchThreads();
 
   /// Get a specific chat
   static Future<BackendChatThread> getChat(String chatId) async {
@@ -353,7 +696,7 @@ class BackendChatService {
       final response = await http.get(
         Uri.parse('$_baseUrl/chats/$chatId'),
         headers: {'Authorization': _authHeader},
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(_lookupTimeout);
 
       if (response.statusCode == 200) {
         return BackendChatThread.fromJson(
@@ -380,7 +723,7 @@ class BackendChatService {
         Uri.parse(
             '$_baseUrl/chats/$chatId/messages?page=$page&pageSize=$pageSize'),
         headers: {'Authorization': _authHeader},
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(_lookupTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
@@ -402,10 +745,23 @@ class BackendChatService {
     required String chatId,
     required String content,
     String type = 'text',
+    List<Map<String, dynamic>>? tags,
+    Map<String, dynamic>? metadata,
+    String? clientMessageId,
   }) async {
     await ensureAuth();
 
     try {
+      final payload = <String, dynamic>{
+        'content': content,
+        'type': type,
+      };
+      if (tags != null && tags.isNotEmpty) payload['tags'] = tags;
+      if (metadata != null && metadata.isNotEmpty) payload['metadata'] = metadata;
+      if (clientMessageId != null && clientMessageId.isNotEmpty) {
+        payload['clientMessageId'] = clientMessageId;
+      }
+
       final response = await http
           .post(
             Uri.parse('$_baseUrl/chats/$chatId/messages'),
@@ -413,10 +769,7 @@ class BackendChatService {
               'Authorization': _authHeader,
               'Content-Type': 'application/json',
             },
-            body: jsonEncode({
-              'content': content,
-              'type': type,
-            }),
+            body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 10));
 
@@ -478,7 +831,7 @@ class BackendChatService {
       final response = await http.delete(
         Uri.parse('$_baseUrl/chats/$chatId/messages/$messageId'),
         headers: {'Authorization': _authHeader},
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(_lookupTimeout);
 
       if (response.statusCode != 200) {
         throw Exception('Failed to delete message: ${response.statusCode}');
@@ -569,7 +922,7 @@ class BackendChatService {
       final usersResponse = await http.get(
         usersUrl,
         headers: {'Authorization': _authHeader},
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(_lookupTimeout);
 
       if (usersResponse.statusCode != 200) {
         throw Exception('Failed to fetch users: ${usersResponse.statusCode}');

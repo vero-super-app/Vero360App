@@ -1,22 +1,25 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
+import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 
 class MessagePageBackendApi extends StatefulWidget {
   final String peerId; // Chat ID from backend
   final String peerName;
   final String? peerAvatarUrl;
+  final ChatProductContext? productContext;
 
   const MessagePageBackendApi({
     super.key,
     required this.peerId,
     required this.peerName,
     this.peerAvatarUrl,
+    this.productContext,
   });
 
   @override
@@ -29,16 +32,20 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   final _input = TextEditingController();
   final _scroll = ScrollController();
-  final _picker = ImagePicker();
 
   bool _sending = false;
   bool _loading = true;
+  bool _wsConnected = false;
+  bool _productTagAttached = false;
   String? _loadError;
   List<BackendChatMessage> _messages = [];
-  Timer? _refreshTimer;
+  Timer? _fallbackPollTimer;
+  StreamSubscription<BackendChatMessage>? _wsMessageSub;
+  StreamSubscription<bool>? _wsConnectionSub;
 
   static const _brandOrange = Color(0xFFFF8A00);
   static const _bg = Color(0xFFF3F4F7);
+  static const _fallbackPollInterval = Duration(seconds: 30);
 
   @override
   void initState() {
@@ -50,15 +57,53 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       setState(() {});
     });
 
-    // Refresh messages periodically
-    _refreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (mounted) _loadMessages();
+    _startRealtime();
+  }
+
+  void _startRealtime() {
+    _wsMessageSub = BackendMessagingSocket.messageStream.listen((msg) {
+      if (!mounted || msg.chatId != widget.peerId) return;
+      setState(() {
+        _upsertMessage(msg);
+        if (_hasProductTagInMessages(_messages)) {
+          _productTagAttached = true;
+        }
+      });
+      _scrollToBottom();
+    });
+
+    _wsConnectionSub =
+        BackendMessagingSocket.connectionStream.listen((connected) {
+      if (!mounted) return;
+      setState(() => _wsConnected = connected);
+      if (connected) {
+        _fallbackPollTimer?.cancel();
+        _fallbackPollTimer = null;
+      } else {
+        _startFallbackPoll();
+      }
+    });
+
+    _startFallbackPoll();
+  }
+
+  void _startFallbackPoll() {
+    _fallbackPollTimer?.cancel();
+    if (BackendMessagingSocket.isConnected) return;
+    _fallbackPollTimer = Timer.periodic(_fallbackPollInterval, (_) {
+      if (mounted && !_sending && !BackendMessagingSocket.isConnected) {
+        _loadMessages(silent: true);
+      }
     });
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
+    BackendChatService.setActiveChatId(null);
+    _fallbackPollTimer?.cancel();
+    _wsMessageSub?.cancel();
+    _wsConnectionSub?.cancel();
+    unawaited(BackendMessagingSocket.leaveChat(widget.peerId));
     _input.dispose();
     _scroll.dispose();
     super.dispose();
@@ -66,8 +111,19 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   Future<void> _boot() async {
     try {
+      BackendChatService.setActiveChatId(widget.peerId);
+
       await BackendChatService.ensureAuth();
       final userId = await BackendChatService.getUserId();
+
+      try {
+        await BackendMessagingSocket.connect();
+        await BackendMessagingSocket.joinChat(widget.peerId);
+        if (mounted) setState(() => _wsConnected = BackendMessagingSocket.isConnected);
+      } catch (_) {
+        if (mounted) setState(() => _wsConnected = false);
+      }
+
       await _loadMessages(silent: true);
       await _markUnreadAsRead(userId);
 
@@ -106,9 +162,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       if (!mounted) return;
       messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
       setState(() {
-        _messages = messages;
+        _messages = _mergeWithPending(messages);
         _loading = false;
         _loadError = null;
+        if (_hasProductTagInMessages(_messages)) {
+          _productTagAttached = true;
+        }
       });
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -143,40 +202,145 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     } catch (_) {}
   }
 
+  List<BackendChatMessage> _mergeWithPending(List<BackendChatMessage> server) {
+    final myId = _myUserId;
+    if (myId == null) return server;
+
+    final pending = _messages.where((m) => m.status == 'pending').toList();
+    if (pending.isEmpty) return server;
+
+    final merged = List<BackendChatMessage>.from(server);
+    for (final p in pending) {
+      final alreadySaved = server.any((s) => _isSameMessage(s, p, myId));
+      if (!alreadySaved) merged.add(p);
+    }
+    merged.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return merged;
+  }
+
+  bool _isSameMessage(
+    BackendChatMessage a,
+    BackendChatMessage b,
+    int myId,
+  ) {
+    if (a.id.isNotEmpty && a.id == b.id) return true;
+    if (a.clientMessageId != null &&
+        a.clientMessageId == b.clientMessageId) {
+      return true;
+    }
+    return a.isMine(myId) &&
+        b.isMine(myId) &&
+        a.content == b.content &&
+        a.createdAt.difference(b.createdAt).inSeconds.abs() < 30;
+  }
+
+  void _upsertMessage(BackendChatMessage msg) {
+    final idx = _messages.indexWhere(
+      (m) =>
+          m.id == msg.id ||
+          (msg.clientMessageId != null &&
+              m.clientMessageId == msg.clientMessageId) ||
+          (m.status == 'pending' &&
+              msg.clientMessageId != null &&
+              m.id == msg.clientMessageId),
+    );
+
+    if (idx >= 0) {
+      _messages[idx] = msg;
+    } else {
+      _messages.add(msg);
+    }
+    _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  bool _hasProductTagInMessages(List<BackendChatMessage> messages) {
+    final productId = widget.productContext?.productId;
+    if (productId == null) return false;
+    for (final msg in messages) {
+      final tags = msg.tags ?? const [];
+      for (final tag in tags) {
+        if (tag['tagType'] == 'product' && '${tag['tagId']}' == productId) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   Future<void> _sendMessage() async {
+    if (_sending) return;
+
     final content = _input.text.trim();
     if (content.isEmpty) return;
 
+    final myId = _myUserId;
+    if (myId == null) return;
+
+    final product = widget.productContext;
+    final attachProductTag =
+        product != null && !_productTagAttached;
+    final tags = attachProductTag ? [product.toMessageTag()] : null;
+
+    final clientMessageId = const Uuid().v4();
+    final pending = BackendChatMessage(
+      id: clientMessageId,
+      chatId: widget.peerId,
+      senderId: myId,
+      content: content,
+      type: 'text',
+      status: 'pending',
+      createdAt: DateTime.now(),
+      tags: tags,
+      clientMessageId: clientMessageId,
+    );
+
+    _sending = true;
     _input.clear();
-    setState(() => _sending = true);
+    setState(() {
+      _messages = [..._messages, pending];
+    });
 
     try {
-      await BackendChatService.sendMessage(
+      final saved = await BackendChatService.sendMessage(
         chatId: widget.peerId,
         content: content,
         type: 'text',
+        tags: tags,
+        clientMessageId: clientMessageId,
+        metadata: attachProductTag
+            ? {'source': 'marketplace', 'productId': product.productId}
+            : null,
       );
 
-      await _loadMessages();
-      if (_myUserId != null) await _markUnreadAsRead(_myUserId!);
-      BackendChatService.refreshThreads();
+      if (attachProductTag) _productTagAttached = true;
 
       if (mounted) {
-        setState(() => _sending = false);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scroll.hasClients && _scroll.position.maxScrollExtent > 0) {
-            _scroll.animateTo(
-              _scroll.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-            );
-          }
+        setState(() {
+          _upsertMessage(saved);
+          _sending = false;
         });
+        BackendChatService.refreshThreads();
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _sending = false);
+      setState(() {
+        _sending = false;
+        _messages =
+            _messages.where((m) => m.clientMessageId != clientMessageId).toList();
+        _input.text = content;
+      });
       _toast('Failed to send message: $e');
+    }
+  }
+
+  void _scrollToBottom() {
+    if (_scroll.hasClients && _scroll.position.maxScrollExtent > 0) {
+      _scroll.animateTo(
+        _scroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
     }
   }
 
@@ -242,12 +406,18 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                   ),
                   const SizedBox(height: 2),
                   Row(
-                    children: const [
-                      Icon(Icons.circle, size: 8, color: Color(0xFF39C16C)),
-                      SizedBox(width: 6),
+                    children: [
+                      Icon(
+                        Icons.circle,
+                        size: 8,
+                        color: _wsConnected
+                            ? const Color(0xFF39C16C)
+                            : Colors.orange,
+                      ),
+                      const SizedBox(width: 6),
                       Text(
-                        'Online',
-                        style: TextStyle(
+                        _wsConnected ? 'Connected' : 'Reconnecting…',
+                        style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: Colors.black54,
@@ -410,15 +580,54 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                                                       ),
                                                     ],
                                                   ),
-                                                  child: Text(
-                                                    msg.content ??
-                                                        '(no message)',
-                                                    style: TextStyle(
-                                                      color: isMine
-                                                          ? Colors.white
-                                                          : Colors.black87,
-                                                      fontSize: 14,
-                                                    ),
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      ..._productTagsFor(msg)
+                                                          .map(
+                                                        (tag) => Padding(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .only(
+                                                                  bottom: 6),
+                                                          child:
+                                                              _productTagChip(
+                                                            tag,
+                                                            isMine: isMine,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      if ((msg.content ?? '')
+                                                          .isNotEmpty)
+                                                        Text(
+                                                          msg.content!,
+                                                          style: TextStyle(
+                                                            color: isMine
+                                                                ? Colors.white
+                                                                : Colors
+                                                                    .black87,
+                                                            fontSize: 14,
+                                                          ),
+                                                        ),
+                                                      if ((msg.content ?? '')
+                                                              .isEmpty &&
+                                                          _productTagsFor(msg)
+                                                              .isNotEmpty)
+                                                        Text(
+                                                          'Shared a product',
+                                                          style: TextStyle(
+                                                            color: isMine
+                                                                ? Colors.white70
+                                                                : Colors
+                                                                    .black54,
+                                                            fontSize: 13,
+                                                            fontStyle: FontStyle
+                                                                .italic,
+                                                          ),
+                                                        ),
+                                                    ],
                                                   ),
                                                 ),
                                                 const SizedBox(height: 4),
@@ -441,12 +650,138 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                               },
                             ),
                     ),
+                    if (widget.productContext != null && !_productTagAttached)
+                      _buildPinnedProductCard(),
                     _buildInputArea(canSend),
                   ],
                 ),
               ],
             ),
     );
+  }
+
+  Widget _buildPinnedProductCard() {
+    final product = widget.productContext!;
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Row(
+        children: [
+          _productThumb(product.image, size: 48),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  product.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                if (product.price != null)
+                  Text(
+                    _formatPrice(product.price!),
+                    style: const TextStyle(
+                      color: _brandOrange,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                const Text(
+                  'Product will be attached to your first message',
+                  style: TextStyle(fontSize: 11, color: Colors.black54),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Map<String, dynamic>> _productTagsFor(BackendChatMessage msg) {
+    final tags = msg.tags ?? const [];
+    return tags
+        .where((t) => t['tagType'] == 'product')
+        .map((t) => Map<String, dynamic>.from(t))
+        .toList();
+  }
+
+  Widget _productTagChip(Map<String, dynamic> tag, {required bool isMine}) {
+    final name = '${tag['tagName'] ?? 'Product'}';
+    final image = tag['tagImage']?.toString();
+    final price = tag['metadata'] is Map
+        ? (tag['metadata'] as Map)['price']
+        : null;
+
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: isMine ? Colors.white.withOpacity(0.15) : Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _productThumb(image, size: 40),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isMine ? Colors.white : Colors.black87,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+                if (price != null)
+                  Text(
+                    _formatPrice((price is num) ? price.toDouble() : 0),
+                    style: TextStyle(
+                      color: isMine ? Colors.white70 : _brandOrange,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _productThumb(String? url, {required double size}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: size,
+        height: size,
+        color: Colors.grey.shade200,
+        child: url != null && url.isNotEmpty
+            ? Image.network(
+                url,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) =>
+                    Icon(Icons.shopping_bag_outlined, size: size * 0.5),
+              )
+            : Icon(Icons.shopping_bag_outlined, size: size * 0.5),
+      ),
+    );
+  }
+
+  String _formatPrice(double price) {
+    return NumberFormat.simpleCurrency(name: 'MWK', decimalDigits: 0)
+        .format(price);
   }
 
   Widget _buildInputArea(bool canSend) {

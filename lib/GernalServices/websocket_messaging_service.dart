@@ -58,32 +58,51 @@ class WebSocketMessagingService {
 
   /// Initialize WebSocket connection
   Future<void> connect() async {
-    if (_isConnected) return;
+    if (_isConnected && _socket.connected) return;
+
+    final completer = Completer<void>();
+    Timer? timeout;
+
+    _socket = IO.io(
+      _wsUrl,
+      IO.OptionBuilder()
+          .setTransports(['websocket'])
+          .disableAutoConnect()
+          .setAuth({'token': _token, 'userId': _userId})
+          .build(),
+    );
+
+    void onConnect(_) {
+      timeout?.cancel();
+      if (!completer.isCompleted) completer.complete();
+    }
+
+    void onConnectError(dynamic err) {
+      timeout?.cancel();
+      if (!completer.isCompleted) {
+        completer.completeError(Exception('WebSocket connection failed: $err'));
+      }
+    }
+
+    _socket.on('connect', onConnect);
+    _socket.on('connect_error', onConnectError);
+    _setupEventListeners();
+    _socket.connect();
+
+    timeout = Timer(const Duration(seconds: 10), () {
+      if (!completer.isCompleted) {
+        completer.completeError(Exception('WebSocket connection timeout'));
+      }
+    });
 
     try {
-      _socket = IO.io(
-        _wsUrl,
-        IO.OptionBuilder()
-            .setTransports(['websocket'])
-            .disableAutoConnect()
-            .setAuth({'token': _token, 'userId': _userId})
-            .build(),
-      );
-
-      _setupEventListeners();
-      _socket.connect();
-
-      // Wait for connection with timeout
-      await Future.delayed(const Duration(seconds: 1));
-      if (!_socket.connected) {
-        throw Exception('WebSocket connection failed');
-      }
-
+      await completer.future;
       _isConnected = true;
       _reconnectAttempts = 0;
       _connectionStatusController.add('connected');
     } catch (e) {
       _handleConnectionError(e);
+      rethrow;
     }
   }
 

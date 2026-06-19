@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 
 class ChatListPage extends StatefulWidget {
@@ -17,9 +18,11 @@ class _ChatListPageState extends State<ChatListPage> {
 
   int? _myUserId;
   String? _error;
+  bool _wsConnected = false;
 
   bool _searching = false;
   final _searchCtrl = TextEditingController();
+  StreamSubscription<bool>? _wsConnectionSub;
 
   @override
   void initState() {
@@ -29,20 +32,32 @@ class _ChatListPageState extends State<ChatListPage> {
 
   @override
   void dispose() {
+    _wsConnectionSub?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _boot() async {
     try {
-      // Ensure backend authentication
       await BackendChatService.ensureAuth();
       final userId = await BackendChatService.getUserId();
+
+      try {
+        await BackendMessagingSocket.connect();
+      } catch (_) {}
+
+      _wsConnectionSub?.cancel();
+      _wsConnectionSub =
+          BackendMessagingSocket.connectionStream.listen((connected) {
+        if (!mounted) return;
+        setState(() => _wsConnected = connected);
+      });
 
       if (!mounted) return;
       setState(() {
         _myUserId = userId;
         _error = null;
+        _wsConnected = BackendMessagingSocket.isConnected;
       });
     } catch (e) {
       if (!mounted) return;
@@ -155,7 +170,7 @@ class _ChatListPageState extends State<ChatListPage> {
       backgroundColor: _bg,
       appBar: _appBar(),
       body: StreamBuilder<List<BackendChatThread>>(
-        stream: BackendChatService.threadsStream(),
+        stream: BackendChatService.watchThreads(),
         builder: (context, snap) {
           if (snap.hasError) {
             final ui = _friendlyChatError(snap.error!);
@@ -204,7 +219,7 @@ class _ChatListPageState extends State<ChatListPage> {
           return RefreshIndicator(
             color: _brandOrange,
             onRefresh: () async {
-              await _boot();
+              BackendChatService.refreshThreads();
               await Future<void>.delayed(const Duration(milliseconds: 250));
             },
             child: ListView.separated(
@@ -244,16 +259,22 @@ class _ChatListPageState extends State<ChatListPage> {
                   lastText: subtitle,
                   updatedAt: t.updatedAt,
                   unreadCount: t.unreadCount,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => MessagePageBackendApi(
-                        peerId: t.id,
-                        peerName: name.isEmpty ? 'Contact' : name,
-                        peerAvatarUrl: avatarUrl,
+                  onTap: () async {
+                    BackendChatService.setActiveChatId(t.id);
+                    BackendChatService.clearThreadUnread(t.id);
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => MessagePageBackendApi(
+                          peerId: t.id,
+                          peerName: name.isEmpty ? 'Contact' : name,
+                          peerAvatarUrl: avatarUrl,
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                    BackendChatService.setActiveChatId(null);
+                    BackendChatService.refreshThreads();
+                  },
                 );
               },
             ),
@@ -315,6 +336,14 @@ class _ChatListPageState extends State<ChatListPage> {
               ),
       ),
       actions: [
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: Icon(
+            Icons.circle,
+            size: 10,
+            color: _wsConnected ? const Color(0xFF39C16C) : Colors.orange,
+          ),
+        ),
         IconButton(
           tooltip: _searching ? 'Close' : 'Search',
           onPressed: () {

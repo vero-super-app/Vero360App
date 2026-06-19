@@ -16,6 +16,12 @@ import 'package:vero360_app/GernalServices/hybrid_chat_service.dart';
 import 'package:vero360_app/GeneralModels/messaging_models.dart';
 import 'package:vero360_app/Gernalproviders/messaging/messaging_provider.dart';
 
+/// Legacy hybrid Firebase/WebSocket message screen.
+///
+/// Use [MessagePageBackendApi] with [BackendChatService] instead.
+@Deprecated(
+  'Use MessagePageBackendApi with BackendChatService instead.',
+)
 class MessagePageWebSocket extends ConsumerStatefulWidget {
   final String peerAppId;
   final String? peerName;

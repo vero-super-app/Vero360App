@@ -48,7 +48,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 // Services
 import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 import 'package:vero360_app/config/api_config.dart';
-import 'package:vero360_app/GernalServices/messaging_initialization_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
@@ -210,16 +210,13 @@ class _AppBootstrapState extends State<AppBootstrap> {
       // _log("API config warning (using offline/defaults): $e");
     }
 
-    // Run heavier messaging initialization in the background so it
-    // does not block the user from seeing the home screen.
-    _log("Scheduling messaging services init in background…");
+    // Connect backend messaging WebSocket when user is signed in.
     unawaited(Future(() async {
       try {
-        await MessagingInitializationService.initialize();
-        // _log("Messaging services initialized ✅");
-      } catch (e) {
-        // _log("Messaging init warning: $e");
-      }
+        if (FirebaseAuth.instance.currentUser != null) {
+          await BackendMessagingSocket.connect();
+        }
+      } catch (_) {}
     }));
 
     // _log("Launch ready 🚀");

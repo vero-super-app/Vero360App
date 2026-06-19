@@ -19,6 +19,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/GernalServices/chat_service.dart';
 import 'package:vero360_app/GernalServices/chat_service_wrapper.dart';
 
+/// Legacy Firebase direct-message screen.
+///
+/// Use [MessagePageBackendApi] with [BackendChatService] instead.
+@Deprecated(
+  'Firebase MessagePage is deprecated. Use MessagePageBackendApi instead.',
+)
 class MessagePage extends StatefulWidget {
   final String peerAppId; // REQUIRED: app user id of the seller
   final String? peerName;

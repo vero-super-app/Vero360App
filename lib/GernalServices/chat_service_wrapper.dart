@@ -3,7 +3,12 @@ import 'package:vero360_app/GernalServices/chat_service.dart';
 import 'package:vero360_app/GernalServices/hybrid_chat_service.dart';
 import 'package:vero360_app/GernalServices/websocket_manager.dart';
 
-/// Wrapper that automatically uses HybridChatService when WebSocket is available
+/// Legacy Firebase chat wrapper with optional WebSocket fallback.
+///
+/// Use [BackendChatService] and [MessagePageBackendApi] instead.
+@Deprecated(
+  'Use BackendChatService and MessagePageBackendApi instead.',
+)
 class ChatServiceWrapper {
   static HybridChatService? _hybrid;
 

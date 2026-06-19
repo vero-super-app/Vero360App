@@ -125,6 +125,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       }
 
       await _loadMessages(silent: true);
+      await _maybeSendProductEnquiry(userId);
       await _markUnreadAsRead(userId);
 
       if (!mounted) return;
@@ -139,6 +140,58 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         _loadError = _friendlyError(e);
       });
       _toast(_loadError!);
+    }
+  }
+
+  ChatProductContext? get _activeProduct {
+    return ChatProductContext.latestFromMessages(_messages) ??
+        widget.productContext;
+  }
+
+  BackendChatMessage? get _latestProductTaggedMessage {
+    for (var i = _messages.length - 1; i >= 0; i--) {
+      if (_productTagsFor(_messages[i]).isNotEmpty) return _messages[i];
+    }
+    return null;
+  }
+
+  bool get _isMerchantViewingEnquiry {
+    final myId = _myUserId;
+    final tagged = _latestProductTaggedMessage;
+    if (myId == null || tagged == null) return false;
+    return !tagged.isMine(myId);
+  }
+
+  Future<void> _maybeSendProductEnquiry(int myUserId) async {
+    final product = widget.productContext;
+    if (product == null) return;
+    if (_hasProductTagInMessages(_messages)) {
+      _productTagAttached = true;
+      return;
+    }
+
+    const enquiryText = "Hi, I'm interested in this item.";
+    try {
+      final saved = await BackendChatService.sendMessage(
+        chatId: widget.peerId,
+        content: enquiryText,
+        type: 'text',
+        tags: [product.toMessageTag()],
+        metadata: {
+          'source': 'marketplace',
+          'productId': product.productId,
+          'autoEnquiry': true,
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _upsertMessage(saved);
+        _productTagAttached = true;
+      });
+      BackendChatService.refreshThreads();
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    } catch (_) {
+      // Buyer can still attach the product on their first manual message.
     }
   }
 
@@ -379,6 +432,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   @override
   Widget build(BuildContext context) {
+    final activeProduct = _activeProduct;
     final title = widget.peerName;
     final canSend = !_sending && _input.text.trim().isNotEmpty;
 
@@ -405,25 +459,19 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                   const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.circle,
-                        size: 8,
-                        color: _wsConnected
-                            ? const Color(0xFF39C16C)
-                            : Colors.orange,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _wsConnected ? 'Connected' : 'Reconnecting…',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.black54,
-                        ),
-                      ),
-                    ],
+                  Text(
+                    activeProduct != null
+                        ? activeProduct.name
+                        : (_wsConnected ? 'Connected' : 'Reconnecting…'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: activeProduct != null
+                          ? _brandOrange
+                          : Colors.black54,
+                    ),
                   ),
                 ],
               ),
@@ -485,6 +533,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                 Positioned.fill(child: CustomPaint(painter: _ChatBgPainter())),
                 Column(
                   children: [
+                    if (_isMerchantViewingEnquiry && activeProduct != null)
+                      _buildMerchantEnquiryBanner(activeProduct),
                     Expanded(
                       child: _messages.isEmpty
                           ? const Center(
@@ -650,8 +700,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                               },
                             ),
                     ),
-                    if (widget.productContext != null && !_productTagAttached)
-                      _buildPinnedProductCard(),
+                    if (activeProduct != null)
+                      _buildDiscussedProductBar(activeProduct),
                     _buildInputArea(canSend),
                   ],
                 ),
@@ -660,44 +710,109 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     );
   }
 
-  Widget _buildPinnedProductCard() {
-    final product = widget.productContext!;
+  Widget _buildMerchantEnquiryBanner(ChatProductContext product) {
     return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _brandOrange.withOpacity(0.25)),
+      ),
       child: Row(
         children: [
-          _productThumb(product.image, size: 48),
+          Icon(Icons.storefront_outlined, color: _brandOrange, size: 22),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  product.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
+                const Text(
+                  'Marketplace enquiry',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
                     fontSize: 13,
+                    color: Colors.black87,
                   ),
                 ),
-                if (product.price != null)
-                  Text(
-                    _formatPrice(product.price!),
-                    style: const TextStyle(
-                      color: _brandOrange,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
+                const SizedBox(height: 2),
+                Text(
+                  '${widget.peerName} is asking about "${product.name}".',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.black87,
+                    height: 1.3,
                   ),
-                const Text(
-                  'Product will be attached to your first message',
-                  style: TextStyle(fontSize: 11, color: Colors.black54),
                 ),
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDiscussedProductBar(ChatProductContext product) {
+    final isMerchant = _isMerchantViewingEnquiry;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          top: BorderSide(color: Colors.grey.shade200),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      child: Row(
+        children: [
+          _productThumb(product.image, size: 54),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isMerchant ? 'Customer is viewing' : 'You are enquiring about',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  product.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                  ),
+                ),
+                if (product.price != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    _formatPrice(product.price!),
+                    style: const TextStyle(
+                      color: _brandOrange,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Icon(Icons.shopping_bag_outlined, color: _brandOrange.withOpacity(0.85)),
         ],
       ),
     );

@@ -204,7 +204,10 @@ class _ChatListPageState extends State<ChatListPage> {
                 pName = otherParticipant.email.split('@').first.toLowerCase();
               }
               final chatName = (t.name ?? '').toLowerCase();
-              return pName.contains(q) || chatName.contains(q);
+              final productName = (t.lastProductTag?.name ?? '').toLowerCase();
+              return pName.contains(q) ||
+                  chatName.contains(q) ||
+                  productName.contains(q);
             }).toList();
           }
 
@@ -247,15 +250,28 @@ class _ChatListPageState extends State<ChatListPage> {
                   }
                 }
                 final avatarUrl = otherParticipant.profilePicture ?? '';
+                final product = t.lastProductTag;
 
                 final preview = (t.lastMessagePreview ?? '').trim();
                 final subtitle = preview.isNotEmpty
                     ? preview
-                    : (t.type == 'direct' ? 'Tap to chat' : (t.name ?? 'Group chat'));
+                    : (product != null
+                        ? 'Enquiry about ${product.name}'
+                        : (t.type == 'direct'
+                            ? 'Tap to chat'
+                            : (t.name ?? 'Group chat')));
+
+                final rowTitle = product?.name ??
+                    (name.isEmpty ? 'Contact' : name);
+                final rowPeerLabel = product != null
+                    ? (name.isEmpty ? 'Seller' : name)
+                    : null;
 
                 return _ChatRow(
-                  name: name.isEmpty ? 'Contact' : name,
+                  name: rowTitle,
+                  peerLabel: rowPeerLabel,
                   avatarUrls: avatarUrl.isNotEmpty ? [avatarUrl] : [],
+                  productImageUrl: product?.image,
                   lastText: subtitle,
                   updatedAt: t.updatedAt,
                   unreadCount: t.unreadCount,
@@ -269,6 +285,7 @@ class _ChatListPageState extends State<ChatListPage> {
                           peerId: t.id,
                           peerName: name.isEmpty ? 'Contact' : name,
                           peerAvatarUrl: avatarUrl,
+                          productContext: product,
                         ),
                       ),
                     );
@@ -648,18 +665,26 @@ class _ChatRow extends StatelessWidget {
     required this.updatedAt,
     required this.unreadCount,
     required this.onTap,
+    this.peerLabel,
+    this.productImageUrl,
   });
 
   final String name;
+  final String? peerLabel;
   final List<String> avatarUrls;
+  final String? productImageUrl;
   final String lastText;
   final DateTime updatedAt;
   final int unreadCount;
   final VoidCallback onTap;
 
+  static const _brandOrange = Color(0xFFFF8A00);
+
   @override
   Widget build(BuildContext context) {
     final time = _fmtTime(updatedAt);
+    final hasProductImage =
+        productImageUrl != null && productImageUrl!.trim().isNotEmpty;
 
     return Material(
       color: Colors.white,
@@ -673,7 +698,7 @@ class _ChatRow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
-              _AvatarCarousel(urls: avatarUrls, name: name),
+              _AvatarCarousel(urls: avatarUrls, name: peerLabel ?? name),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -687,10 +712,12 @@ class _ChatRow extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                                fontWeight: FontWeight.w900, fontSize: 15.5),
+                              fontWeight: FontWeight.w900,
+                              fontSize: 15.5,
+                            ),
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 8),
                         Text(
                           time,
                           style: TextStyle(
@@ -703,6 +730,19 @@ class _ChatRow extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (peerLabel != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        peerLabel!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     Row(
                       children: [
@@ -722,7 +762,7 @@ class _ChatRow extends StatelessWidget {
                             ),
                           ),
                         ),
-                        if (unreadCount > 0) ...[
+                        if (unreadCount > 0 && !hasProductImage) ...[
                           const SizedBox(width: 10),
                           _UnreadPill(count: unreadCount),
                         ],
@@ -731,6 +771,36 @@ class _ChatRow extends StatelessWidget {
                   ],
                 ),
               ),
+              if (hasProductImage) ...[
+                const SizedBox(width: 10),
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        width: 52,
+                        height: 52,
+                        color: Colors.grey.shade200,
+                        child: Image.network(
+                          productImageUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Icon(
+                            Icons.shopping_bag_outlined,
+                            color: _brandOrange.withOpacity(0.8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (unreadCount > 0)
+                      Positioned(
+                        top: -4,
+                        right: -4,
+                        child: _UnreadPill(count: unreadCount),
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

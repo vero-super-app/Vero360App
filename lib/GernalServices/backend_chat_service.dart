@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 class BackendChatThread {
   final String id;
   final String type; // 'direct' or 'group'
@@ -18,6 +19,7 @@ class BackendChatThread {
   final DateTime updatedAt;
   final List<ChatParticipant> participants;
   final String? lastMessagePreview;
+  final ChatProductContext? lastProductTag;
 
   BackendChatThread({
     required this.id,
@@ -29,6 +31,7 @@ class BackendChatThread {
     required this.participantCount,
     this.lastMessageAt,
     this.lastMessagePreview,
+    this.lastProductTag,
     required this.unreadCount,
     required this.createdAt,
     required this.updatedAt,
@@ -59,6 +62,11 @@ class BackendChatThread {
               : null),
       unreadCount: (json['unreadCount'] as int?) ?? 0,
       lastMessagePreview: json['lastMessagePreview']?.toString(),
+      lastProductTag: json['lastProductTag'] is Map
+          ? ChatProductContext.fromTagMap(
+              Map<String, dynamic>.from(json['lastProductTag'] as Map),
+            )
+          : null,
       createdAt: DateTime.parse(
           json['createdAt']?.toString() ?? DateTime.now().toIso8601String()),
       updatedAt: DateTime.parse(
@@ -84,6 +92,7 @@ class BackendChatThread {
     DateTime? updatedAt,
     List<ChatParticipant>? participants,
     String? lastMessagePreview,
+    ChatProductContext? lastProductTag,
   }) {
     return BackendChatThread(
       id: id ?? this.id,
@@ -99,6 +108,7 @@ class BackendChatThread {
       updatedAt: updatedAt ?? this.updatedAt,
       participants: participants ?? this.participants,
       lastMessagePreview: lastMessagePreview ?? this.lastMessagePreview,
+      lastProductTag: lastProductTag ?? this.lastProductTag,
     );
   }
 }
@@ -240,6 +250,17 @@ class BackendChatService {
         ? null
         : (preview.length > 80 ? '${preview.substring(0, 80)}…' : preview);
 
+    ChatProductContext? productUpdate;
+    final tags = message.tags ?? const [];
+    for (final tag in tags) {
+      if (tag['tagType'] == 'product') {
+        productUpdate = ChatProductContext.fromTagMap(
+          Map<String, dynamic>.from(tag),
+        );
+        break;
+      }
+    }
+
     final idx = _cachedThreads.indexWhere((t) => t.id == message.chatId);
     if (idx < 0) {
       refreshThreads();
@@ -250,7 +271,11 @@ class BackendChatService {
     final bumpUnread =
         !message.isMine(myId) && message.chatId != _activeChatId;
     final updated = old.copyWith(
-      lastMessagePreview: previewText ?? old.lastMessagePreview,
+      lastMessagePreview: previewText ??
+          (productUpdate != null
+              ? 'Enquiry about ${productUpdate.name}'
+              : old.lastMessagePreview),
+      lastProductTag: productUpdate ?? old.lastProductTag,
       updatedAt: message.createdAt,
       lastMessageAt: message.createdAt,
       unreadCount: bumpUnread ? old.unreadCount + 1 : old.unreadCount,

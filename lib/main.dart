@@ -49,6 +49,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
@@ -214,6 +215,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
     unawaited(Future(() async {
       try {
         if (FirebaseAuth.instance.currentUser != null) {
+          await BackendMessagingCache.initialize();
           await BackendMessagingSocket.connect();
         }
       } catch (_) {}

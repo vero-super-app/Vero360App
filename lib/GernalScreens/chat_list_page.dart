@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({super.key});
@@ -162,7 +164,7 @@ class _ChatListPageState extends State<ChatListPage> {
       return Scaffold(
         backgroundColor: _bg,
         appBar: _appBar(),
-        body: const Center(child: CircularProgressIndicator()),
+        body: const ChatListSkeleton(),
       );
     }
 
@@ -183,7 +185,7 @@ class _ChatListPageState extends State<ChatListPage> {
           }
 
           if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
+            return const ChatListSkeleton();
           }
 
           var items = snap.data ?? <BackendChatThread>[];
@@ -510,23 +512,11 @@ class _AvatarCarouselState extends State<_AvatarCarousel> {
                 physics: const NeverScrollableScrollPhysics(), // auto only
                 itemBuilder: (_, idx) {
                   final url = widget.urls[idx];
-                  return Image.network(
-                    url,
+                  return ResilientCachedNetworkImage(
+                    url: url,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _fallback(initials),
-                    loadingBuilder: (c, w, p) {
-                      if (p == null) return w;
-                      return Center(
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.grey.shade500,
-                          ),
-                        ),
-                      );
-                    },
+                    width: 48,
+                    height: 48,
                   );
                 },
               ),
@@ -782,13 +772,11 @@ class _ChatRow extends StatelessWidget {
                         width: 52,
                         height: 52,
                         color: Colors.grey.shade200,
-                        child: Image.network(
-                          productImageUrl!,
+                        child: ResilientCachedNetworkImage(
+                          url: productImageUrl!,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Icon(
-                            Icons.shopping_bag_outlined,
-                            color: _brandOrange.withOpacity(0.8),
-                          ),
+                          width: 52,
+                          height: 52,
                         ),
                       ),
                     ),

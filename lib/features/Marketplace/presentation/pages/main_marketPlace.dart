@@ -46,6 +46,7 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_pro
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
 // ─────────────────────────────────────────────
@@ -1006,21 +1007,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         context: context,
         barrierDismissible: false,
         useRootNavigator: true,
-        builder: (_) => const Center(
-          child: Card(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Opening chat...'),
-                ],
-              ),
-            ),
-          ),
-        ),
+        builder: (_) => const OpeningChatLoadingDialog(),
       ),
     );
 
@@ -1079,6 +1066,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           peerName: sellerName,
           peerAvatarUrl: sellerAvatar,
           productContext: productContext,
+          sendProductEnquiry: true,
         ),
       ),
     );

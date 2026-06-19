@@ -7,6 +7,8 @@ import 'package:uuid/uuid.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 
 class MessagePageBackendApi extends StatefulWidget {
   final String peerId; // Chat ID from backend
@@ -14,12 +16,16 @@ class MessagePageBackendApi extends StatefulWidget {
   final String? peerAvatarUrl;
   final ChatProductContext? productContext;
 
+  /// When true, sends the marketplace enquiry once (product page only).
+  final bool sendProductEnquiry;
+
   const MessagePageBackendApi({
     super.key,
     required this.peerId,
     required this.peerName,
     this.peerAvatarUrl,
     this.productContext,
+    this.sendProductEnquiry = false,
   });
 
   @override
@@ -35,6 +41,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   bool _sending = false;
   bool _loading = true;
+  bool _bootComplete = false;
   bool _wsConnected = false;
   bool _productTagAttached = false;
   String? _loadError;
@@ -116,6 +123,19 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       await BackendChatService.ensureAuth();
       final userId = await BackendChatService.getUserId();
 
+      final cached = BackendChatService.peekCachedMessages(widget.peerId);
+      if (cached.isNotEmpty && mounted) {
+        setState(() {
+          _messages = cached;
+          _loading = false;
+          _myUserId = userId;
+          _me = userId.toString();
+          if (_hasProductTagInMessages(_messages)) {
+            _productTagAttached = true;
+          }
+        });
+      }
+
       try {
         await BackendMessagingSocket.connect();
         await BackendMessagingSocket.joinChat(widget.peerId);
@@ -124,7 +144,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         if (mounted) setState(() => _wsConnected = false);
       }
 
-      await _loadMessages(silent: true);
+      await _loadMessages(silent: cached.isNotEmpty);
       await _maybeSendProductEnquiry(userId);
       await _markUnreadAsRead(userId);
 
@@ -140,6 +160,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         _loadError = _friendlyError(e);
       });
       _toast(_loadError!);
+    } finally {
+      if (mounted) {
+        setState(() => _bootComplete = true);
+      }
     }
   }
 
@@ -162,21 +186,47 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     return !tagged.isMine(myId);
   }
 
+  String _enquiryClientMessageId(String productId) =>
+      'mp-enquiry-${widget.peerId}-$productId';
+
+  bool _hasExistingProductEnquiry(int myUserId, String productId) {
+    if (_hasProductTagInMessages(_messages, productId: productId)) {
+      return true;
+    }
+
+    final enquiryClientId = _enquiryClientMessageId(productId);
+    for (final msg in _messages) {
+      if (msg.clientMessageId == enquiryClientId) return true;
+      if (!msg.isMine(myUserId)) continue;
+      final text = (msg.content ?? '').trim().toLowerCase();
+      if (!text.contains("interested in this item")) continue;
+      if (_productTagsFor(msg).any((t) => '${t['tagId']}' == productId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<void> _maybeSendProductEnquiry(int myUserId) async {
+    if (!widget.sendProductEnquiry) return;
+
     final product = widget.productContext;
     if (product == null) return;
-    if (_hasProductTagInMessages(_messages)) {
+
+    if (_hasExistingProductEnquiry(myUserId, product.productId)) {
       _productTagAttached = true;
       return;
     }
 
     const enquiryText = "Hi, I'm interested in this item.";
+    final clientMessageId = _enquiryClientMessageId(product.productId);
     try {
       final saved = await BackendChatService.sendMessage(
         chatId: widget.peerId,
         content: enquiryText,
         type: 'text',
         tags: [product.toMessageTag()],
+        clientMessageId: clientMessageId,
         metadata: {
           'source': 'marketplace',
           'productId': product.productId,
@@ -306,13 +356,16 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
-  bool _hasProductTagInMessages(List<BackendChatMessage> messages) {
-    final productId = widget.productContext?.productId;
-    if (productId == null) return false;
+  bool _hasProductTagInMessages(
+    List<BackendChatMessage> messages, {
+    String? productId,
+  }) {
+    final id = productId ?? widget.productContext?.productId;
+    if (id == null) return false;
     for (final msg in messages) {
       final tags = msg.tags ?? const [];
       for (final tag in tags) {
-        if (tag['tagType'] == 'product' && '${tag['tagId']}' == productId) {
+        if (tag['tagType'] == 'product' && '${tag['tagId']}' == id) {
           return true;
         }
       }
@@ -347,11 +400,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       clientMessageId: clientMessageId,
     );
 
-    _sending = true;
-    _input.clear();
     setState(() {
+      _sending = true;
       _messages = [..._messages, pending];
     });
+    _input.clear();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
     try {
       final saved = await BackendChatService.sendMessage(
@@ -432,9 +486,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_bootComplete) {
+      return const ChatBootLoadingScaffold();
+    }
+
     final activeProduct = _activeProduct;
     final title = widget.peerName;
-    final canSend = !_sending && _input.text.trim().isNotEmpty;
+    final hasText = _input.text.trim().isNotEmpty;
+    final canSend = hasText && !_sending;
 
     return Scaffold(
       backgroundColor: _bg,
@@ -459,30 +518,46 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                   const SizedBox(height: 2),
-                  Text(
-                    activeProduct != null
-                        ? activeProduct.name
-                        : (_wsConnected ? 'Connected' : 'Reconnecting…'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: activeProduct != null
-                          ? _brandOrange
-                          : Colors.black54,
-                    ),
+                  Row(
+                    children: [
+                      if (activeProduct == null) ...[
+                        Icon(
+                          Icons.circle,
+                          size: 8,
+                          color: _wsConnected
+                              ? const Color(0xFF39C16C)
+                              : Colors.orange,
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Expanded(
+                        child: Text(
+                          activeProduct != null
+                              ? activeProduct.name
+                              : (_wsConnected ? 'Connected' : 'Reconnecting…'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: activeProduct != null
+                                ? _brandOrange
+                                : Colors.black54,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
             IconButton(
               onPressed: _me == null ? null : () {},
-              icon: const Icon(Icons.call),
+              icon: const Icon(Icons.call_outlined),
             ),
             IconButton(
               onPressed: _me == null ? null : () {},
-              icon: const Icon(Icons.videocam),
+              icon: const Icon(Icons.videocam_outlined),
             ),
             IconButton(
               onPressed: () {},
@@ -491,222 +566,235 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           ],
         ),
       ),
-      body: _me == null || _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _loadError != null && _messages.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.error_outline, size: 44, color: Colors.black54),
-                        const SizedBox(height: 12),
-                        Text(
-                          _loadError!,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: Colors.black87,
-                          ),
+      body: Column(
+        children: [
+          Expanded(child: _buildMessagesPane(activeProduct)),
+          if (activeProduct != null) _buildDiscussedProductBar(activeProduct),
+          _buildInputArea(canSend),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessagesPane(ChatProductContext? activeProduct) {
+    if (_loading && _messages.isEmpty && _loadError == null) {
+      return const ChatScreenLoadingSkeleton(includeHeaderStrip: false);
+    }
+
+    if (_loadError != null && _messages.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 44, color: Colors.black54),
+              const SizedBox(height: 12),
+              Text(
+                _loadError!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () {
+                  setState(() {
+                    _loading = true;
+                    _loadError = null;
+                  });
+                  _loadMessages();
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: _brandOrange,
+                ),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Stack(
+      children: [
+        Positioned.fill(child: CustomPaint(painter: _ChatBgPainter())),
+        Column(
+          children: [
+            if (_isMerchantViewingEnquiry && activeProduct != null)
+              _buildMerchantEnquiryBanner(activeProduct),
+            Expanded(
+              child: _messages.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'Say hi 👋',
+                        style: TextStyle(
+                          color: Colors.black54,
+                          fontWeight: FontWeight.w800,
                         ),
-                        const SizedBox(height: 16),
-                        FilledButton(
-                          onPressed: () {
-                            setState(() {
-                              _loading = true;
-                              _loadError = null;
-                            });
-                            _loadMessages();
-                          },
-                          style: FilledButton.styleFrom(
-                            backgroundColor: _brandOrange,
-                          ),
-                          child: const Text('Retry'),
-                        ),
-                      ],
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scroll,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 16,
+                      ),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, i) =>
+                          _buildMessageTile(_messages[i], i),
                     ),
-                  ),
-                )
-              : Stack(
-              children: [
-                Positioned.fill(child: CustomPaint(painter: _ChatBgPainter())),
-                Column(
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMessageTile(BackendChatMessage msg, int index) {
+    final prevMsg = index > 0 ? _messages[index - 1] : null;
+    final isMine = msg.isMine(_myUserId!);
+    final isPending = msg.status == 'pending';
+    final showDateSeparator = _isDifferentDay(msg, prevMsg);
+
+    return Column(
+      children: [
+        if (showDateSeparator) ...[
+          const SizedBox(height: 16),
+          Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 6,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.grey[200],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _dateLabel(msg.createdAt),
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.black54,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Row(
+            mainAxisAlignment:
+                isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (!isMine)
+                _avatar(widget.peerAvatarUrl, size: 28)
+              else
+                const SizedBox(width: 28),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment:
+                      isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                   children: [
-                    if (_isMerchantViewingEnquiry && activeProduct != null)
-                      _buildMerchantEnquiryBanner(activeProduct),
-                    Expanded(
-                      child: _messages.isEmpty
-                          ? const Center(
-                              child: Text(
-                                'Say hi 👋',
-                                style: TextStyle(
-                                  color: Colors.black54,
-                                  fontWeight: FontWeight.w800,
+                    AnimatedOpacity(
+                      duration: const Duration(milliseconds: 200),
+                      opacity: isPending ? 0.72 : 1,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isMine ? _brandOrange : Colors.white,
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(18),
+                            topRight: const Radius.circular(18),
+                            bottomLeft: Radius.circular(isMine ? 18 : 6),
+                            bottomRight: Radius.circular(isMine ? 6 : 18),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.06),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ..._productTagsFor(msg).map(
+                              (tag) => Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: _productTagChip(
+                                  tag,
+                                  isMine: isMine,
                                 ),
                               ),
-                            )
-                          : ListView.builder(
-                              controller: _scroll,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 16,
-                              ),
-                              itemCount: _messages.length,
-                              itemBuilder: (context, i) {
-                                final msg = _messages[i];
-                                final prevMsg = i > 0 ? _messages[i - 1] : null;
-                                final isMine = msg.isMine(_myUserId!);
-                                final showDateSeparator =
-                                    _isDifferentDay(msg, prevMsg);
-
-                                return Column(
-                                  children: [
-                                    if (showDateSeparator) ...[
-                                      const SizedBox(height: 16),
-                                      Center(
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 6,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: Colors.grey[200],
-                                            borderRadius:
-                                                BorderRadius.circular(12),
-                                          ),
-                                          child: Text(
-                                            _dateLabel(msg.createdAt),
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.black54,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                    ],
-                                    Padding(
-                                      padding:
-                                          const EdgeInsets.only(bottom: 12),
-                                      child: Row(
-                                        mainAxisAlignment: isMine
-                                            ? MainAxisAlignment.end
-                                            : MainAxisAlignment.start,
-                                        children: [
-                                          if (!isMine)
-                                            _avatar(widget.peerAvatarUrl,
-                                                size: 28)
-                                          else
-                                            const SizedBox(width: 28),
-                                          const SizedBox(width: 8),
-                                          Flexible(
-                                            child: Column(
-                                              crossAxisAlignment: isMine
-                                                  ? CrossAxisAlignment.end
-                                                  : CrossAxisAlignment.start,
-                                              children: [
-                                                Container(
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                    horizontal: 12,
-                                                    vertical: 8,
-                                                  ),
-                                                  decoration: BoxDecoration(
-                                                    color: isMine
-                                                        ? _brandOrange
-                                                        : Colors.white,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            12),
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black
-                                                            .withOpacity(0.05),
-                                                        blurRadius: 2,
-                                                        offset:
-                                                            const Offset(0, 1),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: Column(
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .start,
-                                                    children: [
-                                                      ..._productTagsFor(msg)
-                                                          .map(
-                                                        (tag) => Padding(
-                                                          padding:
-                                                              const EdgeInsets
-                                                                  .only(
-                                                                  bottom: 6),
-                                                          child:
-                                                              _productTagChip(
-                                                            tag,
-                                                            isMine: isMine,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                      if ((msg.content ?? '')
-                                                          .isNotEmpty)
-                                                        Text(
-                                                          msg.content!,
-                                                          style: TextStyle(
-                                                            color: isMine
-                                                                ? Colors.white
-                                                                : Colors
-                                                                    .black87,
-                                                            fontSize: 14,
-                                                          ),
-                                                        ),
-                                                      if ((msg.content ?? '')
-                                                              .isEmpty &&
-                                                          _productTagsFor(msg)
-                                                              .isNotEmpty)
-                                                        Text(
-                                                          'Shared a product',
-                                                          style: TextStyle(
-                                                            color: isMine
-                                                                ? Colors.white70
-                                                                : Colors
-                                                                    .black54,
-                                                            fontSize: 13,
-                                                            fontStyle: FontStyle
-                                                                .italic,
-                                                          ),
-                                                        ),
-                                                    ],
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  _timeLabel(msg),
-                                                  style: const TextStyle(
-                                                    fontSize: 11,
-                                                    color: Colors.black54,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                );
-                              },
                             ),
+                            if ((msg.content ?? '').isNotEmpty)
+                              Text(
+                                msg.content!,
+                                style: TextStyle(
+                                  color: isMine ? Colors.white : Colors.black87,
+                                  fontSize: 15,
+                                  height: 1.35,
+                                ),
+                              ),
+                            if ((msg.content ?? '').isEmpty &&
+                                _productTagsFor(msg).isNotEmpty)
+                              Text(
+                                'Shared a product',
+                                style: TextStyle(
+                                  color: isMine ? Colors.white70 : Colors.black54,
+                                  fontSize: 13,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
-                    if (activeProduct != null)
-                      _buildDiscussedProductBar(activeProduct),
-                    _buildInputArea(canSend),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _timeLabel(msg),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.black54,
+                          ),
+                        ),
+                        if (isPending) ...[
+                          const SizedBox(width: 6),
+                          SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.8,
+                              color: isMine
+                                  ? _brandOrange.withValues(alpha: 0.7)
+                                  : Colors.black38,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -883,11 +971,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         height: size,
         color: Colors.grey.shade200,
         child: url != null && url.isNotEmpty
-            ? Image.network(
-                url,
+            ? ResilientCachedNetworkImage(
+                url: url,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    Icon(Icons.shopping_bag_outlined, size: size * 0.5),
+                width: size,
+                height: size,
               )
             : Icon(Icons.shopping_bag_outlined, size: size * 0.5),
       ),
@@ -901,48 +989,130 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   Widget _buildInputArea(bool canSend) {
     return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _input,
-              enabled: !_sending,
-              maxLines: 3,
-              minLines: 1,
-              decoration: InputDecoration(
-                hintText: 'Message...',
-                hintStyle: const TextStyle(color: Colors.black54),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  borderSide: const BorderSide(color: Colors.black12),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          FloatingActionButton(
-            onPressed: canSend ? _sendMessage : null,
-            backgroundColor: _brandOrange,
-            disabledElevation: 0,
-            elevation: 2,
-            child: _sending
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(Colors.white),
-                    ),
-                  )
-                : const Icon(Icons.send),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
           ),
         ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F4F7),
+                    borderRadius: BorderRadius.circular(26),
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: 0.06),
+                    ),
+                  ),
+                  child: TextField(
+                    controller: _input,
+                    maxLines: 5,
+                    minLines: 1,
+                    textCapitalization: TextCapitalization.sentences,
+                    textInputAction: TextInputAction.newline,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      height: 1.35,
+                      color: Colors.black87,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Type a message…',
+                      hintStyle: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 12,
+                      ),
+                    ),
+                    onSubmitted: canSend ? (_) => _sendMessage() : null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              AnimatedScale(
+                scale: canSend || _sending ? 1 : 0.92,
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    gradient: canSend || _sending
+                        ? const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Color(0xFFFF9A2E),
+                              Color(0xFFFF8A00),
+                            ],
+                          )
+                        : null,
+                    color: canSend || _sending ? null : const Color(0xFFE4E6EB),
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: canSend || _sending
+                        ? [
+                            BoxShadow(
+                              color: _brandOrange.withValues(alpha: 0.35),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: canSend ? _sendMessage : null,
+                      borderRadius: BorderRadius.circular(24),
+                      child: Center(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          child: _sending
+                              ? const SizedBox(
+                                  key: ValueKey('sending'),
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.white,
+                                    ),
+                                  ),
+                                )
+                              : Icon(
+                                  key: const ValueKey('send'),
+                                  Icons.arrow_upward_rounded,
+                                  color: canSend ? Colors.white : Colors.grey.shade500,
+                                  size: 22,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -959,18 +1129,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       child: url != null && url.isNotEmpty
           ? ClipRRect(
               borderRadius: BorderRadius.circular(size / 2),
-              child: Image.network(
-                url,
+              child: ResilientCachedNetworkImage(
+                url: url,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Center(
-                  child: Text(
-                    initials,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ),
+                width: size,
+                height: size,
               ),
             )
           : Center(

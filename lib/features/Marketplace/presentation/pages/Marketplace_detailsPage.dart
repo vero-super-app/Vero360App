@@ -28,6 +28,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovid
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 
 import '../../../../GeneralPages/video_player_page.dart';
 
@@ -513,21 +514,7 @@ class _DetailsPageState extends State<DetailsPage> {
         context: context,
         barrierDismissible: false,
         useRootNavigator: true,
-        builder: (_) => const Center(
-          child: Card(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Opening chat...'),
-                ],
-              ),
-            ),
-          ),
-        ),
+        builder: (_) => const OpeningChatLoadingDialog(),
       ),
     );
 
@@ -583,6 +570,7 @@ class _DetailsPageState extends State<DetailsPage> {
           peerName: sellerName,
           peerAvatarUrl: sellerAvatar,
           productContext: productContext,
+          sendProductEnquiry: true,
         ),
       ),
     );

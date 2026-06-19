@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 class BackendChatThread {
   final String id;
   final String type; // 'direct' or 'group'
@@ -76,6 +78,25 @@ class BackendChatThread {
               .toList() ??
           [],
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'type': type,
+      'name': name,
+      'description': description,
+      'avatarUrl': avatarUrl,
+      'isArchived': isArchived,
+      'participantCount': participantCount,
+      'lastMessageAt': lastMessageAt?.toIso8601String(),
+      'lastMessagePreview': lastMessagePreview,
+      'lastProductTag': lastProductTag?.toMessageTag(),
+      'unreadCount': unreadCount,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+      'participants': participants.map((p) => p.toJson()).toList(),
+    };
   }
 
   BackendChatThread copyWith({
@@ -174,6 +195,24 @@ class BackendChatMessage {
       clientMessageId: json['clientMessageId']?.toString(),
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'chatId': chatId,
+      'senderId': senderId,
+      'content': content,
+      'type': type,
+      'status': status,
+      'createdAt': createdAt.toIso8601String(),
+      'readAt': readAt?.toIso8601String(),
+      'deliveredAt': deliveredAt?.toIso8601String(),
+      'attachments': attachments,
+      'tags': tags,
+      'sender': sender,
+      'clientMessageId': clientMessageId,
+    };
+  }
 }
 
 class ChatParticipant {
@@ -196,6 +235,15 @@ class ChatParticipant {
       email: json['email'] ?? '',
       profilePicture: json['profilepicture'] ?? json['profilePicture'],
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'email': email,
+      'profilepicture': profilePicture,
+    };
   }
 }
 
@@ -284,6 +332,12 @@ class BackendChatService {
     _cachedThreads.removeAt(idx);
     _cachedThreads.insert(0, updated);
     _emitCachedThreads();
+    if (myId != null) {
+      unawaited(BackendMessagingCache.upsertMessage(myId, message));
+      unawaited(
+        BackendMessagingCache.saveThreads(myId, _cachedThreads),
+      );
+    }
   }
 
   static void clearThreadUnread(String chatId) {
@@ -300,9 +354,33 @@ class BackendChatService {
   }
 
   static Future<void> _reloadThreadCache() async {
-    _cachedThreads = await getThreads();
-    _threadsWatchReady = true;
-    _emitCachedThreads();
+    await BackendMessagingCache.initialize();
+    await ensureAuth();
+    final userId = _userId;
+
+    if (userId != null) {
+      final diskThreads = BackendMessagingCache.peekThreads(userId);
+      if (diskThreads.isNotEmpty) {
+        _cachedThreads = diskThreads;
+        _threadsWatchReady = true;
+        _emitCachedThreads();
+      }
+    }
+
+    try {
+      final fresh = await getThreads();
+      _cachedThreads = fresh;
+      _threadsWatchReady = true;
+      _emitCachedThreads();
+      if (userId != null) {
+        await BackendMessagingCache.saveThreads(userId, fresh);
+      }
+    } catch (e) {
+      if (_cachedThreads.isEmpty) rethrow;
+      if (kDebugMode) {
+        print('[BackendChatService] Thread refresh failed, using cache: $e');
+      }
+    }
   }
 
   static void _ensureThreadsFallbackPoll() {
@@ -401,6 +479,10 @@ class BackendChatService {
 
   /// Clear in-memory auth cache (e.g. on sign-out).
   static void clearAuthCache() {
+    final uid = _userId;
+    if (uid != null) {
+      unawaited(BackendMessagingCache.clearUser(uid));
+    }
     _authToken = null;
     _userId = null;
     _cachedFirebaseUid = null;
@@ -735,13 +817,19 @@ class BackendChatService {
     }
   }
 
-  /// Get messages in a chat
+  /// Cached messages for instant UI (disk). Call after [ensureAuth].
+  static List<BackendChatMessage> peekCachedMessages(String chatId) {
+    return BackendMessagingCache.peekMessages(_userId, chatId);
+  }
+
+  /// Get messages in a chat (network fetch + disk cache).
   static Future<List<BackendChatMessage>> getMessages(
     String chatId, {
     int page = 1,
     int pageSize = 50,
   }) async {
     await ensureAuth();
+    await BackendMessagingCache.initialize();
 
     try {
       final response = await http.get(
@@ -753,13 +841,25 @@ class BackendChatService {
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
         final data = json['data'] as List? ?? [];
-        return data
+        final messages = data
             .map((m) => BackendChatMessage.fromJson(m as Map<String, dynamic>))
             .toList();
+        if (_userId != null && page == 1) {
+          await BackendMessagingCache.saveMessages(
+            _userId!,
+            chatId,
+            messages,
+          );
+        }
+        return messages;
       } else {
         throw Exception('Failed to fetch messages: ${response.statusCode}');
       }
     } catch (e) {
+      if (page == 1) {
+        final cached = peekCachedMessages(chatId);
+        if (cached.isNotEmpty) return cached;
+      }
       print('[BackendChatService] Error fetching messages: $e');
       rethrow;
     }
@@ -801,6 +901,9 @@ class BackendChatService {
       if (response.statusCode == 201) {
         final msg = BackendChatMessage.fromJson(
             jsonDecode(response.body) as Map<String, dynamic>);
+        if (_userId != null) {
+          unawaited(BackendMessagingCache.upsertMessage(_userId!, msg));
+        }
         // Notify all listeners to refresh threads list
         refreshThreads();
         return msg;

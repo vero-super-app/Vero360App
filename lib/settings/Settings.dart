@@ -2774,7 +2774,7 @@ class PolicyPage extends StatelessWidget {
 
                 // ================= FOOTER =================
                 Text(
-                  'Last updated: April 2026',
+                  'Last updated: June 2026',
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.black54,

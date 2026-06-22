@@ -36,6 +36,7 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
@@ -45,6 +46,7 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_pro
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
 // ─────────────────────────────────────────────
@@ -991,65 +993,83 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   Future<void> _openChatWithMerchant(MarketplaceDetailModel item) async {
     if (!await _requireLoginForChat()) return;
 
+    if (!mounted) return;
+    final rootNav = Navigator.of(context, rootNavigator: true);
+    var loadingDismissed = false;
+    void dismissLoading() {
+      if (loadingDismissed) return;
+      if (rootNav.canPop()) rootNav.pop();
+      loadingDismissed = true;
+    }
+
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        useRootNavigator: true,
+        builder: (_) => const OpeningChatLoadingDialog(),
+      ),
+    );
+
+    BackendChatThread? chat;
+    String sellerName = 'Seller';
+    String sellerAvatar = '';
+    ChatProductContext? productContext;
+
     try {
-      // Resolve seller numeric ID from available fields
+      final myId = await BackendChatService.getUserId();
+
       final ownerId = int.tryParse((item.sellerUserId ?? '').trim());
-      final sellerId = await BackendChatService.resolvePeerUserId(
+      final sqlItemId = item.hasValidSqlItemId ? item.sqlItemId : null;
+
+      chat = await BackendChatService.startMerchantChat(
+        sqlItemId: sqlItemId,
         ownerId: ownerId,
         sellerUserId: item.sellerUserId,
         serviceProviderId: item.serviceProviderId,
         merchantId: item.merchantId,
+        myUserId: myId,
       );
-
-      if (sellerId == null || sellerId <= 0) {
-        if (!mounted) return;
-        ToastHelper.showCustomToast(context, 'Seller chat unavailable', isSuccess: false, errorMessage: 'Seller id missing');
-        return;
-      }
-
-      final myId = await BackendChatService.getUserId();
-      if (myId == null) {
-        if (!mounted) return;
-        ToastHelper.showCustomToast(context, 'Please log in to chat', isSuccess: false, errorMessage: '');
-        return;
-      }
-
-      // Don't allow chatting with yourself
-      if (sellerId == myId) {
-        if (kDebugMode) debugPrint('[_openChatWithMerchant] sellerId ($sellerId) == myId ($myId), this is your own listing');
-        if (!mounted) return;
-        ToastHelper.showCustomToast(context, 'This is your own listing', isSuccess: false, errorMessage: '');
-        return;
-      }
 
       final merchantName = (item.merchantName ?? '').trim();
-      final sellerName = merchantName.isNotEmpty ? merchantName : ((item.sellerBusinessName ?? 'Seller').trim());
-      final rawAvatar = (item.sellerLogoUrl ?? '').trim();
-      final sellerAvatar = (await _toDownloadUrl(rawAvatar)) ?? rawAvatar;
+      sellerName = merchantName.isNotEmpty
+          ? merchantName
+          : ((item.sellerBusinessName ?? 'Seller').trim());
+      sellerAvatar = (item.sellerLogoUrl ?? '').trim();
 
-      // Create or get existing chat via backend API
-      final chat = await BackendChatService.ensureChat(
-        peerUserId: sellerId,
-        peerName: sellerName,
-        peerAvatar: sellerAvatar,
-      );
-
-      if (!mounted) return;
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => MessagePageBackendApi(
-            peerId: chat.id,
-            peerName: sellerName,
-            peerAvatarUrl: sellerAvatar,
-          ),
-        ),
+      final productId = item.hasValidSqlItemId
+          ? item.sqlItemId!.toString()
+          : item.id;
+      productContext = ChatProductContext(
+        productId: productId,
+        name: item.name,
+        image: item.image,
+        price: item.price,
+        description: item.description,
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[_openChatWithMerchant] Error: $e');
-      if (!mounted) return;
-      ToastHelper.showCustomToast(context, 'Error opening chat', isSuccess: false, errorMessage: e.toString());
+      if (mounted) {
+        ToastHelper.showCustomToast(context, 'Error opening chat', isSuccess: false, errorMessage: e.toString());
+      }
+    } finally {
+      dismissLoading();
     }
+
+    if (chat == null || !mounted) return;
+
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MessagePageBackendApi(
+          peerId: chat!.id,
+          peerName: sellerName,
+          peerAvatarUrl: sellerAvatar,
+          productContext: productContext,
+          sendProductEnquiry: true,
+        ),
+      ),
+    );
   }
 
   Future<void> _goToCheckoutFromBottomSheet(MarketplaceDetailModel item) async {

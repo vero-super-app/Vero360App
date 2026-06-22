@@ -17,6 +17,9 @@ import 'create_taxi_screen.dart';
 import 'edit_taxi_screen.dart';
 import 'ride_history_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 
 class DriverDashboard extends ConsumerStatefulWidget {
   const DriverDashboard({super.key});
@@ -42,12 +45,13 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _ensureDriverActive();
-        _startLocationBroadcasting();
-        _startMapCentering();
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await LocationPermissionHelper.ensureLocationAccess(context);
+      if (!mounted) return;
+      _ensureDriverActive();
+      _startLocationBroadcasting();
+      _startMapCentering();
     });
   }
 
@@ -69,15 +73,22 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       if (_isOnline) {
         _resumeLocationAfterForeground = true;
       }
-      _stopLocationBroadcasting();
-    } else if (state == AppLifecycleState.resumed &&
-        _resumeLocationAfterForeground) {
-      _resumeLocationAfterForeground = false;
-      Future.microtask(() {
-        if (mounted) {
-          _startLocationBroadcasting();
-        }
-      });
+      _pauseDashboardLocationBroadcast();
+    } else if (state == AppLifecycleState.resumed) {
+      LocationPermissionHelper.onAppResumed();
+      if (_resumeLocationAfterForeground) {
+        _resumeLocationAfterForeground = false;
+        Future.microtask(() async {
+          if (!mounted) return;
+          await LocationPermissionHelper.ensureLocationAccess(
+            context,
+            forceRefresh: true,
+          );
+          if (mounted) {
+            _startLocationBroadcasting();
+          }
+        });
+      }
     }
   }
 
@@ -113,12 +124,16 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
     _locationBroadcastTimer =
         Timer.periodic(const Duration(seconds: 5), (_) async {
       try {
-        final position = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-            timeLimit: Duration(seconds: 5),
-          ),
+        final position =
+            await LocationPermissionHelper.getCurrentPositionIfGranted(
+          timeLimit: const Duration(seconds: 5),
         );
+        if (position == null) {
+          if (mounted) {
+            await LocationPermissionHelper.promptIfBlocked(context);
+          }
+          return;
+        }
 
         // Update last position for map centering
         _lastPosition = position;
@@ -163,18 +178,40 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
         if (kDebugMode) {
           print('[DriverDashboard] Error getting position: $e');
         }
+        if (mounted) {
+          await LocationPermissionHelper.promptIfBlocked(context);
+        }
       }
     });
   }
 
-  /// Stop broadcasting driver location
-  void _stopLocationBroadcasting() {
+  /// Stop dashboard timer only — keeps taxi available during an active trip.
+  void _pauseDashboardLocationBroadcast() {
     _locationBroadcastTimer?.cancel();
     _locationBroadcastTimer = null;
-    setState(() => _isOnline = false);
+    if (mounted) setState(() => _isOnline = false);
 
-    // Set taxi unavailable when going offline
-    _setTaxiAvailability(false);
+    final lifecycle = ref.read(rideLifecycleProvider);
+    final hasActiveTrip = lifecycle is RideActive &&
+        (lifecycle.isAccepted ||
+            lifecycle.isDriverArrived ||
+            lifecycle.isInProgress);
+    if (!hasActiveTrip) {
+      _setTaxiAvailability(false);
+    }
+  }
+
+  /// Stop broadcasting driver location and mark taxi offline.
+  void _stopLocationBroadcasting() {
+    _pauseDashboardLocationBroadcast();
+    final lifecycle = ref.read(rideLifecycleProvider);
+    final hasActiveTrip = lifecycle is RideActive &&
+        (lifecycle.isAccepted ||
+            lifecycle.isDriverArrived ||
+            lifecycle.isInProgress);
+    if (!hasActiveTrip) {
+      _setTaxiAvailability(false);
+    }
   }
 
   /// Helper to sync online/offline status with taxi availability

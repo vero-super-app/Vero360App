@@ -38,17 +38,17 @@ class _DriverRideExecutionScreenState
     // Ride id guards on Completed/Cancelled still protect stale state on frame 1.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      ref.read(rideLifecycleProvider.notifier).reset();
-      ref.read(rideLifecycleProvider.notifier).subscribeToRide(widget.rideId);
+      ref
+          .read(rideLifecycleProvider.notifier)
+          .subscribeToRideAsDriver(widget.rideId);
     });
   }
 
   @override
   void dispose() {
-    final notifier = ref.read(rideLifecycleProvider.notifier);
+    ref.read(rideLifecycleProvider.notifier).detachScreen();
     _mapController?.dispose();
     super.dispose();
-    Future.microtask(() => notifier.reset());
   }
 
   void _onMapCreated(GoogleMapController controller) {

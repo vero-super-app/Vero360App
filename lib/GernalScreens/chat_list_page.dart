@@ -3,7 +3,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({super.key});
@@ -17,9 +20,11 @@ class _ChatListPageState extends State<ChatListPage> {
 
   int? _myUserId;
   String? _error;
+  bool _wsConnected = false;
 
   bool _searching = false;
   final _searchCtrl = TextEditingController();
+  StreamSubscription<bool>? _wsConnectionSub;
 
   @override
   void initState() {
@@ -29,20 +34,32 @@ class _ChatListPageState extends State<ChatListPage> {
 
   @override
   void dispose() {
+    _wsConnectionSub?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _boot() async {
     try {
-      // Ensure backend authentication
       await BackendChatService.ensureAuth();
       final userId = await BackendChatService.getUserId();
+
+      try {
+        await BackendMessagingSocket.connect();
+      } catch (_) {}
+
+      _wsConnectionSub?.cancel();
+      _wsConnectionSub =
+          BackendMessagingSocket.connectionStream.listen((connected) {
+        if (!mounted) return;
+        setState(() => _wsConnected = connected);
+      });
 
       if (!mounted) return;
       setState(() {
         _myUserId = userId;
         _error = null;
+        _wsConnected = BackendMessagingSocket.isConnected;
       });
     } catch (e) {
       if (!mounted) return;
@@ -147,7 +164,7 @@ class _ChatListPageState extends State<ChatListPage> {
       return Scaffold(
         backgroundColor: _bg,
         appBar: _appBar(),
-        body: const Center(child: CircularProgressIndicator()),
+        body: const ChatListSkeleton(),
       );
     }
 
@@ -155,7 +172,7 @@ class _ChatListPageState extends State<ChatListPage> {
       backgroundColor: _bg,
       appBar: _appBar(),
       body: StreamBuilder<List<BackendChatThread>>(
-        stream: BackendChatService.threadsStream(),
+        stream: BackendChatService.watchThreads(),
         builder: (context, snap) {
           if (snap.hasError) {
             final ui = _friendlyChatError(snap.error!);
@@ -168,7 +185,7 @@ class _ChatListPageState extends State<ChatListPage> {
           }
 
           if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
+            return const ChatListSkeleton();
           }
 
           var items = snap.data ?? <BackendChatThread>[];
@@ -189,7 +206,10 @@ class _ChatListPageState extends State<ChatListPage> {
                 pName = otherParticipant.email.split('@').first.toLowerCase();
               }
               final chatName = (t.name ?? '').toLowerCase();
-              return pName.contains(q) || chatName.contains(q);
+              final productName = (t.lastProductTag?.name ?? '').toLowerCase();
+              return pName.contains(q) ||
+                  chatName.contains(q) ||
+                  productName.contains(q);
             }).toList();
           }
 
@@ -204,7 +224,7 @@ class _ChatListPageState extends State<ChatListPage> {
           return RefreshIndicator(
             color: _brandOrange,
             onRefresh: () async {
-              await _boot();
+              BackendChatService.refreshThreads();
               await Future<void>.delayed(const Duration(milliseconds: 250));
             },
             child: ListView.separated(
@@ -232,28 +252,48 @@ class _ChatListPageState extends State<ChatListPage> {
                   }
                 }
                 final avatarUrl = otherParticipant.profilePicture ?? '';
+                final product = t.lastProductTag;
 
                 final preview = (t.lastMessagePreview ?? '').trim();
                 final subtitle = preview.isNotEmpty
                     ? preview
-                    : (t.type == 'direct' ? 'Tap to chat' : (t.name ?? 'Group chat'));
+                    : (product != null
+                        ? 'Enquiry about ${product.name}'
+                        : (t.type == 'direct'
+                            ? 'Tap to chat'
+                            : (t.name ?? 'Group chat')));
+
+                final rowTitle = product?.name ??
+                    (name.isEmpty ? 'Contact' : name);
+                final rowPeerLabel = product != null
+                    ? (name.isEmpty ? 'Seller' : name)
+                    : null;
 
                 return _ChatRow(
-                  name: name.isEmpty ? 'Contact' : name,
+                  name: rowTitle,
+                  peerLabel: rowPeerLabel,
                   avatarUrls: avatarUrl.isNotEmpty ? [avatarUrl] : [],
+                  productImageUrl: product?.image,
                   lastText: subtitle,
                   updatedAt: t.updatedAt,
                   unreadCount: t.unreadCount,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => MessagePageBackendApi(
-                        peerId: t.id,
-                        peerName: name.isEmpty ? 'Contact' : name,
-                        peerAvatarUrl: avatarUrl,
+                  onTap: () async {
+                    BackendChatService.setActiveChatId(t.id);
+                    BackendChatService.clearThreadUnread(t.id);
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => MessagePageBackendApi(
+                          peerId: t.id,
+                          peerName: name.isEmpty ? 'Contact' : name,
+                          peerAvatarUrl: avatarUrl,
+                          productContext: product,
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                    BackendChatService.setActiveChatId(null);
+                    BackendChatService.refreshThreads();
+                  },
                 );
               },
             ),
@@ -315,6 +355,14 @@ class _ChatListPageState extends State<ChatListPage> {
               ),
       ),
       actions: [
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: Icon(
+            Icons.circle,
+            size: 10,
+            color: _wsConnected ? const Color(0xFF39C16C) : Colors.orange,
+          ),
+        ),
         IconButton(
           tooltip: _searching ? 'Close' : 'Search',
           onPressed: () {
@@ -464,23 +512,11 @@ class _AvatarCarouselState extends State<_AvatarCarousel> {
                 physics: const NeverScrollableScrollPhysics(), // auto only
                 itemBuilder: (_, idx) {
                   final url = widget.urls[idx];
-                  return Image.network(
-                    url,
+                  return ResilientCachedNetworkImage(
+                    url: url,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _fallback(initials),
-                    loadingBuilder: (c, w, p) {
-                      if (p == null) return w;
-                      return Center(
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.grey.shade500,
-                          ),
-                        ),
-                      );
-                    },
+                    width: 48,
+                    height: 48,
                   );
                 },
               ),
@@ -619,18 +655,26 @@ class _ChatRow extends StatelessWidget {
     required this.updatedAt,
     required this.unreadCount,
     required this.onTap,
+    this.peerLabel,
+    this.productImageUrl,
   });
 
   final String name;
+  final String? peerLabel;
   final List<String> avatarUrls;
+  final String? productImageUrl;
   final String lastText;
   final DateTime updatedAt;
   final int unreadCount;
   final VoidCallback onTap;
 
+  static const _brandOrange = Color(0xFFFF8A00);
+
   @override
   Widget build(BuildContext context) {
     final time = _fmtTime(updatedAt);
+    final hasProductImage =
+        productImageUrl != null && productImageUrl!.trim().isNotEmpty;
 
     return Material(
       color: Colors.white,
@@ -644,7 +688,7 @@ class _ChatRow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
-              _AvatarCarousel(urls: avatarUrls, name: name),
+              _AvatarCarousel(urls: avatarUrls, name: peerLabel ?? name),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -658,10 +702,12 @@ class _ChatRow extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                                fontWeight: FontWeight.w900, fontSize: 15.5),
+                              fontWeight: FontWeight.w900,
+                              fontSize: 15.5,
+                            ),
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 8),
                         Text(
                           time,
                           style: TextStyle(
@@ -674,6 +720,19 @@ class _ChatRow extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (peerLabel != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        peerLabel!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     Row(
                       children: [
@@ -693,7 +752,7 @@ class _ChatRow extends StatelessWidget {
                             ),
                           ),
                         ),
-                        if (unreadCount > 0) ...[
+                        if (unreadCount > 0 && !hasProductImage) ...[
                           const SizedBox(width: 10),
                           _UnreadPill(count: unreadCount),
                         ],
@@ -702,6 +761,34 @@ class _ChatRow extends StatelessWidget {
                   ],
                 ),
               ),
+              if (hasProductImage) ...[
+                const SizedBox(width: 10),
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        width: 52,
+                        height: 52,
+                        color: Colors.grey.shade200,
+                        child: ResilientCachedNetworkImage(
+                          url: productImageUrl!,
+                          fit: BoxFit.cover,
+                          width: 52,
+                          height: 52,
+                        ),
+                      ),
+                    ),
+                    if (unreadCount > 0)
+                      Positioned(
+                        top: -4,
+                        right: -4,
+                        child: _UnreadPill(count: unreadCount),
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

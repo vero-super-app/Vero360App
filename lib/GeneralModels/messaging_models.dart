@@ -36,6 +36,7 @@ class Message {
   final List<Map<String, dynamic>>? attachments;
   final List<Map<String, dynamic>>? tags;
   final Map<String, dynamic>? sender;
+  final String? clientMessageId;
 
   Message({
     required this.id,
@@ -52,16 +53,26 @@ class Message {
     this.attachments,
     this.tags,
     this.sender,
+    this.clientMessageId,
   });
 
   bool isMine(int myId) => senderId == myId;
 
   factory Message.fromJson(Map<String, dynamic> json) {
+    final senderMap = json['sender'] is Map
+        ? Map<String, dynamic>.from(json['sender'] as Map)
+        : null;
+    final senderIdRaw = json['senderId'] ?? senderMap?['id'];
+
     return Message(
       id: json['id'] ?? '',
       chatId: json['chatId'] ?? '',
-      senderId: (json['senderId'] is int) ? json['senderId'] : int.tryParse(json['senderId'].toString()) ?? 0,
-      recipientId: (json['recipientId'] is int) ? json['recipientId'] : int.tryParse(json['recipientId'].toString()) ?? 0,
+      senderId: (senderIdRaw is int)
+          ? senderIdRaw
+          : int.tryParse(senderIdRaw?.toString() ?? '') ?? 0,
+      recipientId: (json['recipientId'] is int)
+          ? json['recipientId']
+          : int.tryParse(json['recipientId']?.toString() ?? '') ?? 0,
       content: json['content'] ?? '',
       createdAt: json['createdAt'] is Timestamp
           ? (json['createdAt'] as Timestamp).toDate()
@@ -85,7 +96,8 @@ class Message {
       tags: json['tags'] != null
           ? List<Map<String, dynamic>>.from(json['tags'] as List)
           : null,
-      sender: json['sender'] is Map ? Map<String, dynamic>.from(json['sender'] as Map) : null,
+      sender: senderMap,
+      clientMessageId: json['clientMessageId']?.toString(),
     );
   }
 

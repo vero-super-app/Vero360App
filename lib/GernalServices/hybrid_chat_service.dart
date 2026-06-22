@@ -4,7 +4,12 @@ import 'package:vero360_app/GernalServices/chat_service.dart';
 import 'package:vero360_app/GernalServices/websocket_messaging_service.dart';
 import 'package:vero360_app/GeneralModels/messaging_models.dart' as messaging_models;
 
-/// Hybrid chat service that uses WebSocket when available, falls back to Firebase
+/// Legacy hybrid chat: WebSocket when available, Firebase fallback.
+///
+/// Use [BackendChatService] and [BackendMessagingSocket] instead.
+@Deprecated(
+  'Use BackendChatService and BackendMessagingSocket instead.',
+)
 class HybridChatService {
   final WebSocketMessagingService? _webSocket;
   final ChatService _firebase = ChatService();

@@ -9,6 +9,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GeneralModels/ride_history_model.dart';
+import 'package:vero360_app/features/ride_share/services/active_ride_storage.dart';
 
 /// HTTP-based Ride Share Service replacing Firebase completely
 class RideShareHttpService {
@@ -19,6 +20,8 @@ class RideShareHttpService {
   late StreamController<Ride> _rideUpdateController;
   Future<void>? _initializationFuture;
   bool _globalSocketListenersRegistered = false;
+  int? _subscribedRideId;
+  ActiveRideRole? _subscribedRole;
 
   RideShareHttpService() {
     _initializeControllers();
@@ -119,6 +122,7 @@ class RideShareHttpService {
     socket.onConnect((_) {
       print('[RideShareHttpService] Socket connected with token');
       _connectionStatusController.add('connected');
+      _resubscribeIfNeeded();
     });
 
     socket.onDisconnect((_) {
@@ -143,6 +147,11 @@ class RideShareHttpService {
     socket.on('driver:location:updated', (data) {
       print('[RideShareHttpService] Driver location updated: $data');
       _driverLocationController.add(Map<String, dynamic>.from(data));
+    });
+
+    socket.on('ride:driver-location-stale', (data) {
+      print('[RideShareHttpService] Driver location stale: $data');
+      _rideStatusController.add(Map<String, dynamic>.from(data as Map));
     });
 
     socket.on('ride:status:updated', (data) {
@@ -644,6 +653,71 @@ class RideShareHttpService {
   // Note: Taxi management is handled through DriverService
   // This service focuses on ride operations, not vehicle/taxi registration
 
+  void registerRideSubscription({
+    required int rideId,
+    required ActiveRideRole role,
+  }) {
+    _subscribedRideId = rideId;
+    _subscribedRole = role;
+  }
+
+  void clearRideSubscription() {
+    _subscribedRideId = null;
+    _subscribedRole = null;
+  }
+
+  Future<void> _resubscribeIfNeeded() async {
+    final rideId = _subscribedRideId;
+    final role = _subscribedRole;
+    if (rideId == null || role == null || !socket.connected) return;
+
+    if (role == ActiveRideRole.driver) {
+      socket.emit('driver:subscribe', {'rideId': rideId});
+    } else {
+      socket.emit('passenger:subscribe', {'rideId': rideId});
+    }
+    print(
+        '[RideShareHttpService] Re-subscribed to ride $rideId as ${role.name}');
+  }
+
+  Future<void> reconnectAndResubscribe() async {
+    await reconnectWebSocket();
+    await _resubscribeIfNeeded();
+  }
+
+  /// Get active rides for passenger
+  Future<List<Ride>> getActiveRidesForPassenger() async {
+    try {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+      };
+      final token = await _getAuthToken();
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
+      final response = await http.get(
+        ApiConfig.endpoint('/ride-share/passengers/me/active-rides'),
+        headers: headers,
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is List) {
+          return (data)
+              .map((r) => Ride.fromJson(r as Map<String, dynamic>))
+              .toList();
+        }
+        return [];
+      }
+      throw Exception(
+          'Failed to get passenger active rides: ${response.statusCode}');
+    } catch (e) {
+      print('Error getting passenger active rides');
+      rethrow;
+    }
+  }
+
   /// Get active rides for driver
   Future<List<Ride>> getActiveRidesForDriver(int driverId) async {
     try {
@@ -757,6 +831,7 @@ class RideShareHttpService {
         print('WebSocket reconnected');
         _connectionStatusController.add('connected');
       }
+      await _resubscribeIfNeeded();
     } catch (e) {
       print('Error reconnecting WebSocket');
       _connectionStatusController.add('error');

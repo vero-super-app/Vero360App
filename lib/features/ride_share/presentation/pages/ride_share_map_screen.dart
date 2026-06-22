@@ -14,6 +14,7 @@ import 'package:vero360_app/features/ride_share/presentation/providers/ride_shar
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
   const RideShareMapScreen({super.key});
@@ -170,7 +171,11 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     _fadeAnimationController.forward();
 
     // Load recent places & GPS after frame to avoid jank
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (!LocationPermissionHelper.isKnownGranted) {
+        await LocationPermissionHelper.ensureLocationAccess(context);
+      }
       if (!mounted) return;
       RecentPlacesManager.loadAndSet(ref);
       ref.invalidate(currentLocationProvider);

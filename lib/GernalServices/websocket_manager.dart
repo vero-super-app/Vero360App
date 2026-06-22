@@ -1,82 +1,36 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/websocket_messaging_service.dart';
-import 'package:vero360_app/GernalServices/messaging_initialization_service.dart';
-import 'package:vero360_app/GernalServices/chat_service.dart';
 
-/// Global WebSocket manager - handles initialization and lifecycle
+/// @deprecated Use [BackendMessagingSocket] instead.
+@Deprecated('Use BackendMessagingSocket instead.')
 class WebSocketManager {
-  static WebSocketMessagingService? _instance;
+  static void _log(String message) {
+    if (kDebugMode) debugPrint(message);
+  }
 
-  static WebSocketMessagingService? get instance => _instance;
+  static WebSocketMessagingService? get instance =>
+      BackendMessagingSocket.webSocketService;
 
-  /// Initialize WebSocket connection
-  static Future<WebSocketMessagingService?> initialize() async {
+  static Future<void> initialize() async {
     try {
-      // Get current user
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        print(
-            '[WebSocketManager] No authenticated user, skipping WebSocket init');
-        return null;
-      }
-
-      // Get app user ID from chat service
-      final appUserId = await ChatService.myAppUserId();
-
-      if (appUserId.isEmpty) {
-        print('[WebSocketManager] No app user ID, skipping WebSocket init');
-        return null;
-      }
-
-      // Get auth token
-      final idToken = await user.getIdToken();
-
-      // Configure WebSocket URL
-      const wsUrl = 'wss://vero-backend-2.onrender.com';
-
-      print('[WebSocketManager] Initializing WebSocket at $wsUrl');
-
-      _instance = WebSocketMessagingService(
-        wsUrl: wsUrl,
-        token: idToken!,
-        userId: appUserId,
-      );
-
-      // Connect
-      await _instance!.connect();
-      print('[WebSocketManager] WebSocket connected ✅');
-
-      // Link to sync service
-      await MessagingInitializationService.setWebSocketService(_instance!);
-
-      return _instance;
+      if (FirebaseAuth.instance.currentUser == null) return;
+      await BackendChatService.ensureAuth();
+      await BackendMessagingSocket.connect();
+      _log('[WebSocketManager] Delegated to BackendMessagingSocket');
     } catch (e) {
-      print('[WebSocketManager] Failed to initialize: $e');
-      return null;
+      _log('[WebSocketManager] Init failed: $e');
     }
   }
 
-  /// Reconnect if disconnected
   static Future<void> ensureConnected() async {
-    if (_instance != null && _instance!.isConnected) {
-      return;
-    }
+    if (BackendMessagingSocket.isConnected) return;
     await initialize();
   }
 
-  /// Disconnect WebSocket
-  static Future<void> disconnect() async {
-    try {
-      await _instance?.disconnect();
-      print('[WebSocketManager] WebSocket disconnected');
-    } catch (e) {
-      print('[WebSocketManager] Error disconnecting: $e');
-    }
-  }
+  static Future<void> disconnect() => BackendMessagingSocket.disconnect();
 
-  /// Dispose
-  static Future<void> dispose() async {
-    await disconnect();
-    _instance = null;
-  }
+  static Future<void> dispose() => BackendMessagingSocket.disconnect();
 }

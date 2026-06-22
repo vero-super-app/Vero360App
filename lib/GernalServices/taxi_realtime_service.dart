@@ -5,6 +5,9 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
 
+/// @deprecated Uses raw WebSocket and is incompatible with the NestJS Socket.IO
+/// [RideTrackingGateway]. Prefer [RideShareHttpService] for ride and taxi realtime.
+///
 /// Model for real-time taxi location update
 class TaxiLocationUpdate {
   final int taxiId;

@@ -17,6 +17,7 @@ import 'package:http/http.dart' as http;
 import 'package:saver_gallery/saver_gallery.dart';
 
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
@@ -27,6 +28,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovid
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 
 import '../../../../GeneralPages/video_player_page.dart';
 
@@ -498,70 +500,80 @@ class _DetailsPageState extends State<DetailsPage> {
   Future<void> _openChat(MarketplaceDetailModel item) async {
     if (!await _requireLogin()) return;
 
+    if (!mounted) return;
+    final rootNav = Navigator.of(context, rootNavigator: true);
+    var loadingDismissed = false;
+    void dismissLoading() {
+      if (loadingDismissed) return;
+      if (rootNav.canPop()) rootNav.pop();
+      loadingDismissed = true;
+    }
+
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        useRootNavigator: true,
+        builder: (_) => const OpeningChatLoadingDialog(),
+      ),
+    );
+
+    BackendChatThread? chat;
+    String sellerName = 'Seller';
+    String sellerAvatar = '';
+    ChatProductContext? productContext;
+
     try {
+      final myId = await BackendChatService.getUserId();
+
       final ownerId = int.tryParse((item.sellerUserId ?? '').trim());
-      final sellerId = await BackendChatService.resolvePeerUserId(
+      final sqlItemId = item.id > 0 ? item.id : null;
+
+      chat = await BackendChatService.startMerchantChat(
+        sqlItemId: sqlItemId,
         ownerId: ownerId,
         sellerUserId: item.sellerUserId,
         serviceProviderId: item.serviceProviderId,
         merchantId: item.merchantId,
+        myUserId: myId,
       );
 
       if (kDebugMode) {
-        debugPrint(
-          '[_openChat] Resolved sellerId=$sellerId (sellerUserId=${item.sellerUserId}, merchantId=${item.merchantId})',
-        );
+        debugPrint('[_openChat] Opened chat ${chat.id} with seller');
       }
 
-      if (sellerId == null || sellerId <= 0) {
-        if (kDebugMode) debugPrint('[_openChat] No valid seller ID found');
-        _toast('Seller chat unavailable', Icons.info_outline, Colors.orange);
-        return;
-      }
-
-      final myId = await BackendChatService.getUserId();
-      if (kDebugMode) {
-        debugPrint('[_openChat] Current user ID: $myId');
-      }
-      if (myId == null) {
-        if (kDebugMode) debugPrint('[_openChat] User ID is null - user may not be logged in');
-        _toast('Please log in to chat', Icons.info_outline, Colors.orange);
-        return;
-      }
-
-      if (sellerId == myId) {
-        if (kDebugMode) debugPrint('[_openChat] sellerId == myId, this is your own listing');
-        _toast('This is your own listing', Icons.info_outline, Colors.orange);
-        return;
-      }
-
-      final sellerName = item.sellerBusinessName ?? item.merchantName ?? 'Seller';
-      final sellerAvatar = item.sellerLogoUrl ?? '';
-
-      if (!mounted) return;
-
-      // Create or get existing chat via backend API, then navigate to full chat page
-      final chat = await BackendChatService.ensureChat(
-        peerUserId: sellerId,
-        peerName: sellerName,
-        peerAvatar: sellerAvatar,
-      );
-
-      if (!mounted) return;
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => MessagePageBackendApi(
-            peerId: chat.id,
-            peerName: sellerName,
-            peerAvatarUrl: sellerAvatar,
-          ),
-        ),
+      sellerName = item.sellerBusinessName ?? item.merchantName ?? 'Seller';
+      sellerAvatar = item.sellerLogoUrl ?? '';
+      productContext = ChatProductContext(
+        productId: item.id.toString(),
+        name: item.name,
+        image: item.image,
+        price: item.price,
+        description: item.description,
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[_openChat] Exception: $e');
-      _toast('Error opening chat: ${e.toString()}', Icons.error, Colors.red);
+      if (mounted) {
+        _toast('Error opening chat: ${e.toString()}', Icons.error, Colors.red);
+      }
+    } finally {
+      dismissLoading();
     }
+
+    if (chat == null || !mounted) return;
+
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MessagePageBackendApi(
+          peerId: chat!.id,
+          peerName: sellerName,
+          peerAvatarUrl: sellerAvatar,
+          productContext: productContext,
+          sendProductEnquiry: true,
+        ),
+      ),
+    );
   }
 
   /// Navigate to a page that shows all products from this merchant.

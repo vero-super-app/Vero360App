@@ -1037,10 +1037,14 @@ class BackendChatService {
     }
   }
 
-  /// Send test message to all users (TEST ONLY)
+  /// Send test message to all users (TEST ONLY, debug builds)
   static Future<int> sendTestMessageToAllUsers({
     required String testMessage,
   }) async {
+    if (!kDebugMode) {
+      throw StateError('sendTestMessageToAllUsers is only available in debug builds');
+    }
+
     await ensureAuth();
     final myId = _userId!;
 

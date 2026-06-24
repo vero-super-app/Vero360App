@@ -1,6 +1,7 @@
 // lib/screens/chat_list_page.dart
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
@@ -300,12 +301,14 @@ class _ChatListPageState extends State<ChatListPage> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: _brandOrange,
-        foregroundColor: Colors.white,
-        onPressed: () => _showTestMenu(context),
-        child: const Icon(Icons.chat_rounded),
-      ),
+      floatingActionButton: kDebugMode
+          ? FloatingActionButton(
+              backgroundColor: _brandOrange,
+              foregroundColor: Colors.white,
+              onPressed: () => _showTestMenu(context),
+              child: const Icon(Icons.chat_rounded),
+            )
+          : null,
     );
   }
 

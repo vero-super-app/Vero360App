@@ -16,10 +16,10 @@ class AccommodationMyBookingsTab extends StatefulWidget {
 
   @override
   State<AccommodationMyBookingsTab> createState() =>
-      _AccommodationMyBookingsTabState();
+      AccommodationMyBookingsTabState();
 }
 
-class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
+class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
     with AutomaticKeepAliveClientMixin {
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
@@ -55,12 +55,14 @@ class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
     });
   }
 
+  void reload() => _reload();
+
   Future<List<BookingItem>> _load() async {
     final loggedIn = await AuthHandler.isAuthenticated();
     if (!loggedIn) {
       throw AuthRequiredException('Sign in to see your bookings');
     }
-    return _svc.getMyBookings();
+    return _svc.getGuestMyBookings();
   }
 
   bool _showPaidBadge(BookingItem b) {
@@ -80,13 +82,12 @@ class _AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
       case BookingStatus.pending:
         return 'Pending payment';
       case BookingStatus.confirmed:
-        return 'Confirmed';
       case BookingStatus.completed:
-        return 'Completed';
+        return 'Booked';
       case BookingStatus.cancelled:
         return 'Cancelled';
       case BookingStatus.unknown:
-        return 'Status unknown';
+        return b.includeInGuestMyBookings ? 'Booked' : 'Status unknown';
     }
   }
 

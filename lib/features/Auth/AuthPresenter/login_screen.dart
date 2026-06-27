@@ -93,12 +93,18 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _applySelectedAccount(account));
   }
 
-  void _useAnotherAccount() {
+  void _switchAccount({bool addNewAccount = false}) {
     setState(() {
-      _selectedAccount = null;
-      _showFullForm = true;
-      _identifier.clear();
       _password.clear();
+      if (addNewAccount) {
+        _selectedAccount = null;
+        _showFullForm = true;
+        _identifier.clear();
+        return;
+      }
+      _selectedAccount = null;
+      _showFullForm = false;
+      _identifier.clear();
     });
   }
 
@@ -957,6 +963,19 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
             ),
           ),
+          TextButton(
+            onPressed: (_loading || _socialLoading) ? null : _switchAccount,
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.brandOrange,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text(
+              'Switch',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+            ),
+          ),
         ],
       ),
     );
@@ -1069,14 +1088,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
             ],
-            if (_savedAccounts.length > 1 || _showFullForm) ...[
+            if (_savedAccounts.isNotEmpty) ...[
               const SizedBox(height: 8),
               TextButton(
-                onPressed: (_loading || _socialLoading)
-                    ? null
-                    : _useAnotherAccount,
+                onPressed: (_loading || _socialLoading) ? null : _switchAccount,
                 child: const Text(
-                  'Use another account',
+                  'Switch account',
                   style: TextStyle(
                     color: AppColors.brandOrange,
                     fontWeight: FontWeight.w700,
@@ -1182,7 +1199,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           _selectedAccount = null;
                         }),
                 child: const Text(
-                  'Back to saved accounts',
+                  'Switch account',
                   style: TextStyle(
                     color: AppColors.brandOrange,
                     fontWeight: FontWeight.w700,
@@ -1268,10 +1285,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 18),
                     Text(
                       _showSavedAccountPicker
-                          ? 'Continue as'
-                          : _showSavedAccountSignIn
-                              ? 'Welcome back'
-                              : 'Welcome back',
+                          ? (_savedAccounts.length > 1
+                              ? 'Switch account'
+                              : 'Continue as')
+                          : 'Welcome back',
                       style: const TextStyle(
                         color: AppColors.title,
                         fontSize: 26,
@@ -1281,7 +1298,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     if (_showSavedAccountPicker) ...[
                       const SizedBox(height: 6),
                       Text(
-                        'Tap your account, then enter your password',
+                        _savedAccounts.length > 1
+                            ? 'Choose an account or add another one'
+                            : 'Tap your account, then enter your password',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Colors.grey.shade600,
@@ -1289,7 +1308,18 @@ class _LoginScreenState extends State<LoginScreen> {
                           height: 1.35,
                         ),
                       ),
-                    ] else if (!_showSavedAccountSignIn) ...[
+                    ] else if (_showSavedAccountSignIn) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Enter your password to continue',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 14,
+                          height: 1.35,
+                        ),
+                      ),
+                    ] else ...[
                       const SizedBox(height: 8),
                       Text(
                         'Sign in to pick up where you left off',
@@ -1338,9 +1368,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 TextButton(
                                   onPressed: (_loading || _socialLoading)
                                       ? null
-                                      : _useAnotherAccount,
+                                      : () => _switchAccount(addNewAccount: true),
                                   child: const Text(
-                                    'Use another account',
+                                    'Add another account',
                                     style: TextStyle(
                                       color: AppColors.brandOrange,
                                       fontWeight: FontWeight.w800,

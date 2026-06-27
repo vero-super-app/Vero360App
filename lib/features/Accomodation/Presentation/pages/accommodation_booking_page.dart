@@ -13,6 +13,7 @@ import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_booking_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/booking_service.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/guest_booking_local_cache.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_listing_image.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -796,6 +797,23 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             )
           : null;
 
+      final bookingDetailsMap = result['bookingDetails'] is Map
+          ? Map<String, dynamic>.from(result['bookingDetails'] as Map)
+          : <String, dynamic>{};
+      final paidStaySnapshot = GuestBookingLocalCache.buildFromCheckout(
+        bookingDetails: bookingDetailsMap,
+        bookingRef: bookingNo,
+        accommodationId: widget.accommodationId,
+        propertyName: widget.propertyName,
+        propertyLocation: widget.location,
+        checkIn: _checkIn,
+        checkOut: _checkOut,
+        totalMwk: _totalMwk,
+        guestName: _nameController.text.trim(),
+        guestEmail: _emailController.text.trim(),
+        guestPhone: _phoneController.text.trim(),
+      );
+
       if (!mounted) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -808,6 +826,9 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             accommodationEscrow: escrow,
             onSuccessNavigate: (bookingCtx) {
               unawaited(() async {
+                try {
+                  await GuestBookingLocalCache.rememberPaidStay(paidStaySnapshot);
+                } catch (_) {}
                 try {
                   await NotificationService.instance
                       .notifyAccommodationBookingForGuestAndHost(

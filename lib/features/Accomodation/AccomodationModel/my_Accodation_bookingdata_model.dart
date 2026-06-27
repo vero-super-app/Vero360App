@@ -426,6 +426,7 @@ class BookingItem {
     if (payStr.isNotEmpty) {
       final payAsStatus = bookingStatusFrom(payStr);
       if (payAsStatus == BookingStatus.completed) return true;
+      if (payAsStatus == BookingStatus.confirmed) return true;
       if (payAsStatus == BookingStatus.pending ||
           payStr.contains('unpaid') ||
           payStr.contains('await') ||

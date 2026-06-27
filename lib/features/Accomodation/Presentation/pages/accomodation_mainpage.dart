@@ -117,6 +117,9 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
   final Map<int, String> _hostelRoomTypeByApiId = <int, String>{};
   final Map<int, bool> _hostelAvailabilityByApiId = <int, bool>{};
 
+  final GlobalKey<AccommodationMyBookingsTabState> _myBookingsTabKey =
+      GlobalKey<AccommodationMyBookingsTabState>();
+
   @override
   void initState() {
     super.initState();
@@ -130,6 +133,11 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     _refreshSession();
     _searchController.addListener(_onSearchChanged);
     _locationController.addListener(_onLocationChanged);
+    if (widget.initialTabIndex == 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _myBookingsTabKey.currentState?.reload();
+      });
+    }
   }
 
   Future<void> _refreshSession() async {
@@ -177,7 +185,11 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
   }
 
   void _onAccommodationTabChanged() {
-    if (!mounted || _tabController.index != 0) return;
+    if (!mounted) return;
+    if (_tabController.index == 1) {
+      _myBookingsTabKey.currentState?.reload();
+    }
+    if (_tabController.index != 0) return;
     unawaited(_loadGuestPaidStays());
   }
 
@@ -187,7 +199,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
       return;
     }
     try {
-      final list = await _myBookingService.getGuestStaysForDiscoverOverlay();
+      final list = await _myBookingService.getGuestMyBookings();
       if (mounted) setState(() => _guestPaidStays = list);
     } catch (_) {
       if (mounted) setState(() => _guestPaidStays = []);
@@ -795,7 +807,10 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
                 controller: _tabController,
                 children: [
                   _buildDiscoverTab(context, isDark),
-                  AccommodationMyBookingsTab(isDark: isDark),
+                  AccommodationMyBookingsTab(
+                    key: _myBookingsTabKey,
+                    isDark: isDark,
+                  ),
                 ],
               )
             : _buildDiscoverTab(context, isDark),

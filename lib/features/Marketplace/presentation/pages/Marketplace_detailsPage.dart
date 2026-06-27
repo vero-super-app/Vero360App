@@ -57,6 +57,7 @@ class _SellerInfo {
       logoUrl,
       serviceProviderId;
   double? rating;
+  int? backendMerchantId;
   _SellerInfo({
     this.businessName,
     this.openingHours,
@@ -241,12 +242,30 @@ class _DetailsPageState extends State<DetailsPage> {
           info.status ??= sp.status;
           info.description ??= sp.businessDescription;
           info.logoUrl ??= sp.logoUrl;
+          if (sp.id != null && sp.id! > 0) {
+            info.backendMerchantId = sp.id;
+          }
           final r = sp.rating;
           if (info.rating == null && r != null) {
             info.rating = (r as num).toDouble();
           }
         }
       } catch (_) {}
+    }
+
+    if (info.backendMerchantId == null) {
+      for (final raw in [i.merchantId, i.sellerUserId]) {
+        final key = raw?.trim();
+        if (key == null || key.isEmpty) continue;
+        if (RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(key)) continue;
+        try {
+          final sp = await ServiceProviderServicess.fetchByNumber(key);
+          if (sp?.id != null && sp!.id! > 0) {
+            info.backendMerchantId = sp.id;
+            break;
+          }
+        } catch (_) {}
+      }
     }
 
     // Fallback profile data source (same family as merchant dashboard):
@@ -445,6 +464,9 @@ class _DetailsPageState extends State<DetailsPage> {
     required String merchantName,
     String? logoUrl,
     double? rating,
+    String? serviceProviderId,
+    String? sellerUserId,
+    int? merchantBackendId,
   }) {
     Navigator.push(
       context,
@@ -454,6 +476,9 @@ class _DetailsPageState extends State<DetailsPage> {
           merchantName: merchantName,
           logoUrl: logoUrl,
           rating: rating,
+          serviceProviderId: serviceProviderId,
+          sellerUserId: sellerUserId,
+          merchantBackendId: merchantBackendId,
         ),
       ),
     );
@@ -469,6 +494,7 @@ class _DetailsPageState extends State<DetailsPage> {
     double? rating,
     String? businessDesc,
     String? logo,
+    int? merchantBackendId,
   }) {
     const ink = Color(0xFF101010);
     const muted = Color(0xFF6B7280);
@@ -588,6 +614,9 @@ class _DetailsPageState extends State<DetailsPage> {
                           merchantName: merchantDisplayName,
                           logoUrl: logo ?? item.sellerLogoUrl,
                           rating: rating,
+                          serviceProviderId: item.serviceProviderId,
+                          sellerUserId: item.sellerUserId,
+                          merchantBackendId: merchantBackendId,
                         )
                     : null,
                 child: Container(
@@ -1365,6 +1394,7 @@ class _DetailsPageState extends State<DetailsPage> {
                 rating: rating,
                 businessDesc: businessDesc,
                 logo: logo,
+                merchantBackendId: s?.backendMerchantId,
               ),
               if (hasMerchant && merchantId.trim().isNotEmpty) ...[
                 const SizedBox(height: 12),

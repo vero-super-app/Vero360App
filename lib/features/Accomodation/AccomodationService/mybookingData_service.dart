@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/guest_booking_local_cache.dart';
 
 class AuthRequiredException implements Exception {
   final String message;
@@ -203,6 +204,36 @@ class MyBookingService {
         .map(BookingItem.fromJson)
         .where((b) => b.includeInGuestMyBookings)
         .toList();
+  }
+
+  /// Guest “My bookings” — always `/bookings/me`, merges local paid cache, prunes when API syncs.
+  Future<List<BookingItem>> getGuestMyBookings() async {
+    List<BookingItem> api = [];
+    try {
+      api = await getGuestStaysForDiscoverOverlay();
+    } catch (_) {}
+
+    final local = await GuestBookingLocalCache.loadPaidStays();
+    final merged = <BookingItem>[...api];
+    for (final item in local) {
+      if (!merged.any((b) => GuestBookingLocalCache.sameBooking(b, item))) {
+        merged.insert(0, item);
+      }
+    }
+
+    merged.sort((a, b) {
+      final da = a.bookingDate;
+      final db = b.bookingDate;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
+
+    if (api.isNotEmpty) {
+      unawaited(GuestBookingLocalCache.pruneIfPresentInApi(api));
+    }
+    return merged;
   }
 
   /// Incoming stays for **this user as host** (`GET /vero/bookings/merchant/me`).

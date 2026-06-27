@@ -132,7 +132,7 @@ class MarketplaceDetailModel {
     this.serviceType,
     this.createdAt,
     this.latitude,
-    this.longitude,
+    this.longitude, int? backendItemId,
   });
 
   factory MarketplaceDetailModel.fromJson(Map<String, dynamic> j) {

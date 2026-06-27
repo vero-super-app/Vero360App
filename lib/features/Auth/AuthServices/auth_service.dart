@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -21,10 +22,42 @@ import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/password_reset_verification_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/registration_verification_service.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 
 enum DeleteAccountStatus { success, requiresRecentLogin, failed }
 
+enum PasswordResetChannel { email, phone }
+
+enum PasswordResetOutcome {
+  sent,
+  otpSent,
+  phoneOnlyNoRecovery,
+  notFound,
+  error,
+  completed,
+}
+
+/// Result of [AuthService.requestPasswordReset] for UI feedback.
+class PasswordResetResult {
+  final bool success;
+  final PasswordResetChannel? channel;
+  final String? maskedDestination;
+  final String message;
+  final PasswordResetOutcome outcome;
+
+  const PasswordResetResult({
+    required this.success,
+    this.channel,
+    this.maskedDestination,
+    required this.message,
+    required this.outcome,
+  });
+}
+
 class AuthService {
+  static const String supportEmail = 'support@vero360.app';
   static const Duration _reqTimeoutWarm = Duration(seconds: 18);
 
   // ✅ google_sign_in 7.x
@@ -406,77 +439,441 @@ class AuthService {
   }
 
   // -------------------- Forgot password (email or phone) --------------------
+  //
+  // OTP is sent via the Vero API (backend SMTP, same as registration).
+  // After the user enters the code + new password in-app, Firebase Auth is updated.
 
-  /// Sends password reset to [identifier] (email or phone).
-  /// Email: Firebase sendPasswordResetEmail. Phone: backend OTP (if endpoint exists) or requestOtp.
-  /// Returns true if sent, false otherwise. Shows toast using [context]; ensure context is mounted.
-  Future<bool> requestPasswordReset({
+  static bool _looksLikeEmail(String v) =>
+      RegExp(r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(v.trim());
+
+  static bool _looksLikePhone(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return false;
+    final digits = t.replaceAll(RegExp(r'\D'), '');
+    return RegExp(r'^(08|09)\d{8}$').hasMatch(digits) ||
+        RegExp(r'^\+265[89]\d{8}$').hasMatch(t);
+  }
+
+  static bool _isRecoverableEmail(String email) {
+    final e = email.trim();
+    if (e.isEmpty) return false;
+    return !e.toLowerCase().endsWith('@phone.vero360.app');
+  }
+
+  static String _maskEmail(String email) {
+    final parts = email.split('@');
+    if (parts.length != 2) return '***';
+    final local = parts[0];
+    final domain = parts[1];
+    if (local.isEmpty) return '***@$domain';
+    final visible = local.length <= 1 ? '*' : local[0];
+    return '$visible***@$domain';
+  }
+
+  Set<String> _phoneLookupVariants(String phone) {
+    final trimmed = phone.trim();
+    final digits = trimmed.replaceAll(RegExp(r'\D'), '');
+    final variants = <String>{trimmed, digits};
+    if (digits.length == 10 && digits.startsWith('0')) {
+      variants.add('+265${digits.substring(1)}');
+      variants.add('265${digits.substring(1)}');
+    } else if (digits.length == 12 && digits.startsWith('265')) {
+      variants.add('0${digits.substring(3)}');
+      variants.add('+$digits');
+    }
+    return variants;
+  }
+
+  Future<String?> _lookupRecoverableEmailByPhone(String phone) async {
+    for (final variant in _phoneLookupVariants(phone)) {
+      try {
+        final snap = await _firestore
+            .collection('users')
+            .where('phone', isEqualTo: variant)
+            .limit(1)
+            .get()
+            .timeout(const Duration(seconds: 12));
+        if (snap.docs.isEmpty) continue;
+        final email = snap.docs.first.data()['email']?.toString().trim() ?? '';
+        if (_isRecoverableEmail(email)) return email;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Future<bool> _phoneProfileExists(String phone) async {
+    for (final variant in _phoneLookupVariants(phone)) {
+      try {
+        final snap = await _firestore
+            .collection('users')
+            .where('phone', isEqualTo: variant)
+            .limit(1)
+            .get()
+            .timeout(const Duration(seconds: 12));
+        if (snap.docs.isNotEmpty) return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  Future<String> _resolveAuthEmailForPasswordReset({
+    required String channel,
+    String? email,
+    String? phone,
+  }) async {
+    if (channel == 'email' && email != null && email.trim().isNotEmpty) {
+      return email.trim().toLowerCase();
+    }
+
+    if (phone == null || phone.trim().isEmpty) {
+      return '';
+    }
+
+    final linkedEmail = await _lookupRecoverableEmailByPhone(phone);
+    if (linkedEmail != null && linkedEmail.isNotEmpty) {
+      return linkedEmail.trim().toLowerCase();
+    }
+
+    return syntheticEmailForPhone(phone).toLowerCase();
+  }
+
+  String _passwordResetApplyErrorMessage(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'weak-password':
+        return 'Password is too weak. Use at least 6 characters.';
+      case 'requires-recent-login':
+        return 'Please sign in again, then change your password from settings.';
+      case 'user-not-found':
+        return 'No Vero360 account found for this email or phone.';
+      case 'user-disabled':
+        return 'This account has been disabled.';
+      case 'network-request-failed':
+        return 'Network error. Check your connection and try again.';
+      default:
+        return e.message?.trim().isNotEmpty == true
+            ? e.message!
+            : 'Failed to update password. Try again.';
+    }
+  }
+
+  Future<void> _applyFirebasePasswordAfterOtp({
+    required String authEmail,
+    required String newPassword,
+    required String verificationTicket,
+    String? firebaseCustomToken,
+    String? channel,
+    String? email,
+    String? phone,
+  }) async {
+    await _firebaseAuth.signOut();
+
+    final customToken = firebaseCustomToken?.trim();
+    if (customToken != null && customToken.isNotEmpty) {
+      try {
+        final cred = await _firebaseAuth.signInWithCustomToken(customToken);
+        await cred.user?.updatePassword(newPassword);
+        await _firebaseAuth.signOut();
+        return;
+      } on FirebaseAuthException catch (e) {
+        throw ApiException(message: _passwordResetApplyErrorMessage(e));
+      }
+    }
+
+    try {
+      await ApiClient.post(
+        '/auth/password/reset',
+        body: jsonEncode({
+          'verificationTicket': verificationTicket,
+          'newPassword': newPassword,
+          'authEmail': authEmail,
+          if (channel != null) 'channel': channel,
+          if (email != null && email.isNotEmpty)
+            'email': email.trim().toLowerCase(),
+          if (phone != null && phone.isNotEmpty) 'phone': phone,
+        }),
+        timeout: _reqTimeoutWarm,
+      );
+      return;
+    } on ApiException catch (e) {
+      if (e.statusCode != 404 && e.statusCode != 405) rethrow;
+    }
+
+    try {
+      final result = await FirebaseFunctions.instance
+          .httpsCallable('resetPasswordAfterOtp')
+          .call({
+        'authEmail': authEmail,
+        'newPassword': newPassword,
+        'verificationTicket': verificationTicket,
+        if (channel != null) 'channel': channel,
+        if (email != null) 'email': email,
+        if (phone != null) 'phone': phone,
+      });
+      final data = result.data;
+      if (data is Map && data['success'] == true) return;
+      if (data == true) return;
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code == 'not-found') {
+        throw const ApiException(
+          message:
+              'No Vero360 account found. Check your email or phone, or register first.',
+        );
+      }
+      if (e.code != 'unavailable') {
+        throw ApiException(
+          message: e.message?.trim().isNotEmpty == true
+              ? e.message!
+              : 'Password reset failed. Try again.',
+        );
+      }
+    }
+
+    try {
+      final cred =
+          await _firebaseAuth.signInWithCustomToken(verificationTicket);
+      await cred.user?.updatePassword(newPassword);
+      await _firebaseAuth.signOut();
+      return;
+    } on FirebaseAuthException catch (_) {
+      // verificationTicket is not a Firebase custom token — expected.
+    }
+
+    try {
+      await _firebaseAuth.confirmPasswordReset(
+        code: verificationTicket,
+        newPassword: newPassword,
+      );
+      return;
+    } on FirebaseAuthException catch (_) {
+      // verificationTicket is not a Firebase oob code — expected.
+    }
+
+    throw const ApiException(
+      message:
+          'Could not update your password. Deploy the resetPasswordAfterOtp cloud function or contact support@vero360.app.',
+    );
+  }
+
+  /// Step 1: send a 6-digit code via backend SMTP (same pipeline as registration).
+  Future<PasswordResetResult> requestPasswordReset({
     required String identifier,
-    required BuildContext context,
   }) async {
     final trimmed = identifier.trim();
     if (trimmed.isEmpty) {
-      _toast(context, 'Enter email or phone number', ok: false);
-      return false;
-    }
-
-    final isEmail = RegExp(r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(trimmed);
-    if (isEmail) {
-      try {
-        await _firebaseAuth.sendPasswordResetEmail(email: trimmed);
-        _toast(context, 'Check your email for a password reset link.', ok: true);
-        return true;
-      } on FirebaseAuthException catch (e) {
-        _toast(context, e.message ?? 'Failed to send reset email.', ok: false);
-        return false;
-      } catch (e) {
-        _toast(context, 'Failed to send reset email. Try again.', ok: false);
-        return false;
-      }
-    }
-
-    // Phone: send OTP via backend (user can then reset password with code)
-    try {
-      final ok = await requestOtp(
-        channel: 'phone',
-        phone: trimmed,
-        context: context,
+      return const PasswordResetResult(
+        success: false,
+        message: 'Enter email or phone number',
+        outcome: PasswordResetOutcome.error,
       );
-      if (ok) {
-        _toast(context, 'Verification code sent to your number.', ok: true);
+    }
+
+    final service = PasswordResetVerificationService();
+
+    if (_looksLikeEmail(trimmed)) {
+      try {
+        await service.requestOtp(channel: 'email', email: trimmed);
+        return PasswordResetResult(
+          success: true,
+          channel: PasswordResetChannel.email,
+          maskedDestination: _maskEmail(trimmed),
+          message:
+              '6-digit code sent to ${_maskEmail(trimmed)}. Enter it on the next screen with your new password.',
+          outcome: PasswordResetOutcome.otpSent,
+        );
+      } on ApiException catch (e) {
+        return PasswordResetResult(
+          success: false,
+          channel: PasswordResetChannel.email,
+          message: PasswordResetVerificationService.friendlyError(e, forSend: true),
+          outcome: PasswordResetOutcome.error,
+        );
+      } catch (_) {
+        return const PasswordResetResult(
+          success: false,
+          channel: PasswordResetChannel.email,
+          message: 'Could not send verification code. Try again.',
+          outcome: PasswordResetOutcome.error,
+        );
       }
-      return ok;
+    }
+
+    if (!_looksLikePhone(trimmed)) {
+      return const PasswordResetResult(
+        success: false,
+        message: 'Enter a valid email or phone number',
+        outcome: PasswordResetOutcome.error,
+      );
+    }
+
+    final linkedEmail = await _lookupRecoverableEmailByPhone(trimmed);
+    if (linkedEmail == null) {
+      final profileExists = await _phoneProfileExists(trimmed);
+      if (!profileExists) {
+        return const PasswordResetResult(
+          success: true,
+          channel: PasswordResetChannel.phone,
+          message:
+              'If an account exists for this number, we sent a verification code.',
+          outcome: PasswordResetOutcome.otpSent,
+        );
+      }
+      return PasswordResetResult(
+        success: false,
+        channel: PasswordResetChannel.phone,
+        message:
+            'This account was created with phone only and has no email on file. '
+            'Try signing in with Google or Apple, or contact $supportEmail for help.',
+        outcome: PasswordResetOutcome.phoneOnlyNoRecovery,
+      );
+    }
+
+    try {
+      await service.requestOtp(channel: 'phone', phone: trimmed);
+      return PasswordResetResult(
+        success: true,
+        channel: PasswordResetChannel.phone,
+        maskedDestination: _maskEmail(linkedEmail),
+        message:
+            '6-digit code sent via SMS. Enter it with your new password on the next screen.',
+        outcome: PasswordResetOutcome.otpSent,
+      );
+    } on ApiException catch (e) {
+      return PasswordResetResult(
+        success: false,
+        channel: PasswordResetChannel.phone,
+        message: PasswordResetVerificationService.friendlyError(e, forSend: true),
+        outcome: PasswordResetOutcome.error,
+      );
     } catch (_) {
-      _toast(context, 'Failed to send code to number. Try again.', ok: false);
-      return false;
+      return const PasswordResetResult(
+        success: false,
+        channel: PasswordResetChannel.phone,
+        message: 'Could not send verification code. Try again.',
+        outcome: PasswordResetOutcome.error,
+      );
+    }
+  }
+
+  /// Step 2: verify OTP + set a new Firebase password (in-app, no reset link email).
+  Future<PasswordResetResult> completePasswordResetWithOtp({
+    required String identifier,
+    required String otpCode,
+    required String newPassword,
+    required PasswordResetVerificationResult verification,
+  }) async {
+    final trimmed = identifier.trim();
+    if (trimmed.isEmpty || otpCode.trim().length != 6) {
+      return const PasswordResetResult(
+        success: false,
+        message: 'Enter the 6-digit verification code',
+        outcome: PasswordResetOutcome.error,
+      );
+    }
+    if (newPassword.trim().length < 6) {
+      return const PasswordResetResult(
+        success: false,
+        message: 'Password must be at least 6 characters',
+        outcome: PasswordResetOutcome.error,
+      );
+    }
+
+    final channel = verification.channel;
+    final email = channel == 'email' ? trimmed : null;
+    final phone = channel == 'phone' ? trimmed : null;
+
+    try {
+      final authEmail = await _resolveAuthEmailForPasswordReset(
+        channel: channel,
+        email: email,
+        phone: phone,
+      );
+      if (authEmail.isEmpty) {
+        return const PasswordResetResult(
+          success: false,
+          message: 'Could not resolve account email for password reset.',
+          outcome: PasswordResetOutcome.error,
+        );
+      }
+
+      await _applyFirebasePasswordAfterOtp(
+        authEmail: authEmail,
+        newPassword: newPassword.trim(),
+        verificationTicket: verification.verificationTicket,
+        firebaseCustomToken: verification.firebaseCustomToken,
+        channel: channel,
+        email: email,
+        phone: phone != null
+            ? RegistrationVerificationService.formatPhoneE164(phone)
+            : null,
+      );
+
+      return const PasswordResetResult(
+        success: true,
+        message: 'Password updated. You can sign in now.',
+        outcome: PasswordResetOutcome.completed,
+      );
+    } on ApiException catch (e) {
+      return PasswordResetResult(
+        success: false,
+        message: e.message,
+        outcome: PasswordResetOutcome.error,
+      );
+    } on FirebaseAuthException catch (e) {
+      return PasswordResetResult(
+        success: false,
+        message: _passwordResetApplyErrorMessage(e),
+        outcome: PasswordResetOutcome.error,
+      );
+    } catch (_) {
+      return const PasswordResetResult(
+        success: false,
+        message: 'Failed to update password. Try again.',
+        outcome: PasswordResetOutcome.error,
+      );
     }
   }
 
   // -------------------- OTP --------------------
+
+  static String syntheticEmailForPhone(String phone) {
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return '';
+    return '$digits@phone.vero360.app';
+  }
 
   Future<bool> requestOtp({
     required String channel, // 'email' | 'phone'
     String? email,
     String? phone,
     required BuildContext context,
+    bool showToast = true,
+    String purpose = 'registration',
   }) async {
     try {
       await ApiClient.post(
         '/auth/otp/request',
         body: jsonEncode({
           'channel': channel,
+          'purpose': purpose,
           if (email != null) 'email': email,
           if (phone != null) 'phone': phone,
         }),
         timeout: _reqTimeoutWarm,
       );
-      _toast(context, 'Verification code sent');
+      if (showToast) {
+        final msg = channel == 'email'
+            ? '6-digit code sent to your email'
+            : '6-digit code sent via SMS';
+        _toast(context, msg);
+      }
       return true;
     } on ApiException catch (e) {
-      _toast(context, 'OTP failed: ${e.message}', ok: false);
+      if (showToast) _toast(context, 'OTP failed: ${e.message}', ok: false);
       return false;
     } catch (_) {
-      _toast(context, 'OTP failed (server unreachable)', ok: false);
+      if (showToast) {
+        _toast(context, 'OTP failed (server unreachable)', ok: false);
+      }
       return false;
     }
   }
@@ -485,6 +882,7 @@ class AuthService {
     required String identifier,
     required String code,
     required BuildContext context,
+    bool showToast = true,
   }) async {
     try {
       final channel = identifier.contains('@') ? 'email' : 'phone';
@@ -504,22 +902,44 @@ class AuthService {
       final ticket = data['ticket']?.toString();
 
       if (ticket == null || ticket.isEmpty) {
-        _toast(context, 'No ticket returned', ok: false);
+        if (showToast) _toast(context, 'Invalid or expired code', ok: false);
         return null;
       }
 
-      _toast(context, 'Verified');
+      if (showToast) _toast(context, 'Verified');
       return ticket;
     } on ApiException catch (e) {
-      _toast(context, e.message, ok: false);
+      if (showToast) _toast(context, e.message, ok: false);
       return null;
     } catch (_) {
-      _toast(context, 'Verification failed (server unreachable)', ok: false);
+      if (showToast) {
+        _toast(context, 'Verification failed (server unreachable)', ok: false);
+      }
       return null;
     }
   }
 
   // -------------------- Register --------------------
+  //
+  // OTP is verified via the Vero API; the account is created in Firebase only
+  // (Auth + Firestore). NestJS /auth/register is not used.
+
+  String _registerFirebaseErrorMessage(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'email-already-in-use':
+        return 'Account already exists. Please sign in.';
+      case 'invalid-email':
+        return 'Enter a valid email address.';
+      case 'weak-password':
+        return 'Password is too weak. Use at least 6 characters.';
+      case 'network-request-failed':
+        return 'Network error. Check your connection and try again.';
+      default:
+        return e.message?.trim().isNotEmpty == true
+            ? e.message!
+            : 'Sign up failed. Try again.';
+    }
+  }
 
   Future<Map<String, dynamic>?> registerUser({
     required String name,
@@ -532,68 +952,41 @@ class AuthService {
     required String verificationTicket,
     Map<String, dynamic>? merchantData,
     required BuildContext context,
+    bool allowFirebaseFallback = true,
   }) async {
     final normalizedRole = role.toLowerCase();
 
-    // 1) Try backend register if ticket exists
-    if (verificationTicket.trim().isNotEmpty) {
-      try {
-        final body = <String, dynamic>{
-          'name': name,
-          'email': email,
-          'phone': phone,
-          'password': password,
-          'role': normalizedRole,
-          'profilepicture': profilePicture,
-          'preferredVerification': preferredVerification,
-          'verificationTicket': verificationTicket,
-          if (merchantData != null) ...merchantData,
-        };
-
-        final res = await ApiClient.post(
-          '/auth/register',
-          body: jsonEncode(body),
-          timeout: _reqTimeoutWarm,
-        );
-
-        final data = jsonDecode(res.body) as Map<String, dynamic>;
-        _toast(context, 'Account created');
-
-        final backendAuth = _normalizeBackendAuthResponse(data);
-
-        // mirror to Firebase
-        if (email.trim().isNotEmpty) {
-          await _ensureFirebaseMirrorForBackendUser(
-            email: email.trim(),
-            password: password,
-            backendUser: backendAuth['user'] as Map<String, dynamic>?,
-            merchantData: merchantData,
-          );
-        }
-
-        return backendAuth;
-      } on ApiException catch (e) {
-        _toast(context, 'Backend signup failed: ${e.message}', ok: false);
-      } catch (e) {
-        _toast(context, 'Signup error: $e', ok: false);
-      }
+    if (verificationTicket.trim().isEmpty && !allowFirebaseFallback) {
+      _toast(
+        context,
+        'Verification required before creating your account.',
+        ok: false,
+      );
+      return null;
     }
 
-    // 2) Firebase fallback
-    if (email.trim().isEmpty) {
-      _toast(context, 'Email required for backup sign-up.', ok: false);
+    // Firebase Auth requires an email; phone-only signups use a synthetic address.
+    final authEmail = email.trim().isNotEmpty
+        ? email.trim()
+        : syntheticEmailForPhone(phone);
+    if (authEmail.isEmpty) {
+      _toast(context, 'Email or phone number is required.', ok: false);
       return null;
     }
 
     try {
       final cred = await _firebaseAuth.createUserWithEmailAndPassword(
-        email: email.trim(),
+        email: authEmail,
         password: password,
       );
       final user = cred.user;
       if (user == null) {
-        _toast(context, 'Backup signup failed.', ok: false);
+        _toast(context, 'Sign up failed.', ok: false);
         return null;
+      }
+
+      if (name.trim().isNotEmpty) {
+        await user.updateDisplayName(name.trim());
       }
 
       await _saveFirebaseProfile(
@@ -604,6 +997,25 @@ class AuthService {
         merchantData: merchantData,
       );
 
+      // Store contact email separately when auth uses a synthetic phone email.
+      if (email.trim().isNotEmpty && email.trim() != authEmail) {
+        try {
+          await _firestore.collection('users').doc(user.uid).set(
+            {'contactEmail': email.trim()},
+            SetOptions(merge: true),
+          );
+        } catch (_) {}
+      }
+
+      if (preferredVerification.trim().isNotEmpty) {
+        try {
+          await _firestore.collection('users').doc(user.uid).set(
+            {'preferredVerification': preferredVerification.trim()},
+            SetOptions(merge: true),
+          );
+        } catch (_) {}
+      }
+
       final auth = await _buildFirebaseAuthResult(
         user,
         fallbackName: name,
@@ -612,13 +1024,13 @@ class AuthService {
         merchantData: merchantData,
       );
 
-      _toast(context, 'Account created (backup)', ok: true);
+      _toast(context, 'Account created', ok: true);
       return auth;
     } on FirebaseAuthException catch (e) {
-      _toast(context, e.message ?? 'Backup signup failed.', ok: false);
+      _toast(context, _registerFirebaseErrorMessage(e), ok: false);
       return null;
     } catch (_) {
-      _toast(context, 'Signup failed. Try again later.', ok: false);
+      _toast(context, 'Sign up failed. Try again later.', ok: false);
       return null;
     }
   }
@@ -883,7 +1295,7 @@ class AuthService {
           body: jsonEncode({}),
         );
       } catch (e) {
-        if (kDebugMode) debugPrint('Backend logout call failed: $e');
+        if (kDebugMode) debugPrint(' logout call failed: $e');
       }
     }
 
@@ -905,7 +1317,7 @@ class AuthService {
     // Step 6: Clear local session
     final ok = await _clearLocalSession();
     if (context != null) {
-      _toast(context, ok ? 'Signed out' : 'Signed out (cleanup error)', ok: ok);
+      _toast(context, ok ? 'Signed out' : 'Signed out', ok: ok);
     }
     return ok;
   }
@@ -932,6 +1344,7 @@ class AuthService {
         'messaging_firebase_uid',
         'role',
         'user_role',
+        'has_driver_profile',
         'fullName',
         'name',
         'phone',
@@ -940,6 +1353,7 @@ class AuthService {
       ]) {
         await sp.remove(k);
       }
+      resetDriverSessionCache();
       return true;
     } catch (_) {
       return false;

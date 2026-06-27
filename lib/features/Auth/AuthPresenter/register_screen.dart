@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -19,6 +20,9 @@ import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/registration_verification_service.dart';
+import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 
@@ -89,6 +93,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuthService _firebaseAuthService = FirebaseAuthService();
+  final RegistrationVerificationService _verificationService =
+      RegistrationVerificationService();
+  final AuthService _authService = AuthService();
+
+  RegistrationVerificationResult? _verificationResult;
 
   final _name = TextEditingController();
   final _identifier = TextEditingController(); // email or phone (one field)
@@ -96,15 +105,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _confirm = TextEditingController();
   final _businessName = TextEditingController();
   final _businessAddress = TextEditingController();
+  final _otpCode = TextEditingController();
 
   bool _obscure1 = true;
   bool _obscure2 = true;
   bool _agree = false;
+  bool _otpSent = false;
+  String? _otpError;
 
   UserRole _role = UserRole.customer;
   MerchantService? _selectedMerchantService;
 
   bool _registering = false;
+  bool _resendingOtp = false;
   bool _socialLoading = false;
 
   Timer? _dummyTimer;
@@ -118,7 +131,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _confirm.dispose();
     _businessName.dispose();
     _businessAddress.dispose();
+    _otpCode.dispose();
     super.dispose();
+  }
+
+  void _resetOtpStep() {
+    _otpSent = false;
+    _otpError = null;
+    _otpCode.clear();
+    _verificationResult = null;
   }
 
   // ---------- validators ----------
@@ -162,13 +183,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   String get _identifierPhone =>
       _looksLikePhone(_identifierValue) ? _identifierValue : '';
-
-  /// Normalise a phone number to a compact numeric form for auth-only use.
-  /// Example: "0992 695 612" -> "0992695612".
-  String _normalizePhone(String raw) {
-    final digits = raw.replaceAll(RegExp(r'\D'), '');
-    return digits;
-  }
 
   String? _validateIdentifier(String? v) {
     final s = v?.trim() ?? '';
@@ -676,7 +690,124 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  // ---------- Firebase-only registration ----------
+  // ---------- Registration with API OTP verification ----------
+
+  Future<bool> _sendRegistrationOtp() async {
+    final email = _identifierEmail;
+    final phone = _identifierPhone;
+    _verificationResult = null;
+    try {
+      if (email.isNotEmpty) {
+        await _verificationService.requestOtp(
+          channel: 'email',
+          email: email,
+        );
+      } else {
+        await _verificationService.requestOtp(
+          channel: 'phone',
+          phone: phone,
+        );
+      }
+      return true;
+    } on ApiException catch (e) {
+      if (!mounted) return false;
+      ToastHelper.showCustomToast(
+        context,
+        RegistrationVerificationService.friendlyError(e, forSend: true),
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return false;
+    } catch (e) {
+      if (!mounted) return false;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not send verification code. Try again.',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> _verifyRegistrationOtp(String code) async {
+    final email = _identifierEmail;
+    final phone = _identifierPhone;
+    final channel = email.isNotEmpty ? 'email' : 'phone';
+    final ticket = await _verificationService.verifyOtp(
+      channel: channel,
+      email: email.isNotEmpty ? email : null,
+      phone: phone.isNotEmpty ? phone : null,
+      code: code,
+    );
+    _verificationResult = RegistrationVerificationResult(
+      channel: channel,
+      verificationTicket: ticket,
+    );
+    return true;
+  }
+
+  Future<void> _createAccountAfterVerification() async {
+    final verification = _verificationResult;
+    if (verification == null || !verification.isVerified) {
+      ToastHelper.showCustomToast(
+        context,
+        'Verification required before creating your account.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    final email = _identifierEmail;
+    final phone = _identifierPhone.isNotEmpty
+        ? RegistrationVerificationService.formatPhoneE164(_identifierPhone)
+        : '';
+
+    Map<String, dynamic>? merchantData;
+    if (_role == UserRole.merchant && _selectedMerchantService != null) {
+      merchantData = {
+        'merchantService': _selectedMerchantService!.key,
+        'serviceType': _selectedMerchantService!.key,
+        'businessName': _businessName.text.trim(),
+        'businessAddress': _businessAddress.text.trim(),
+        'status': 'pending',
+        'isActive': false,
+      };
+    }
+
+    // OTP verified via API; account is created in Firebase (not NestJS DB).
+    final result = await _authService.registerUser(
+      name: _name.text.trim(),
+      email: email,
+      phone: phone.isNotEmpty ? phone : _identifierPhone,
+      password: _password.text,
+      role: _roleString,
+      profilePicture: '',
+      preferredVerification: verification.channel,
+      verificationTicket: verification.verificationTicket,
+      merchantData: merchantData,
+      context: context,
+    );
+
+    if (result == null || !mounted) return;
+
+    final userMap = result['user'];
+    final uid = userMap is Map
+        ? (userMap['uid'] ?? userMap['firebaseUid'])?.toString()
+        : null;
+    if (uid != null && uid.isNotEmpty) {
+      await NotificationService.instance.sendWelcomeNotificationIfFirstTime(
+        uid: uid,
+        name: _name.text.trim(),
+        role: _roleString,
+        merchantService:
+            _role == UserRole.merchant ? _selectedMerchantService?.key : null,
+      );
+    }
+
+    await _handleAuthResult(result);
+  }
 
   Future<void> _registerWithFirebaseOnly() async {
     if (!_agree) {
@@ -700,12 +831,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
       return;
     }
-    // Firebase Auth requires an email for createUserWithEmailAndPassword.
-    // When user enters only a phone number, use a synthetic email so we can still create the account;
-    // we store and display the real phone everywhere else.
-    final authEmail = email.isNotEmpty
-        ? email
-        : '${_normalizePhone(phone)}@phone.vero360.app';
 
     if (_role == UserRole.merchant) {
       final serviceErr = _validateMerchantService(_selectedMerchantService);
@@ -733,149 +858,66 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    setState(() => _registering = true);
+    if (!_otpSent) {
+      setState(() => _registering = true);
+      try {
+        final sent = await _sendRegistrationOtp();
+        if (!sent || !mounted) return;
+
+        setState(() {
+          _otpSent = true;
+          _otpError = null;
+        });
+
+        if (_identifierEmail.isNotEmpty) {
+          ToastHelper.showCustomToast(
+            context,
+            '6-digit code sent to your email',
+            isSuccess: true,
+            errorMessage: '',
+          );
+        } else {
+          ToastHelper.showCustomToast(
+            context,
+            '6-digit code sent via SMS',
+            isSuccess: true,
+            errorMessage: '',
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _registering = false);
+      }
+      return;
+    }
+
+    final code = _otpCode.text.trim();
+    if (code.length != 6) {
+      setState(() => _otpError = 'Enter the 6-digit code');
+      return;
+    }
+
+    setState(() {
+      _registering = true;
+      _otpError = null;
+    });
     try {
-      final userCredential = await _auth.createUserWithEmailAndPassword(
-        email: authEmail,
-        password: _password.text,
-      );
-
-      final user = userCredential.user;
-      if (user == null) throw Exception('Firebase user creation failed');
-
-      final role = _roleString;
-
-      final userData = <String, dynamic>{
-        'uid': user.uid,
-        'email': _identifierEmail,
-        'name': _name.text.trim(),
-        'phone': _identifierPhone,
-        'role': role,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'authProvider': 'firebase_only',
-      };
-
-      if (_role == UserRole.merchant) {
-        userData['merchantService'] = _selectedMerchantService!.key;
-        userData['businessName'] = _businessName.text.trim();
-        userData['businessAddress'] = _businessAddress.text.trim();
-        userData['status'] = 'pending';
-        userData['isActive'] = false;
-
-        final merchantProfile = {
-          'uid': user.uid,
-          'email': _identifierEmail,
-          'name': _name.text.trim(),
-          'phone': _identifierPhone,
-          'businessName': _businessName.text.trim(),
-          'businessAddress': _businessAddress.text.trim(),
-          'serviceType': _selectedMerchantService!.key,
-          'status': 'pending',
-          'isActive': false,
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-          'rating': 0.0,
-          'totalRatings': 0,
-          'completedOrders': 0,
-        };
-
-        await _firestore.collection('users').doc(user.uid).set(
-              userData,
-              SetOptions(merge: true),
-            );
-
-        final collectionName = _selectedMerchantService!.key == 'marketplace'
-            ? 'marketplace_merchants'
-            : '${_selectedMerchantService!.key}_merchants';
-        await _firestore
-            .collection(collectionName)
-            .doc(user.uid)
-            .set(merchantProfile);
-      } else {
-        await _firestore.collection('users').doc(user.uid).set(
-              userData,
-              SetOptions(merge: true),
-            );
+      bool verified;
+      try {
+        verified = await _verifyRegistrationOtp(code);
+      } on ApiException catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _otpError = RegistrationVerificationService.friendlyError(e);
+        });
+        return;
       }
 
-      await AuthHandler.refreshFirebaseTokenIfSignedIn();
-      await _persistRoleToFirestore(user);
-
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('uid', user.uid);
-      // Store the identifier the user actually entered (email or phone) for display/login.
-      await prefs.setString(
-        'email',
-        _identifierEmail.isNotEmpty ? _identifierEmail : _identifierValue,
-      );
-      if (_identifierPhone.isNotEmpty) {
-        await prefs.setString('phone', _identifierPhone);
-      }
-      final nameVal = _name.text.trim();
-      if (nameVal.isNotEmpty) {
-        await prefs.setString('fullName', nameVal);
-        await prefs.setString('name', nameVal);
-      }
-      await prefs.setString('role', role);
-      await prefs.setString('user_role', role);
-      await prefs.setBool('is_merchant', role == 'merchant');
-      await prefs.setString('auth_provider', 'firebase_only');
-
-      if (_role == UserRole.merchant) {
-        await prefs.setString('merchant_service', _selectedMerchantService!.key);
-        await prefs.setString('business_name', _businessName.text.trim());
-        await prefs.setString('business_address', _businessAddress.text.trim());
+      if (!verified || !mounted) {
+        setState(() => _otpError = 'Invalid or expired code. Try again.');
+        return;
       }
 
-      // Sync role to backend so the API user record matches the chosen role.
-      final synced = await _syncProfileToBackend(user, showUserFeedback: false);
-      if (!synced &&
-          (_role == UserRole.merchant || _role == UserRole.driver)) {
-        _retrySyncRoleToBackend(user);
-      }
-
-      final firebaseResponse = await _buildResultFromUser(user);
-
-      if (!mounted) return;
-      ToastHelper.showCustomToast(
-        context,
-        'Account created successfully',
-        isSuccess: true,
-        errorMessage: '',
-      );
-      await NotificationService.instance.sendWelcomeNotificationIfFirstTime(
-        uid: user.uid,
-        name: _name.text.trim(),
-        role: _roleString,
-        merchantService: _role == UserRole.merchant
-            ? _selectedMerchantService?.key
-            : null,
-      );
-      await _handleAuthResult(firebaseResponse);
-    } on FirebaseAuthException catch (e) {
-      String errorMessage = 'Registration failed';
-      if (e.code == 'email-already-in-use') {
-        errorMessage = 'Email already registered. Please sign in.';
-      } else if (e.code == 'weak-password') {
-        errorMessage = 'Password is too weak. Use a stronger password.';
-      } else if (e.code == 'invalid-email') {
-        errorMessage = 'Invalid email address.';
-      }
-
-      ToastHelper.showCustomToast(
-        context,
-        errorMessage,
-        isSuccess: false,
-        errorMessage: e.message ?? '',
-      );
-    } catch (e) {
-      ToastHelper.showCustomToast(
-        context,
-        'Firebase registration failed. Please try again.',
-        isSuccess: false,
-        errorMessage: e.toString(),
-      );
+      await _createAccountAfterVerification();
     } finally {
       if (mounted) setState(() => _registering = false);
     }
@@ -1274,9 +1316,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               controller: _identifier,
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
+                              onChanged: (_) {
+                                if (_otpSent) {
+                                  setState(_resetOtpStep);
+                                }
+                              },
                               decoration: _dec(
                                 label: ' phone number or email',
-                                hint: ' 09xxxxxxxx or you@vero.com',
+                                hint: ' 09xxxxxxxx or you@vero360.',
                                 icon: Icons.contact_mail_outlined,
                               ),
                               validator: _validateIdentifier,
@@ -1363,6 +1410,141 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                               validator: _validateConfirm,
                             ),
+                            if (_otpSent) ...[
+                              const SizedBox(height: 18),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: AppColors.fieldFill,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: AppColors.brandOrange.withValues(
+                                      alpha: 0.35,
+                                    ),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _identifierEmail.isNotEmpty
+                                          ? 'Enter the 6-digit code sent to your email:'
+                                          : 'Enter the 6-digit code sent to your phone:',
+                                      style: TextStyle(
+                                        color: Colors.grey.shade700,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      _identifierValue,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 14),
+                                    TextFormField(
+                                      controller: _otpCode,
+                                      keyboardType: TextInputType.number,
+                                      textAlign: TextAlign.center,
+                                      maxLength: 6,
+                                      enabled: !_registering,
+                                      inputFormatters: [
+                                        FilteringTextInputFormatter.digitsOnly,
+                                      ],
+                                      style: const TextStyle(
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 12,
+                                      ),
+                                      decoration: InputDecoration(
+                                        counterText: '',
+                                        hintText: '••••••',
+                                        filled: true,
+                                        fillColor: Colors.white,
+                                        border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                          borderSide: const BorderSide(
+                                            color: AppColors.brandOrange,
+                                            width: 1.2,
+                                          ),
+                                        ),
+                                      ),
+                                      onChanged: (_) {
+                                        if (_otpError != null) {
+                                          setState(() => _otpError = null);
+                                        }
+                                      },
+                                    ),
+                                    if (_otpError != null) ...[
+                                      const SizedBox(height: 10),
+                                      Text(
+                                        _otpError!,
+                                        style: const TextStyle(
+                                          color: Colors.red,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ],
+                                    const SizedBox(height: 8),
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: TextButton(
+                                        onPressed: (_registering || _resendingOtp)
+                                            ? null
+                                            : () async {
+                                                setState(() {
+                                                  _resendingOtp = true;
+                                                  _otpError = null;
+                                                });
+                                                try {
+                                                  final ok =
+                                                      await _sendRegistrationOtp();
+                                                  if (!mounted) return;
+                                                  if (ok) {
+                                                    _otpCode.clear();
+                                                    ToastHelper.showCustomToast(
+                                                      context,
+                                                      _identifierEmail
+                                                              .isNotEmpty
+                                                          ? 'New code sent to your email'
+                                                          : 'New code sent via SMS',
+                                                      isSuccess: true,
+                                                      errorMessage: '',
+                                                    );
+                                                  }
+                                                } finally {
+                                                  if (mounted) {
+                                                    setState(
+                                                      () => _resendingOtp =
+                                                          false,
+                                                    );
+                                                  }
+                                                }
+                                              },
+                                        child: Text(
+                                          _resendingOtp
+                                              ? 'Sending…'
+                                              : 'Resend code',
+                                          style: const TextStyle(
+                                            color: AppColors.brandOrange,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 10),
 
                             Row(
@@ -1418,8 +1600,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ),
                                 child: Text(
                                   _registering
-                                      ? 'Creating account…'
-                                      : 'Create account',
+                                      ? (_otpSent
+                                          ? 'Creating account…'
+                                          : 'Sending code…')
+                                      : (_otpSent
+                                          ? 'Verify & create account'
+                                          : 'Create account'),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w800,

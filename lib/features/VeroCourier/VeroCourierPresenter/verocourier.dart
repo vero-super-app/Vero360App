@@ -47,6 +47,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
   Timer? _progressPollingTimer;
   String _senderName = '';
   String _senderPhone = '';
+  String _senderEmail = '';
   String _senderCity = '';
   String? _selectedGoodsType;
   int _selectedService = 0;
@@ -58,6 +59,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
   bool _submitting = false;
   bool _loadingList = false;
   bool _tracking = false;
+  bool _sendingDetailsComplete = false;
 
   @override
   void initState() {
@@ -65,9 +67,67 @@ class _VerocourierPageState extends State<VerocourierPage> {
     _checkOnboarding();
     _loadSenderInfo();
     _detectAndValidateCity();
+    _registerSendingDetailsListeners();
+  }
+
+  void _registerSendingDetailsListeners() {
+    void onSendingFieldChanged() {
+      if (!_sendingDetailsComplete) return;
+      if (!mounted) return;
+      setState(() => _sendingDetailsComplete = false);
+    }
+
+    for (final ctrl in [
+      _senderNameCtrl,
+      _senderPhoneCtrl,
+      _senderAddressCtrl,
+      _recipientNameCtrl,
+      _recipientPhoneCtrl,
+      _recipientAddressCtrl,
+    ]) {
+      ctrl.addListener(onSendingFieldChanged);
+    }
+  }
+
+  bool _hasValidSendingDetails() {
+    return _senderNameCtrl.text.trim().isNotEmpty &&
+        _senderPhoneCtrl.text.trim().isNotEmpty &&
+        _senderAddressCtrl.text.trim().isNotEmpty &&
+        _recipientNameCtrl.text.trim().isNotEmpty &&
+        _recipientPhoneCtrl.text.trim().isNotEmpty &&
+        _recipientAddressCtrl.text.trim().isNotEmpty;
+  }
+
+  bool _canAccessServiceTab(int index) {
+    if (index == 0) return true;
+    if (!_citySupported) return false;
+    if (index == 1) return _sendingDetailsComplete && _hasValidSendingDetails();
+  // Progress and history are always reachable once city is supported.
+    return true;
+  }
+
+  String? _tabAccessMessage(int index) {
+    if (!_citySupported) {
+      return 'Vero Courier is not available in your city yet.';
+    }
+    if (index == 1 && (!_sendingDetailsComplete || !_hasValidSendingDetails())) {
+      return 'Complete sending details first, then tap Next.';
+    }
+    return null;
   }
 
   Future<void> _onServiceTabChanged(int index) async {
+    if (index == _selectedService) return;
+
+    final blocked = _tabAccessMessage(index);
+    if (blocked != null) {
+      _toast(blocked, isError: true);
+      if (index == 1 && !_sendingDetailsComplete) {
+        setState(() => _selectedService = 0);
+      }
+      return;
+    }
+
     setState(() => _selectedService = index);
     if (index == 1) {
       setState(() => _loadingParcelForm = true);
@@ -75,6 +135,9 @@ class _VerocourierPageState extends State<VerocourierPage> {
         if (!mounted) return;
         setState(() => _loadingParcelForm = false);
       });
+    }
+    if (index == 2 && _deliveries.isEmpty) {
+      await _loadDeliveries();
     }
     if (index == 3 && _deliveries.isEmpty) {
       await _loadDeliveries();
@@ -109,6 +172,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
                   'Vero User')
               .trim();
       _senderPhone = (prefs.getString('phone') ?? '').trim();
+      _senderEmail = (prefs.getString('email') ?? '').trim();
       _senderCity = (prefs.getString('city') ?? 'Lilongwe').trim();
       _senderNameCtrl.text = _senderName;
       _senderPhoneCtrl.text = _senderPhone;
@@ -208,7 +272,14 @@ class _VerocourierPageState extends State<VerocourierPage> {
   Future<void> _loadDeliveries() async {
     setState(() => _loadingList = true);
     try {
-      final data = await _courierService.getMyDeliveries();
+      final phone = _senderPhoneCtrl.text.trim().isNotEmpty
+          ? _senderPhoneCtrl.text.trim()
+          : _senderPhone;
+      final email = _senderEmail.trim();
+      final data = await _courierService.getMyDeliveriesForSender(
+        senderPhone: phone,
+        senderEmail: email.isEmpty ? null : email,
+      );
       if (!mounted) return;
       setState(() => _deliveries = data);
     } on ApiException catch (e) {
@@ -220,15 +291,29 @@ class _VerocourierPageState extends State<VerocourierPage> {
     }
   }
 
+  String get _activeSenderPhone =>
+      _senderPhoneCtrl.text.trim().isNotEmpty
+          ? _senderPhoneCtrl.text.trim()
+          : _senderPhone;
+
   Future<void> _trackDelivery() async {
     final id = int.tryParse(_trackCtrl.text.trim());
     if (id == null) {
       _toast('Enter a valid delivery number.', isError: true);
       return;
     }
+    final phone = _activeSenderPhone;
+    if (phone.isEmpty) {
+      _toast('Add your phone number in Sending Details first.', isError: true);
+      return;
+    }
     setState(() => _tracking = true);
     try {
-      final data = await _courierService.getDeliveryById(id);
+      final data = await _courierService.getMyDeliveryById(
+        id,
+        senderPhone: phone,
+        senderEmail: _senderEmail.isEmpty ? null : _senderEmail,
+      );
       if (!mounted) return;
       setState(() {
         _trackingResult = data;
@@ -251,8 +336,14 @@ class _VerocourierPageState extends State<VerocourierPage> {
     if (_trackedDeliveryId == null) return;
     _progressPollingTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
       if (!mounted || _trackedDeliveryId == null) return;
+      final phone = _activeSenderPhone;
+      if (phone.isEmpty) return;
       try {
-        final latest = await _courierService.getDeliveryById(_trackedDeliveryId!);
+        final latest = await _courierService.getMyDeliveryById(
+          _trackedDeliveryId!,
+          senderPhone: phone,
+          senderEmail: _senderEmail.isEmpty ? null : _senderEmail,
+        );
         if (!mounted) return;
         setState(() => _trackingResult = latest);
       } catch (_) {
@@ -284,6 +375,14 @@ class _VerocourierPageState extends State<VerocourierPage> {
       );
       return;
     }
+    if (!_sendingDetailsComplete || !_hasValidSendingDetails()) {
+      _toast(
+        'Complete sending details first, then tap Next.',
+        isError: true,
+      );
+      setState(() => _selectedService = 0);
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
     if (_senderPhone.isEmpty || _senderCity.isEmpty) {
       _toast(
@@ -301,6 +400,8 @@ class _VerocourierPageState extends State<VerocourierPage> {
     setState(() => _submitting = true);
     final mergedAdditionalInfo = [
       _additionalCtrl.text.trim(),
+      if (_senderNameCtrl.text.trim().isNotEmpty)
+        'Sender: ${_senderNameCtrl.text.trim()}',
       if (_recipientNameCtrl.text.trim().isNotEmpty)
         'Recipient: ${_recipientNameCtrl.text.trim()}',
       if (_recipientPhoneCtrl.text.trim().isNotEmpty)
@@ -372,22 +473,30 @@ class _VerocourierPageState extends State<VerocourierPage> {
       _senderCity = _senderAddressCtrl.text.trim().isEmpty
           ? _senderCity
           : _senderAddressCtrl.text.trim();
+      _sendingDetailsComplete = true;
     });
    // _toast('Sending details saved for this session.');
     await _onServiceTabChanged(1);
   }
 
-  Future<void> _updateStatus(CourierDelivery delivery, CourierStatus status) async {
-    try {
-      await _courierService.updateStatus(id: delivery.courierId, status: status);
-      if (!mounted) return;
-      _toast('Status updated to ${status.value}.');
-      await _loadDeliveries();
-    } on ApiException catch (e) {
-      _toast(e.message, isError: true);
-    } catch (_) {
-      _toast('Failed to update status.', isError: true);
-    }
+  Widget _deliveryCard(CourierDelivery d) {
+    return CourierDeliveryCard(
+      delivery: d,
+      footer: Align(
+        alignment: Alignment.centerRight,
+        child: TextButton.icon(
+          onPressed: () async {
+            _trackCtrl.text = d.courierId.toString();
+            if (_selectedService != 2) {
+              await _onServiceTabChanged(2);
+            }
+            await _trackDelivery();
+          },
+          icon: const Icon(PhosphorIconsBold.magnifyingGlass, size: 16),
+          label: const Text('Track'),
+        ),
+      ),
+    );
   }
 
   void _toast(String msg, {bool isError = false}) {
@@ -875,7 +984,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
                         isDense: true,
-                        hintText: 'Search by delivery number',
+                        hintText: 'Your delivery number',
                         border: InputBorder.none,
                       ),
                     ),
@@ -991,7 +1100,9 @@ class _VerocourierPageState extends State<VerocourierPage> {
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
                 onTap: () => _onServiceTabChanged(i),
-                child: Container(
+                child: Opacity(
+                  opacity: _canAccessServiceTab(i) ? 1 : 0.45,
+                  child: Container(
                   width: 88,
                   padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
                   decoration: BoxDecoration(
@@ -1028,27 +1139,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
                     ],
                   ),
                 ),
+                ),
               ),
             ),
         ],
-      ),
-    );
-  }
-
-  Widget _deliveryCard(CourierDelivery d) {
-    return CourierDeliveryCard(
-      delivery: d,
-      footer: Wrap(
-        spacing: 8,
-        children: CourierStatus.values
-            .where((s) => s != d.status)
-            .map(
-              (s) => ActionChip(
-                label: Text(s.value),
-                onPressed: () => _updateStatus(d, s),
-              ),
-            )
-            .toList(),
       ),
     );
   }

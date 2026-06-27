@@ -67,18 +67,54 @@ class MerchantStoryItem {
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 }
 
+/// Live story ring state for a merchant profile (WhatsApp-style).
+class MerchantStoryRingState {
+  final List<MerchantStoryItem> items;
+  final bool hasStories;
+  final bool hasUnviewed;
+  final MerchantStoryGroup? group;
+
+  const MerchantStoryRingState({
+    this.items = const [],
+    this.hasStories = false,
+    this.hasUnviewed = false,
+    this.group,
+  });
+
+  static const empty = MerchantStoryRingState();
+}
+
 class MerchantStoryGroup {
   final String merchantId;
   final String merchantName;
   final String? merchantImageUrl;
   final List<MerchantStoryItem> items;
+  /// True when the current viewer has not seen every slide in this group.
+  final bool hasUnviewed;
 
   const MerchantStoryGroup({
     required this.merchantId,
     required this.merchantName,
     this.merchantImageUrl,
     required this.items,
+    this.hasUnviewed = true,
   });
+
+  MerchantStoryGroup copyWith({
+    String? merchantId,
+    String? merchantName,
+    String? merchantImageUrl,
+    List<MerchantStoryItem>? items,
+    bool? hasUnviewed,
+  }) {
+    return MerchantStoryGroup(
+      merchantId: merchantId ?? this.merchantId,
+      merchantName: merchantName ?? this.merchantName,
+      merchantImageUrl: merchantImageUrl ?? this.merchantImageUrl,
+      items: items ?? this.items,
+      hasUnviewed: hasUnviewed ?? this.hasUnviewed,
+    );
+  }
 
   MerchantStoryItem? get latestItem =>
       items.isEmpty ? null : items.reduce((a, b) => a.createdAt.isAfter(b.createdAt) ? a : b);

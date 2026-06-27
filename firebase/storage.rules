@@ -1,21 +1,43 @@
 rules_version = '2';
-// Paste into Firebase Console → Build → Storage → Rules (or deploy with Firebase CLI).
-// Accommodation uploads in the app use profile_photos/{uid}_acc_{timestamp}.ext by default
-// so they match common "profile_photos" rules. Optionally allow accommodation_photos below.
+// Deploy: firebase deploy --only storage
+// Specific paths first; default deny at the bottom matches production lock-down.
 
 service firebase.storage {
   match /b/{bucket}/o {
-    // Typical profile / merchant image pattern (matches marketplace & accommodation property photos)
+    // Courier delivery proof photos
+    match /delivery_proofs/{orderId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // Profile / merchant images (marketplace, accommodation, etc.)
+    // Filename must start with the uploader's Firebase uid + "_"
     match /profile_photos/{fileName} {
       allow read: if true;
       allow write: if request.auth != null
         && fileName.matches('^' + request.auth.uid + '_.*');
     }
 
-    // Dedicated folder (if you switch the app back to accommodation_photos/{uid}/…)
     match /accommodation_photos/{userId}/{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Chat images and attachments
+    match /chat_media/{userId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Voice notes in chat
+    match /voice_notes/{userId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Deny everything else (production default)
+    match /{allPaths=**} {
+      allow read, write: if false;
     }
   }
 }

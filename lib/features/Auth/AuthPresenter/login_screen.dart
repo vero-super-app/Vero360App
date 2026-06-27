@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -12,6 +13,7 @@ import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchan
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/forgot_password_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
@@ -19,7 +21,9 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
+import 'package:vero360_app/features/Auth/AuthServices/recent_login_storage.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -53,8 +57,117 @@ class _LoginScreenState extends State<LoginScreen> {
   /// Which provider flow is active (for overlay copy). Cleared when idle.
   String? _oauthProviderLabel;
 
+  List<SavedLoginAccount> _savedAccounts = [];
+  SavedLoginAccount? _selectedAccount;
+  bool _showFullForm = false;
+  bool _loadingSavedAccounts = true;
+
   /// True while Google/Apple flow is running (buttons disabled + overlay shown).
   bool get _socialLoading => _oauthPhase != _OAuthPhase.idle;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedAccounts();
+  }
+
+  Future<void> _loadSavedAccounts() async {
+    final accounts = await RecentLoginStorage.loadAccounts();
+    if (!mounted) return;
+    setState(() {
+      _savedAccounts = accounts;
+      _loadingSavedAccounts = false;
+      if (accounts.length == 1 && !_showFullForm) {
+        _applySelectedAccount(accounts.first);
+      }
+    });
+  }
+
+  void _applySelectedAccount(SavedLoginAccount account) {
+    _selectedAccount = account;
+    _identifier.text = account.identifier;
+    _password.clear();
+  }
+
+  void _selectAccount(SavedLoginAccount account) {
+    setState(() => _applySelectedAccount(account));
+  }
+
+  void _useAnotherAccount() {
+    setState(() {
+      _selectedAccount = null;
+      _showFullForm = true;
+      _identifier.clear();
+      _password.clear();
+    });
+  }
+
+  Future<void> _removeSavedAccount(SavedLoginAccount account) async {
+    await RecentLoginStorage.removeAccount(account.id);
+    if (!mounted) return;
+    final remaining = _savedAccounts.where((a) => a.id != account.id).toList();
+    setState(() {
+      _savedAccounts = remaining;
+      if (_selectedAccount?.id == account.id) {
+        _selectedAccount = null;
+        _identifier.clear();
+        _password.clear();
+        if (remaining.length == 1) {
+          _applySelectedAccount(remaining.first);
+          _showFullForm = false;
+        } else if (remaining.isEmpty) {
+          _showFullForm = true;
+        }
+      }
+    });
+  }
+
+  Future<void> _persistSavedLoginAccount(
+    Map<String, dynamic> result,
+    Map<String, dynamic> user,
+    String displayId,
+  ) async {
+    final authProvider =
+        (result['authProvider'] ?? 'firebase').toString().toLowerCase();
+    final name = (user['name'] ?? user['fullName'] ?? user['displayName'] ?? '')
+        .toString()
+        .trim();
+    final email = user['email']?.toString().trim() ?? '';
+    final phone = user['phone']?.toString().trim() ?? '';
+    final identifier = phone.isNotEmpty && email.isEmpty
+        ? phone
+        : (email.isNotEmpty ? email : displayId);
+    if (identifier.isEmpty) return;
+
+    final photo = user['photoURL']?.toString() ??
+        user['profilepicture']?.toString() ??
+        user['profilePicture']?.toString();
+
+    String provider = 'password';
+    if (authProvider.contains('google')) {
+      provider = 'google';
+    } else if (authProvider.contains('apple')) {
+      provider = 'apple';
+    }
+
+    await RecentLoginStorage.saveAccount(
+      identifier: identifier,
+      displayName: name.isNotEmpty ? name : identifier,
+      photoUrl: photo,
+      authProvider: provider,
+    );
+  }
+
+  bool get _showSavedAccountPicker =>
+      !_loadingSavedAccounts &&
+      _savedAccounts.isNotEmpty &&
+      !_showFullForm &&
+      _selectedAccount == null;
+
+  bool get _showSavedAccountSignIn =>
+      !_loadingSavedAccounts &&
+      _selectedAccount != null &&
+      !_showFullForm;
 
   @override
   void dispose() {
@@ -139,6 +252,7 @@ class _LoginScreenState extends State<LoginScreen> {
     await prefs.setString('role', role);
     await prefs.setString('user_role', role);
     await prefs.setBool('is_merchant', role == 'merchant');
+    await loadDriverStatusFromPrefs();
     
     print('🔐 Login: user=$user');
     print('🔐 Login: role=$role');
@@ -149,6 +263,8 @@ class _LoginScreenState extends State<LoginScreen> {
     if (uid != null && uid.isNotEmpty) {
       await prefs.setString('uid', uid);
     }
+
+    await _persistSavedLoginAccount(result, user, displayId);
 
     // Backend chat expects numeric userId in SharedPreferences
     final rawId = user['id'] ?? user['userId'];
@@ -203,6 +319,8 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     if (!mounted) return;
+
+    TextInput.finishAutofillContext(shouldSave: true);
 
      if (role == 'merchant') {
        final merchantService = prefs.getString('merchant_service');
@@ -324,6 +442,7 @@ class _LoginScreenState extends State<LoginScreen> {
         'phone': displayPhone,
         'name': profile['name']?.toString() ?? (user.displayName ?? ''),
         'role': role,
+        'photoURL': user.photoURL ?? profile['photoURL'] ?? profile['profilepicture'],
         'merchantService': profile['merchantService'],
         'businessName': profile['businessName'],
         'businessAddress': profile['businessAddress'],
@@ -364,6 +483,7 @@ class _LoginScreenState extends State<LoginScreen> {
         'email': email,
         'phone': user.phoneNumber ?? '',
         'name': user.displayName ?? '',
+        'photoURL': user.photoURL,
         'role': role,
         'merchantService': null,
         'businessName': null,
@@ -523,23 +643,17 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _showForgotPasswordDialog() async {
     if (!mounted) return;
-    final identifier = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => _ForgotPasswordDialog(
-        initialValue: _identifier.text.trim(),
-        looksLikeEmail: _looksLikeEmail,
-        looksLikePhone: _looksLikePhone,
+    final identifier = _identifier.text.trim();
+    final updatedIdentifier = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) => ForgotPasswordScreen(initialIdentifier: identifier),
       ),
     );
-    if (identifier == null || identifier.isEmpty || !mounted) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      await _authService.requestPasswordReset(
-        identifier: identifier,
-        context: context,
-      );
-    });
+    if (updatedIdentifier != null &&
+        updatedIdentifier.trim().isNotEmpty &&
+        mounted) {
+      _identifier.text = updatedIdentifier.trim();
+    }
   }
 
   // -------------------- Social sign-in via Firebase (no platform lock) --------------------
@@ -715,6 +829,373 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Widget _avatarForAccount(SavedLoginAccount account, {double radius = 26}) {
+    final photo = account.photoUrl;
+    if (photo != null && photo.isNotEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: AppColors.fieldFill,
+        backgroundImage: NetworkImage(photo),
+        onBackgroundImageError: (_, __) {},
+        child: photo.isEmpty ? Text(account.initials) : null,
+      );
+    }
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: AppColors.brandOrange.withValues(alpha: 0.15),
+      child: Text(
+        account.initials,
+        style: TextStyle(
+          color: AppColors.brandOrange,
+          fontWeight: FontWeight.w800,
+          fontSize: radius * 0.72,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSavedAccountCard(SavedLoginAccount account) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: AppColors.fieldFill,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: (_loading || _socialLoading)
+              ? null
+              : () => _selectAccount(account),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                _avatarForAccount(account),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        account.displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                          color: AppColors.title,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        account.identifier,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Remove saved account',
+                  onPressed: (_loading || _socialLoading)
+                      ? null
+                      : () => _removeSavedAccount(account),
+                  icon: Icon(Icons.close, size: 20, color: Colors.grey.shade500),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.brandOrange,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectedAccountHeader() {
+    final account = _selectedAccount!;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.fieldFill,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.brandOrange.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Row(
+        children: [
+          _avatarForAccount(account, radius: 28),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  account.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 17,
+                    color: AppColors.title,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  account.identifier,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _continueWithSavedSocial(SavedLoginAccount account) async {
+    if (account.authProvider == 'google') {
+      await _google();
+    } else if (account.authProvider == 'apple') {
+      await _apple();
+    }
+  }
+
+  Widget _buildCredentialForm() {
+    return AutofillGroup(
+      child: Column(
+        children: [
+          if (_showSavedAccountSignIn) ...[
+            _buildSelectedAccountHeader(),
+            const SizedBox(height: 16),
+            if (_selectedAccount!.isSocial) ...[
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: (_loading || _socialLoading)
+                      ? null
+                      : () => _continueWithSavedSocial(_selectedAccount!),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.brandOrange,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Text(
+                    _selectedAccount!.authProvider == 'google'
+                        ? 'Continue with Google'
+                        : 'Continue with Apple',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ),
+            ] else ...[
+              TextFormField(
+                controller: _password,
+                obscureText: _obscure,
+                autofocus: true,
+                autofillHints: const [AutofillHints.password],
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _submit(),
+                decoration: _fieldDecoration(
+                  label: 'Password',
+                  hint: 'Enter your password',
+                  icon: Icons.lock_outline,
+                  trailing: IconButton(
+                    tooltip: _obscure ? 'Show' : 'Hide',
+                    icon: Icon(
+                      _obscure ? Icons.visibility : Icons.visibility_off,
+                    ),
+                    onPressed: () => setState(() => _obscure = !_obscure),
+                  ),
+                ),
+                validator: (v) {
+                  if (v == null || v.isEmpty) return 'Password is required';
+                  if (v.length < 6) return 'Must be at least 6 characters';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: (_loading || _socialLoading)
+                      ? null
+                      : _showForgotPasswordDialog,
+                  child: const Text(
+                    'Forgot password?',
+                    style: TextStyle(
+                      color: AppColors.brandOrange,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: (_loading || _socialLoading) ? null : _submit,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.brandOrange,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Text(
+                    _loading ? 'Signing in…' : 'Sign in',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            if (_savedAccounts.length > 1 || _showFullForm) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: (_loading || _socialLoading)
+                    ? null
+                    : _useAnotherAccount,
+                child: const Text(
+                  'Use another account',
+                  style: TextStyle(
+                    color: AppColors.brandOrange,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ] else ...[
+            TextFormField(
+              controller: _identifier,
+              keyboardType: TextInputType.emailAddress,
+              autofillHints: const [
+                AutofillHints.username,
+                AutofillHints.email,
+                AutofillHints.telephoneNumber,
+              ],
+              textInputAction: TextInputAction.next,
+              decoration: _fieldDecoration(
+                label: 'Phone number or email',
+                hint: '09xxxxxxxx or you@vero.com',
+                icon: Icons.person_outline,
+              ),
+              validator: (v) {
+                final val = v?.trim() ?? '';
+                if (val.isEmpty) return 'Email or phone is required';
+                if (!_looksLikeEmail(val) && !_looksLikePhone(val)) {
+                  return 'Enter a valid email or phone number';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _password,
+              obscureText: _obscure,
+              autofillHints: const [AutofillHints.password],
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _submit(),
+              decoration: _fieldDecoration(
+                label: 'Password',
+                hint: '••••••••',
+                icon: Icons.lock_outline,
+                trailing: IconButton(
+                  tooltip: _obscure ? 'Show' : 'Hide',
+                  icon: Icon(
+                    _obscure ? Icons.visibility : Icons.visibility_off,
+                  ),
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                ),
+              ),
+              validator: (v) {
+                if (v == null || v.isEmpty) return 'Password is required';
+                if (v.length < 6) return 'Must be at least 6 characters';
+                return null;
+              },
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: (_loading || _socialLoading)
+                    ? null
+                    : _showForgotPasswordDialog,
+                child: const Text(
+                  'Forgot password?',
+                  style: TextStyle(
+                    color: AppColors.brandOrange,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: (_loading || _socialLoading) ? null : _submit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.brandOrange,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: Text(
+                  _loading ? 'Signing in…' : 'Sign in',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ),
+            if (_savedAccounts.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: (_loading || _socialLoading)
+                    ? null
+                    : () => setState(() {
+                          _showFullForm = false;
+                          _selectedAccount = null;
+                        }),
+                child: const Text(
+                  'Back to saved accounts',
+                  style: TextStyle(
+                    color: AppColors.brandOrange,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
   // -------------------- UI helpers --------------------
 
   InputDecoration _fieldDecoration({
@@ -785,14 +1266,40 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    const Text(
-                      'Welcome back',
-                      style: TextStyle(
+                    Text(
+                      _showSavedAccountPicker
+                          ? 'Continue as'
+                          : _showSavedAccountSignIn
+                              ? 'Welcome back'
+                              : 'Welcome back',
+                      style: const TextStyle(
                         color: AppColors.title,
                         fontSize: 26,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
+                    if (_showSavedAccountPicker) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Tap your account, then enter your password',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 14,
+                          height: 1.35,
+                        ),
+                      ),
+                    ] else if (!_showSavedAccountSignIn) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Sign in to pick up where you left off',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
 
                     Container(
@@ -808,109 +1315,47 @@ class _LoginScreenState extends State<LoginScreen> {
                         ],
                       ),
                       padding: const EdgeInsets.all(18),
-                      child: Form(
-                        key: _formKey,
-                        child: Column(
-                          children: [
-                            TextFormField(
-                              controller: _identifier,
-                              keyboardType: TextInputType.emailAddress,
-                              textInputAction: TextInputAction.next,
-                              decoration: _fieldDecoration(
-                                label: 'phone number or email',
-                                hint: '09xxxxxxxx or you@vero.com',
-                                icon: Icons.person_outline,
-                              ),
-                              validator: (v) {
-                                final val = v?.trim() ?? '';
-                                if (val.isEmpty) return 'Email or phone is required';
-                                final isEmail = RegExp(
-                                  r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$',
-                                ).hasMatch(val);
-                                final isPhone = RegExp(r'^\+?[\d\s\-]{8,}$').hasMatch(val.replaceAll(' ', ''));
-                                if (!isEmail && !isPhone) {
-                                  return 'Enter a valid email or phone number';
-                                }
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 14),
-                            TextFormField(
-                              controller: _password,
-                              obscureText: _obscure,
-                              textInputAction: TextInputAction.done,
-                              onFieldSubmitted: (_) => _submit(),
-                              decoration: _fieldDecoration(
-                                label: 'Password',
-                                hint: '••••••••',
-                                icon: Icons.lock_outline,
-                                trailing: IconButton(
-                                  tooltip: _obscure ? 'Show' : 'Hide',
-                                  icon: Icon(
-                                    _obscure
-                                        ? Icons.visibility
-                                        : Icons.visibility_off,
-                                  ),
-                                  onPressed: () =>
-                                      setState(() => _obscure = !_obscure),
-                                ),
-                              ),
-                              validator: (v) {
-                                if (v == null || v.isEmpty) {
-                                  return 'Password is required';
-                                }
-                                if (v.length < 6) {
-                                  return 'Must be at least 6 characters';
-                                }
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 8),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: TextButton(
-                                onPressed: (_loading || _socialLoading)
-                                    ? null
-                                    : _showForgotPasswordDialog,
-                                child: const Text(
-                                  'Forgot password?',
-                                  style: TextStyle(
+                      child: _loadingSavedAccounts
+                          ? const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 28),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 28,
+                                  height: 28,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
                                     color: AppColors.brandOrange,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13,
                                   ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 10),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 50,
-                              child: ElevatedButton(
-                                onPressed: (_loading || _socialLoading)
-                                    ? null
-                                    : _submit,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.brandOrange,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                            )
+                          : _showSavedAccountPicker
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                ..._savedAccounts.map(_buildSavedAccountCard),
+                                const SizedBox(height: 4),
+                                TextButton(
+                                  onPressed: (_loading || _socialLoading)
+                                      ? null
+                                      : _useAnotherAccount,
+                                  child: const Text(
+                                    'Use another account',
+                                    style: TextStyle(
+                                      color: AppColors.brandOrange,
+                                      fontWeight: FontWeight.w800,
+                                    ),
                                   ),
                                 ),
-                                child: Text(
-                                  _loading ? 'Signing in…' : 'Sign in',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ),
+                              ],
+                            )
+                          : Form(
+                              key: _formKey,
+                              child: _buildCredentialForm(),
                             ),
-                          ],
-                        ),
-                      ),
                     ),
 
+                    if (!_showSavedAccountPicker) ...[
                     const SizedBox(height: 20),
                     Row(
                       children: [
@@ -968,6 +1413,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ],
                     ),
+                    ],
                   ],
                 ),
               ),
@@ -976,84 +1422,6 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         if (_oauthPhase != _OAuthPhase.idle) _buildOAuthBlockingOverlay(),
       ]),
-    );
-  }
-}
-
-/// Self-contained dialog so controller and form key are disposed with the dialog.
-/// Pops with the identifier string on submit; no async or parent context used inside.
-class _ForgotPasswordDialog extends StatefulWidget {
-  final String initialValue;
-  final bool Function(String) looksLikeEmail;
-  final bool Function(String) looksLikePhone;
-
-  const _ForgotPasswordDialog({
-    required this.initialValue,
-    required this.looksLikeEmail,
-    required this.looksLikePhone,
-  });
-
-  @override
-  State<_ForgotPasswordDialog> createState() => _ForgotPasswordDialogState();
-}
-
-class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
-  late final TextEditingController _controller;
-  final _formKey = GlobalKey<FormState>();
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.initialValue);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    final identifier = _controller.text.trim();
-    Navigator.of(context).pop(identifier);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Forgot password'),
-      content: Form(
-        key: _formKey,
-        child: TextFormField(
-          controller: _controller,
-          keyboardType: TextInputType.emailAddress,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Email or phone number',
-            hintText: 'you@vero.com or 09xxxxxxxx',
-          ),
-          validator: (v) {
-            final val = v?.trim() ?? '';
-            if (val.isEmpty) return 'Email or phone is required';
-            if (widget.looksLikeEmail(val)) return null;
-            if (widget.looksLikePhone(val)) return null;
-            return 'Enter a valid email or phone number';
-          },
-          onFieldSubmitted: (_) => _submit(),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _submit,
-          style: ElevatedButton.styleFrom(backgroundColor: AppColors.brandOrange),
-          child: const Text('Send code / reset link'),
-        ),
-      ],
     );
   }
 }

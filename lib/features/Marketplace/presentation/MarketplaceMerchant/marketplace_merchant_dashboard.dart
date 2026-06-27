@@ -46,12 +46,14 @@ import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchan
 
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
+import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:vero360_app/GeneralPages/ToRefund.dart';
 import 'package:vero360_app/GeneralPages/Toreceive.dart';
 import 'package:vero360_app/GeneralPages/Toship.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 
 import 'package:intl/intl.dart'; // ✅ NEW
 
@@ -2688,73 +2690,82 @@ class _MarketplaceMerchantDashboardState
       actions: [
         Padding(
           padding: const EdgeInsets.only(right: 8),
-          child: GestureDetector(
-            onTap: () {
-              final uid = _auth.currentUser?.uid;
-              if (uid == null) {
-                _toastErr('Please sign in to post a story');
-                return;
-              }
-              Navigator.push(
-                context,
-                MaterialPageRoute<bool>(
-                  builder: (_) => PostStoryPage(
-                    merchantId: uid,
-                    merchantName: _businessName.isNotEmpty
-                        ? _businessName
-                        : (_auth.currentUser?.displayName ?? 'Merchant'),
-                    merchantImageUrl:
-                        _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
-                    serviceType: 'marketplace',
-                  ),
-                ),
-              );
-            },
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(2),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(
-                      colors: [
-                        Color(0xFFF58529),
-                        Color(0xFFDD2A7B),
-                        Color(0xFF8134AF),
-                        Color(0xFF515BD4),
-                      ],
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              StoryProfileRing(
+                merchantId: _auth.currentUser?.uid ?? _uid,
+                merchantName: _businessName.isNotEmpty
+                    ? _businessName
+                    : (_auth.currentUser?.displayName ?? 'Merchant'),
+                merchantImageUrl:
+                    _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
+                size: 36,
+                imageProvider: _merchantProfileUrl.isNotEmpty
+                    ? NetworkImage(_merchantProfileUrl)
+                    : null,
+                placeholderIcon: Icons.person,
+                onNoStoriesTap: () {
+                  final uid = _auth.currentUser?.uid;
+                  if (uid == null) {
+                    _toastErr('Please sign in to post a story');
+                    return;
+                  }
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute<bool>(
+                      builder: (_) => PostStoryPage(
+                        merchantId: uid,
+                        merchantName: _businessName.isNotEmpty
+                            ? _businessName
+                            : (_auth.currentUser?.displayName ?? 'Merchant'),
+                        merchantImageUrl: _merchantProfileUrl.isNotEmpty
+                            ? _merchantProfileUrl
+                            : null,
+                        serviceType: 'marketplace',
+                      ),
                     ),
-                  ),
-                  child: CircleAvatar(
-                    radius: 16,
-                    backgroundColor: Colors.grey.shade200,
-                    backgroundImage: _merchantProfileUrl.isNotEmpty
-                        ? NetworkImage(_merchantProfileUrl)
-                        : null,
-                    child: _merchantProfileUrl.isNotEmpty
-                        ? null
-                        : const Icon(
-                            Icons.person,
-                            size: 18,
-                            color: Colors.grey,
-                          ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 0,
-                  right: 0,
+                  );
+                },
+              ),
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: GestureDetector(
+                  onTap: () {
+                    final uid = _auth.currentUser?.uid;
+                    if (uid == null) {
+                      _toastErr('Please sign in to post a story');
+                      return;
+                    }
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute<bool>(
+                        builder: (_) => PostStoryPage(
+                          merchantId: uid,
+                          merchantName: _businessName.isNotEmpty
+                              ? _businessName
+                              : (_auth.currentUser?.displayName ?? 'Merchant'),
+                          merchantImageUrl: _merchantProfileUrl.isNotEmpty
+                              ? _merchantProfileUrl
+                              : null,
+                          serviceType: 'marketplace',
+                        ),
+                      ),
+                    );
+                  },
                   child: Container(
                     width: 18,
                     height: 18,
-                    decoration: BoxDecoration(
+                    decoration: const BoxDecoration(
                       color: Colors.white,
                       shape: BoxShape.circle,
                     ),
                     child: Container(
                       margin: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF25D366),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF25D366),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
@@ -2765,8 +2776,8 @@ class _MarketplaceMerchantDashboardState
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
         IconButton(
@@ -3096,19 +3107,19 @@ class _MarketplaceMerchantDashboardState
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            GestureDetector(
-              onTap: _viewProfilePhoto,
-              child: Stack(
-                children: [
-                  CircleAvatar(
-                    radius: 28,
-                    backgroundColor: Colors.white.withOpacity(0.15),
-                    backgroundImage: _profileImageProvider(),
-                    child: _profileImageProvider() == null
-                        ? const Icon(Icons.storefront_rounded,
-                            color: Colors.white, size: 26)
-                        : null,
-                  ),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                StoryProfileRing(
+                  merchantId: _uid.isNotEmpty ? _uid : (_auth.currentUser?.uid ?? ''),
+                  merchantName: business,
+                  merchantImageUrl:
+                      _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
+                  size: 56,
+                  imageProvider: _profileImageProvider(),
+                  placeholderIcon: Icons.storefront_rounded,
+                  onNoStoriesTap: _viewProfilePhoto,
+                ),
                   Positioned(
                     bottom: -2,
                     right: -2,
@@ -3135,7 +3146,6 @@ class _MarketplaceMerchantDashboardState
                   ),
                 ],
               ),
-            ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -3359,15 +3369,21 @@ class _MarketplaceMerchantDashboardState
               badgeRoute: NotificationStore.kBadgePromotions,
               onTap: () => _openBottomSheet(const PromotionsCrudPage()),
             ),
-              _QuickActionTile(
-              title: 'My Vero Ride',
-              icon: Icons.local_taxi,
+            _QuickActionTile(
+              title: 'Ride History',
+              icon: Icons.history_rounded,
               color: Colors.orange,
-              onTap: () => _openBottomSheet(const PromotionsCrudPage()),
+              onTap: _openRideHistory,
             ),
           ],
         ),
       ],
+    );
+  }
+
+  void _openRideHistory() {
+    _openBottomSheet(
+      const RideHistoryScreen(mode: RideHistoryMode.passenger),
     );
   }
 

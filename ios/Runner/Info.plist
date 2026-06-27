@@ -97,6 +97,8 @@
 
 <key>NSCameraUsageDescription</key>
 <string>We use your camera to take a profile picture.</string>
+<key>NSMicrophoneUsageDescription</key>
+<string>Vero360 needs microphone access so you can send voice messages in chat.</string>
 <key>NSPhotoLibraryUsageDescription</key>
 <string>We need photo library access to pick a profile picture.</string>
 

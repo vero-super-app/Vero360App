@@ -31,6 +31,56 @@ class BackendMessagingCache {
   static String _messagesKey(int userId, String chatId) =>
       'u$userId:msgs:$chatId';
 
+  static String _chatClearedKey(int userId, String chatId) =>
+      'u$userId:cleared:$chatId';
+
+  static DateTime? peekChatClearedAt(int? userId, String chatId) {
+    if (!_ready || userId == null || _box == null) return null;
+    final raw = _box!.get(_chatClearedKey(userId, chatId));
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  /// Hide messages at or before [clearedAt] (with a small clock-skew buffer).
+  static List<BackendChatMessage> filterAfterClear(
+    int? userId,
+    String chatId,
+    List<BackendChatMessage> messages,
+  ) {
+    final clearedAt = peekChatClearedAt(userId, chatId);
+    if (clearedAt == null) return messages;
+    final cutoff = clearedAt.subtract(const Duration(seconds: 2));
+    return messages.where((m) => m.createdAt.isAfter(cutoff)).toList();
+  }
+
+  static Future<void> markChatCleared(int userId, String chatId) async {
+    await initialize();
+    if (_box == null) return;
+    try {
+      await _box!.put(
+        _chatClearedKey(userId, chatId),
+        DateTime.now().toUtc().toIso8601String(),
+      );
+      await deleteMessagesForChat(userId, chatId);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[BackendMessagingCache] markChatCleared: $e');
+      }
+    }
+  }
+
+  static Future<void> unmarkChatCleared(int userId, String chatId) async {
+    await initialize();
+    if (_box == null) return;
+    try {
+      await _box!.delete(_chatClearedKey(userId, chatId));
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[BackendMessagingCache] unmarkChatCleared: $e');
+      }
+    }
+  }
+
   static List<BackendChatThread> peekThreads(int? userId) {
     if (!_ready || userId == null || _box == null) return [];
     final raw = _box!.get(_threadsKey(userId));
@@ -63,7 +113,7 @@ class BackendMessagingCache {
           )
           .toList();
       messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      return messages;
+      return filterAfterClear(userId, chatId, messages);
     } catch (_) {
       return [];
     }
@@ -123,6 +173,29 @@ class BackendMessagingCache {
       existing.add(message);
     }
     await saveMessages(userId, message.chatId, existing);
+  }
+
+  static Future<void> removeMessageFromCache(
+    int userId,
+    String chatId,
+    String messageId,
+  ) async {
+    final existing = peekMessages(userId, chatId);
+    if (existing.isEmpty) return;
+    final updated = existing.where((m) => m.id != messageId).toList();
+    await saveMessages(userId, chatId, updated);
+  }
+
+  static Future<void> deleteMessagesForChat(int userId, String chatId) async {
+    await initialize();
+    if (_box == null) return;
+    try {
+      await _box!.delete(_messagesKey(userId, chatId));
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[BackendMessagingCache] deleteMessagesForChat: $e');
+      }
+    }
   }
 
   static Future<void> clearUser(int userId) async {

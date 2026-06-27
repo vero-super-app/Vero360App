@@ -2,6 +2,7 @@
 // When Storage fails (e.g. -13040), falls back to storing image as base64 in Firestore.
 
 import 'dart:convert';
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -19,13 +20,24 @@ const int _maxFallbackImageBytes = 350000;
 
 class StoryService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance;                                        
+  final FirebaseStorage _storage = FirebaseStorage.instance;
+
+  static final StreamController<String> _merchantViewRefresh =
+      StreamController<String>.broadcast();
+
+  static Stream<String> get merchantViewRefreshStream =>
+      _merchantViewRefresh.stream;
+
+  static void _notifyMerchantStoriesViewed(String merchantId) {
+    if (merchantId.isEmpty || _merchantViewRefresh.isClosed) return;
+    _merchantViewRefresh.add(merchantId);
+  }
 
   static const Duration storyLifetime = Duration(hours: 24);
 
   /// Stream of active story groups (non-expired), grouped by merchant.
-  /// Firestore index required: collection `merchant_stories`, fields: expiresAt (Ascending).
-  Stream<List<MerchantStoryGroup>> getActiveStoriesStream() {
+  /// When [viewerId] is set, each group includes [MerchantStoryGroup.hasUnviewed].
+  Stream<List<MerchantStoryGroup>> getActiveStoriesStream({String? viewerId}) {
     final now = Timestamp.now();
     return _firestore
         .collection(_collection)
@@ -33,7 +45,122 @@ class StoryService {
         .orderBy('expiresAt', descending: false)
         .limit(100)
         .snapshots()
-        .map((snap) => _groupByMerchant(snap.docs));
+        .asyncMap((snap) async {
+          final groups = _groupByMerchant(snap.docs);
+          if (viewerId == null || viewerId.isEmpty) return groups;
+          return _attachUnviewedFlags(groups, viewerId);
+        });
+  }
+
+  /// Watch one merchant's active stories + viewed state for profile rings.
+  Stream<MerchantStoryRingState> watchMerchantStoryRing({
+    required String merchantId,
+    String? viewerId,
+  }) {
+    final controller = StreamController<MerchantStoryRingState>();
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? storySub;
+    StreamSubscription<String>? viewSub;
+
+    Future<void> emit() async {
+      if (controller.isClosed) return;
+      try {
+        final snap = await _firestore
+            .collection(_collection)
+            .where('merchantId', isEqualTo: merchantId)
+            .get();
+        controller.add(await _buildRingStateFromDocs(snap.docs, viewerId));
+      } catch (_) {
+        if (!controller.isClosed) controller.add(MerchantStoryRingState.empty);
+      }
+    }
+
+    controller.onListen = () {
+      storySub = _firestore
+          .collection(_collection)
+          .where('merchantId', isEqualTo: merchantId)
+          .snapshots()
+          .listen((_) => emit(), onError: (_) {});
+      viewSub = _merchantViewRefresh.stream
+          .where((id) => id == merchantId)
+          .listen((_) => emit());
+      emit();
+    };
+    controller.onCancel = () {
+      storySub?.cancel();
+      viewSub?.cancel();
+    };
+    return controller.stream;
+  }
+
+  Future<MerchantStoryRingState> getMerchantStoryRingState({
+    required String merchantId,
+    String? viewerId,
+  }) async {
+    final snap = await _firestore
+        .collection(_collection)
+        .where('merchantId', isEqualTo: merchantId)
+        .get();
+    return _buildRingStateFromDocs(snap.docs, viewerId);
+  }
+
+  Future<MerchantStoryRingState> _buildRingStateFromDocs(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    String? viewerId,
+  ) async {
+    final now = DateTime.now();
+    final items = docs
+        .map(_docToItem)
+        .where((e) => e.expiresAt.isAfter(now))
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    if (items.isEmpty) return MerchantStoryRingState.empty;
+
+    final hasUnviewed = await _groupHasUnviewedForViewer(items, viewerId);
+    final group = MerchantStoryGroup(
+      merchantId: items.first.merchantId,
+      merchantName: items.first.merchantName,
+      merchantImageUrl: items.first.merchantImageUrl,
+      items: items,
+      hasUnviewed: hasUnviewed,
+    );
+
+    return MerchantStoryRingState(
+      items: items,
+      hasStories: true,
+      hasUnviewed: hasUnviewed,
+      group: group,
+    );
+  }
+
+  Future<List<MerchantStoryGroup>> _attachUnviewedFlags(
+    List<MerchantStoryGroup> groups,
+    String viewerId,
+  ) async {
+    final out = <MerchantStoryGroup>[];
+    for (final g in groups) {
+      final hasUnviewed = await _groupHasUnviewedForViewer(g.items, viewerId);
+      out.add(g.copyWith(hasUnviewed: hasUnviewed));
+    }
+    return out;
+  }
+
+  Future<bool> _groupHasUnviewedForViewer(
+    List<MerchantStoryItem> items,
+    String? viewerId,
+  ) async {
+    if (items.isEmpty) return false;
+    if (viewerId == null || viewerId.isEmpty) return true;
+    for (final item in items) {
+      final viewed = await _firestore
+          .collection(_collection)
+          .doc(item.storyId)
+          .collection(_viewersSubcollection)
+          .doc(viewerId)
+          .get();
+      if (!viewed.exists) return true;
+    }
+    return false;
   }
 
   List<MerchantStoryGroup> _groupByMerchant(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
@@ -231,18 +358,20 @@ class StoryService {
     required String viewerName,
     String? viewerProfileImageUrl,
   }) async {
-    await _firestore
-        .collection(_collection)
-        .doc(storyId)
-        .collection(_viewersSubcollection)
-        .doc(viewerId)
-        .set({
+    final storyRef = _firestore.collection(_collection).doc(storyId);
+    final storySnap = await storyRef.get();
+    final merchantId =
+        storySnap.data()?['merchantId']?.toString().trim() ?? '';
+
+    await storyRef.collection(_viewersSubcollection).doc(viewerId).set({
       'viewerId': viewerId,
       'viewerName': viewerName,
       'viewedAt': FieldValue.serverTimestamp(),
       if (viewerProfileImageUrl != null && viewerProfileImageUrl.isNotEmpty)
         'viewerProfileImageUrl': viewerProfileImageUrl,
     }, SetOptions(merge: true));
+
+    if (merchantId.isNotEmpty) _notifyMerchantStoriesViewed(merchantId);
   }
 
   /// Get list of viewers who saw this story (for merchant insights).

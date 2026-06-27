@@ -663,7 +663,9 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       final result =
           await _itemsFromDocs(snap.docs, category: _selectedCategory);
       if (!mounted) return;
-      setState(() => _future = Future.value(result));
+      setState(() {
+        _future = Future.value(result);
+      });
     });
   }
 
@@ -992,29 +994,9 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
   Future<void> _openChatWithMerchant(MarketplaceDetailModel item) async {
     if (!await _requireLoginForChat()) return;
-
     if (!mounted) return;
-    final rootNav = Navigator.of(context, rootNavigator: true);
-    var loadingDismissed = false;
-    void dismissLoading() {
-      if (loadingDismissed) return;
-      if (rootNav.canPop()) rootNav.pop();
-      loadingDismissed = true;
-    }
 
-    unawaited(
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        useRootNavigator: true,
-        builder: (_) => const OpeningChatLoadingDialog(),
-      ),
-    );
-
-    BackendChatThread? chat;
-    String sellerName = 'Seller';
-    String sellerAvatar = '';
-    ChatProductContext? productContext;
+    MerchantChatResult? result;
 
     try {
       final myId = await BackendChatService.getUserId();
@@ -1022,7 +1004,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       final ownerId = int.tryParse((item.sellerUserId ?? '').trim());
       final sqlItemId = item.hasValidSqlItemId ? item.sqlItemId : null;
 
-      chat = await BackendChatService.startMerchantChat(
+      result = await BackendChatService.startMerchantChat(
         sqlItemId: sqlItemId,
         ownerId: ownerId,
         sellerUserId: item.sellerUserId,
@@ -1030,42 +1012,45 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         merchantId: item.merchantId,
         myUserId: myId,
       );
-
-      final merchantName = (item.merchantName ?? '').trim();
-      sellerName = merchantName.isNotEmpty
-          ? merchantName
-          : ((item.sellerBusinessName ?? 'Seller').trim());
-      sellerAvatar = (item.sellerLogoUrl ?? '').trim();
-
-      final productId = item.hasValidSqlItemId
-          ? item.sqlItemId!.toString()
-          : item.id;
-      productContext = ChatProductContext(
-        productId: productId,
-        name: item.name,
-        image: item.image,
-        price: item.price,
-        description: item.description,
-      );
     } catch (e) {
       if (kDebugMode) debugPrint('[_openChatWithMerchant] Error: $e');
       if (mounted) {
         ToastHelper.showCustomToast(context, 'Error opening chat', isSuccess: false, errorMessage: e.toString());
       }
-    } finally {
-      dismissLoading();
     }
 
-    if (chat == null || !mounted) return;
+    if (result == null || !mounted) return;
+
+    final merchantName = (item.merchantName ?? '').trim();
+    final sellerName = merchantName.isNotEmpty
+        ? merchantName
+        : ((item.sellerBusinessName ?? 'Seller').trim());
+    final sellerAvatar = (item.sellerLogoUrl ?? '').trim();
+
+    final productId = item.hasValidSqlItemId
+        ? item.sqlItemId!.toString()
+        : item.id;
+    final productContext = ChatProductContext(
+      productId: productId,
+      name: item.name,
+      image: item.image,
+      price: item.price,
+      description: item.description,
+      merchantId: (item.merchantId ?? item.serviceProviderId ?? '').trim().isEmpty
+          ? null
+          : (item.merchantId ?? item.serviceProviderId),
+    );
 
     await Navigator.push<void>(
       context,
       MaterialPageRoute(
         builder: (_) => MessagePageBackendApi(
-          peerId: chat!.id,
+          peerId: result!.chat.id,
           peerName: sellerName,
           peerAvatarUrl: sellerAvatar,
           productContext: productContext,
+          peerMerchantId: item.merchantId ?? item.serviceProviderId,
+          peerUserId: result.sellerId,
           sendProductEnquiry: true,
         ),
       ),

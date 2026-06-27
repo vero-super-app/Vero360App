@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:intl/intl.dart';
@@ -24,11 +25,11 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
-import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 
 import '../../../../GeneralPages/video_player_page.dart';
 
@@ -129,6 +130,10 @@ class _DetailsPageState extends State<DetailsPage> {
   // ── Brand (UI only)
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandSoft = Color(0xFFFFE8CC);
+  static const Color _bg = Color(0xFFF7F8FA);
+  static const Color _ink = Color(0xFF101010);
+  static const Color _muted = Color(0xFF6B7280);
+  static const Color _border = Color(0xFFECEEF2);
 
   Future<_SellerInfo>? _sellerFuture;
   final TextEditingController _commentController = TextEditingController();
@@ -139,10 +144,13 @@ class _DetailsPageState extends State<DetailsPage> {
   List<_Media> _media = const [];
   Timer? _autoTimer;
   static const _autoInterval = Duration(seconds: 4);
+  bool _openingChat = false;
 
   @override
   void initState() {
     super.initState();
+    unawaited(BackendChatService.ensureAuth().catchError((_) {}));
+    unawaited(BackendMessagingSocket.connect().catchError((_) {}));
     _pc = PageController();
     _sellerFuture = _loadSeller();
     _fToast.init(context);
@@ -348,29 +356,6 @@ class _DetailsPageState extends State<DetailsPage> {
     );
   }
 
-  Widget _infoRow(String label, String? value, {IconData? icon}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (icon != null) ...[
-          Icon(icon, size: 16, color: Colors.black54),
-          const SizedBox(width: 8),
-        ],
-        SizedBox(
-          width: 120,
-          child: Text(label, style: const TextStyle(color: Colors.black54)),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            (value ?? '').isNotEmpty ? value! : '—',
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-        ),
-      ]),
-    );
-  }
-
   Widget _statusChip(String? status) {
     final s = (status ?? '').toLowerCase().trim();
     Color bg = Colors.grey.shade200, fg = Colors.black87;
@@ -455,22 +440,276 @@ class _DetailsPageState extends State<DetailsPage> {
     ]);
   }
 
-  Widget _merchantAvatar(String? raw) {
+  void _openMerchantReviews({
+    required String merchantId,
+    required String merchantName,
+    String? logoUrl,
+    double? rating,
+  }) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MerchantReviewsPage(
+          merchantId: merchantId,
+          merchantName: merchantName,
+          logoUrl: logoUrl,
+          rating: rating,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMerchantCard({
+    required MarketplaceDetailModel item,
+    required String merchantDisplayName,
+    required String merchantId,
+    required bool hasMerchant,
+    String? businessName,
+    String? status,
+    double? rating,
+    String? businessDesc,
+    String? logo,
+  }) {
+    const ink = Color(0xFF101010);
+    const muted = Color(0xFF6B7280);
+    const border = Color(0xFFECEEF2);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _merchantAvatar(logo ?? item.sellerLogoUrl, size: 44),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        merchantDisplayName,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 17,
+                          color: ink,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          _ratingStars(rating),
+                          const SizedBox(width: 8),
+                          Text(
+                            _fmtRating(rating ?? 0),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                              color: ink,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                _statusChip(status),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F8FA),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  _merchantDetailRow(
+                    icon: Icons.badge_outlined,
+                    label: 'Business name',
+                    value: businessName ??
+                        item.sellerBusinessName ??
+                        item.merchantName,
+                  ),
+                  const SizedBox(height: 8),
+                  _merchantDetailRow(
+                    icon: Icons.info_outline_rounded,
+                    label: 'Status',
+                    value: (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Business description',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: muted,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              (businessDesc ?? '').trim().isNotEmpty ? businessDesc!.trim() : '—',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: ink,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Material(
+              color: const Color(0xFFFFF8F0),
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: hasMerchant && merchantId.trim().isNotEmpty
+                    ? () => _openMerchantReviews(
+                          merchantId: merchantId,
+                          merchantName: merchantDisplayName,
+                          logoUrl: logo ?? item.sellerLogoUrl,
+                          rating: rating,
+                        )
+                    : null,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _brandOrange.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: _brandOrange.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.rate_review_outlined,
+                          color: _brandOrange,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Reviews & Ratings',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: ink,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'See what customers are saying',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: muted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        color: Colors.grey.shade500,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _merchantDetailRow({
+    required IconData icon,
+    required String label,
+    required String? value,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: const Color(0xFF9CA3AF)),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 100,
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF6B7280),
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            (value ?? '').trim().isEmpty ? '—' : value!.trim(),
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF101010),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _merchantAvatar(String? raw, {double size = 36}) {
     final s = (raw ?? '').trim();
     if (s.isEmpty) {
       return CircleAvatar(
-        radius: 18,
-        backgroundColor: Colors.grey.shade200,
-        child: const Icon(Icons.person_outline_rounded, color: Colors.grey, size: 18),
+        radius: size / 2,
+        backgroundColor: const Color(0xFFFFF4E5),
+        child: Icon(
+          Icons.storefront_outlined,
+          color: _brandOrange,
+          size: size * 0.45,
+        ),
       );
     }
     return CircleAvatar(
-      radius: 18,
-      backgroundColor: Colors.grey.shade200,
+      radius: size / 2,
+      backgroundColor: const Color(0xFFF0F2F5),
       child: ClipOval(
         child: SizedBox(
-          width: 36,
-          height: 36,
+          width: size,
+          height: size,
           child: _buildMarketplaceImage(s, fit: BoxFit.cover),
         ),
       ),
@@ -498,30 +737,11 @@ class _DetailsPageState extends State<DetailsPage> {
   }
 
   Future<void> _openChat(MarketplaceDetailModel item) async {
+    if (_openingChat) return;
     if (!await _requireLogin()) return;
-
     if (!mounted) return;
-    final rootNav = Navigator.of(context, rootNavigator: true);
-    var loadingDismissed = false;
-    void dismissLoading() {
-      if (loadingDismissed) return;
-      if (rootNav.canPop()) rootNav.pop();
-      loadingDismissed = true;
-    }
 
-    unawaited(
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        useRootNavigator: true,
-        builder: (_) => const OpeningChatLoadingDialog(),
-      ),
-    );
-
-    BackendChatThread? chat;
-    String sellerName = 'Seller';
-    String sellerAvatar = '';
-    ChatProductContext? productContext;
+    setState(() => _openingChat = true);
 
     try {
       final myId = await BackendChatService.getUserId();
@@ -529,7 +749,7 @@ class _DetailsPageState extends State<DetailsPage> {
       final ownerId = int.tryParse((item.sellerUserId ?? '').trim());
       final sqlItemId = item.id > 0 ? item.id : null;
 
-      chat = await BackendChatService.startMerchantChat(
+      final result = await BackendChatService.startMerchantChat(
         sqlItemId: sqlItemId,
         ownerId: ownerId,
         sellerUserId: item.sellerUserId,
@@ -539,17 +759,37 @@ class _DetailsPageState extends State<DetailsPage> {
       );
 
       if (kDebugMode) {
-        debugPrint('[_openChat] Opened chat ${chat.id} with seller');
+        debugPrint('[_openChat] Opened chat ${result.chat.id} with seller');
       }
 
-      sellerName = item.sellerBusinessName ?? item.merchantName ?? 'Seller';
-      sellerAvatar = item.sellerLogoUrl ?? '';
-      productContext = ChatProductContext(
+      if (!mounted) return;
+
+      final sellerName = item.sellerBusinessName ?? item.merchantName ?? 'Seller';
+      final sellerAvatar = item.sellerLogoUrl ?? '';
+      final productContext = ChatProductContext(
         productId: item.id.toString(),
         name: item.name,
         image: item.image,
         price: item.price,
         description: item.description,
+        merchantId: (item.merchantId ?? item.serviceProviderId ?? '').trim().isEmpty
+            ? null
+            : (item.merchantId ?? item.serviceProviderId),
+      );
+
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MessagePageBackendApi(
+            peerId: result.chat.id,
+            peerName: sellerName,
+            peerAvatarUrl: sellerAvatar,
+            productContext: productContext,
+            peerMerchantId: item.merchantId ?? item.serviceProviderId,
+            peerUserId: result.sellerId,
+            sendProductEnquiry: true,
+          ),
+        ),
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[_openChat] Exception: $e');
@@ -557,23 +797,8 @@ class _DetailsPageState extends State<DetailsPage> {
         _toast('Error opening chat: ${e.toString()}', Icons.error, Colors.red);
       }
     } finally {
-      dismissLoading();
+      if (mounted) setState(() => _openingChat = false);
     }
-
-    if (chat == null || !mounted) return;
-
-    await Navigator.push<void>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => MessagePageBackendApi(
-          peerId: chat!.id,
-          peerName: sellerName,
-          peerAvatarUrl: sellerAvatar,
-          productContext: productContext,
-          sendProductEnquiry: true,
-        ),
-      ),
-    );
   }
 
   /// Navigate to a page that shows all products from this merchant.
@@ -592,29 +817,511 @@ class _DetailsPageState extends State<DetailsPage> {
     );
   }
 
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      title: const Text(
+        'Item Details',
+        style: TextStyle(
+          fontWeight: FontWeight.w800,
+          fontSize: 18,
+          color: _ink,
+          letterSpacing: -0.3,
+        ),
+      ),
+      centerTitle: false,
+      backgroundColor: Colors.white,
+      foregroundColor: _ink,
+      elevation: 0,
+      scrolledUnderElevation: 0.5,
+      surfaceTintColor: Colors.white,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.link_rounded),
+          onPressed: _copyProductLink,
+          tooltip: 'Copy link',
+        ),
+        IconButton(
+          icon: const Icon(Icons.ios_share_rounded),
+          onPressed: _shareProduct,
+          tooltip: 'Share product',
+        ),
+        const SizedBox(width: 4),
+      ],
+    );
+  }
+
+  Widget _buildHeroGallery() {
+    return AspectRatio(
+      aspectRatio: 1,
+      child: Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: PageView.builder(
+              controller: _pc,
+              physics: _media.length > 1
+                  ? const BouncingScrollPhysics()
+                  : const NeverScrollableScrollPhysics(),
+              itemCount: _media.isEmpty ? 1 : _media.length,
+              onPageChanged: (i) {
+                setState(() => _page = i);
+                if (_media.length > 1) _startAutoplay();
+              },
+              itemBuilder: (_, i) {
+                if (_media.isEmpty) {
+                  return ColoredBox(
+                    color: const Color(0xFFF0F2F5),
+                    child: Icon(
+                      Icons.image_outlined,
+                      size: 48,
+                      color: Colors.grey.shade400,
+                    ),
+                  );
+                }
+                final m = _media[i];
+                if (!m.isVideo) {
+                  return InkWell(
+                    onTap: () => _openImageViewer(
+                      m.url,
+                      merchantName: widget.item.merchantName ??
+                          widget.item.sellerBusinessName,
+                    ),
+                    child: _buildMarketplaceImage(m.url, fit: BoxFit.cover),
+                  );
+                }
+                return InkWell(
+                  onTap: () => _openVideo(m.url),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      ColoredBox(color: Colors.black.withValues(alpha: 0.35)),
+                      Center(
+                        child: Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.92),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.play_arrow_rounded,
+                            size: 40,
+                            color: _brandOrange,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          if (_media.length > 1) ...[
+            Positioned(
+              top: 12,
+              right: 12,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${_page + 1} / ${_media.length}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 12,
+              left: 0,
+              right: 0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(_media.length, (i) {
+                  final active = i == _page;
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: active ? 20 : 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: active
+                          ? _brandOrange
+                          : Colors.white.withValues(alpha: 0.75),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductCard({
+    required MarketplaceDetailModel item,
+    required String merchantDisplayName,
+  }) {
+    final price =
+        'MWK ${NumberFormat('#,###', 'en').format(item.price.truncate())}';
+    final category = (item.category ?? '').trim();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (category.isNotEmpty) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: _brandSoft.withValues(alpha: 0.65),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                category.toUpperCase(),
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: _brandOrange,
+                  letterSpacing: 0.6,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          Text(
+            item.name,
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              color: _ink,
+              height: 1.2,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFF9A2E), Color(0xFFFF8A00)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _brandOrange.withValues(alpha: 0.28),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  price,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              if (item.location.trim().isNotEmpty) ...[
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.location_on_outlined,
+                        size: 16,
+                        color: Colors.grey.shade500,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          item.location.trim(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+          if (item.description.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            const Text(
+              'About this item',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: _muted,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              item.description,
+              style: const TextStyle(
+                fontSize: 15,
+                height: 1.45,
+                color: _ink,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ],
+          if (merchantDisplayName.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Icon(Icons.schedule_rounded, size: 14, color: Colors.grey.shade500),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    item.createdAt != null
+                        ? 'Posted by $merchantDisplayName • ${_formatTimeAgo(item.createdAt!)}'
+                        : 'Posted by $merchantDisplayName',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChatButton(MarketplaceDetailModel item) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: _brandOrange,
+          side: BorderSide(color: _brandOrange.withValues(alpha: 0.45)),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        onPressed: _openingChat ? null : () => _openChat(item),
+        icon: _openingChat
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: _brandOrange,
+                ),
+              )
+            : const Icon(Icons.chat_bubble_outline_rounded),
+        label: Text(
+          _openingChat ? 'Opening chat…' : 'Chat with seller',
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMerchantProductsButton({
+    required String merchantId,
+    required String merchantDisplayName,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _openMerchantProducts(
+            merchantId: merchantId,
+            merchantName: merchantDisplayName,
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _border),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: _brandSoft.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.storefront_outlined,
+                    color: _brandOrange,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'More from $merchantDisplayName',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          color: _ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Browse all products from this seller',
+                        style: TextStyle(fontSize: 12, color: _muted),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, color: Colors.grey.shade500),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomBar(MarketplaceDetailModel item) {
+    final price =
+        'MWK ${NumberFormat('#,###', 'en').format(item.price.truncate())}';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Total',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _muted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      price,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: _ink,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                  ),
+                  onPressed: () => _goToCheckout(item),
+                  icon: const Icon(Icons.shopping_bag_outlined, size: 20),
+                  label: const Text(
+                    'Checkout',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionLabel(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w800,
+          color: _ink,
+          letterSpacing: -0.3,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Item Details"),
-        backgroundColor: _brandOrange,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.link),
-            onPressed: _copyProductLink,
-            tooltip: 'Copy link',
-          ),
-          IconButton(
-            icon: const Icon(Icons.share),
-            onPressed: _shareProduct,
-            tooltip: 'Share product',
-          ),
-        ],
-      ),
+      backgroundColor: _bg,
+      appBar: _buildAppBar(),
+      bottomNavigationBar: _buildBottomBar(item),
       body: FutureBuilder<_SellerInfo>(
         future: _sellerFuture ??= _loadSeller(),
         builder: (context, snapshot) {
@@ -635,304 +1342,39 @@ class _DetailsPageState extends State<DetailsPage> {
           final merchantDisplayName =
               businessName ?? item.sellerBusinessName ?? item.merchantName ?? 'Merchant';
 
-          return Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: ListView(
-              children: [
-                // ----- MEDIA CAROUSEL -----
-                AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: Stack(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: PageView.builder(
-                          controller: _pc,
-                          physics: _media.length > 1
-                              ? const BouncingScrollPhysics()
-                              : const NeverScrollableScrollPhysics(),
-                          itemCount: _media.length,
-                          onPageChanged: (i) {
-                            setState(() => _page = i);
-                            if (_media.length > 1) _startAutoplay();
-                          },
-                          itemBuilder: (_, i) {
-                            final m = _media[i];
-                            if (!m.isVideo) {
-                              return InkWell(
-                                onTap: () => _openImageViewer(
-                                  m.url,
-                                  merchantName: widget.item.merchantName ??
-                                      widget.item.sellerBusinessName,
-                                ),
-                                child: _buildMarketplaceImage(
-                                  m.url,
-                                  fit: BoxFit.cover,
-                                ),
-                              );
-                            }
-                            return InkWell(
-                              onTap: () => _openVideo(m.url),
-                              child: Stack(
-                                children: const [
-                                  ColoredBox(
-                                    color: Colors.black26,
-                                  ),
-                                  Center(
-                                    child: Icon(
-                                      Icons.play_circle_fill,
-                                      size: 64,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      if (_media.length > 1)
-                        Positioned(
-                          bottom: 8,
-                          left: 0,
-                          right: 0,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: List.generate(_media.length, (i) {
-                              final active = i == _page;
-                              return AnimatedContainer(
-                                duration:
-                                    const Duration(milliseconds: 200),
-                                margin:
-                                    const EdgeInsets.symmetric(horizontal: 3),
-                                width: active ? 18 : 8,
-                                height: 8,
-                                decoration: BoxDecoration(
-                                  color: active
-                                      ? _brandOrange
-                                      : Colors.white70,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: Colors.black26),
-                                ),
-                              );
-                            }),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // ----- TEXTS + CHAT BUTTON -----
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment:
-                            CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item.name,
-                            style: const TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: _brandSoft,
-                              borderRadius:
-                                  BorderRadius.circular(20),
-                              border: Border.all(
-                                  color: _brandOrange),
-                            ),
-                            child: Text(
-                              'MWK ${NumberFormat('#,###', 'en').format(item.price.truncate())}',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          if (item.description.isNotEmpty)
-                            Text(
-                              item.description,
-                              style:
-                                  const TextStyle(height: 1.3),
-                            ),
-                          if (merchantDisplayName.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              item.createdAt != null
-                                  ? 'Posted by $merchantDisplayName • ${_formatTimeAgo(item.createdAt!)}'
-                                  : 'Posted by $merchantDisplayName',
-                              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _brandOrange,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius:
-                              BorderRadius.circular(12),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                      ),
-                      onPressed: () => _openChat(item),
-                      icon:
-                          const Icon(Icons.message_rounded),
-                      label: const Text('Chat'),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 20),
-
-                // ----- MERCHANT CARD (full details) -----
-                Card(
-                  elevation: 6,
-                  shadowColor: Colors.black12,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16)),
-                  clipBehavior: Clip.antiAlias,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            // Merchant photo (logo URL from seller info or item)
-                            _merchantAvatar(logo ?? item.sellerLogoUrl),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                (item.merchantName ?? businessName ?? '').trim().isEmpty
-                                    ? '—'
-                                    : merchantDisplayName,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 16,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            _statusChip(status),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            const Icon(Icons.star_rounded, size: 16, color: Colors.amber),
-                            const SizedBox(width: 8),
-                            const Text(
-                              'Rating',
-                              style: TextStyle(color: Colors.black54),
-                            ),
-                            const SizedBox(width: 12),
-                            _ratingStars(rating),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        _infoRow(
-                          'Business name',
-                          businessName ?? item.sellerBusinessName ?? item.merchantName,
-                          icon: Icons.badge_rounded,
-                        ),
-                        _infoRow(
-                          'Status',
-                          (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
-                          icon: Icons.info_outline_rounded,
-                        ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          'Business description',
-                          style: TextStyle(color: Colors.black54),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          (businessDesc ?? '').isNotEmpty ? businessDesc! : '—',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // ----- VIEW MERCHANT PRODUCTS BUTTON -----
-                if (hasMerchant &&
-                    merchantId.trim().isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      icon: const Icon(
-                        Icons.store_mall_directory_outlined,
-                      ),
-                      label: Text(
-                        'View more from $merchantDisplayName',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        shape: RoundedRectangleBorder(
-                          borderRadius:
-                              BorderRadius.circular(14),
-                        ),
-                        side: BorderSide(
-                            color: _brandOrange),
-                        foregroundColor: _brandOrange,
-                      ),
-                      onPressed: () {
-                        _openMerchantProducts(
-                          merchantId: merchantId,
-                          merchantName:
-                              merchantDisplayName,
-                        );
-                      },
-                    ),
-                  ),
-                ],
-
-                const SizedBox(height: 16),
-
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _brandOrange,
-                      foregroundColor: Colors.white,
-                      padding:
-                          const EdgeInsets.symmetric(
-                              vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(14),
-                      ),
-                      textStyle: const TextStyle(
-                          fontWeight: FontWeight.w700),
-                    ),
-                    onPressed: () =>
-                        _goToCheckout(widget.item),
-                    icon: const Icon(
-                        Icons.shopping_bag_outlined),
-                    label:
-                        const Text("Continue to checkout"),
-                  ),
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            children: [
+              _buildHeroGallery(),
+              const SizedBox(height: 16),
+              _buildProductCard(
+                item: item,
+                merchantDisplayName: merchantDisplayName,
+              ),
+              const SizedBox(height: 12),
+              _buildChatButton(item),
+              const SizedBox(height: 24),
+              _sectionLabel('Seller'),
+              _buildMerchantCard(
+                item: item,
+                merchantDisplayName: merchantDisplayName,
+                merchantId: merchantId,
+                hasMerchant: hasMerchant,
+                businessName: businessName,
+                status: status,
+                rating: rating,
+                businessDesc: businessDesc,
+                logo: logo,
+              ),
+              if (hasMerchant && merchantId.trim().isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _buildMerchantProductsButton(
+                  merchantId: merchantId,
+                  merchantDisplayName: merchantDisplayName,
                 ),
               ],
-            ),
+              const SizedBox(height: 8),
+            ],
           );
         },
       ),

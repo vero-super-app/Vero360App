@@ -7,6 +7,7 @@ class ChatProductContext {
   final String? image;
   final double? price;
   final String? description;
+  final String? merchantId;
 
   const ChatProductContext({
     required this.productId,
@@ -14,14 +15,25 @@ class ChatProductContext {
     this.image,
     this.price,
     this.description,
+    this.merchantId,
   });
 
   factory ChatProductContext.fromTagMap(Map<String, dynamic> tag) {
     final metadata = tag['metadata'];
     double? price;
-    if (metadata is Map && metadata['price'] != null) {
-      final raw = metadata['price'];
-      price = raw is num ? raw.toDouble() : double.tryParse('$raw');
+    String? merchantId;
+    if (metadata is Map) {
+      if (metadata['price'] != null) {
+        final raw = metadata['price'];
+        price = raw is num ? raw.toDouble() : double.tryParse('$raw');
+      }
+      final mid = metadata['merchantId']?.toString().trim();
+      if (mid != null && mid.isNotEmpty) {
+        merchantId = mid;
+      } else {
+        final sp = metadata['serviceProviderId']?.toString().trim();
+        if (sp != null && sp.isNotEmpty) merchantId = sp;
+      }
     }
 
     return ChatProductContext(
@@ -30,6 +42,7 @@ class ChatProductContext {
       image: tag['tagImage']?.toString(),
       description: tag['tagDescription']?.toString(),
       price: price,
+      merchantId: merchantId,
     );
   }
 
@@ -60,7 +73,12 @@ class ChatProductContext {
       if (description != null && description!.trim().isNotEmpty)
         'tagDescription': description!.trim(),
       if (image != null && image!.trim().isNotEmpty) 'tagImage': image!.trim(),
-      if (price != null) 'metadata': {'price': price},
+      if (price != null || merchantId != null)
+        'metadata': {
+          if (price != null) 'price': price,
+          if (merchantId != null && merchantId!.trim().isNotEmpty)
+            'merchantId': merchantId!.trim(),
+        },
     };
   }
 }

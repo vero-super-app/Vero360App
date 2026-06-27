@@ -44,6 +44,7 @@ import 'package:vero360_app/features/ride_share/presentation/providers/active_ri
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_request_overlay.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/reset_password_screen.dart';
 
 // Services
 import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
@@ -60,6 +61,25 @@ import 'package:vero360_app/features/ride_share/presentation/providers/driver_pr
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
 final GlobalKey<NavigatorState> navKey = appNavKey;
+
+bool _isPasswordResetDeepLink(Uri uri) {
+  final oobCode = uri.queryParameters['oobCode'];
+  if (oobCode == null || oobCode.isEmpty) return false;
+  if (uri.scheme == 'vero360' && uri.host == 'reset-password') return true;
+  if (uri.queryParameters['mode'] == 'resetPassword') return true;
+  if (uri.path.contains('/__/auth/action')) return true;
+  return false;
+}
+
+void _openPasswordResetFromDeepLink(Uri uri) {
+  final oobCode = uri.queryParameters['oobCode'];
+  if (oobCode == null || oobCode.isEmpty) return;
+  navKey.currentState?.push(
+    MaterialPageRoute(
+      builder: (_) => ResetPasswordScreen(oobCode: oobCode),
+    ),
+  );
+}
 
 /// Root merchant shell: must match [Bottomnavbar] / auth screens (prefs `merchant_service`).
 Widget merchantDashboardFromPrefs(String email, SharedPreferences prefs) {
@@ -617,9 +637,10 @@ class _DriverStatusBootstrapState
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      loadDriverStatusFromPrefs();
-      ref.read(syncDriverStatusProvider);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await loadDriverStatusFromPrefs();
+      await ref.read(syncDriverStatusProvider.future);
+      await loadDriverStatusFromPrefs();
     });
   }
 
@@ -665,7 +686,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Future<void> _initDeepLinks() async {
     _appLinks = AppLinks();
     _sub = _appLinks.uriLinkStream.listen((uri) {
-      if (uri.scheme == 'vero360' && uri.host == 'users' && uri.path == '/me') {
+      if (_isPasswordResetDeepLink(uri)) {
+        _openPasswordResetFromDeepLink(uri);
+      } else if (uri.scheme == 'vero360' &&
+          uri.host == 'users' &&
+          uri.path == '/me') {
         navKey.currentState?.push(
           MaterialPageRoute(builder: (_) => const ProfileFromLinkPage()),
         );
@@ -677,6 +702,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         );
       }
     }, onError: (_) {});
+
+    try {
+      final initial = await _appLinks.getInitialLink();
+      if (initial != null && _isPasswordResetDeepLink(initial)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _openPasswordResetFromDeepLink(initial);
+        });
+      }
+    } catch (_) {}
   }
 
   @override
@@ -761,6 +795,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         _currentShell != 'customer') {
       _pushCustomer(result.email);
     }
+    await loadDriverStatusFromPrefs();
   }
 
   Future<void> _clearAuth(SharedPreferences prefs) async {
@@ -1080,6 +1115,8 @@ class AuthFlow {
           await prefs.setString('role', 'customer');
         }
 
+        await loadDriverStatusFromPrefs();
+
         // debugPrint("✅ Login: email=$email, role=${isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer')}");
 
         // Navigate based on role
@@ -1107,6 +1144,8 @@ class AuthFlow {
     await p.remove('authToken');
     await p.remove('user_role');
     await p.remove('role');
+    await p.remove('has_driver_profile');
+    resetDriverSessionCache();
 
     try {
       await FirebaseAuth.instance.signOut();

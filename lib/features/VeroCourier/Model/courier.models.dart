@@ -118,4 +118,89 @@ class CourierDelivery {
     if (value == null) return null;
     return DateTime.tryParse(value.toString());
   }
+
+  /// Structured view of [additionalInformation] plus top-level sender fields.
+  CourierDeliveryView get view => CourierDeliveryView.fromDelivery(this);
+}
+
+/// Parsed sender/receiver/notes from pipe-separated [additionalInformation].
+class CourierDeliveryView {
+  final String? senderName;
+  final String senderPhone;
+  final String senderCity;
+  final String? recipientName;
+  final String? recipientPhone;
+  final String? recipientAddress;
+  final String? notes;
+
+  const CourierDeliveryView({
+    this.senderName,
+    required this.senderPhone,
+    required this.senderCity,
+    this.recipientName,
+    this.recipientPhone,
+    this.recipientAddress,
+    this.notes,
+  });
+
+  factory CourierDeliveryView.fromDelivery(CourierDelivery d) {
+    final parsed = _parseAdditionalInfo(d.additionalInformation);
+    return CourierDeliveryView(
+      senderName: parsed.senderName,
+      senderPhone: d.courierPhone.trim(),
+      senderCity: d.courierCity.trim(),
+      recipientName: parsed.recipientName,
+      recipientPhone: parsed.recipientPhone,
+      recipientAddress: parsed.recipientAddress,
+      notes: parsed.notes,
+    );
+  }
+
+  static ({
+    String? senderName,
+    String? recipientName,
+    String? recipientPhone,
+    String? recipientAddress,
+    String? notes,
+  }) _parseAdditionalInfo(String? raw) {
+    if (raw == null || raw.trim().isEmpty) {
+      return (
+        senderName: null,
+        recipientName: null,
+        recipientPhone: null,
+        recipientAddress: null,
+        notes: null,
+      );
+    }
+
+    String? senderName;
+    String? recipientName;
+    String? recipientPhone;
+    String? recipientAddress;
+    final noteParts = <String>[];
+
+    for (final part in raw.split('|').map((s) => s.trim()).where((s) => s.isNotEmpty)) {
+      final lower = part.toLowerCase();
+      if (lower.startsWith('sender:')) {
+        senderName = part.substring(part.indexOf(':') + 1).trim();
+      } else if (lower.startsWith('recipient phone:')) {
+        recipientPhone = part.substring(part.indexOf(':') + 1).trim();
+      } else if (lower.startsWith('recipient address:')) {
+        recipientAddress = part.substring(part.indexOf(':') + 1).trim();
+      } else if (lower.startsWith('recipient:')) {
+        recipientName = part.substring(part.indexOf(':') + 1).trim();
+      } else {
+        noteParts.add(part);
+      }
+    }
+
+    final notes = noteParts.isEmpty ? null : noteParts.join(' · ');
+    return (
+      senderName: senderName,
+      recipientName: recipientName,
+      recipientPhone: recipientPhone,
+      recipientAddress: recipientAddress,
+      notes: notes,
+    );
+  }
 }

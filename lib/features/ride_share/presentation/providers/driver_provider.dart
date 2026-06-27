@@ -115,64 +115,12 @@ final verifiedDriversProvider =
 });
 
 // ==================== DRIVER STATUS FROM SHARED PREFERENCES ====================
-/// Loads driver status from SharedPreferences (local cache, no network call)
-final isCurrentUserDriverProvider = Provider<bool?>((ref) {
-  return _isDriverCachedValue;
-});
-
-/// Whether ride-request popups should run (avoids blocking on null prefs / stale cache).
-final driverRideNotificationsEnabledProvider = Provider<bool>((ref) {
-  final cached = ref.watch(isCurrentUserDriverProvider);
-  if (cached == true) return true;
-
-  final sync = ref.watch(syncDriverStatusProvider);
-  if (sync.hasValue && sync.value == true) return true;
-
-  final profile = ref.watch(myDriverProfileProvider);
-  final hasDriverProfile = profile.maybeWhen(
-    data: (d) => d['id'] != null,
-    orElse: () => false,
-  );
-  if (hasDriverProfile) return true;
-
-  if (cached == false &&
-      sync.hasValue &&
-      sync.value == false &&
-      !hasDriverProfile) {
-    return false;
-  }
-
-  return false;
-});
-
-/// Syncs driver status with backend (call periodically or on demand)
-final syncDriverStatusProvider = FutureProvider<bool>((ref) async {
-  try {
-    final userId = await AuthStorage.userIdFromToken();
-    if (userId == null) {
-      await _saveDriverStatusToPrefs(false);
-      return false;
-    }
-    
-    final driverService = ref.watch(driverServiceProvider);
-    try {
-      await driverService.getDriverByUserId(userId);
-      await _saveDriverStatusToPrefs(true);
-      return true;
-    } catch (_) {
-      await _saveDriverStatusToPrefs(false);
-      return false;
-    }
-  } catch (_) {
-    await _saveDriverStatusToPrefs(false);
-    return false;
-  }
-});
-
-// ==================== SHARED PREFERENCES HELPERS ====================
+/// Active session role only — set at login/register, never inferred from driver API rows.
 bool? _isDriverCachedValue;
 
-/// Load driver status from SharedPreferences (checks user_role == 'driver')
+const _hasDriverProfileKey = 'has_driver_profile';
+
+/// Load whether the current session is driver mode (`user_role == 'driver'`).
 Future<bool?> loadDriverStatusFromPrefs() async {
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -188,15 +136,68 @@ Future<bool?> loadDriverStatusFromPrefs() async {
   }
 }
 
-/// Save driver status to SharedPreferences
-Future<void> _saveDriverStatusToPrefs(bool isDriver) async {
+/// Clears in-memory driver session cache (call after logout).
+void resetDriverSessionCache() {
+  _isDriverCachedValue = false;
+}
+
+/// Whether ride-request popups should run (explicit driver session only).
+final driverRideNotificationsEnabledProvider = Provider<bool>((ref) {
+  final cached = ref.watch(isCurrentUserDriverProvider);
+  return cached == true;
+});
+
+/// Loads driver status from SharedPreferences (local cache, no network call)
+final isCurrentUserDriverProvider = Provider<bool?>((ref) {
+  return _isDriverCachedValue;
+});
+
+/// Optional: user has a driver row on the server (does not change session role).
+final hasDriverProfileProvider = Provider<bool?>((ref) {
+  final sync = ref.watch(syncDriverStatusProvider);
+  return sync.maybeWhen(data: (v) => v, orElse: () => null);
+});
+
+/// Syncs whether a driver profile exists on the backend (does not set user_role).
+final syncDriverStatusProvider = FutureProvider<bool>((ref) async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    if (isDriver) {
-      await prefs.setString('user_role', 'driver');
-      await prefs.setString('role', 'driver');
+    final sessionRole = (prefs.getString('user_role') ??
+            prefs.getString('role') ??
+            '')
+        .toLowerCase();
+    // Never infer session role from driver API — only explicit driver login counts.
+    if (sessionRole == 'merchant' || sessionRole == 'customer') {
+      await _saveDriverProfileAvailability(false);
+      return false;
     }
-    _isDriverCachedValue = isDriver;
+
+    final userId = await AuthStorage.userIdFromToken();
+    if (userId == null) {
+      await _saveDriverProfileAvailability(false);
+      return false;
+    }
+
+    final driverService = ref.watch(driverServiceProvider);
+    try {
+      await driverService.getDriverByUserId(userId);
+      await _saveDriverProfileAvailability(true);
+      return true;
+    } catch (_) {
+      await _saveDriverProfileAvailability(false);
+      return false;
+    }
+  } catch (_) {
+    await _saveDriverProfileAvailability(false);
+    return false;
+  }
+});
+
+/// Saves driver-profile availability only — never overwrites [user_role].
+Future<void> _saveDriverProfileAvailability(bool hasProfile) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_hasDriverProfileKey, hasProfile);
   } catch (_) {
     // Silent fail
   }

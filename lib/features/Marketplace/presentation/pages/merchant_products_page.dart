@@ -24,6 +24,7 @@ import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
+import 'package:vero360_app/Home/story_ring_widget.dart';
 
 int? _stayListingApiId(Map<String, dynamic> d) {
   final direct = d['apiAccommodationId'];
@@ -1746,6 +1747,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       body: Column(
         children: [
           _MerchantProfileCard(
+            merchantId: widget.merchantId,
             name: widget.merchantName,
             email: _merchantEmail,
             phone: _merchantPhone,
@@ -1953,6 +1955,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                       builder: (_) => DetailsPage(
                         item: marketplaceModel.MarketplaceDetailModel(
                           id: it.sqlItemId!,
+                          backendItemId: it.sqlItemId,
                           name: it.name,
                           image: it.image,
                           price: it.price,
@@ -2337,6 +2340,7 @@ class _MerchantProfileCard extends StatelessWidget {
   static const Color _kBrandNavy = Color(0xFF16284C);
   static const Color _kBorder = Color(0xFFE2E6EF);
 
+  final String merchantId;
   final String name;
   final String? email;
   final String? phone;
@@ -2352,6 +2356,7 @@ class _MerchantProfileCard extends StatelessWidget {
   final VoidCallback onViewProfile;
 
   const _MerchantProfileCard({
+    required this.merchantId,
     required this.name,
     required this.email,
     required this.phone,
@@ -2434,36 +2439,14 @@ class _MerchantProfileCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              InkWell(
-                onTap: hasPhoto ? onViewProfile : null,
-                borderRadius: BorderRadius.circular(999),
-                child: Container(
-                  padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [
-                        _kBrandOrange,
-                        _kBrandNavy.withValues(alpha: 0.85),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                  ),
-                  child: CircleAvatar(
-                    radius: 34,
-                    backgroundColor: Colors.white,
-                    child: CircleAvatar(
-                      radius: 32,
-                      backgroundColor: Colors.grey.shade100,
-                      backgroundImage: img,
-                      child: hasPhoto
-                          ? null
-                          : const Icon(Icons.storefront_rounded,
-                              color: Colors.grey, size: 32),
-                    ),
-                  ),
-                ),
+              StoryProfileRing(
+                merchantId: merchantId,
+                merchantName: name,
+                merchantImageUrl: profileUrl,
+                size: 74,
+                imageProvider: img,
+                placeholderIcon: Icons.storefront_rounded,
+                onNoStoriesTap: hasPhoto ? onViewProfile : null,
               ),
               const SizedBox(width: 14),
               Expanded(

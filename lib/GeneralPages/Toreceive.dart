@@ -324,20 +324,27 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     );
   }
 
-  Widget _deliveredNoticeLine(String text) {
+  Widget _deliveredNoticeLine(String text, {Color? color}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('• ', style: TextStyle(fontWeight: FontWeight.w800)),
+          Text(
+            '• ',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: color ?? const Color(0xFF444444),
+            ),
+          ),
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(
-                color: Color(0xFF444444),
+              style: TextStyle(
+                color: color ?? const Color(0xFF444444),
                 height: 1.4,
                 fontSize: 14,
+                fontWeight: color != null ? FontWeight.w600 : FontWeight.normal,
               ),
             ),
           ),
@@ -393,6 +400,11 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
           _deliveredNoticeLine(
             'Do not confirm receiving the parcel or release payment unless you have '
             'actually received the goods or verified delivery status with the courier.',
+          ),
+          _deliveredNoticeLine(
+            'If you confirm receipt without checking with the courier first, '
+            'Vero360 is not responsible for any problems with your order.',
+            color: Colors.red,
           ),
         ],
       ),

@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 
 import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/Home/story_service.dart';
+import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
@@ -34,18 +35,20 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   late PageController _pageController;
   int _currentIndex = 0;
   late int _groupIndex;
+  late List<MerchantStoryGroup> _groups;
   static const Duration _autoAdvance = Duration(seconds: 8);
   DateTime _lastTap = DateTime.fromMillisecondsSinceEpoch(0);
   bool _isPaused = false;
   late AnimationController _progressController;
   final StoryService _storyService = StoryService();
 
-  MerchantStoryGroup get _currentGroup => widget.groups[_groupIndex];
+  MerchantStoryGroup get _currentGroup => _groups[_groupIndex];
   List<MerchantStoryItem> get _items => _currentGroup.items;
 
   @override
   void initState() {
     super.initState();
+    _groups = List<MerchantStoryGroup>.from(widget.groups);
     _groupIndex = widget.initialGroupIndex;
     _pageController = PageController();
     _progressController = AnimationController(
@@ -66,12 +69,24 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
     final viewerName = user.displayName ?? user.email ?? 'Someone';
+    final storyId = items[_currentIndex].storyId;
     _storyService.recordView(
-      storyId: items[_currentIndex].storyId,
+      storyId: storyId,
       viewerId: user.uid,
       viewerName: viewerName,
       viewerProfileImageUrl: user.photoURL,
-    );
+    ).then((_) => _refreshUnviewedState(user.uid));
+  }
+
+  Future<void> _refreshUnviewedState(String viewerId) async {
+    final group = _currentGroup;
+    final hasUnviewed = await _storyService
+        .getMerchantStoryRingState(merchantId: group.merchantId, viewerId: viewerId)
+        .then((s) => s.hasUnviewed);
+    if (!mounted) return;
+    setState(() {
+      _groups[_groupIndex] = group.copyWith(hasUnviewed: hasUnviewed);
+    });
   }
 
   void _restartProgress() {
@@ -107,7 +122,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   void _goNextStoryGroupOrClose() {
-    if (_groupIndex < widget.groups.length - 1) {
+    if (_groupIndex < _groups.length - 1) {
       setState(() {
         _groupIndex++;
         _currentIndex = 0;
@@ -225,23 +240,30 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               right: 0,
               bottom: 24,
               child: SafeArea(
-                child: Center(
-                  child: InkWell(
-                    onTap: _showDetails,
-                    borderRadius: BorderRadius.circular(24),
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.4),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_groups.length > 1) _buildGroupsTray(),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: InkWell(
+                        onTap: _showDetails,
                         borderRadius: BorderRadius.circular(24),
-                      ),
-                      child: const Icon(
-                        Icons.keyboard_arrow_up_rounded,
-                        color: Colors.white,
-                        size: 28,
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.4),
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          child: const Icon(
+                            Icons.keyboard_arrow_up_rounded,
+                            color: Colors.white,
+                            size: 28,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ),
@@ -272,21 +294,24 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 ),
               );
             },
-            child: CircleAvatar(
-              radius: 20,
-              backgroundColor: Colors.white24,
-              child: _currentGroup.merchantImageUrl != null
-                  ? ClipOval(
-                      child: Image.network(
-                        _currentGroup.merchantImageUrl!,
-                        width: 40,
-                        height: 40,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            const Icon(Icons.store, color: Colors.white),
-                      ),
-                    )
-                  : const Icon(Icons.store, color: Colors.white),
+            child: Container(
+              width: 44,
+              height: 44,
+              padding: EdgeInsets.all(_currentGroup.hasUnviewed ? 2 : 0),
+              decoration: StoryRingDecoration.ring(
+                hasStories: true,
+                hasUnviewed: _currentGroup.hasUnviewed,
+              ),
+              child: CircleAvatar(
+                radius: 20,
+                backgroundColor: Colors.white24,
+                backgroundImage: _currentGroup.merchantImageUrl != null
+                    ? NetworkImage(_currentGroup.merchantImageUrl!)
+                    : null,
+                child: _currentGroup.merchantImageUrl == null
+                    ? const Icon(Icons.store, color: Colors.white)
+                    : null,
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -354,6 +379,92 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 ),
               );
             }),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildGroupsTray() {
+    return SizedBox(
+      height: 78,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        itemCount: _groups.length,
+        itemBuilder: (context, i) {
+          final g = _groups[i];
+          final isActive = i == _groupIndex;
+          return Padding(
+            padding: const EdgeInsets.only(right: 10),
+            child: GestureDetector(
+              onTap: () {
+                if (i == _groupIndex) return;
+                setState(() {
+                  _groupIndex = i;
+                  _currentIndex = 0;
+                });
+                _pageController.jumpToPage(0);
+                _restartProgress();
+                _recordViewForCurrentSlide();
+              },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: isActive
+                        ? BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          )
+                        : null,
+                    child: Container(
+                      padding: EdgeInsets.all(g.hasUnviewed ? 2.5 : 1.5),
+                      decoration: StoryRingDecoration.ring(
+                        hasStories: true,
+                        hasUnviewed: g.hasUnviewed,
+                      ),
+                      child: ClipOval(
+                        child: g.merchantImageUrl != null &&
+                                g.merchantImageUrl!.isNotEmpty
+                            ? Image.network(
+                                g.merchantImageUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => Container(
+                                  color: Colors.white24,
+                                  child: const Icon(Icons.store,
+                                      color: Colors.white, size: 20),
+                                ),
+                              )
+                            : Container(
+                                color: Colors.white24,
+                                child: const Icon(Icons.store,
+                                    color: Colors.white, size: 20),
+                              ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    width: 56,
+                    child: Text(
+                      g.merchantName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 10,
+                        fontWeight:
+                            isActive ? FontWeight.w800 : FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           );
         },
       ),

@@ -1,11 +1,14 @@
 // lib/screens/chat_list_page.dart
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 
@@ -17,16 +20,19 @@ class ChatListPage extends StatefulWidget {
 
 class _ChatListPageState extends State<ChatListPage> {
   static const _brandOrange = Color(0xFFFF8A00);
-  static const _bg = Color(0xFFF6F6F6);
+  static const _bg = Color(0xFFF7F8FA);
+  static const _ink = Color(0xFF101010);
+  static const _maxPinnedChats = 3;
 
   int? _myUserId;
   String? _error;
   bool _wsConnected = false;
 
-  bool _searching = false;
   final _searchCtrl = TextEditingController();
   StreamSubscription<bool>? _wsConnectionSub;
 
+  final List<String> _pinnedIds = [];
+  final Set<String> _hiddenIds = {};
   @override
   void initState() {
     super.initState();
@@ -41,13 +47,30 @@ class _ChatListPageState extends State<ChatListPage> {
   }
 
   Future<void> _boot() async {
+    // Fast path: use cached backend user id so the list can render immediately.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = int.tryParse(
+        prefs.getString('userId') ??
+            prefs.getString('user_id') ??
+            prefs.getString('id') ??
+            '',
+      );
+      if (cached != null && cached > 0 && mounted) {
+        setState(() {
+          _myUserId = cached;
+          _error = null;
+        });
+        unawaited(_loadChatListPrefs(cached));
+      }    } catch (_) {}
+
     try {
       await BackendChatService.ensureAuth();
       final userId = await BackendChatService.getUserId();
 
-      try {
-        await BackendMessagingSocket.connect();
-      } catch (_) {}
+      unawaited(
+        BackendMessagingSocket.connect().catchError((_) {}),
+      );
 
       _wsConnectionSub?.cancel();
       _wsConnectionSub =
@@ -57,89 +80,133 @@ class _ChatListPageState extends State<ChatListPage> {
       });
 
       if (!mounted) return;
+      await _loadChatListPrefs(userId);
       setState(() {
         _myUserId = userId;
         _error = null;
         _wsConnected = BackendMessagingSocket.isConnected;
-      });
-    } catch (e) {
+      });    } catch (e) {
       if (!mounted) return;
+      if (_myUserId != null) return; // keep cached-id UI if auth is slow/fails
       final ui = _friendlyChatError(e);
       setState(() => _error = ui.message);
     }
   }
 
-  void _showTestMenu(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Test Actions',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: () => _sendTestMessage(context),
-                icon: const Icon(Icons.send),
-                label: const Text('Send Test Message to All Users'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: _brandOrange,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  String _pinnedPrefsKey(int userId) => 'chat_list_pinned_$userId';
+  String _hiddenPrefsKey(int userId) => 'chat_list_hidden_$userId';
+
+  Future<void> _loadChatListPrefs(int userId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pinnedRaw = prefs.getStringList(_pinnedPrefsKey(userId)) ?? [];
+      final hiddenRaw = prefs.getStringList(_hiddenPrefsKey(userId)) ?? [];
+      if (!mounted) return;
+      setState(() {
+        _pinnedIds
+          ..clear()
+          ..addAll(pinnedRaw.take(_maxPinnedChats));
+        _hiddenIds
+          ..clear()
+          ..addAll(hiddenRaw);
+      });
+    } catch (_) {}
   }
 
-  Future<void> _sendTestMessage(BuildContext context) async {
-    Navigator.pop(context);
+  Future<void> _persistChatListPrefs() async {
+    final userId = _myUserId;
+    if (userId == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_pinnedPrefsKey(userId), _pinnedIds);
+      await prefs.setStringList(_hiddenPrefsKey(userId), _hiddenIds.toList());
+    } catch (_) {}
+  }
 
-    final scaffold = ScaffoldMessenger.of(context);
-    scaffold.showSnackBar(
-      const SnackBar(content: Text('Sending test messages...')),
+  List<_ThreadTile> _mapThreads(List<BackendChatThread> raw, int me) {
+    final q = _searchCtrl.text.trim().toLowerCase();
+
+    final tiles = raw
+        .where((t) => !_hiddenIds.contains(t.id))
+        .map(
+          (t) => _ThreadTile.fromThread(
+            t,
+            me,
+            isPinned: _pinnedIds.contains(t.id),
+          ),
+        )
+        .where((tile) => q.isEmpty || tile.searchKey.contains(q))
+        .toList();
+
+    final pinned = <_ThreadTile>[];
+    final rest = <_ThreadTile>[];
+    for (final tile in tiles) {
+      if (tile.isPinned) {
+        pinned.add(tile);
+      } else {
+        rest.add(tile);
+      }
+    }
+    pinned.sort(
+      (a, b) =>
+          _pinnedIds.indexOf(a.threadId).compareTo(_pinnedIds.indexOf(b.threadId)),
     );
+    rest.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return [...pinned, ...rest];
+  }
+
+  Future<void> _togglePin(_ThreadTile tile) async {
+    final wasPinned = _pinnedIds.contains(tile.threadId);
+    if (wasPinned) {
+      _pinnedIds.remove(tile.threadId);
+    } else {
+      if (_pinnedIds.length >= _maxPinnedChats) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You can pin up to 3 chats. Unpin one first.'),
+          ),
+        );
+        return;
+      }
+      _pinnedIds.add(tile.threadId);
+    }
+    await _persistChatListPrefs();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _confirmDelete(_ThreadTile tile) async {
+    final ok = await showModernConfirmDialog(
+      context,
+      title: 'Delete chat?',
+      message:
+          'Remove your conversation with ${tile.peerName}? This cannot be undone.',
+      confirmLabel: 'Delete',
+    );
+    if (!ok || !mounted) return;
 
     try {
-      final count = await BackendChatService.sendTestMessageToAllUsers(
-        testMessage: '✅ Test message from ${DateTime.now()}',
-      );
-
+      await BackendChatService.deleteChat(tile.threadId);
+      _hiddenIds.add(tile.threadId);
+      _pinnedIds.remove(tile.threadId);
+      await _persistChatListPrefs();
       if (!mounted) return;
-      final msg = count == 0
-          ? 'No active users found'
-          : 'Test messages sent to $count users!';
-      scaffold.showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          backgroundColor: count > 0 ? Colors.green : Colors.orange,
-        ),
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Chat deleted')),
       );
     } catch (e) {
       if (!mounted) return;
-      scaffold.showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error: ${_friendlyChatError(e).message}'),
+          content: Text('Could not delete chat: ${_friendlyChatError(e).message}'),
           backgroundColor: Colors.red,
         ),
       );
     }
   }
-
   @override
   Widget build(BuildContext context) {
-    // ✅ removes scrollbars + glow "bars"
     return ScrollConfiguration(
       behavior: const _NoBarsScrollBehavior(),
       child: _buildBody(context),
@@ -172,10 +239,14 @@ class _ChatListPageState extends State<ChatListPage> {
     return Scaffold(
       backgroundColor: _bg,
       appBar: _appBar(),
-      body: StreamBuilder<List<BackendChatThread>>(
+      body: Column(
+        children: [
+          _buildWhatsAppSearch(),
+          Expanded(
+            child: StreamBuilder<List<BackendChatThread>>(
         stream: BackendChatService.watchThreads(),
         builder: (context, snap) {
-          if (snap.hasError) {
+          if (snap.hasError && (snap.data == null || snap.data!.isEmpty)) {
             final ui = _friendlyChatError(snap.error!);
             return _EmptyState(
               icon: ui.icon,
@@ -189,195 +260,192 @@ class _ChatListPageState extends State<ChatListPage> {
             return const ChatListSkeleton();
           }
 
-          var items = snap.data ?? <BackendChatThread>[];
-          items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+          final tiles = _mapThreads(snap.data ?? const [], me);
 
-          // Search filter (name + chat type)
-          final q = _searchCtrl.text.trim().toLowerCase();
-          if (q.isNotEmpty) {
-            items = items.where((t) {
-              final otherParticipant = t.participants.firstWhere(
-                (p) => p.id != me,
-                orElse: () => t.participants.isNotEmpty
-                    ? t.participants.first
-                    : ChatParticipant(id: 0, name: 'Contact', email: ''),
-              );
-              var pName = otherParticipant.name.toLowerCase();
-              if (pName.isEmpty || pName == 'user') {
-                pName = otherParticipant.email.split('@').first.toLowerCase();
-              }
-              final chatName = (t.name ?? '').toLowerCase();
-              final productName = (t.lastProductTag?.name ?? '').toLowerCase();
-              return pName.contains(q) ||
-                  chatName.contains(q) ||
-                  productName.contains(q);
-            }).toList();
-          }
-
-          if (items.isEmpty) {
-            return const _EmptyState(
-              icon: Icons.chat_bubble_outline_rounded,
-              title: 'No chats yet',
-              subtitle: 'Start a conversation and it will appear here.',
+          if (tiles.isEmpty) {
+            final q = _searchCtrl.text.trim();
+            return _EmptyState(
+              icon: q.isEmpty
+                  ? Icons.chat_bubble_outline_rounded
+                  : Icons.search_off_rounded,
+              title: q.isEmpty ? 'No chats yet' : 'No results',
+              subtitle: q.isEmpty
+                  ? 'When you message a seller, the conversation appears here.'
+                  : 'Try a different name or message.',
             );
           }
 
-          return RefreshIndicator(
-            color: _brandOrange,
-            onRefresh: () async {
-              BackendChatService.refreshThreads();
-              await Future<void>.delayed(const Duration(milliseconds: 250));
-            },
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (_, i) {
-                final t = items[i];
-                final otherParticipant = t.participants.firstWhere(
-                  (p) => p.id != me,
-                  orElse: () => t.participants.isNotEmpty
-                      ? t.participants.first
-                      : ChatParticipant(id: 0, name: 'Contact', email: ''),
-                );
-
-                // Use participant name, but fall back to email prefix
-                // if name is empty or a generic placeholder like "user"
-                var name = otherParticipant.name.trim();
-                if (name.isEmpty || name.toLowerCase() == 'user') {
-                  final email = otherParticipant.email.trim();
-                  if (email.contains('@') && !email.startsWith('+firebase_')) {
-                    name = email.split('@').first;
-                  } else if (t.name != null && t.name!.trim().isNotEmpty) {
-                    name = t.name!.trim();
-                  }
-                }
-                final avatarUrl = otherParticipant.profilePicture ?? '';
-                final product = t.lastProductTag;
-
-                final preview = (t.lastMessagePreview ?? '').trim();
-                final subtitle = preview.isNotEmpty
-                    ? preview
-                    : (product != null
-                        ? 'Enquiry about ${product.name}'
-                        : (t.type == 'direct'
-                            ? 'Tap to chat'
-                            : (t.name ?? 'Group chat')));
-
-                final rowTitle = product?.name ??
-                    (name.isEmpty ? 'Contact' : name);
-                final rowPeerLabel = product != null
-                    ? (name.isEmpty ? 'Seller' : name)
-                    : null;
-
-                return _ChatRow(
-                  name: rowTitle,
-                  peerLabel: rowPeerLabel,
-                  avatarUrls: avatarUrl.isNotEmpty ? [avatarUrl] : [],
-                  productImageUrl: product?.image,
-                  lastText: subtitle,
-                  updatedAt: t.updatedAt,
-                  unreadCount: t.unreadCount,
-                  onTap: () async {
-                    BackendChatService.setActiveChatId(t.id);
-                    BackendChatService.clearThreadUnread(t.id);
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => MessagePageBackendApi(
-                          peerId: t.id,
-                          peerName: name.isEmpty ? 'Contact' : name,
-                          peerAvatarUrl: avatarUrl,
-                          productContext: product,
-                        ),
-                      ),
-                    );
-                    BackendChatService.setActiveChatId(null);
-                    BackendChatService.refreshThreads();
-                  },
-                );
+          return SlidableAutoCloseBehavior(
+            child: RefreshIndicator(
+              color: _brandOrange,
+              onRefresh: () async {
+                BackendChatService.refreshThreads();
+                await Future<void>.delayed(const Duration(milliseconds: 200));
               },
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
+                cacheExtent: 480,
+                itemCount: tiles.length,
+                separatorBuilder: (_, __) => const Divider(
+                  height: 1,
+                  indent: 76,
+                  endIndent: 16,
+                  color: Color(0xFFECEEF2),
+                ),
+                itemBuilder: (_, i) {
+                  final tile = tiles[i];
+                  return Slidable(
+                    key: ValueKey(tile.threadId),
+                    startActionPane: ActionPane(
+                      motion: const BehindMotion(),
+                      extentRatio: 0.26,
+                      children: [
+                        SlidableAction(
+                          onPressed: (_) => _togglePin(tile),
+                          backgroundColor: tile.isPinned
+                              ? const Color(0xFF6B7280)
+                              : _brandOrange,
+                          foregroundColor: Colors.white,
+                          icon: tile.isPinned
+                              ? Icons.push_pin_rounded
+                              : Icons.push_pin_outlined,
+                          label: tile.isPinned ? 'Unpin' : 'Pin',
+                          borderRadius: BorderRadius.zero,
+                        ),
+                      ],
+                    ),
+                    endActionPane: ActionPane(
+                      motion: const BehindMotion(),
+                      extentRatio: 0.26,
+                      children: [
+                        SlidableAction(
+                          onPressed: (_) => _confirmDelete(tile),
+                          backgroundColor: const Color(0xFFEF4444),
+                          foregroundColor: Colors.white,
+                          icon: Icons.delete_outline_rounded,
+                          label: 'Delete',
+                          borderRadius: BorderRadius.zero,
+                        ),
+                      ],
+                    ),
+                    child: _ChatRow(
+                      tile: tile,
+                      onTap: () async {
+                        BackendChatService.setActiveChatId(tile.threadId);
+                        BackendChatService.clearThreadUnread(tile.threadId);
+                        unawaited(
+                          BackendMessagingSocket.connect().catchError((_) {}),
+                        );
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => MessagePageBackendApi(
+                              peerId: tile.threadId,
+                              peerName: tile.peerName,
+                              peerAvatarUrl: tile.avatarUrl,
+                              productContext: tile.product,
+                              peerMerchantId: tile.product?.merchantId,
+                              peerUserId: tile.peerUserId,
+                            ),
+                          ),
+                        );
+                        BackendChatService.setActiveChatId(null);
+                        BackendChatService.refreshThreads();
+                      },
+                    ),
+                  );
+                },
+              ),
             ),
           );
         },
+            ),
+          ),
+        ],
       ),
-      floatingActionButton: kDebugMode
-          ? FloatingActionButton(
-              backgroundColor: _brandOrange,
-              foregroundColor: Colors.white,
-              onPressed: () => _showTestMenu(context),
-              child: const Icon(Icons.chat_rounded),
-            )
-          : null,
+    );
+  }
+
+  Widget _buildWhatsAppSearch() {
+    return ColoredBox(
+      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
+        child: Container(
+          height: 38,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF0F2F5),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: TextField(
+            controller: _searchCtrl,
+            onChanged: (_) => setState(() {}),
+            style: const TextStyle(fontSize: 15, height: 1.2),
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Search',
+              hintStyle: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 15,
+              ),
+              prefixIcon: Icon(
+                Icons.search,
+                size: 22,
+                color: Colors.grey.shade600,
+              ),
+              suffixIcon: _searchCtrl.text.isNotEmpty
+                  ? IconButton(
+                      icon: Icon(
+                        Icons.close,
+                        size: 20,
+                        color: Colors.grey.shade600,
+                      ),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() {});
+                      },
+                    )
+                  : null,
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(vertical: 9),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
   PreferredSizeWidget _appBar() {
     return AppBar(
       backgroundColor: Colors.white,
-      elevation: 0.6,
+      surfaceTintColor: Colors.white,
+      elevation: 0,
+      scrolledUnderElevation: 0.5,
       titleSpacing: 16,
-      title: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 180),
-        child: _searching
-            ? Container(
-                key: const ValueKey('search'),
-                height: 40,
-                alignment: Alignment.center,
-                child: TextField(
-                  controller: _searchCtrl,
-                  autofocus: true,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: 'Search chats',
-                    isDense: true,
-                    filled: true,
-                    fillColor: const Color(0xFFF3F3F3),
-                    prefixIcon: const Icon(Icons.search_rounded),
-                    suffixIcon: IconButton(
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        setState(() {});
-                      },
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(999),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 10),
-                  ),
-                ),
-              )
-            : const Text(
-                'Messages',
-                key: ValueKey('title'),
-                style:
-                    TextStyle(fontWeight: FontWeight.w900, color: Colors.black),
-              ),
+      title: const Text(
+        'Messages',
+        style: TextStyle(
+          fontWeight: FontWeight.w800,
+          fontSize: 22,
+          color: _ink,
+          letterSpacing: -0.3,
+        ),
       ),
       actions: [
-        Padding(
-          padding: const EdgeInsets.only(right: 4),
-          child: Icon(
-            Icons.circle,
-            size: 10,
-            color: _wsConnected ? const Color(0xFF39C16C) : Colors.orange,
+        Tooltip(
+          message: _wsConnected ? 'Connected' : 'Reconnecting…',
+          child: Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Icon(
+              Icons.circle,
+              size: 9,
+              color: _wsConnected
+                  ? const Color(0xFF22C55E)
+                  : const Color(0xFFF59E0B),
+            ),
           ),
         ),
-        IconButton(
-          tooltip: _searching ? 'Close' : 'Search',
-          onPressed: () {
-            setState(() {
-              _searching = !_searching;
-              if (!_searching) _searchCtrl.clear();
-            });
-          },
-          icon: Icon(_searching ? Icons.close_rounded : Icons.search_rounded,
-              color: Colors.black87),
-        ),
-        const SizedBox(width: 6),
       ],
     );
   }
@@ -405,20 +473,100 @@ class _ChatListPageState extends State<ChatListPage> {
       );
     }
 
-    if (raw.contains('failed') || raw.contains('error')) {
-      return const _ChatUiError(
-        icon: Icons.error_outline_rounded,
-        title: 'Chats unavailable',
-        message: 'Something went wrong while loading chats. Please tap Retry.',
-      );
-    }
-
     return const _ChatUiError(
       icon: Icons.error_outline_rounded,
       title: 'Chats unavailable',
-      message: 'Something went wrong. Please tap Retry.',
+      message: 'Something went wrong while loading chats. Please tap Retry.',
     );
   }
+}
+
+class _ThreadTile {
+  final String threadId;
+  final String title;
+  final String peerName;
+  final String? peerLabel;
+  final String avatarUrl;
+  final String? productImageUrl;
+  final String preview;
+  final DateTime updatedAt;
+  final int unreadCount;
+  final ChatProductContext? product;
+  final String searchKey;
+  final bool isPinned;
+  final int? peerUserId;
+
+  const _ThreadTile({
+    required this.threadId,
+    required this.title,
+    required this.peerName,
+    required this.peerLabel,
+    required this.avatarUrl,
+    required this.productImageUrl,
+    required this.preview,
+    required this.updatedAt,
+    required this.unreadCount,
+    required this.product,
+    required this.searchKey,
+    this.isPinned = false,
+    this.peerUserId,
+  });
+
+  factory _ThreadTile.fromThread(
+    BackendChatThread t,
+    int me, {
+    bool isPinned = false,
+  }) {    final otherParticipant = t.participants.firstWhere(
+      (p) => p.id != me,
+      orElse: () => t.participants.isNotEmpty
+          ? t.participants.first
+          : ChatParticipant(id: 0, name: 'Contact', email: ''),
+    );
+
+    var peerName = otherParticipant.name.trim();
+    if (peerName.isEmpty || peerName.toLowerCase() == 'user') {
+      final email = otherParticipant.email.trim();
+      if (email.contains('@') && !email.startsWith('+firebase_')) {
+        peerName = email.split('@').first;
+      } else if (t.name != null && t.name!.trim().isNotEmpty) {
+        peerName = t.name!.trim();
+      }
+    }
+
+    final product = t.lastProductTag;
+    final previewRaw = (t.lastMessagePreview ?? '').trim();
+    final preview = previewRaw.isNotEmpty
+        ? previewRaw
+        : (product != null
+            ? 'Enquiry about ${product.name}'
+            : (t.type == 'direct' ? 'Tap to open chat' : (t.name ?? 'Group chat')));
+
+    final title = product?.name ?? (peerName.isEmpty ? 'Contact' : peerName);
+    final peerLabel = product != null
+        ? (peerName.isEmpty ? 'Seller' : peerName)
+        : null;
+
+    return _ThreadTile(
+      threadId: t.id,
+      title: title,
+      peerName: peerName.isEmpty ? 'Contact' : peerName,
+      peerLabel: peerLabel,
+      avatarUrl: otherParticipant.profilePicture ?? '',
+      productImageUrl: product?.image,
+      preview: preview,
+      updatedAt: t.updatedAt,
+      unreadCount: t.unreadCount,
+      product: product,
+      searchKey: [
+        title,
+        peerName,
+        peerLabel ?? '',
+        product?.name ?? '',
+        preview,
+      ].join(' ').toLowerCase(),
+      isPinned: isPinned,
+      peerUserId: otherParticipant.id > 0 ? otherParticipant.id : null,
+    );  }
 }
 
 String _fmtTime(DateTime dt) {
@@ -432,138 +580,145 @@ String _fmtTime(DateTime dt) {
     final ap = dt.hour >= 12 ? 'PM' : 'AM';
     return '$h:$m $ap';
   }
+  final yesterday = now.subtract(const Duration(days: 1));
+  if (dt.year == yesterday.year &&
+      dt.month == yesterday.month &&
+      dt.day == yesterday.day) {
+    return 'Yesterday';
+  }
+  if (dt.year == now.year) {
+    return '${dt.month}/${dt.day}';
+  }
   return '${dt.month}/${dt.day}/${dt.year % 100}';
 }
 
-class _AvatarCarousel extends StatefulWidget {
-  const _AvatarCarousel({required this.urls, required this.name});
-  final List<String> urls;
+class _ChatAvatar extends StatelessWidget {
+  const _ChatAvatar({
+    required this.name,
+    required this.imageUrl,
+    this.size = 52,
+  });
+
   final String name;
+  final String imageUrl;
+  final double size;
 
-  @override
-  State<_AvatarCarousel> createState() => _AvatarCarouselState();
-}
+  static const _palette = <Color>[
+    Color(0xFFFF8A00),
+    Color(0xFF2D9CDB),
+    Color(0xFF27AE60),
+    Color(0xFF9B51E0),
+    Color(0xFFEB5757),
+    Color(0xFF16284C),
+    Color(0xFF00B894),
+    Color(0xFF6C5CE7),
+  ];
 
-class _AvatarCarouselState extends State<_AvatarCarousel> {
-  late final PageController _pc;
-  Timer? _timer;
-  int _i = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _pc = PageController();
-
-    // ✅ auto-slide only when > 1 image
-    if (widget.urls.length > 1) {
-      _timer = Timer.periodic(const Duration(seconds: 3), (_) {
-        if (!mounted) return;
-        _i = (_i + 1) % widget.urls.length;
-        _pc.animateToPage(
-          _i,
-          duration: const Duration(milliseconds: 420),
-          curve: Curves.easeInOut,
-        );
-      });
+  static Color _colorFor(String seed) {
+    var hash = 0;
+    for (final c in seed.codeUnits) {
+      hash = c + ((hash << 5) - hash);
     }
+    return _palette[hash.abs() % _palette.length];
   }
 
-  @override
-  void didUpdateWidget(covariant _AvatarCarousel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    // restart timer if urls count changes
-    if (oldWidget.urls.length != widget.urls.length) {
-      _timer?.cancel();
-      _i = 0;
-      if (widget.urls.length > 1) {
-        _timer = Timer.periodic(const Duration(seconds: 3), (_) {
-          if (!mounted) return;
-          _i = (_i + 1) % widget.urls.length;
-          _pc.animateToPage(
-            _i,
-            duration: const Duration(milliseconds: 420),
-            curve: Curves.easeInOut,
-          );
-        });
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _pc.dispose();
-    super.dispose();
+  static String _letter(String n) {
+    final trimmed = n.trim();
+    if (trimmed.isEmpty) return '?';
+    return trimmed[0].toUpperCase();
   }
 
   @override
   Widget build(BuildContext context) {
-    final initials = _initials(widget.name);
+    final url = imageUrl.trim();
+    final letter = _letter(name);
+    final color = _colorFor(name.isEmpty ? 'contact' : name);
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        width: 48,
-        height: 48,
-        color: Colors.grey.shade200,
-        child: widget.urls.isEmpty
-            ? _fallback(initials)
-            : PageView.builder(
-                controller: _pc,
-                itemCount: widget.urls.length,
-                physics: const NeverScrollableScrollPhysics(), // auto only
-                itemBuilder: (_, idx) {
-                  final url = widget.urls[idx];
-                  return ResilientCachedNetworkImage(
-                    url: url,
-                    fit: BoxFit.cover,
-                    width: 48,
-                    height: 48,
-                  );
-                },
-              ),
+    if (url.isNotEmpty) {
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: ClipOval(
+          child: ResilientCachedNetworkImage(
+            url: url,
+            fit: BoxFit.cover,
+            width: size,
+            height: size,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          colors: [
+            color,
+            Color.lerp(color, Colors.black, 0.18)!,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.28),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        letter,
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+          fontSize: size * 0.38,
+          letterSpacing: -0.5,
+        ),
       ),
     );
   }
-
-  Widget _fallback(String initials) => Center(
-        child: Text(
-          initials,
-          style: const TextStyle(
-              fontWeight: FontWeight.w900, color: Colors.black87),
-        ),
-      );
-
-  String _initials(String n) {
-    final parts =
-        n.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-    if (parts.isEmpty) return 'C';
-    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
-    return (parts.first.substring(0, 1) + parts.last.substring(0, 1))
-        .toUpperCase();
-  }
 }
 
-class _UnreadPill extends StatelessWidget {
-  static const _brandOrange = Color(0xFFFF8A00);
+class _UnreadDot extends StatelessWidget {
+  const _UnreadDot({required this.count});
 
-  const _UnreadPill({required this.count});
   final int count;
 
   @override
   Widget build(BuildContext context) {
+    if (count <= 0) return const SizedBox.shrink();
     final label = count > 99 ? '99+' : '$count';
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: _brandOrange,
+        color: const Color(0xFFFF8A00),
         borderRadius: BorderRadius.circular(999),
       ),
+      alignment: Alignment.center,
       child: Text(
         label,
         style: const TextStyle(
-            color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12),
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+          fontSize: 11,
+        ),
       ),
     );
   }
@@ -588,30 +743,46 @@ class _EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 44, color: Colors.black54),
-            const SizedBox(height: 12),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F3F6),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Icon(icon, size: 30, color: const Color(0xFF6B7280)),
+            ),
+            const SizedBox(height: 16),
             Text(
               title,
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 17,
+                color: Color(0xFF101010),
+              ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text(
               subtitle,
-              style: const TextStyle(color: Colors.black54),
+              style: const TextStyle(color: Color(0xFF6B7280), height: 1.4),
               textAlign: TextAlign.center,
             ),
             if (onRetry != null) ...[
-              const SizedBox(height: 14),
+              const SizedBox(height: 18),
               FilledButton(
                 onPressed: onRetry,
                 style: FilledButton.styleFrom(
                   backgroundColor: _brandOrange,
                   foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
                 child: const Text('Retry'),
               ),
@@ -623,19 +794,24 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-/// ✅ Removes scrollbar + glow bars
 class _NoBarsScrollBehavior extends MaterialScrollBehavior {
   const _NoBarsScrollBehavior();
 
   @override
   Widget buildOverscrollIndicator(
-      BuildContext context, Widget child, ScrollableDetails details) {
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
     return child;
   }
 
   @override
   Widget buildScrollbar(
-      BuildContext context, Widget child, ScrollableDetails details) {
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
     return child;
   }
 }
@@ -644,54 +820,48 @@ class _ChatUiError {
   final IconData icon;
   final String title;
   final String message;
-  const _ChatUiError(
-      {required this.icon, required this.title, required this.message});
+  const _ChatUiError({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
 }
-
-// ─────────────────────────────────────────────────────────────
 
 class _ChatRow extends StatelessWidget {
   const _ChatRow({
-    required this.name,
-    required this.avatarUrls,
-    required this.lastText,
-    required this.updatedAt,
-    required this.unreadCount,
+    required this.tile,
     required this.onTap,
-    this.peerLabel,
-    this.productImageUrl,
   });
 
-  final String name;
-  final String? peerLabel;
-  final List<String> avatarUrls;
-  final String? productImageUrl;
-  final String lastText;
-  final DateTime updatedAt;
-  final int unreadCount;
+  final _ThreadTile tile;
   final VoidCallback onTap;
 
+  static const _ink = Color(0xFF101010);
+  static const _muted = Color(0xFF6B7280);
   static const _brandOrange = Color(0xFFFF8A00);
 
   @override
   Widget build(BuildContext context) {
-    final time = _fmtTime(updatedAt);
+    final unread = tile.unreadCount > 0;
+    final time = _fmtTime(tile.updatedAt);
     final hasProductImage =
-        productImageUrl != null && productImageUrl!.trim().isNotEmpty;
+        tile.productImageUrl != null && tile.productImageUrl!.trim().isNotEmpty;
 
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      elevation: 2,
-      shadowColor: Colors.black12,
+      color: unread
+          ? const Color(0xFFFFF9F2)
+          : (tile.isPinned ? const Color(0xFFFFFBF5) : Colors.white),
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              _AvatarCarousel(urls: avatarUrls, name: peerLabel ?? name),
+              _ChatAvatar(
+                name: tile.peerLabel ?? tile.title,
+                imageUrl: tile.avatarUrl,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -699,14 +869,23 @@ class _ChatRow extends StatelessWidget {
                   children: [
                     Row(
                       children: [
+                        if (tile.isPinned) ...[
+                          Icon(
+                            Icons.push_pin_rounded,
+                            size: 14,
+                            color: _brandOrange.withValues(alpha: 0.9),
+                          ),
+                          const SizedBox(width: 4),
+                        ],
                         Expanded(
                           child: Text(
-                            name,
-                            maxLines: 1,
+                            tile.title,                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 15.5,
+                            style: TextStyle(
+                              fontWeight: unread ? FontWeight.w800 : FontWeight.w700,
+                              fontSize: 16,
+                              color: _ink,
+                              letterSpacing: -0.2,
                             ),
                           ),
                         ),
@@ -715,23 +894,21 @@ class _ChatRow extends StatelessWidget {
                           time,
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.grey.shade600,
-                            fontWeight: unreadCount > 0
-                                ? FontWeight.w800
-                                : FontWeight.w500,
+                            color: unread ? _brandOrange : _muted,
+                            fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
                           ),
                         ),
                       ],
                     ),
-                    if (peerLabel != null) ...[
+                    if (tile.peerLabel != null) ...[
                       const SizedBox(height: 2),
                       Text(
-                        peerLabel!,
+                        tile.peerLabel!,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: Colors.grey.shade600,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: _muted,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -741,23 +918,20 @@ class _ChatRow extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            lastText,
+                            tile.preview,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 13,
-                              color: unreadCount > 0
-                                  ? Colors.black87
-                                  : Colors.grey.shade700,
-                              fontWeight: unreadCount > 0
-                                  ? FontWeight.w600
-                                  : FontWeight.w500,
+                              fontSize: 14,
+                              height: 1.2,
+                              color: unread ? _ink.withValues(alpha: 0.82) : _muted,
+                              fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
                             ),
                           ),
                         ),
-                        if (unreadCount > 0 && !hasProductImage) ...[
-                          const SizedBox(width: 10),
-                          _UnreadPill(count: unreadCount),
+                        if (unread && !hasProductImage) ...[
+                          const SizedBox(width: 8),
+                          _UnreadDot(count: tile.unreadCount),
                         ],
                       ],
                     ),
@@ -770,24 +944,24 @@ class _ChatRow extends StatelessWidget {
                   clipBehavior: Clip.none,
                   children: [
                     ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(10),
                       child: Container(
-                        width: 52,
-                        height: 52,
-                        color: Colors.grey.shade200,
+                        width: 48,
+                        height: 48,
+                        color: const Color(0xFFF1F3F6),
                         child: ResilientCachedNetworkImage(
-                          url: productImageUrl!,
+                          url: tile.productImageUrl!,
                           fit: BoxFit.cover,
-                          width: 52,
-                          height: 52,
+                          width: 48,
+                          height: 48,
                         ),
                       ),
                     ),
-                    if (unreadCount > 0)
+                    if (unread)
                       Positioned(
                         top: -4,
                         right: -4,
-                        child: _UnreadPill(count: unreadCount),
+                        child: _UnreadDot(count: tile.unreadCount),
                       ),
                   ],
                 ),

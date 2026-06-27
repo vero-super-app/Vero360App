@@ -1,12 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
+import 'package:vero360_app/GernalServices/notification_service.dart';
 class BackendChatThread {
   final String id;
   final String type; // 'direct' or 'group'
@@ -134,6 +139,17 @@ class BackendChatThread {
   }
 }
 
+/// Result of [BackendChatService.startMerchantChat] — chat thread + resolved seller id.
+class MerchantChatResult {
+  final BackendChatThread chat;
+  final int sellerId;
+
+  const MerchantChatResult({
+    required this.chat,
+    required this.sellerId,
+  });
+}
+
 class BackendChatMessage {
   final String id;
   final String chatId;
@@ -185,7 +201,16 @@ class BackendChatMessage {
           : null,
       attachments: json['attachments'] != null
           ? List<Map<String, dynamic>>.from(json['attachments'] as List)
-          : null,
+          : json['attachmentUrls'] is List
+              ? (json['attachmentUrls'] as List)
+                  .map(
+                    (u) => {
+                      'url': u.toString(),
+                      'type': json['type']?.toString() ?? 'image',
+                    },
+                  )
+                  .toList()
+              : null,
       tags: json['tags'] != null
           ? List<Map<String, dynamic>>.from(json['tags'] as List)
           : null,
@@ -248,6 +273,10 @@ class ChatParticipant {
 }
 
 class BackendChatService {
+  /// Legacy Firebase chat image prefix still accepted by some backends.
+  static const _legacyImgPrefix = 'img::';
+  static const _legacyAudPrefix = 'aud::';
+
   /// Uses ApiConfig for base URL (supports dart-define, ngrok, etc.)
   /// Builds: {ApiConfig.prod}/vero/api/v1
   static String get _baseUrl => '${ApiConfig.prod}/vero/api/v1';
@@ -271,6 +300,8 @@ class BackendChatService {
   static bool _wsConnected = false;
 
   /// Chat currently open in [MessagePageBackendApi] (suppresses unread bump).
+  static String? get activeChatId => _activeChatId;
+
   static void setActiveChatId(String? chatId) => _activeChatId = chatId;
 
   static void notifyWsConnected(bool connected) {
@@ -332,11 +363,77 @@ class BackendChatService {
     _cachedThreads.removeAt(idx);
     _cachedThreads.insert(0, updated);
     _emitCachedThreads();
-    if (myId != null) {
-      unawaited(BackendMessagingCache.upsertMessage(myId, message));
-      unawaited(
-        BackendMessagingCache.saveThreads(myId, _cachedThreads),
+    unawaited(BackendMessagingCache.upsertMessage(myId, message));
+    unawaited(
+      BackendMessagingCache.saveThreads(myId, _cachedThreads),
+    );
+    if (bumpUnread) {
+      unawaited(_notifyIncomingMessage(message, updated));
+    }
+  }
+
+  static Future<void> _notifyIncomingMessage(
+    BackendChatMessage message,
+    BackendChatThread thread,
+  ) async {
+    try {
+      final myId = _userId;
+      if (myId == null) return;
+      if (message.isMine(myId)) return;
+      if (message.chatId == _activeChatId) return;
+
+      final sender = thread.participants.firstWhere(
+        (p) => p.id != myId,
+        orElse: () => thread.participants.isNotEmpty
+            ? thread.participants.first
+            : ChatParticipant(id: 0, name: 'Someone', email: ''),
       );
+      var senderName = sender.name.trim();
+      if (senderName.isEmpty || senderName.toLowerCase() == 'user') {
+        final email = sender.email.trim();
+        if (email.contains('@') && !email.startsWith('+firebase_')) {
+          senderName = email.split('@').first;
+        } else {
+          senderName = 'New message';
+        }
+      }
+
+      final raw = (message.content ?? '').trim();
+      String body;
+      if (raw.isEmpty) {
+        body = 'Sent you a message';
+      } else if (message.type == 'audio' || raw.startsWith(_legacyAudPrefix)) {
+        body = '🎤 Voice message';
+      } else if (message.type == 'image' || raw.startsWith(_legacyImgPrefix)) {
+        body = '📷 Photo';
+      } else {
+        body = raw.length > 100 ? '${raw.substring(0, 100)}…' : raw;
+      }
+
+      await NotificationService.instance.showNewChatMessageNotification(
+        senderName: senderName,
+        body: body,
+        chatId: message.chatId,
+      );
+    } catch (_) {}
+  }
+
+  /// Total unread messages across all chat threads.
+  static int get totalUnreadMessageCount =>
+      _cachedThreads.fold<int>(0, (sum, t) => sum + t.unreadCount);
+
+  /// Emits whenever thread unread totals change.
+  static Stream<int> watchTotalUnreadCount() async* {
+    if (FirebaseAuth.instance.currentUser == null) {
+      yield 0;
+      return;
+    }
+    try {
+      await _ensureThreadsWatchInitialized();
+      yield totalUnreadMessageCount;
+      yield* _threadsLiveController.stream.map((_) => totalUnreadMessageCount);
+    } catch (_) {
+      yield 0;
     }
   }
 
@@ -614,7 +711,7 @@ class BackendChatService {
   }
 
   /// Resolve seller and create/open a direct chat (bounded time).
-  static Future<BackendChatThread> startMerchantChat({
+  static Future<MerchantChatResult> startMerchantChat({
     int? sqlItemId,
     int? ownerId,
     String? sellerUserId,
@@ -642,12 +739,13 @@ class BackendChatService {
       throw Exception('This is your own listing');
     }
 
-    return ensureChat(peerUserId: sellerId).timeout(
+    final chat = await ensureChat(peerUserId: sellerId).timeout(
       const Duration(seconds: 12),
       onTimeout: () => throw Exception(
         'Chat server is not responding. Check your connection and try again.',
       ),
     );
+    return MerchantChatResult(chat: chat, sellerId: sellerId);
   }
 
   static bool _looksLikeFirebaseUid(String value) {
@@ -750,6 +848,46 @@ class BackendChatService {
     return null;
   }
 
+  /// Resolve a backend user's Firebase UID (used for merchant shop pages).
+  static Future<String?> getFirebaseUidByUserId(
+    int userId, {
+    bool quiet = false,
+  }) async {
+    if (userId <= 0) return null;
+    await ensureAuth();
+
+    try {
+      final response = await http
+          .get(
+            ApiConfig.endpoint('/users/$userId'),
+            headers: {'Authorization': _authHeader},
+          )
+          .timeout(_lookupTimeout);
+
+      if (response.statusCode != 200) return null;
+
+      final json = jsonDecode(response.body);
+      final data = json is Map<String, dynamic>
+          ? (json['data'] is Map<String, dynamic>
+              ? json['data'] as Map<String, dynamic>
+              : json)
+          : null;
+      if (data == null) return null;
+
+      for (final key in ['firebaseUid', 'firebase_uid', 'uid']) {
+        final raw = data[key]?.toString().trim();
+        if (raw != null && raw.isNotEmpty && _looksLikeFirebaseUid(raw)) {
+          return raw;
+        }
+      }
+    } catch (e) {
+      if (!quiet) {
+        print('[BackendChatService] Error fetching Firebase UID for user $userId: $e');
+      }
+    }
+    return null;
+  }
+
   static String get _authHeader => 'Bearer $_authToken';
 
   /// Get user's chat threads
@@ -844,14 +982,19 @@ class BackendChatService {
         final messages = data
             .map((m) => BackendChatMessage.fromJson(m as Map<String, dynamic>))
             .toList();
+        final visible = BackendMessagingCache.filterAfterClear(
+          _userId,
+          chatId,
+          messages,
+        );
         if (_userId != null && page == 1) {
           await BackendMessagingCache.saveMessages(
             _userId!,
             chatId,
-            messages,
+            visible,
           );
         }
-        return messages;
+        return visible;
       } else {
         throw Exception('Failed to fetch messages: ${response.statusCode}');
       }
@@ -871,6 +1014,7 @@ class BackendChatService {
     required String content,
     String type = 'text',
     List<Map<String, dynamic>>? tags,
+    List<Map<String, dynamic>>? attachments,
     Map<String, dynamic>? metadata,
     String? clientMessageId,
   }) async {
@@ -882,6 +1026,9 @@ class BackendChatService {
         'type': type,
       };
       if (tags != null && tags.isNotEmpty) payload['tags'] = tags;
+      if (attachments != null && attachments.isNotEmpty) {
+        payload['attachments'] = attachments;
+      }
       if (metadata != null && metadata.isNotEmpty) payload['metadata'] = metadata;
       if (clientMessageId != null && clientMessageId.isNotEmpty) {
         payload['clientMessageId'] = clientMessageId;
@@ -896,7 +1043,7 @@ class BackendChatService {
             },
             body: jsonEncode(payload),
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 201) {
         final msg = BackendChatMessage.fromJson(
@@ -908,12 +1055,262 @@ class BackendChatService {
         refreshThreads();
         return msg;
       } else {
-        throw Exception('Failed to send message: ${response.statusCode}');
+        if (kDebugMode) {
+          print(
+            '[BackendChatService] sendMessage ${response.statusCode}: ${response.body}',
+          );
+        }
+        throw Exception(
+          'Failed to send message: ${response.statusCode} ${response.body}',
+        );
       }
     } catch (e) {
       print('[BackendChatService] Error sending message: $e');
       rethrow;
     }
+  }
+
+  /// Upload a chat image/file to the backend CDN.
+  static Future<String> uploadChatAttachment({
+    required Uint8List bytes,
+    required String filename,
+    String? mimeType,
+  }) async {
+    await ensureAuth();
+    final uri = ApiConfig.endpoint('/uploads');
+    final detectedMime =
+        mimeType ?? lookupMimeType(filename, headerBytes: bytes) ?? 'image/jpeg';
+    final parts = detectedMime.split('/');
+    final contentType = parts.length == 2
+        ? MediaType(parts[0], parts[1])
+        : MediaType('image', 'jpeg');
+
+    final req = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = _authHeader
+      ..headers['Accept'] = 'application/json'
+      ..files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: filename.isNotEmpty ? filename : 'chat.jpg',
+          contentType: contentType,
+        ),
+      );
+
+    final streamed = await req.send().timeout(const Duration(seconds: 30));
+    final resp = await http.Response.fromStream(streamed);
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      if (kDebugMode) {
+        print(
+          '[BackendChatService] upload failed ${resp.statusCode}: ${resp.body}',
+        );
+      }
+      throw Exception('Upload failed (${resp.statusCode})');
+    }
+    final body = jsonDecode(resp.body);
+    final rawUrl = _extractUploadUrl(body);
+    if (rawUrl.isEmpty) {
+      throw Exception('Upload succeeded but no URL was returned');
+    }
+    return _normalizeMediaUrl(rawUrl);
+  }
+
+  static String _extractUploadUrl(dynamic body) {
+    if (body is! Map) return '';
+    final direct = body['url']?.toString().trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+    final data = body['data'];
+    if (data is Map) {
+      final nested = data['url']?.toString().trim();
+      if (nested != null && nested.isNotEmpty) return nested;
+    }
+    return '';
+  }
+
+  static String _normalizeMediaUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    final root = ApiConfig.prod.replaceAll(RegExp(r'/+$'), '');
+    if (trimmed.startsWith('/')) return '$root$trimmed';
+    return '$root/$trimmed';
+  }
+
+  /// Send an image message, trying common backend payload shapes.
+  static Future<BackendChatMessage> sendImageMessage({
+    required String chatId,
+    required String imageUrl,
+    String caption = '',
+    String? clientMessageId,
+    String? mimeType,
+  }) async {
+    await ensureAuth();
+
+    final trimmedCaption = caption.trim();
+    final mime = mimeType ?? 'image/jpeg';
+
+    final attempts = <Map<String, dynamic>>[
+      {
+        'content': trimmedCaption.isNotEmpty
+            ? '$_legacyImgPrefix$imageUrl\n$trimmedCaption'
+            : '$_legacyImgPrefix$imageUrl',
+        'type': 'text',
+      },
+      {
+        'content': trimmedCaption.isNotEmpty ? trimmedCaption : imageUrl,
+        'type': 'image',
+        'attachmentUrls': [imageUrl],
+      },
+      {
+        'content': imageUrl,
+        'type': 'image',
+        'attachments': [
+          {
+            'url': imageUrl,
+            'type': 'image',
+            'mimeType': mime,
+          },
+        ],
+      },
+    ];
+
+    Object? lastError;
+    for (final attempt in attempts) {
+      try {
+        final payload = Map<String, dynamic>.from(attempt);
+        if (clientMessageId != null && clientMessageId.isNotEmpty) {
+          payload['clientMessageId'] = clientMessageId;
+        }
+
+        final response = await http
+            .post(
+              Uri.parse('$_baseUrl/chats/$chatId/messages'),
+              headers: {
+                'Authorization': _authHeader,
+                'Content-Type': 'application/json',
+              },
+              body: jsonEncode(payload),
+            )
+            .timeout(const Duration(seconds: 15));
+
+        if (response.statusCode == 201) {
+          final body = jsonDecode(response.body);
+          final raw = body is Map<String, dynamic>
+              ? body
+              : (body is Map && body['data'] is Map)
+                  ? Map<String, dynamic>.from(body['data'] as Map)
+                  : body;
+          final msg = BackendChatMessage.fromJson(
+            Map<String, dynamic>.from(raw as Map),
+          );
+          if (_userId != null) {
+            unawaited(BackendMessagingCache.upsertMessage(_userId!, msg));
+          }
+          refreshThreads();
+          return msg;
+        }
+
+        if (kDebugMode) {
+          print(
+            '[BackendChatService] sendImage attempt ${response.statusCode}: ${response.body}',
+          );
+        }
+        lastError = 'HTTP ${response.statusCode}: ${response.body}';
+      } catch (e) {
+        lastError = e;
+      }
+    }
+
+    throw Exception('Failed to send image: $lastError');
+  }
+
+  /// Send a voice note message, trying common backend payload shapes.
+  static Future<BackendChatMessage> sendAudioMessage({
+    required String chatId,
+    required String audioUrl,
+    required int durationMs,
+    String? clientMessageId,
+    String? mimeType,
+  }) async {
+    await ensureAuth();
+
+    final mime = mimeType ?? 'audio/mp4';
+    final duration = durationMs.clamp(0, 600000);
+
+    final attempts = <Map<String, dynamic>>[
+      {
+        'content': '$_legacyAudPrefix$audioUrl|$duration',
+        'type': 'text',
+      },
+      {
+        'content': audioUrl,
+        'type': 'audio',
+        'attachmentUrls': [audioUrl],
+        'metadata': {'durationMs': duration},
+      },
+      {
+        'content': audioUrl,
+        'type': 'audio',
+        'attachments': [
+          {
+            'url': audioUrl,
+            'type': 'audio',
+            'mimeType': mime,
+            'durationMs': duration,
+          },
+        ],
+      },
+    ];
+
+    Object? lastError;
+    for (final attempt in attempts) {
+      try {
+        final payload = Map<String, dynamic>.from(attempt);
+        if (clientMessageId != null && clientMessageId.isNotEmpty) {
+          payload['clientMessageId'] = clientMessageId;
+        }
+
+        final response = await http
+            .post(
+              Uri.parse('$_baseUrl/chats/$chatId/messages'),
+              headers: {
+                'Authorization': _authHeader,
+                'Content-Type': 'application/json',
+              },
+              body: jsonEncode(payload),
+            )
+            .timeout(const Duration(seconds: 20));
+
+        if (response.statusCode == 201) {
+          final body = jsonDecode(response.body);
+          final raw = body is Map<String, dynamic>
+              ? body
+              : (body is Map && body['data'] is Map)
+                  ? Map<String, dynamic>.from(body['data'] as Map)
+                  : body;
+          final msg = BackendChatMessage.fromJson(
+            Map<String, dynamic>.from(raw as Map),
+          );
+          if (_userId != null) {
+            unawaited(BackendMessagingCache.upsertMessage(_userId!, msg));
+          }
+          refreshThreads();
+          return msg;
+        }
+
+        if (kDebugMode) {
+          print(
+            '[BackendChatService] sendAudio attempt ${response.statusCode}: ${response.body}',
+          );
+        }
+        lastError = 'HTTP ${response.statusCode}: ${response.body}';
+      } catch (e) {
+        lastError = e;
+      }
+    }
+
+    throw Exception('Failed to send voice note: $lastError');
   }
 
   /// Edit a message
@@ -937,8 +1334,12 @@ class BackendChatService {
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        return BackendChatMessage.fromJson(
+        final msg = BackendChatMessage.fromJson(
             jsonDecode(response.body) as Map<String, dynamic>);
+        if (_userId != null) {
+          unawaited(BackendMessagingCache.upsertMessage(_userId!, msg));
+        }
+        return msg;
       } else {
         throw Exception('Failed to edit message: ${response.statusCode}');
       }
@@ -946,6 +1347,80 @@ class BackendChatService {
       print('[BackendChatService] Error editing message: $e');
       rethrow;
     }
+  }
+
+  /// Clear all messages in a chat (server attempt + local cache).
+  static Future<void> clearChatHistory(String chatId) async {
+    await ensureAuth();
+    final userId = _userId;
+
+    try {
+      final response = await http.delete(
+        Uri.parse('$_baseUrl/chats/$chatId/messages'),
+        headers: {'Authorization': _authHeader},
+      ).timeout(const Duration(seconds: 15));
+      if (kDebugMode &&
+          response.statusCode != 200 &&
+          response.statusCode != 204 &&
+          response.statusCode != 404) {
+        print(
+          '[BackendChatService] clearChatHistory: ${response.statusCode} ${response.body}',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[BackendChatService] clearChatHistory network: $e');
+      }
+    }
+
+    if (userId != null) {
+      await BackendMessagingCache.markChatCleared(userId, chatId);
+    }
+
+    final idx = _cachedThreads.indexWhere((t) => t.id == chatId);
+    if (idx >= 0) {
+      _cachedThreads[idx] = _cachedThreads[idx].copyWith(
+        lastMessagePreview: null,
+        unreadCount: 0,
+      );
+      _emitCachedThreads();
+    }
+  }
+
+  /// Remove a chat from the local list and try to delete on the server.
+  static Future<void> deleteChat(String chatId) async {
+    await ensureAuth();
+
+    try {
+      final response = await http.delete(
+        Uri.parse('$_baseUrl/chats/$chatId'),
+        headers: {'Authorization': _authHeader},
+      ).timeout(const Duration(seconds: 10));
+      if (kDebugMode &&
+          response.statusCode != 200 &&
+          response.statusCode != 204) {
+        print(
+          '[BackendChatService] deleteChat: ${response.statusCode} ${response.body}',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) print('[BackendChatService] deleteChat network: $e');
+    }
+
+    removeThreadLocally(chatId);
+  }
+
+  /// Drop a thread from memory and disk cache without calling the API.
+  static void removeThreadLocally(String chatId) {
+    _cachedThreads.removeWhere((t) => t.id == chatId);
+    _emitCachedThreads();
+    final userId = _userId;
+    if (userId == null) return;
+    final threads = List<BackendChatThread>.from(
+      BackendMessagingCache.peekThreads(userId),
+    )..removeWhere((t) => t.id == chatId);
+    unawaited(BackendMessagingCache.saveThreads(userId, threads));
+    unawaited(BackendMessagingCache.markChatCleared(userId, chatId));
   }
 
   /// Delete a message
@@ -963,6 +1438,16 @@ class BackendChatService {
 
       if (response.statusCode != 200) {
         throw Exception('Failed to delete message: ${response.statusCode}');
+      }
+      final userId = _userId;
+      if (userId != null) {
+        unawaited(
+          BackendMessagingCache.removeMessageFromCache(
+            userId,
+            chatId,
+            messageId,
+          ),
+        );
       }
     } catch (e) {
       print('[BackendChatService] Error deleting message: $e');

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -7,7 +8,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
-import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
@@ -17,10 +17,14 @@ import '../Marketplace/presentation/pages/main_marketPlace.dart';
 import '../Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 
 // Merchant dashboards
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
@@ -91,6 +95,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     try {
       await _checkUserRoleAndSetup();
       await _refreshAuthState();
+      await _bootstrapMessaging();
     } catch (e, st) {
       assert(() { debugPrint('BottomNavbar._initialize: $e\n$st'); return true; }());
     } finally {
@@ -115,6 +120,18 @@ class _BottomnavbarState extends State<Bottomnavbar>
       setState(() => _selectedIndex = 0);
     }
     if (loggedIn) await _fetchAndUpdateRoleFromServer();
+    if (loggedIn) unawaited(_bootstrapMessaging());
+  }
+
+  /// Keep WebSocket + thread cache warm so unread badges and push paths work.
+  Future<void> _bootstrapMessaging() async {
+    if (!_isLoggedIn) return;
+    try {
+      await BackendMessagingCache.initialize();
+      await BackendChatService.ensureAuth();
+      BackendChatService.refreshThreads();
+      await BackendMessagingSocket.connect();
+    } catch (_) {}
   }
 
   Future<void> _fetchAndUpdateRoleFromServer() async {
@@ -149,16 +166,19 @@ class _BottomnavbarState extends State<Bottomnavbar>
       final isMerchant = RoleHelper.isMerchant(user);
       final isDriver = !isMerchant && RoleHelper.isDriver(user);
       var newRole = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
-      // Keep local driver/merchant when backend still reports customer (PUT may have failed).
-      if (newRole == 'customer' &&
-          cachedRole.isNotEmpty &&
-          cachedRole != 'customer') {
-        newRole = cachedRole;
+      // Keep merchant when backend still reports customer (PUT may have failed).
+      if (newRole == 'customer' && cachedRole == 'merchant') {
+        newRole = 'merchant';
+      }
+      // Do not keep stale "driver" when server says customer — a driver DB row ≠ driver session.
+      if (newRole == 'customer' && cachedRole == 'driver') {
+        newRole = 'customer';
       }
       if (cachedRole != newRole) {
         await prefs.setString('user_role', newRole);
         await prefs.setString('role', newRole);
       }
+      await loadDriverStatusFromPrefs();
       if (mounted && (_isMerchant != isMerchant || _isDriver != isDriver)) { await _checkUserRoleAndSetup(); if (mounted) setState(() {}); }
     } catch (_) {}
   }
@@ -403,11 +423,18 @@ class _BottomnavbarState extends State<Bottomnavbar>
     return Scaffold(
       extendBody: true,                    // body goes under the nav for depth
       body: _buildBody(),
-      bottomNavigationBar: VeroMainNavigationBar(
-        selectedIndex: _selectedIndex,
-        onTap: _onItemTapped,
-        isDark: isDark,
-        isMerchant: _isMerchant,
+      bottomNavigationBar: StreamBuilder<int>(
+        stream: BackendChatService.watchTotalUnreadCount(),
+        initialData: BackendChatService.totalUnreadMessageCount,
+        builder: (context, snap) {
+          return VeroMainNavigationBar(
+            selectedIndex: _selectedIndex,
+            onTap: _onItemTapped,
+            isDark: isDark,
+            isMerchant: _isMerchant,
+            messagesBadgeCount: snap.data ?? 0,
+          );
+        },
       ),
     );
   }
@@ -456,6 +483,7 @@ class VeroMainNavigationBar extends StatelessWidget {
     required this.onTap,
     required this.isDark,
     required this.isMerchant,
+    this.messagesBadgeCount = 0,
   });
 
   /// Highlighted tab; pass `null` when no tab applies (e.g. standalone Food screen).
@@ -463,6 +491,7 @@ class VeroMainNavigationBar extends StatelessWidget {
   final ValueChanged<int> onTap;
   final bool isDark;
   final bool isMerchant;
+  final int messagesBadgeCount;
 
   @override
   Widget build(BuildContext context) {
@@ -510,6 +539,7 @@ class VeroMainNavigationBar extends StatelessWidget {
                         selected:
                             selectedIndex != null && i == selectedIndex,
                         isDark: isDark,
+                        badgeCount: i == 2 ? messagesBadgeCount : 0,
                         onTap: () => onTap(i),
                       ),
                     ),
@@ -532,12 +562,14 @@ class _VeroNavButton extends StatefulWidget {
     required this.selected,
     required this.isDark,
     required this.onTap,
+    this.badgeCount = 0,
   });
 
   final VeroNavItemData item;
   final bool selected;
   final bool isDark;
   final VoidCallback onTap;
+  final int badgeCount;
 
   @override
   State<_VeroNavButton> createState() => _VeroNavButtonState();
@@ -656,14 +688,48 @@ class _VeroNavButtonState extends State<_VeroNavButton>
 
                 // ── ICON + LABEL STACK ──
                 Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  // Icon
-                  Transform.translate(
-                    offset: Offset(0, _iconShift.value),
-                    child: Icon(
-                      widget.item.icon,
-                      size: 24,
-                      color: widget.selected ? iconColor : unselIconColor,
-                    ),
+                  // Icon + optional unread badge
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Transform.translate(
+                        offset: Offset(0, _iconShift.value),
+                        child: Icon(
+                          widget.item.icon,
+                          size: 24,
+                          color: widget.selected ? iconColor : unselIconColor,
+                        ),
+                      ),
+                      if (widget.badgeCount > 0)
+                        Positioned(
+                          right: -8,
+                          top: -4 + _iconShift.value,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 2,
+                            ),
+                            constraints: const BoxConstraints(minWidth: 18),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEF4444),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.white, width: 1.5),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              widget.badgeCount > 99
+                                  ? '99+'
+                                  : '${widget.badgeCount}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                height: 1.1,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
 
                   // Label (slides up + fades in when selected)

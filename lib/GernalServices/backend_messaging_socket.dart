@@ -83,12 +83,15 @@ class BackendMessagingSocket {
   }
 
   static BackendChatMessage _toBackendMessage(ws.Message msg) {
+    final type = (msg.attachments != null && msg.attachments!.isNotEmpty)
+        ? (msg.attachments!.first['type']?.toString() ?? 'text')
+        : 'text';
     return BackendChatMessage(
       id: msg.id,
       chatId: msg.chatId,
       senderId: msg.senderId,
       content: msg.content,
-      type: 'text',
+      type: type,
       status: msg.status.name,
       createdAt: msg.createdAt,
       tags: msg.tags,

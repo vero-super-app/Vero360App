@@ -16,6 +16,8 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
+import 'package:vero360_app/GernalServices/chat_notification_service.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
@@ -37,6 +39,7 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _partyAlertSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _chatAlertSub;
 
   static const AndroidNotificationChannel _highPriorityChannel =
       AndroidNotificationChannel(
@@ -166,15 +169,18 @@ class NotificationService {
         await registerTokenWithBackend();
         await NotificationStore.instance.ensureLoaded();
         _syncOrderPartyAlertListener(user);
+        _syncChatAlertListener(user);
       } else {
         // Ensure notifications from previous account do not remain visible.
         await NotificationStore.instance.clearAll();
         _syncOrderPartyAlertListener(null);
+        _syncChatAlertListener(null);
       }
     });
 
     await NotificationStore.instance.ensureLoaded();
     _syncOrderPartyAlertListener(FirebaseAuth.instance.currentUser);
+    _syncChatAlertListener(FirebaseAuth.instance.currentUser);
   }
 
   /// Listens for [OrderPartyNotificationService] docs so buyers/merchants get
@@ -217,6 +223,57 @@ class NotificationService {
         } catch (e) {
           if (kDebugMode) {
             debugPrint('[NotificationService] party alert consume failed: $e');
+          }
+        }
+      }
+    });
+  }
+
+  /// Incoming chat messages published by [ChatNotificationService] for this user.
+  void _syncChatAlertListener(User? user) {
+    _chatAlertSub?.cancel();
+    _chatAlertSub = null;
+    if (user == null) return;
+
+    _chatAlertSub = FirebaseFirestore.instance
+        .collection(ChatNotificationService.collectionName)
+        .where('toUid', isEqualTo: user.uid)
+        .where('consumed', isEqualTo: false)
+        .snapshots()
+        .listen((snap) async {
+      for (final change in snap.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final d = change.doc.data();
+        if (d == null) continue;
+
+        final fromUid = (d['fromUid'] ?? '').toString();
+        if (fromUid == user.uid) continue;
+
+        final title = (d['title'] ?? 'New message').toString();
+        final body = (d['body'] ?? '').toString();
+        final payload = d['payload'];
+        final chatId = payload is Map
+            ? (payload['chatId'] ?? '').toString()
+            : '';
+
+        if (chatId.isNotEmpty &&
+            BackendChatService.activeChatId == chatId) {
+          try {
+            await change.doc.reference.update({'consumed': true});
+          } catch (_) {}
+          continue;
+        }
+
+        await showNewChatMessageNotification(
+          senderName: title,
+          body: body.isEmpty ? 'Sent you a message' : body,
+          chatId: chatId.isEmpty ? change.doc.id : chatId,
+        );
+        try {
+          await change.doc.reference.update({'consumed': true});
+        } catch (e) {
+          if (kDebugMode) {
+            debugPrint('[NotificationService] chat alert consume failed: $e');
           }
         }
       }
@@ -548,6 +605,35 @@ class NotificationService {
   /// Push / manual payloads can include `badgeRoute` for quick-action badges, e.g.
   /// `quick_my_orders`, `quick_shipped`, `quick_received`, `quick_refund`, `quick_promotions`,
   /// `quick_post_arrival` (see [NotificationStore] constants).
+
+  /// Push / in-app alert when a new chat message arrives (WebSocket path).
+  Future<void> showNewChatMessageNotification({
+    required String senderName,
+    required String body,
+    required String chatId,
+  }) async {
+    BackendChatService.refreshThreads();
+    final payload = jsonEncode({
+      'type': 'new_message',
+      'chatId': chatId,
+    });
+    final id = 'chat_${chatId}_${DateTime.now().millisecondsSinceEpoch}';
+    await NotificationStore.instance.addNotification(
+      id: id,
+      title: senderName,
+      body: body,
+      payload: {
+        'type': 'new_message',
+        'chatId': chatId,
+      },
+    );
+    await _showLocalNotification(
+      id: chatId.hashCode.abs(),
+      title: senderName,
+      body: body,
+      payload: payload,
+    );
+  }
 
   /// Show a local notification manually. Set [interactive] true to show Reply + Like actions.
   Future<void> showManualNotification({

@@ -2719,14 +2719,31 @@ class PolicyPage extends StatelessWidget {
                   style: TextStyle(height: 1.35),
                 ),
                 SizedBox(height: 10),
-                Text(
-                  '• Use the app in a lawful and responsible manner.\n'
-                  '• Do not upload or share illegal, harmful, or misleading content.\n'
-                  '• Respect other users, merchants, and service providers.\n'
-                  '• The system holds Money untill both parties are satisified with the business.\n'
-                  '• Merchants are responsible for the accuracy of their products and services.\n'
-                  '• Vero360 acts as a technology platform and is not the direct provider of services.\n',
-                  style: TextStyle(height: 1.35),
+                Text.rich(
+                  TextSpan(
+                    style: TextStyle(height: 1.35),
+                    children: [
+                      TextSpan(
+                        text:
+                            '• Use the app in a lawful and responsible manner.\n'
+                            '• Do not upload or share illegal, harmful, or misleading content.\n'
+                            '• Respect other users, merchants, and service providers.\n',
+                      ),
+                      TextSpan(
+                        text:
+                            '• The system holds Money untill both parties are satisified with the business.\n',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red,
+                        ),
+                      ),
+                      TextSpan(
+                        text:
+                            '• Merchants are responsible for the accuracy of their products and services.\n'
+                            '• Vero360 acts as a technology platform and is not the direct provider of services.\n',
+                      ),
+                    ],
+                  ),
                 ),
                 SizedBox(height: 8),
                 Text(
@@ -2774,7 +2791,7 @@ class PolicyPage extends StatelessWidget {
 
                 // ================= FOOTER =================
                 Text(
-                  'Last updated: June 2026',
+                  'Last updated: July 2026',
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.black54,

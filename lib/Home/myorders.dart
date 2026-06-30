@@ -218,7 +218,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     } catch (_) {}
   }
 
-  /// Loads escrow state, repairs delivery timestamps, auto-releases after 5 days.
+  /// Loads escrow state, repairs delivery timestamps, auto-releases after escrow window.
   Future<void> _hydrateEscrow(List<OrderItem> orders) async {
     if (orders.isEmpty) return;
     try {
@@ -412,9 +412,12 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
               ),
             ),
           ] else if (isMerchantParty)
-            const Text(
-              'Waiting for the buyer to confirm receipt so your payout can be released.',
-              style: TextStyle(
+            Text(
+              esc.releaseDueAt != null
+                  ? 'Waiting for buyer confirmation. If they don’t confirm, funds release on '
+                      '${_date.format(esc.releaseDueAt!.toLocal())}.'
+                  : 'Waiting for the buyer to confirm receipt so your payout can be released.',
+              style: const TextStyle(
                 fontSize: 13,
                 color: Color(0xFF6B778C),
                 height: 1.35,
@@ -1099,22 +1102,22 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
           final items = byStatus
               .where((o) => _orderMatchesSearch(o, _searchQuery))
               .toList();
+          items.sort(_compareOrdersNewestFirst);
           final focusId = _focusOrderId;
           final focusNo = _focusOrderNumber;
           if ((focusId != null && focusId.isNotEmpty) ||
               (focusNo != null && focusNo.isNotEmpty)) {
-            items.sort((a, b) {
-              final aHit = (focusId != null && a.id == focusId) ||
+            final focusIdx = items.indexWhere(
+              (o) =>
+                  (focusId != null && focusId.isNotEmpty && o.id == focusId) ||
                   (focusNo != null &&
                       focusNo.isNotEmpty &&
-                      a.orderNumber == focusNo);
-              final bHit = (focusId != null && b.id == focusId) ||
-                  (focusNo != null &&
-                      focusNo.isNotEmpty &&
-                      b.orderNumber == focusNo);
-              if (aHit == bHit) return 0;
-              return aHit ? -1 : 1;
-            });
+                      o.orderNumber == focusNo),
+            );
+            if (focusIdx > 0) {
+              final focused = items.removeAt(focusIdx);
+              items.insert(0, focused);
+            }
           }
           if (items.isEmpty) {
             return ListView(
@@ -1153,6 +1156,17 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     _searchController.dispose();
     _tab.dispose();
     super.dispose();
+  }
+
+  int _compareOrdersNewestFirst(OrderItem a, OrderItem b) {
+    final ad = a.orderDate;
+    final bd = b.orderDate;
+    if (ad == null && bd == null) return b.id.compareTo(a.id);
+    if (ad == null) return 1;
+    if (bd == null) return -1;
+    final cmp = bd.compareTo(ad);
+    if (cmp != 0) return cmp;
+    return b.id.compareTo(a.id);
   }
 
   bool _orderMatchesSearch(OrderItem o, String q) {

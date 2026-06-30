@@ -1,13 +1,13 @@
 // lib/Pages/promotions_crud_page.dart
 import 'dart:io' show File;
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
-import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/promotion_service.dart';
-import '../../../../utils/toasthelper.dart';
+import 'package:vero360_app/features/Promotions/promotion_service.dart';
+import '../../utils/toasthelper.dart';
 
 class PromotionsCrudPage extends StatefulWidget {
   const PromotionsCrudPage({super.key});
@@ -85,7 +85,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
     );
     if (x != null) {
       _picked = x;
-      _pickedBytes = kIsWeb ? await x.readAsBytes() : null;
+      _pickedBytes = await x.readAsBytes();
       setState(() {});
     }
   }
@@ -98,7 +98,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
     );
     if (x != null) {
       _picked = x;
-      _pickedBytes = kIsWeb ? await x.readAsBytes() : null;
+      _pickedBytes = await x.readAsBytes();
       setState(() {});
     }
   }
@@ -115,15 +115,12 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
     setState(() => _submitting = true);
     try {
       String? imageUrl;
-      if (_picked != null && !kIsWeb) {
-        imageUrl = await svc.uploadImageFile(File(_picked!.path));
-      } else if (_picked != null && kIsWeb) {
-        // Optional: implement web upload with MultipartFile.fromBytes
-        ToastHelper.showCustomToast(
-          context,
-          'Web upload not implemented in this snippet',
-          isSuccess: false,
-          errorMessage: '',
+      if (_pickedBytes != null && _picked != null) {
+        final filename =
+            _picked!.name.isNotEmpty ? _picked!.name : 'promo.jpg';
+        imageUrl = await svc.uploadImageBytes(
+          _pickedBytes!,
+          filename: filename,
         );
       }
 
@@ -606,18 +603,20 @@ class _FullBleedPicker extends StatelessWidget {
     Widget content;
     if (has) {
       // Always cover into a fixed aspect, no letterboxing
-      if (kIsWeb && pickedBytes != null) {
+      if (pickedBytes != null) {
         content = Image.memory(
           pickedBytes!,
           fit: BoxFit.cover,
           gaplessPlayback: true,
         );
-      } else {
+      } else if (!kIsWeb) {
         content = Image.file(
           File(picked!.path),
           fit: BoxFit.cover,
           gaplessPlayback: true,
         );
+      } else {
+        content = const _PlaceholderCover();
       }
     } else {
       content = const _PlaceholderCover();

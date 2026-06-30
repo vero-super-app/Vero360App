@@ -40,6 +40,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/Home/story_section.dart';
+import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
 /* ═══════════════════════════════════════════════════
@@ -1161,7 +1162,7 @@ class _NearbySectionState extends State<_NearbySection> {
   static const _items = [
     ['🍔', 'Food & Restaurants', '4.6', 'food'],
     ['🏨', 'Accommodations',     '4.7', 'accommodation'],
-    ['💼', 'Utility Services',   '4.9', 'more'],
+    ['🚲', 'VeroBike',   '4.9', 'verobike'],
   ];
   int _index = 0;
 
@@ -1560,7 +1561,7 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
     final items = const [
       ['🍔', 'Food & Restaurants', '4.6'],
       ['🏨', 'Accomodations', '4.7'],
-      ['💼', 'Utility', '4.9'],
+      ['🚲', 'VeroBike', '4.9'],
     ];
 
     return _Section(
@@ -1720,11 +1721,11 @@ class _DealsStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final deals = const [
-      ['🗺️', 'Nearby coming soon'],
+      ['🚗', 'Book VeroRide'],
       ['🍔', 'Order food on Vero'],
-      ['🏨', 'Stay · Pay now'],
-      ['💼', 'Home cleaning deals'],
-      ['💳', 'Send money now'],
+      ['🚲', 'Book VeroBike'],
+      ['🚚', 'Book VeroCourier'],
+      ['🏨', 'Book YourStay'],
     ];
     return SizedBox(
       height: 42,
@@ -1762,9 +1763,17 @@ class _DealsStrip extends StatelessWidget {
 class _PromoBanner extends StatelessWidget {
   const _PromoBanner();
 
+  void _openPromotions(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PromotionsPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onTap: () => _openPromotions(context),
+      child: Container(
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [AppColors.brandOrangeDeep, AppColors.brandOrange],
@@ -1819,7 +1828,7 @@ class _PromoBanner extends StatelessWidget {
                             borderRadius: BorderRadius.circular(99),
                           ),
                           child: const Text(
-                            'LIMITED OFFER',
+                            'Promotions',
                             style: TextStyle(
                               fontSize:   9,
                               fontWeight: FontWeight.w800,
@@ -1830,7 +1839,7 @@ class _PromoBanner extends StatelessWidget {
                         ),
                         const SizedBox(height: 7),
                         const Text(
-                          'First ride free\nwith Vero360',
+                          'Promotions with Vero360',
                           style: TextStyle(
                             fontSize:   17,
                             fontWeight: FontWeight.w900,
@@ -1841,7 +1850,7 @@ class _PromoBanner extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Use code HELLO360',
+                          'special promotions for you',
                           style: TextStyle(
                             fontSize:   12,
                             fontWeight: FontWeight.w600,
@@ -1851,10 +1860,15 @@ class _PromoBanner extends StatelessWidget {
                       ],
                     ),
                   ),
-                  Container(
+                  Material(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      onTap: () => _openPromotions(context),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
                     decoration: BoxDecoration(
-                      color:        Colors.white,
                       borderRadius: BorderRadius.circular(12),
                       boxShadow: [
                         BoxShadow(
@@ -1864,11 +1878,13 @@ class _PromoBanner extends StatelessWidget {
                       ],
                     ),
                     child: const Text(
-                      'Claim →',
+                      'See all →',
                       style: TextStyle(
                         color:      AppColors.brandOrange,
                         fontWeight: FontWeight.w900,
                         fontSize:   13,
+                      ),
+                    ),
                       ),
                     ),
                   ),
@@ -1878,6 +1894,7 @@ class _PromoBanner extends StatelessWidget {
           ],
         ),
       ),
+    ),
     );
   }
 }

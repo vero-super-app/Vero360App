@@ -3,11 +3,23 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
-import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
-import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet_transactions_page.dart';
+
+class _HeldEscrowRow {
+  final String itemName;
+  final double amount;
+  final DateTime? releaseDueAt;
+  final bool awaitingShipment;
+
+  const _HeldEscrowRow({
+    required this.itemName,
+    required this.amount,
+    this.releaseDueAt,
+    this.awaitingShipment = false,
+  });
+}
 
 class MerchantWalletPage extends StatefulWidget {
   final String merchantId;
@@ -32,6 +44,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   double _walletBalance = 0.0;
   double _pendingBalance = 0.0;
   double _escrowHeldBalance = 0.0; // incoming funds on hold (not withdrawable yet)
+  List<_HeldEscrowRow> _heldEscrowRows = [];
   bool _isLoading = true;
   bool _isProcessingPayout = false;
   List<WalletTransaction> _recentTransactions = [];
@@ -44,6 +57,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   final _phoneController = TextEditingController();
 
   final NumberFormat _mwkFormat = NumberFormat('#,##0', 'en');
+  final DateFormat _releaseDateFormat = DateFormat('EEE, MMM d, yyyy');
   
   static const List<Map<String, String>> _banks = [
     {"uuid": "82310dd1-ec9b-4fe7-a32c-2f262ef08681", "name": "National Bank of Malawi"},
@@ -69,6 +83,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   StreamSubscription<WalletModel?>? _walletSubscription;
   StreamSubscription<QuerySnapshot>? _transactionsSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _escrowSubscription;
+  Timer? _escrowReleaseTimer;
 
   @override
   void initState() {
@@ -76,22 +91,133 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     _initializeWallet();
     _loadMerchantData();
     _setupEscrowHeldStream();
+    _escrowReleaseTimer = Timer.periodic(
+      const Duration(minutes: 15),
+      (_) => _processDueEscrowReleases(),
+    );
   }
 
   /// Marketplace orders and paid accommodation stays both write `order_escrow`
   /// so incoming stay payments appear in escrow here.
-  /// Credits wallet for marketplace holds past the 5-day window (buyer app is not required).
+  /// Credits wallet when the 7-day window passed and the buyer did not confirm.
   Future<void> _processDueEscrowReleases() async {
     try {
-      List<OrderItem>? orders;
-      try {
-        orders = await OrderService().getMyOrders();
-      } catch (_) {}
-      await OrderEscrowService.processDueAutoReleasesForMerchant(
-        widget.merchantId,
-        merchantOrders: orders,
-      );
-    } catch (_) {}
+      await OrderEscrowService.processDueAutoReleasesForSignedInUser();
+    } catch (e) {
+      debugPrint('[MerchantWallet] escrow auto-release: $e');
+    }
+  }
+
+  String _escrowReleaseSummary() {
+    final days = OrderEscrowService.escrowAutoReleaseDays;
+    if (_heldEscrowRows.isEmpty) {
+      return 'Not withdrawable yet — waiting for buyer confirmation or $days‑day auto‑release.';
+    }
+
+    final dueNow = _heldEscrowRows.where((r) {
+      if (r.awaitingShipment) return false;
+      final due = r.releaseDueAt;
+      return due != null && !DateTime.now().isBefore(due);
+    }).toList();
+
+    if (dueNow.isNotEmpty) {
+      return 'Some funds are ready to release — pull down to refresh.';
+    }
+
+    final nextDue = _heldEscrowRows
+        .map((r) => r.releaseDueAt)
+        .whereType<DateTime>()
+        .fold<DateTime?>(null, (prev, d) {
+      if (prev == null || d.isBefore(prev)) return d;
+      return prev;
+    });
+
+    if (nextDue != null) {
+      return 'Next release: ${_releaseDateFormat.format(nextDue.toLocal())} '
+          '(or sooner if the buyer confirms).';
+    }
+
+    final awaiting = _heldEscrowRows.any((r) => r.awaitingShipment);
+    if (awaiting) {
+      return 'Ship orders with proof to start the $days‑day release timer.';
+    }
+
+    return 'Not withdrawable yet — waiting for buyer confirmation or $days‑day auto‑release.';
+  }
+
+  Widget _buildHeldEscrowDetails({bool onDarkBackground = false}) {
+    if (_heldEscrowRows.isEmpty) return const SizedBox.shrink();
+
+    final subtitleColor =
+        onDarkBackground ? Colors.white70 : const Color(0xFF6B778C);
+    final titleColor =
+        onDarkBackground ? Colors.white : const Color(0xFF222222);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        ..._heldEscrowRows.take(4).map((row) {
+          final amountText = 'MWK ${_mwkFormat.format(row.amount.truncate())}';
+          String statusText;
+          if (row.awaitingShipment) {
+            statusText = 'Awaiting shipment';
+          } else if (row.releaseDueAt != null &&
+              !DateTime.now().isBefore(row.releaseDueAt!)) {
+            statusText = 'Ready to release';
+          } else if (row.releaseDueAt != null) {
+            statusText =
+                'Releases ${_releaseDateFormat.format(row.releaseDueAt!.toLocal())}';
+          } else {
+            statusText = 'Awaiting buyer confirmation';
+          }
+
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    row.itemName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: titleColor,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      amountText,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: titleColor,
+                      ),
+                    ),
+                    Text(
+                      statusText,
+                      style: TextStyle(fontSize: 10, color: subtitleColor),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        }),
+        if (_heldEscrowRows.length > 4)
+          Text(
+            '+ ${_heldEscrowRows.length - 4} more on hold',
+            style: TextStyle(fontSize: 10, color: subtitleColor),
+          ),
+      ],
+    );
   }
 
   void _setupEscrowHeldStream() {
@@ -103,15 +229,45 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         .snapshots()
         .listen((snapshot) {
       double sum = 0.0;
+      final rows = <_HeldEscrowRow>[];
       for (final doc in snapshot.docs) {
         final data = doc.data();
         final raw = data['merchantAmount'];
         final v =
             raw is num ? raw.toDouble() : double.tryParse('$raw') ?? 0.0;
         if (v > 0) sum += v;
+
+        DateTime? releaseDueAt;
+        final dueRaw = data['releaseDueAt'];
+        if (dueRaw is Timestamp) releaseDueAt = dueRaw.toDate();
+
+        final deliveredRaw = data['deliveredAt'];
+        final awaitingShipment = deliveredRaw == null;
+
+        rows.add(_HeldEscrowRow(
+          itemName: (data['itemName'] ?? data['orderNumber'] ?? 'Sale')
+              .toString(),
+          amount: v,
+          releaseDueAt: releaseDueAt,
+          awaitingShipment: awaitingShipment,
+        ));
       }
+      rows.sort((a, b) {
+        if (a.awaitingShipment != b.awaitingShipment) {
+          return a.awaitingShipment ? 1 : -1;
+        }
+        final ad = a.releaseDueAt;
+        final bd = b.releaseDueAt;
+        if (ad == null && bd == null) return 0;
+        if (ad == null) return 1;
+        if (bd == null) return -1;
+        return ad.compareTo(bd);
+      });
       if (!mounted) return;
-      setState(() => _escrowHeldBalance = sum);
+      setState(() {
+        _escrowHeldBalance = sum;
+        _heldEscrowRows = rows;
+      });
     }, onError: (_) {});
   }
 
@@ -351,14 +507,15 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                                 ),
                               ),
                               const SizedBox(height: 4),
-                              const Text(
-                                'Waiting for buyer confirmation or auto‑release (not withdrawable yet).',
-                                style: TextStyle(
+                              Text(
+                                _escrowReleaseSummary(),
+                                style: const TextStyle(
                                   fontSize: 12,
                                   color: Color(0xFF6B778C),
                                   height: 1.25,
                                 ),
                               ),
+                              _buildHeldEscrowDetails(),
                             ],
                           ),
                         ),
@@ -916,7 +1073,13 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           ? const Center(
               child: CircularProgressIndicator(color: Color(0xFFFF8A00)),
             )
-          : SingleChildScrollView(
+          : RefreshIndicator(
+              color: const Color(0xFFFF8A00),
+              onRefresh: () async {
+                await _processDueEscrowReleases();
+              },
+              child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1037,14 +1200,15 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                                   ),
                                 ),
                                 const SizedBox(height: 4),
-                                const Text(
-                                  'Not withdrawable yet — waiting for buyer confirmation or 5‑day auto‑release.',
-                                  style: TextStyle(
+                                Text(
+                                  _escrowReleaseSummary(),
+                                  style: const TextStyle(
                                     fontSize: 11,
                                     color: Colors.white70,
                                     height: 1.25,
                                   ),
                                 ),
+                                _buildHeldEscrowDetails(onDarkBackground: true),
                               ],
                             ),
                           ),
@@ -1052,7 +1216,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                         if (widget.serviceType.toLowerCase() == 'marketplace') ...[
                           const SizedBox(height: 10),
                           Text(
-                            'Marketplace sales are credited when the buyer confirms receipt, or automatically 5 days after delivery.',
+                            'Marketplace sales are credited when the buyer confirms receipt, '
+                            'or automatically ${OrderEscrowService.escrowAutoReleaseDays} days after delivery.',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.white.withOpacity(0.88),
@@ -1142,6 +1307,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                   ),
                 ],
               ),
+            ),
             ),
     );
   }
@@ -1292,6 +1458,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
   @override
   void dispose() {
+    _escrowReleaseTimer?.cancel();
     _escrowSubscription?.cancel();
     _walletSubscription?.cancel();
     _transactionsSubscription?.cancel();

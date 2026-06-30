@@ -53,7 +53,7 @@ class BackendChatThread {
 
   factory BackendChatThread.fromJson(Map<String, dynamic> json) {
     return BackendChatThread(
-      id: json['id'] ?? '',
+      id: json['id']?.toString() ?? '',
       type: json['type'] ?? 'direct',
       name: json['name'],
       description: json['description'],
@@ -294,6 +294,7 @@ class BackendChatService {
   static final _threadsLiveController =
       StreamController<List<BackendChatThread>>.broadcast();
   static List<BackendChatThread> _cachedThreads = [];
+  static Set<String> _deletedThreadIds = {};
   static bool _threadsWatchReady = false;
   static Timer? _threadsFallbackPollTimer;
   static String? _activeChatId;
@@ -302,7 +303,23 @@ class BackendChatService {
   /// Chat currently open in [MessagePageBackendApi] (suppresses unread bump).
   static String? get activeChatId => _activeChatId;
 
-  static void setActiveChatId(String? chatId) => _activeChatId = chatId;
+  static void setActiveChatId(String? chatId) {
+    _activeChatId = chatId;
+    if (chatId != null && chatId.trim().isNotEmpty) {
+      unawaited(restoreThreadLocally(chatId));
+    }
+  }
+
+  /// Server un-archives when a chat is opened; clear local hide state too.
+  static Future<void> restoreThreadLocally(String chatId) async {
+    final normalizedId = chatId.trim();
+    if (normalizedId.isEmpty) return;
+    _deletedThreadIds.remove(normalizedId);
+    final userId = _userId;
+    if (userId != null) {
+      await BackendMessagingCache.unmarkThreadDeleted(userId, normalizedId);
+    }
+  }
 
   static void notifyWsConnected(bool connected) {
     _wsConnected = connected;
@@ -316,6 +333,15 @@ class BackendChatService {
 
   /// Apply a real-time message to the in-memory thread list.
   static void notifyRealtimeMessage(BackendChatMessage message) {
+    final chatId = message.chatId.trim();
+    if (_deletedThreadIds.contains(chatId)) {
+      _deletedThreadIds.remove(chatId);
+      final userId = _userId;
+      if (userId != null) {
+        unawaited(BackendMessagingCache.unmarkThreadDeleted(userId, chatId));
+      }
+    }
+
     if (!_threadsWatchReady || _cachedThreads.isEmpty) {
       refreshThreads();
       return;
@@ -446,7 +472,35 @@ class BackendChatService {
 
   static void _emitCachedThreads() {
     if (!_threadsLiveController.isClosed) {
-      _threadsLiveController.add(List<BackendChatThread>.from(_cachedThreads));
+      _threadsLiveController.add(
+        _filterDeletedThreads(_cachedThreads),
+      );
+    }
+  }
+
+  static Future<void> _loadDeletedThreadIds(int userId) async {
+    await BackendMessagingCache.initialize();
+    _deletedThreadIds = BackendMessagingCache.peekDeletedThreadIds(userId);
+  }
+
+  static List<BackendChatThread> _filterDeletedThreads(
+    List<BackendChatThread> threads,
+  ) {
+    if (_deletedThreadIds.isEmpty) return threads;
+    return threads
+        .where((t) => !_deletedThreadIds.contains(t.id.trim()))
+        .toList();
+  }
+
+  /// Reload deleted-thread ids from disk and re-emit the thread list.
+  /// Call after login or when chat-list prefs are restored.
+  static Future<void> applyPersistedDeletedThreads(int userId) async {
+    await _loadDeletedThreadIds(userId);
+    if (_cachedThreads.isNotEmpty) {
+      _cachedThreads = _filterDeletedThreads(_cachedThreads);
+    }
+    if (_threadsWatchReady) {
+      _emitCachedThreads();
     }
   }
 
@@ -456,9 +510,10 @@ class BackendChatService {
     final userId = _userId;
 
     if (userId != null) {
+      await _loadDeletedThreadIds(userId);
       final diskThreads = BackendMessagingCache.peekThreads(userId);
       if (diskThreads.isNotEmpty) {
-        _cachedThreads = diskThreads;
+        _cachedThreads = _filterDeletedThreads(diskThreads);
         _threadsWatchReady = true;
         _emitCachedThreads();
       }
@@ -466,11 +521,13 @@ class BackendChatService {
 
     try {
       final fresh = await getThreads();
+      _deletedThreadIds.clear();
       _cachedThreads = fresh;
       _threadsWatchReady = true;
       _emitCachedThreads();
       if (userId != null) {
         await BackendMessagingCache.saveThreads(userId, fresh);
+        await BackendMessagingCache.clearDeletedThreadIds(userId);
       }
     } catch (e) {
       if (_cachedThreads.isEmpty) rethrow;
@@ -545,7 +602,12 @@ class BackendChatService {
         _tokenFetchedAt != null &&
         DateTime.now().difference(_tokenFetchedAt!) < _tokenTtl;
 
-    if (cacheValid) return;
+    if (cacheValid) {
+      if (_userId != null) {
+        await _loadDeletedThreadIds(_userId!);
+      }
+      return;
+    }
 
     _authToken = await user.getIdToken(forceRefresh);
     if (_authToken == null || _authToken!.isEmpty) {
@@ -559,6 +621,7 @@ class BackendChatService {
     final cachedUserId = sp.getInt('userId') ?? sp.getInt('user_id');
     if (cachedUserId != null && cachedUserId > 0) {
       _userId = cachedUserId;
+      await _loadDeletedThreadIds(cachedUserId);
       return;
     }
 
@@ -572,19 +635,17 @@ class BackendChatService {
     await sp.setInt('userId', userId);
     await sp.setInt('user_id', userId);
     _userId = userId;
+    await _loadDeletedThreadIds(userId);
   }
 
   /// Clear in-memory auth cache (e.g. on sign-out).
   static void clearAuthCache() {
-    final uid = _userId;
-    if (uid != null) {
-      unawaited(BackendMessagingCache.clearUser(uid));
-    }
     _authToken = null;
     _userId = null;
     _cachedFirebaseUid = null;
     _tokenFetchedAt = null;
     _cachedThreads = [];
+    _deletedThreadIds = {};
     _threadsWatchReady = false;
     _activeChatId = null;
     _wsConnected = false;
@@ -923,7 +984,7 @@ class BackendChatService {
   /// Live thread list: initial REST load, WebSocket patches, manual refresh.
   static Stream<List<BackendChatThread>> watchThreads() async* {
     await _ensureThreadsWatchInitialized();
-    yield List<BackendChatThread>.from(_cachedThreads);
+    yield _filterDeletedThreads(_cachedThreads);
     yield* _threadsLiveController.stream;
   }
 
@@ -1387,40 +1448,107 @@ class BackendChatService {
     }
   }
 
-  /// Remove a chat from the local list and try to delete on the server.
+  /// Archive/remove a chat from the current user's inbox (server + local).
   static Future<void> deleteChat(String chatId) async {
     await ensureAuth();
+    final userId = _userId;
+    if (userId == null) {
+      throw Exception('Not signed in');
+    }
+
+    final normalizedId = chatId.trim();
+    if (normalizedId.isEmpty) return;
+
+    final archived = await _archiveChatOnServer(normalizedId);
+    if (!archived) {
+      throw Exception('Could not remove chat from your inbox');
+    }
+
+    _deletedThreadIds.add(normalizedId);
+    removeThreadLocally(normalizedId);
+    await BackendMessagingCache.deleteMessagesForChat(userId, normalizedId);
+    await BackendMessagingCache.markThreadDeleted(userId, normalizedId);
+  }
+
+  static bool _isArchiveResponseSuccess(http.Response response) {
+    if (response.statusCode == 200 || response.statusCode == 204) {
+      return true;
+    }
+    try {
+      final body = jsonDecode(response.body);
+      if (body is Map && body['success'] == true) return true;
+      if (body is Map && body['archived'] == true) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  /// DELETE /chats/{id}, then PATCH /chats/{id}/archive as fallback.
+  static Future<bool> _archiveChatOnServer(String chatId) async {
+    Object? deleteError;
 
     try {
       final response = await http.delete(
         Uri.parse('$_baseUrl/chats/$chatId'),
-        headers: {'Authorization': _authHeader},
-      ).timeout(const Duration(seconds: 10));
-      if (kDebugMode &&
-          response.statusCode != 200 &&
-          response.statusCode != 204) {
+        headers: {
+          'Authorization': _authHeader,
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (_isArchiveResponseSuccess(response)) return true;
+
+      if (kDebugMode) {
         print(
-          '[BackendChatService] deleteChat: ${response.statusCode} ${response.body}',
+          '[BackendChatService] DELETE chat $chatId: '
+          '${response.statusCode} ${response.body}',
+        );
+      }
+      deleteError = 'HTTP ${response.statusCode}';
+    } catch (e) {
+      deleteError = e;
+      if (kDebugMode) print('[BackendChatService] DELETE chat network: $e');
+    }
+
+    try {
+      final response = await http.patch(
+        Uri.parse('$_baseUrl/chats/$chatId/archive'),
+        headers: {
+          'Authorization': _authHeader,
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (_isArchiveResponseSuccess(response)) return true;
+
+      if (kDebugMode) {
+        print(
+          '[BackendChatService] PATCH archive $chatId: '
+          '${response.statusCode} ${response.body}',
         );
       }
     } catch (e) {
-      if (kDebugMode) print('[BackendChatService] deleteChat network: $e');
+      if (kDebugMode) print('[BackendChatService] PATCH archive network: $e');
     }
 
-    removeThreadLocally(chatId);
+    if (kDebugMode) {
+      print('[BackendChatService] archive failed after DELETE: $deleteError');
+    }
+    return false;
   }
 
   /// Drop a thread from memory and disk cache without calling the API.
   static void removeThreadLocally(String chatId) {
-    _cachedThreads.removeWhere((t) => t.id == chatId);
+    final normalizedId = chatId.trim();
+    if (normalizedId.isEmpty) return;
+
+    _cachedThreads.removeWhere((t) => t.id.trim() == normalizedId);
     _emitCachedThreads();
     final userId = _userId;
     if (userId == null) return;
     final threads = List<BackendChatThread>.from(
       BackendMessagingCache.peekThreads(userId),
-    )..removeWhere((t) => t.id == chatId);
+    )..removeWhere((t) => t.id.trim() == normalizedId);
     unawaited(BackendMessagingCache.saveThreads(userId, threads));
-    unawaited(BackendMessagingCache.markChatCleared(userId, chatId));
   }
 
   /// Delete a message

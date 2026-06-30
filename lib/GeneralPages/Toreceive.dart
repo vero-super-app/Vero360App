@@ -547,9 +547,12 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
               label: Text(releasing ? 'Confirming…' : 'I received this parcel'),
             ),
           ] else if (isSellerWaiting)
-            const Text(
-              'Waiting for the buyer to confirm receipt so your payout can be released.',
-              style: TextStyle(fontSize: 13, color: Color(0xFF6B778C), height: 1.35),
+            Text(
+              escrow.releaseDueAt != null
+                  ? 'Waiting for buyer confirmation. If they don’t confirm, funds release on '
+                      '${_date.format(escrow.releaseDueAt!.toLocal())}.'
+                  : 'Waiting for the buyer to confirm receipt so your payout can be released.',
+              style: const TextStyle(fontSize: 13, color: Color(0xFF6B778C), height: 1.35),
             )
           else if (!waitingMerchant)
             const Text(

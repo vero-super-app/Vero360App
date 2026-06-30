@@ -2,11 +2,14 @@ import 'dart:async';
 
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_onboarding_page.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_widgets.dart';
@@ -60,14 +63,53 @@ class _VerocourierPageState extends State<VerocourierPage> {
   bool _loadingList = false;
   bool _tracking = false;
   bool _sendingDetailsComplete = false;
+  bool _checkingAuth = true;
+  bool _isLoggedIn = false;
+  bool _bootstrapped = false;
+  StreamSubscription<User?>? _authSub;
 
   @override
   void initState() {
     super.initState();
-    _checkOnboarding();
-    _loadSenderInfo();
-    _detectAndValidateCity();
     _registerSendingDetailsListeners();
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((_) {
+      _checkAuth();
+    });
+    _checkAuth();
+  }
+
+  Future<void> _checkAuth() async {
+    if (mounted) setState(() => _checkingAuth = true);
+
+    final user = FirebaseAuth.instance.currentUser;
+    String? token;
+    if (user != null) {
+      token = await AuthHandler.getFirebaseToken();
+    }
+
+    final loggedIn =
+        user != null && token != null && token.trim().isNotEmpty;
+
+    if (!mounted) return;
+    setState(() {
+      _checkingAuth = false;
+      _isLoggedIn = loggedIn;
+    });
+
+    if (loggedIn) {
+      await _bootstrapIfNeeded();
+    } else {
+      _bootstrapped = false;
+      _progressPollingTimer?.cancel();
+    }
+  }
+
+  Future<void> _bootstrapIfNeeded() async {
+    if (_bootstrapped) return;
+    _bootstrapped = true;
+    await _checkOnboarding();
+    await _loadSenderInfo();
+    await _detectAndValidateCity();
   }
 
   void _registerSendingDetailsListeners() {
@@ -254,6 +296,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
 
   @override
   void dispose() {
+    _authSub?.cancel();
     _progressPollingTimer?.cancel();
     _pickupCtrl.dispose();
     _dropoffCtrl.dispose();
@@ -510,149 +553,255 @@ class _VerocourierPageState extends State<VerocourierPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_checkingAuth) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: _veroOrange),
+        ),
+      );
+    }
+
     return Scaffold(
       body: RefreshIndicator(
-        onRefresh: _loadDeliveries,
+        onRefresh: _isLoggedIn ? _loadDeliveries : () async {},
         child: ListView(
           padding: const EdgeInsets.fromLTRB(0, 0, 0, 24),
           children: [
-            ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                bottom: Radius.circular(24),
-              ),
-              child: ColoredBox(
-                color: _veroOrange,
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    16,
-                    MediaQuery.of(context).padding.top + 14,
-                    16,
-                    18,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            height: 52,
-                            width: 52,
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFFFFD18A), Colors.white],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: const Icon(
-                              PhosphorIconsBold.truck,
-                              color: _veroOrange,
-                              size: 28,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Expanded(
-                            child: Text(
-                              'Vero Courier',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 24,
-                                letterSpacing: 0.2,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      const Text(
-                        'Send parcel with us within your city',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w500,
-                          height: 1.3,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Fast pickup, secure handling, real-time progress updates.',
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+            _buildHeader(context),
             const SizedBox(height: 12),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: _isLoggedIn
+                  ? _buildLoggedInBody()
+                  : _buildNotLoggedInBody(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(
+        bottom: Radius.circular(24),
+      ),
+      child: ColoredBox(
+        color: _veroOrange,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            MediaQuery.of(context).padding.top + 14,
+            16,
+            18,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  _serviceTypesRow(),
-                  const SizedBox(height: 10),
-                  if (_detectingCity)
-                    const Card(
-                      elevation: 0,
-                      child: Padding(
-                        padding: EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                            SizedBox(width: 10),
-                            Expanded(
-                              child: Text('Detecting your city for courier availability...'),
-                            ),
-                          ],
-                        ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(
+                      Icons.arrow_back_rounded,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 40,
+                      minHeight: 40,
+                    ),
+                    tooltip: 'Back',
+                  ),
+                  const SizedBox(width: 4),
+                  Container(
+                    height: 52,
+                    width: 52,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFFD18A), Colors.white],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
                       ),
-                    )
-                  else
-                    Card(
-                      elevation: 0,
-                      color: _citySupported
-                          ? const Color(0xFFEAF9EF)
-                          : const Color(0xFFFFF3F1),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(
-                          color: _citySupported
-                              ? const Color(0xFFBEE7C8)
-                              : const Color(0xFFFFCFC8),
-                        ),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Text(
-                          _citySupported
-                              ? 'Vero Courier is available in your city: $_detectedCity'
-                              : 'Sorry, Vero Courier is not available in your city. We are expanding soon.',
-                          style: TextStyle(
-                            color: _citySupported
-                                ? const Color(0xFF1E7A38)
-                                : const Color(0xFFAA3A2A),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: const Icon(
+                      PhosphorIconsBold.truck,
+                      color: _veroOrange,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Vero Courier',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 24,
+                        letterSpacing: 0.2,
                       ),
                     ),
-                  const SizedBox(height: 16),
-                  ..._activeSectionContent(),
+                  ),
                 ],
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Send parcel with us within your city',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w500,
+                  height: 1.3,
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Fast pickup, secure handling, real-time progress updates.',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotLoggedInBody() {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFFEAEAEA)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
+        child: Column(
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: _veroOrange.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: const Icon(
+                PhosphorIconsBold.lock,
+                color: _veroOrange,
+                size: 30,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Not logged in',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Please log in to book courier deliveries and track your parcels.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF6B7280),
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _veroOrange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  );
+                  await _checkAuth();
+                },
+                child: const Text(
+                  'Log in',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildLoggedInBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _serviceTypesRow(),
+        const SizedBox(height: 10),
+        if (_detectingCity)
+          const Card(
+            elevation: 0,
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Detecting your city for courier availability...',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          Card(
+            elevation: 0,
+            color: _citySupported
+                ? const Color(0xFFEAF9EF)
+                : const Color(0xFFFFF3F1),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: _citySupported
+                    ? const Color(0xFFBEE7C8)
+                    : const Color(0xFFFFCFC8),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                _citySupported
+                    ? 'Vero Courier is available in your city: $_detectedCity'
+                    : 'Sorry, Vero Courier is not available in your city. We are expanding soon.',
+                style: TextStyle(
+                  color: _citySupported
+                      ? const Color(0xFF1E7A38)
+                      : const Color(0xFFAA3A2A),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        const SizedBox(height: 16),
+        ..._activeSectionContent(),
+      ],
     );
   }
 

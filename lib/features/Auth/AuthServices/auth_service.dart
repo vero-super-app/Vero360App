@@ -18,6 +18,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
@@ -1312,6 +1313,11 @@ class AuthService {
     // Step 5: Clear notifications
     try {
       await NotificationStore.instance.clearAll();
+    } catch (_) {}
+
+    // Step 5b: Clear in-memory messaging state (deleted-chat prefs stay on disk).
+    try {
+      BackendChatService.clearAuthCache();
     } catch (_) {}
 
     // Step 6: Clear local session

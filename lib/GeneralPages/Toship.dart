@@ -616,7 +616,7 @@ class _ToShipPageState extends State<ToShipPage> {
           );
         }
       } catch (_) {}
-      await OrderEscrowService.markDelivered(o.id);
+      await OrderEscrowService.markDeliveredForOrder(o);
       await _markListingSoldIfDelivered(o);
       await _saveDeliveryMeta(
         orderId: o.id,

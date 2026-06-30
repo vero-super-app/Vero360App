@@ -970,7 +970,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     });
   }
 
-  /// Backend orders + Firestore escrow (merchant wallet credited after buyer confirms or 5 days).
+  /// Backend orders + Firestore escrow (merchant wallet credited after buyer confirms or 7 days).
   Future<void> _createConfirmedOrdersAndEscrow(List<CartModel> items) async {
     try {
       final addressForOrder =

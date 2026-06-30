@@ -6,6 +6,7 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
@@ -50,19 +51,23 @@ class _ChatListPageState extends State<ChatListPage> {
     // Fast path: use cached backend user id so the list can render immediately.
     try {
       final prefs = await SharedPreferences.getInstance();
-      final cached = int.tryParse(
-        prefs.getString('userId') ??
-            prefs.getString('user_id') ??
-            prefs.getString('id') ??
-            '',
-      );
+      final cached = prefs.getInt('userId') ??
+          prefs.getInt('user_id') ??
+          int.tryParse(
+            prefs.getString('userId') ??
+                prefs.getString('user_id') ??
+                prefs.getString('id') ??
+                '',
+          );
       if (cached != null && cached > 0 && mounted) {
+        await _loadChatListPrefs(cached);
+        if (!mounted) return;
         setState(() {
           _myUserId = cached;
           _error = null;
         });
-        unawaited(_loadChatListPrefs(cached));
-      }    } catch (_) {}
+      }
+    } catch (_) {}
 
     try {
       await BackendChatService.ensureAuth();
@@ -81,6 +86,7 @@ class _ChatListPageState extends State<ChatListPage> {
 
       if (!mounted) return;
       await _loadChatListPrefs(userId);
+      if (!mounted) return;
       setState(() {
         _myUserId = userId;
         _error = null;
@@ -101,6 +107,10 @@ class _ChatListPageState extends State<ChatListPage> {
       final prefs = await SharedPreferences.getInstance();
       final pinnedRaw = prefs.getStringList(_pinnedPrefsKey(userId)) ?? [];
       final hiddenRaw = prefs.getStringList(_hiddenPrefsKey(userId)) ?? [];
+      if (hiddenRaw.isNotEmpty) {
+        await BackendMessagingCache.mergeDeletedThreadIds(userId, hiddenRaw);
+      }
+      await BackendChatService.applyPersistedDeletedThreads(userId);
       if (!mounted) return;
       setState(() {
         _pinnedIds
@@ -180,7 +190,7 @@ class _ChatListPageState extends State<ChatListPage> {
       context,
       title: 'Delete chat?',
       message:
-          'Remove your conversation with ${tile.peerName}? This cannot be undone.',
+          'Are you sure you want to delete this chat?',
       confirmLabel: 'Delete',
     );
     if (!ok || !mounted) return;
@@ -190,6 +200,7 @@ class _ChatListPageState extends State<ChatListPage> {
       _hiddenIds.add(tile.threadId);
       _pinnedIds.remove(tile.threadId);
       await _persistChatListPrefs();
+      BackendChatService.refreshThreads();
       if (!mounted) return;
       setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(

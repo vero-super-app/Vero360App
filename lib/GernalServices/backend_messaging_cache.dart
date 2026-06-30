@@ -34,6 +34,9 @@ class BackendMessagingCache {
   static String _chatClearedKey(int userId, String chatId) =>
       'u$userId:cleared:$chatId';
 
+  /// Survives logout — not under the [clearUser] `u$userId:` prefix.
+  static String _deletedThreadsKey(int userId) => 'deleted_threads_$userId';
+
   static DateTime? peekChatClearedAt(int? userId, String chatId) {
     if (!_ready || userId == null || _box == null) return null;
     final raw = _box!.get(_chatClearedKey(userId, chatId));
@@ -77,6 +80,103 @@ class BackendMessagingCache {
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[BackendMessagingCache] unmarkChatCleared: $e');
+      }
+    }
+  }
+
+  static Set<String> peekDeletedThreadIds(int? userId) {
+    if (!_ready || userId == null || _box == null) return {};
+    final raw = _box!.get(_deletedThreadsKey(userId));
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final list = jsonDecode(raw) as List;
+      return list
+          .map((e) => e.toString().trim())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<void> unmarkThreadDeleted(int userId, String chatId) async {
+    final id = chatId.trim();
+    if (id.isEmpty) return;
+    await initialize();
+    if (_box == null) return;
+    try {
+      final existing = peekDeletedThreadIds(userId);
+      if (!existing.remove(id)) return;
+      if (existing.isEmpty) {
+        await _box!.delete(_deletedThreadsKey(userId));
+      } else {
+        await _box!.put(
+          _deletedThreadsKey(userId),
+          jsonEncode(existing.toList()),
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[BackendMessagingCache] unmarkThreadDeleted: $e');
+      }
+    }
+  }
+
+  static Future<void> clearDeletedThreadIds(int userId) async {
+    await initialize();
+    if (_box == null) return;
+    try {
+      await _box!.delete(_deletedThreadsKey(userId));
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[BackendMessagingCache] clearDeletedThreadIds: $e');
+      }
+    }
+  }
+
+  static Future<void> markThreadDeleted(int userId, String chatId) async {
+    final id = chatId.trim();
+    if (id.isEmpty) return;
+    await initialize();
+    if (_box == null) return;
+    try {
+      final existing = peekDeletedThreadIds(userId);
+      if (existing.contains(id)) return;
+      existing.add(id);
+      await _box!.put(
+        _deletedThreadsKey(userId),
+        jsonEncode(existing.toList()),
+      );
+      await deleteMessagesForChat(userId, id);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[BackendMessagingCache] markThreadDeleted: $e');
+      }
+    }
+  }
+
+  static Future<void> mergeDeletedThreadIds(
+    int userId,
+    Iterable<String> chatIds,
+  ) async {
+    await initialize();
+    if (_box == null) return;
+    final merged = peekDeletedThreadIds(userId);
+    var changed = false;
+    for (final raw in chatIds) {
+      final id = raw.trim();
+      if (id.isEmpty) continue;
+      if (merged.add(id)) changed = true;
+    }
+    if (!changed) return;
+    try {
+      await _box!.put(
+        _deletedThreadsKey(userId),
+        jsonEncode(merged.toList()),
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[BackendMessagingCache] mergeDeletedThreadIds: $e');
       }
     }
   }

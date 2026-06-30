@@ -39,7 +39,7 @@ class OrderEscrowService {
   static const String _collection = 'order_escrow';
 
   /// Days after [markDelivered] when funds auto-release to the merchant if not confirmed.
-  static const int escrowAutoReleaseDays = 5;
+  static const int escrowAutoReleaseDays = 7;
 
   static DocumentReference<Map<String, dynamic>> _doc(String orderId) =>
       _db.collection(_collection).doc(orderId);
@@ -147,7 +147,7 @@ class OrderEscrowService {
     );
   }
 
-  /// Call when the merchant marks the order as delivered (starts the 5-day window).
+  /// Call when the merchant marks the order as delivered (starts the escrow window).
   ///
   /// [deliveredAt] defaults to now; pass an earlier date when repairing old shipments
   /// so auto-release can run immediately if the window has already passed.
@@ -155,22 +155,69 @@ class OrderEscrowService {
     String orderId, {
     DateTime? deliveredAt,
   }) async {
-    final snap = await _doc(orderId).get();
+    final escrowDocId = await _resolveEscrowDocId(orderId);
+    if (escrowDocId == null) return;
+
+    final snap = await _doc(escrowDocId).get();
     if (!snap.exists) return;
 
     final data = snap.data();
     if (data == null) return;
     if (data['status'] != 'held') return;
-    if (data['deliveredAt'] != null) return;
+
+    final existingDelivered = data['deliveredAt'];
+    if (existingDelivered is Timestamp && deliveredAt == null) {
+      await _ensureReleaseDueAt(escrowDocId, existingDelivered.toDate());
+      return;
+    }
 
     final shipped = deliveredAt ?? DateTime.now();
     final due = shipped.add(const Duration(days: escrowAutoReleaseDays));
 
-    await _doc(orderId).update({
+    await _doc(escrowDocId).update({
       'deliveredAt': Timestamp.fromDate(shipped),
       'releaseDueAt': Timestamp.fromDate(due),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  /// Resolves escrow doc id (canonical order id or migrated stray doc).
+  static Future<String?> _resolveEscrowDocId(String orderId) async {
+    final id = orderId.trim();
+    if (id.isEmpty) return null;
+
+    final direct = await _doc(id).get();
+    if (direct.exists && direct.data()?['status'] == 'held') return id;
+
+    final qs = await _db
+        .collection(_collection)
+        .where('orderNumber', isEqualTo: id)
+        .where('status', isEqualTo: 'held')
+        .limit(1)
+        .get();
+    if (qs.docs.isNotEmpty) return qs.docs.first.id;
+
+    for (final variant in orderNumberLookupVariants(id)) {
+      if (variant == id) continue;
+      final vq = await _db
+          .collection(_collection)
+          .where('orderNumber', isEqualTo: variant)
+          .where('status', isEqualTo: 'held')
+          .limit(1)
+          .get();
+      if (vq.docs.isNotEmpty) return vq.docs.first.id;
+    }
+    return null;
+  }
+
+  /// Like [markDelivered] but resolves escrow via [fetchEscrowResolvingOrderId] first.
+  static Future<void> markDeliveredForOrder(
+    OrderItem o, {
+    DateTime? deliveredAt,
+  }) async {
+    final esc = await fetchEscrowResolvingOrderId(o);
+    final docId = esc?.orderId ?? o.id;
+    await markDelivered(docId, deliveredAt: deliveredAt);
   }
 
   /// Best-effort shipment time for escrow repair (proof upload time, else order date).
@@ -193,23 +240,85 @@ class OrderEscrowService {
   /// If the order is delivered in the API but escrow still has no [deliveredAt], repair.
   static Future<void> repairDeliveredTimestampIfNeeded(OrderItem o) async {
     if (o.status != OrderStatus.delivered) return;
-    final snap = await _doc(o.id).get();
+    final esc = await fetchEscrowResolvingOrderId(o);
+    if (esc == null || !esc.isHeld) return;
+
+    if (esc.deliveredAt != null) {
+      await _ensureReleaseDueAt(esc.orderId, esc.deliveredAt!);
+      return;
+    }
+
+    final shippedAt = await _resolveShippedAtForOrder(o);
+    await markDelivered(esc.orderId, deliveredAt: shippedAt);
+  }
+
+  /// Backfill [releaseDueAt] from [deliveredAt] when missing or shorter than policy.
+  static Future<void> _ensureReleaseDueAt(
+    String escrowDocId,
+    DateTime deliveredAt,
+  ) async {
+    final snap = await _doc(escrowDocId).get();
     if (!snap.exists) return;
     final data = snap.data();
-    if (data == null) return;
-    if (data['status'] != 'held') return;
-    if (data['deliveredAt'] != null) return;
-    final shippedAt = await _resolveShippedAtForOrder(o);
-    await markDelivered(o.id, deliveredAt: shippedAt);
+    if (data == null || data['status'] != 'held') return;
+
+    final correctDue =
+        deliveredAt.add(const Duration(days: escrowAutoReleaseDays));
+    final existing = data['releaseDueAt'];
+    if (existing is Timestamp) {
+      final existingDue = existing.toDate();
+      if (!existingDue.isBefore(correctDue)) return;
+      if (!DateTime.now().isBefore(existingDue)) return;
+    }
+
+    await _doc(escrowDocId).update({
+      'releaseDueAt': Timestamp.fromDate(correctDue),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Repair a held escrow row using delivery proof when API order context is unavailable.
+  static Future<void> repairHeldEscrowDeliveryTimestamp(String escrowDocId) async {
+    final snap = await _doc(escrowDocId).get();
+    if (!snap.exists) return;
+    final data = snap.data();
+    if (data == null || data['status'] != 'held') return;
+
+    final deliveredRaw = data['deliveredAt'];
+    if (deliveredRaw is Timestamp) {
+      await _ensureReleaseDueAt(escrowDocId, deliveredRaw.toDate());
+      return;
+    }
+
+    DateTime? shippedAt;
+    try {
+      final proofSnap = await _db
+          .collection(DeliveryProofService.collection)
+          .doc(escrowDocId)
+          .get();
+      if (proofSnap.exists) {
+        final u = proofSnap.data()?['updatedAt'];
+        if (u is Timestamp) shippedAt = u.toDate();
+      }
+    } catch (e) {
+      debugPrint('[OrderEscrow] proof read $escrowDocId: $e');
+    }
+
+    if (shippedAt != null) {
+      await markDelivered(escrowDocId, deliveredAt: shippedAt);
+    }
   }
 
   /// Releases escrow when [releaseDueAt] has passed. Returns true if funds were credited.
   static Future<bool> tryAutoReleaseIfDue(String orderId) async {
-    final esc = await fetchEscrow(orderId);
+    final docId = await _resolveEscrowDocId(orderId);
+    if (docId == null) return false;
+
+    final esc = await fetchEscrow(docId);
     if (esc == null || !esc.isHeld) return false;
     if (esc.deliveredAt == null || esc.releaseDueAt == null) return false;
     if (DateTime.now().isBefore(esc.releaseDueAt!)) return false;
-    await releaseFunds(orderId: orderId, buyerConfirmed: false);
+    await releaseFunds(orderId: docId, buyerConfirmed: false);
     return true;
   }
 
@@ -234,6 +343,49 @@ class OrderEscrowService {
         debugPrint('[OrderEscrow] auto-release ${o.id}: $e');
       }
     }
+  }
+
+  /// App open / resume: auto-release escrow when [releaseDueAt] has passed and the
+  /// buyer did not confirm receipt. Works for the signed-in user as merchant or buyer.
+  static Future<int> processDueAutoReleasesForSignedInUser() async {
+    final uid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    if (uid.isEmpty) return 0;
+
+    var released = 0;
+    try {
+      List<OrderItem>? orders;
+      try {
+        orders = await OrderService().getMyOrders();
+      } catch (e) {
+        debugPrint('[OrderEscrow] getMyOrders for auto-release: $e');
+      }
+
+      released += await processDueAutoReleasesForMerchant(
+        uid,
+        merchantOrders: orders,
+      );
+
+      if (orders != null && orders.isNotEmpty) {
+        await processDueAutoReleasesForOrders(orders);
+      }
+
+      final buyerHeld = await _db
+          .collection(_collection)
+          .where('buyerUid', isEqualTo: uid)
+          .where('status', isEqualTo: 'held')
+          .get();
+      for (final doc in buyerHeld.docs) {
+        try {
+          await repairHeldEscrowDeliveryTimestamp(doc.id);
+          if (await tryAutoReleaseIfDue(doc.id)) released++;
+        } catch (e) {
+          debugPrint('[OrderEscrow] buyer auto-release ${doc.id}: $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('[OrderEscrow] processDueAutoReleasesForSignedInUser: $e');
+    }
+    return released;
   }
 
   /// Merchant wallet / ship screen: repair delivery timestamps from [merchantOrders],
@@ -267,6 +419,7 @@ class OrderEscrowService {
     var released = 0;
     for (final doc in qs.docs) {
       try {
+        await repairHeldEscrowDeliveryTimestamp(doc.id);
         if (await tryAutoReleaseIfDue(doc.id)) released++;
       } catch (e) {
         debugPrint('[OrderEscrow] merchant auto-release ${doc.id}: $e');
@@ -497,7 +650,7 @@ class OrderEscrowService {
     await ref.update({
       'status': buyerConfirmed ? 'released' : 'auto_released',
       'releasedAt': FieldValue.serverTimestamp(),
-      'releaseKind': buyerConfirmed ? 'buyer_confirm' : 'auto_5d',
+      'releaseKind': buyerConfirmed ? 'buyer_confirm' : 'auto_7d',
       'updatedAt': FieldValue.serverTimestamp(),
     });
 
@@ -572,6 +725,13 @@ class OrderEscrowSnapshot {
     if (!isHeld || releaseDueAt == null) return false;
     return !DateTime.now().isBefore(releaseDueAt!);
   }
+
+  /// True when shipped but the buyer has not confirmed and auto-release is not due yet.
+  bool get isAwaitingBuyerOrAutoRelease =>
+      isHeld && deliveredAt != null && !isAutoReleaseDue;
+
+  /// True when the merchant has not shipped / marked delivered yet.
+  bool get isAwaitingShipment => isHeld && deliveredAt == null;
 
   factory OrderEscrowSnapshot.fromMap(String orderId, Map<String, dynamic> m) {
     DateTime? ts(dynamic v) {

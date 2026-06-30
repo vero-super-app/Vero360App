@@ -55,6 +55,7 @@ import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
@@ -680,6 +681,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     SchedulerBinding.instance.addPostFrameCallback((_) async {
       await _fastRedirectFromCache();
       unawaited(_verifyRoleFromServerInBg());
+      unawaited(OrderEscrowService.processDueAutoReleasesForSignedInUser());
     });
   }
 
@@ -720,6 +722,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _lastLifecycleState = state;
     if (state == AppLifecycleState.resumed && wasInBackground) {
       _checkBiometricLockOnResume();
+      unawaited(OrderEscrowService.processDueAutoReleasesForSignedInUser());
     }
   }
 

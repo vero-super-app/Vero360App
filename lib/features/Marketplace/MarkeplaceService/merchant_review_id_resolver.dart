@@ -62,8 +62,8 @@ class MerchantReviewIdResolver {
     }
 
     throw const ApiException(
-      message:
-          'Could not load reviews for this merchant. The seller account may not be linked yet.',
+      message: 'Please log in to view and leave reviews.',
+      requiresLogin: true,
     );
   }
 

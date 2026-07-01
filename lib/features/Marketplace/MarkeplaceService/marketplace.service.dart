@@ -445,6 +445,10 @@ class MarketplaceService {
       sellerUserId: data['sellerUserId']?.toString(),
       merchantId: data['merchantId']?.toString(),
       merchantName: data['merchantName']?.toString(),
+      merchantBackendId: parseInt(
+        data['merchantBackendId'] ?? data['backendUserId'],
+      ),
+      firestoreDocId: doc.id,
       serviceType: data['serviceType']?.toString() ?? 'marketplace',
       createdAt: createdAt,
     );

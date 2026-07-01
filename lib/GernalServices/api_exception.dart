@@ -9,10 +9,14 @@ class ApiException implements Exception {
   /// Optional backend validation / error text (for logs only).
   final String? backendMessage;
 
+  /// When true, UI should offer sign-in instead of a generic retry.
+  final bool requiresLogin;
+
   const ApiException({
     required this.message,
     this.statusCode,
     this.backendMessage,
+    this.requiresLogin = false,
   });
 
   @override

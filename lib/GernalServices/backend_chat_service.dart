@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
@@ -12,6 +13,14 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
+
+int _jsonInt(dynamic raw, [int fallback = 0]) {
+  if (raw == null) return fallback;
+  if (raw is int) return raw;
+  if (raw is num) return raw.toInt();
+  return int.tryParse(raw.toString()) ?? fallback;
+}
+
 class BackendChatThread {
   final String id;
   final String type; // 'direct' or 'group'
@@ -59,15 +68,15 @@ class BackendChatThread {
       description: json['description'],
       avatarUrl: json['avatarUrl'],
       isArchived: json['isArchived'] ?? false,
-      participantCount: (json['participantCount'] as int?) ??
-          (json['participants'] as List?)?.length ??
-          0,
+      participantCount: json['participantCount'] != null
+          ? _jsonInt(json['participantCount'])
+          : (json['participants'] as List?)?.length ?? 0,
       lastMessageAt: json['lastMessageAt'] != null
           ? DateTime.parse(json['lastMessageAt'].toString())
           : (json['updatedAt'] != null
               ? DateTime.parse(json['updatedAt'].toString())
               : null),
-      unreadCount: (json['unreadCount'] as int?) ?? 0,
+      unreadCount: _jsonInt(json['unreadCount']),
       lastMessagePreview: json['lastMessagePreview']?.toString(),
       lastProductTag: json['lastProductTag'] is Map
           ? ChatProductContext.fromTagMap(
@@ -185,8 +194,8 @@ class BackendChatMessage {
 
   factory BackendChatMessage.fromJson(Map<String, dynamic> json) {
     return BackendChatMessage(
-      id: json['id'] ?? '',
-      chatId: json['chatId'] ?? '',
+      id: json['id']?.toString() ?? '',
+      chatId: json['chatId']?.toString() ?? '',
       senderId: (json['senderId'] is int)
           ? json['senderId']
           : int.tryParse(json['senderId'].toString()) ?? 0,
@@ -255,7 +264,7 @@ class ChatParticipant {
 
   factory ChatParticipant.fromJson(Map<String, dynamic> json) {
     return ChatParticipant(
-      id: json['id'] ?? 0,
+      id: _jsonInt(json['id']),
       name: json['name'] ?? 'Unknown',
       email: json['email'] ?? '',
       profilePicture: json['profilepicture'] ?? json['profilePicture'],
@@ -272,10 +281,100 @@ class ChatParticipant {
   }
 }
 
+enum ChatLastMessagePreviewKind { text, voice, photo, video }
+
+class ChatLastMessagePreview {
+  final String label;
+  final ChatLastMessagePreviewKind kind;
+
+  const ChatLastMessagePreview({
+    required this.label,
+    required this.kind,
+  });
+}
+
 class BackendChatService {
   /// Legacy Firebase chat image prefix still accepted by some backends.
   static const _legacyImgPrefix = 'img::';
   static const _legacyAudPrefix = 'aud::';
+
+  /// User-facing last-message line for chat lists (WhatsApp-style labels).
+  static ChatLastMessagePreview describeLastMessagePreview(
+    String? raw, {
+    String? messageType,
+  }) {
+    final t = (raw ?? '').trim();
+    if (t.isEmpty) {
+      return const ChatLastMessagePreview(
+        label: '',
+        kind: ChatLastMessagePreviewKind.text,
+      );
+    }
+
+    final type = messageType?.toLowerCase() ?? '';
+    if (type == 'audio' || t.startsWith(_legacyAudPrefix)) {
+      return ChatLastMessagePreview(
+        label: _voicePreviewLabel(t),
+        kind: ChatLastMessagePreviewKind.voice,
+      );
+    }
+    if (type == 'image' || t.startsWith(_legacyImgPrefix)) {
+      return const ChatLastMessagePreview(
+        label: 'Photo',
+        kind: ChatLastMessagePreviewKind.photo,
+      );
+    }
+    if (type == 'video') {
+      return const ChatLastMessagePreview(
+        label: 'Video',
+        kind: ChatLastMessagePreviewKind.video,
+      );
+    }
+    if (_looksLikeAudioContent(t)) {
+      return ChatLastMessagePreview(
+        label: _voicePreviewLabel(t),
+        kind: ChatLastMessagePreviewKind.voice,
+      );
+    }
+    if (t.length > 80) {
+      return ChatLastMessagePreview(
+        label: '${t.substring(0, 80)}…',
+        kind: ChatLastMessagePreviewKind.text,
+      );
+    }
+    return ChatLastMessagePreview(
+      label: t,
+      kind: ChatLastMessagePreviewKind.text,
+    );
+  }
+
+  static String _voicePreviewLabel(String raw) {
+    var rest = raw;
+    if (rest.startsWith(_legacyAudPrefix)) {
+      rest = rest.substring(_legacyAudPrefix.length);
+    }
+    final pipeIdx = rest.lastIndexOf('|');
+    if (pipeIdx > 0) {
+      final durSec = int.tryParse(rest.substring(pipeIdx + 1).trim());
+      if (durSec != null && durSec > 0) {
+        final m = durSec ~/ 60;
+        final s = durSec % 60;
+        return '$m:${s.toString().padLeft(2, '0')}';
+      }
+    }
+    return 'Voice message';
+  }
+
+  static bool _looksLikeAudioContent(String t) {
+    if (!t.startsWith('http')) return false;
+    final lower = t.toLowerCase();
+    return lower.contains('/audio') ||
+        lower.endsWith('.m4a') ||
+        lower.endsWith('.mp3') ||
+        lower.endsWith('.aac') ||
+        lower.endsWith('.wav') ||
+        lower.endsWith('.ogg');
+  }
 
   /// Uses ApiConfig for base URL (supports dart-define, ngrok, etc.)
   /// Builds: {ApiConfig.prod}/vero/api/v1
@@ -351,9 +450,12 @@ class BackendChatService {
     if (myId == null) return;
 
     final preview = (message.content ?? '').trim();
-    final previewText = preview.isEmpty
-        ? null
-        : (preview.length > 80 ? '${preview.substring(0, 80)}…' : preview);
+    final display = describeLastMessagePreview(
+      preview,
+      messageType: message.type,
+    );
+    final previewText =
+        display.label.isEmpty ? null : display.label;
 
     ChatProductContext? productUpdate;
     final tags = message.tags ?? const [];
@@ -581,7 +683,7 @@ class BackendChatService {
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      throw Exception('User not authenticated with Firebase');
+      throw Exception('User not authenticated');
     }
 
     final sp = await SharedPreferences.getInstance();
@@ -611,7 +713,7 @@ class BackendChatService {
 
     _authToken = await user.getIdToken(forceRefresh);
     if (_authToken == null || _authToken!.isEmpty) {
-      throw Exception('Failed to get Firebase ID token');
+      throw Exception('Failed to get Login ID token');
     }
 
     await sp.setString(_messagingFirebaseUidKey, user.uid);
@@ -707,6 +809,113 @@ class BackendChatService {
     return null;
   }
 
+  static int? _acceptSellerId(int? id, int excludeUserId) {
+    if (id == null || id <= 0) return null;
+    if (excludeUserId > 0 && id == excludeUserId) return null;
+    return id;
+  }
+
+  static const _ownListingChatMessage =
+      'This is your own listing — you cannot chat with yourself😂😂.';
+
+  /// True when listing merchant/seller ids match the signed-in buyer.
+  static bool _isOwnMarketplaceListing({
+    required int myBackendId,
+    int? ownerId,
+    String? sellerUserId,
+    String? merchantId,
+  }) {
+    if (ownerId != null && ownerId > 0 && ownerId == myBackendId) return true;
+
+    final meUid = FirebaseAuth.instance.currentUser?.uid.trim();
+    if (meUid != null && meUid.isNotEmpty) {
+      for (final raw in [merchantId, sellerUserId]) {
+        if (raw != null && raw.trim() == meUid) return true;
+      }
+    }
+
+    if (sellerUserId != null) {
+      final parsed = int.tryParse(sellerUserId.trim());
+      if (parsed != null && parsed == myBackendId) return true;
+    }
+
+    return false;
+  }
+
+  /// Firestore-only fallback when sync own-listing checks miss cached fields.
+  static Future<bool> _isOwnMarketplaceListingFromFirestore({
+    required int myBackendId,
+    String? firestoreItemDocId,
+    String? merchantId,
+    String? sellerUserId,
+  }) async {
+    if (firestoreItemDocId != null && firestoreItemDocId.trim().isNotEmpty) {
+      final fromDoc = await _sellerIdFromFirestoreItemDoc(
+        firestoreItemDocId.trim(),
+        quiet: true,
+      );
+      if (fromDoc == myBackendId) return true;
+    }
+
+    final meUid = FirebaseAuth.instance.currentUser?.uid.trim();
+    if (meUid == null || meUid.isEmpty) return false;
+
+    for (final raw in [merchantId, sellerUserId]) {
+      if (raw == null || raw.trim().isEmpty || !_looksLikeFirebaseUid(raw.trim())) {
+        continue;
+      }
+      if (raw.trim() != meUid) continue;
+      final fromMerchant =
+          await _sellerIdFromFirestoreMerchant(raw.trim(), quiet: true);
+      if (fromMerchant == myBackendId) return true;
+    }
+
+    return false;
+  }
+
+  static Future<int?> _verifiedSellerId(int? id, int excludeUserId) async {
+    final accepted = _acceptSellerId(id, excludeUserId);
+    if (accepted == null) return null;
+    if (await verifyBackendUserExists(accepted)) return accepted;
+    return null;
+  }
+
+  static final Map<int, bool> _verifiedBackendUserCache = {};
+
+  /// True when [userId] exists on the Nest/SQL backend (chat API peer).
+  static Future<bool> verifyBackendUserExists(
+    int userId, {
+    bool quiet = true,
+  }) async {
+    if (userId <= 0) return false;
+    final memo = _verifiedBackendUserCache[userId];
+    if (memo != null) return memo;
+
+    await ensureAuth();
+    try {
+      final response = await http
+          .get(
+            ApiConfig.endpoint('/users/$userId'),
+            headers: {'Authorization': _authHeader},
+          )
+          .timeout(_lookupTimeout);
+      final ok = response.statusCode == 200;
+      _verifiedBackendUserCache[userId] = ok;
+      return ok;
+    } catch (e) {
+      if (!quiet) {
+        print('[BackendChatService] verifyBackendUserExists($userId): $e');
+      }
+      _verifiedBackendUserCache[userId] = false;
+      return false;
+    }
+  }
+
+  static void _forgetSellerCache(String cacheKey) {
+    if (cacheKey.isEmpty) return;
+    _marketplaceSellerCache.remove(cacheKey);
+  }
+
   /// Resolve marketplace listing seller → numeric backend user id.
   static Future<int?> resolveMarketplaceSeller({
     int? sqlItemId,
@@ -714,38 +923,144 @@ class BackendChatService {
     String? sellerUserId,
     String? serviceProviderId,
     String? merchantId,
+    String? firestoreItemDocId,
+    int excludeUserId = 0,
+    bool skipEnsureAuth = false,
+    bool skipOwnerId = false,
+    bool skipNumericParse = false,
   }) async {
-    await ensureAuth();
+    if (!skipEnsureAuth) await ensureAuth();
 
-    if (ownerId != null && ownerId > 0) return ownerId;
+    final cacheKey = _marketplaceSellerCacheKey(
+      firestoreItemDocId: firestoreItemDocId,
+      merchantId: merchantId,
+      sellerUserId: sellerUserId,
+      sqlItemId: sqlItemId,
+    );
+    if (cacheKey.isNotEmpty) {
+      final cached = await _verifiedSellerId(
+        _marketplaceSellerCache[cacheKey],
+        excludeUserId,
+      );
+      if (cached != null) return cached;
+      _forgetSellerCache(cacheKey);
+    }
 
-    for (final raw in [sellerUserId, merchantId, serviceProviderId]) {
+    if (!skipOwnerId) {
+      final accepted = await _verifiedSellerId(ownerId, excludeUserId);
+      if (accepted != null) {
+        _rememberMarketplaceSeller(cacheKey, accepted);
+        return accepted;
+      }
+    }
+
+    if (firestoreItemDocId != null && firestoreItemDocId.trim().isNotEmpty) {
+      final fromDoc = await _verifiedSellerId(
+        await _sellerIdFromFirestoreItemDoc(
+          firestoreItemDocId.trim(),
+          quiet: true,
+        ),
+        excludeUserId,
+      );
+      if (fromDoc != null) {
+        _rememberMarketplaceSeller(cacheKey, fromDoc);
+        return fromDoc;
+      }
+    }
+
+    if (!skipNumericParse) {
+      for (final raw in [sellerUserId, merchantId, serviceProviderId]) {
+        if (raw == null || raw.trim().isEmpty) continue;
+        if (_looksLikeFirebaseUid(raw.trim())) continue;
+        final numeric = int.tryParse(raw.trim());
+        final id = await _verifiedSellerId(numeric, excludeUserId);
+        if (id != null) {
+          _rememberMarketplaceSeller(cacheKey, id);
+          return id;
+        }
+      }
+    }
+
+    // Firestore + API lookups in parallel (first match wins).
+    final uidCandidates = <String>{};
+    for (final raw in [merchantId, sellerUserId]) {
       if (raw == null || raw.trim().isEmpty) continue;
-      final numeric = int.tryParse(raw.trim());
-      if (numeric != null && numeric > 0) return numeric;
+      final trimmed = raw.trim();
+      if (_looksLikeFirebaseUid(trimmed)) uidCandidates.add(trimmed);
+    }
+
+    if (uidCandidates.isNotEmpty) {
+      final parallelLookups = <Future<int?>>[];
+      for (final trimmed in uidCandidates) {
+        parallelLookups.add(
+          _sellerIdFromFirestoreMerchant(trimmed, quiet: true)
+              .then((id) => _verifiedSellerId(id, excludeUserId)),
+        );
+        parallelLookups.add(
+          _sellerIdFromFirestoreItems(trimmed, quiet: true)
+              .then((id) => _verifiedSellerId(id, excludeUserId)),
+        );
+        parallelLookups.add(
+          _sellerIdFromFirestoreUser(trimmed, quiet: true)
+              .then((id) => _verifiedSellerId(id, excludeUserId)),
+        );
+        parallelLookups.add(
+          _sellerIdFromUsersQuery(trimmed, quiet: true)
+              .then((id) => _verifiedSellerId(id, excludeUserId)),
+        );
+        parallelLookups.add(
+          getUserIdByFirebaseUidValidated(
+            trimmed,
+            excludeUserId: excludeUserId,
+            quiet: true,
+          ).then((id) => _verifiedSellerId(id, excludeUserId)),
+        );
+      }
+      final fromParallel = await _firstSuccessfulId(parallelLookups);
+      if (fromParallel != null) {
+        _rememberMarketplaceSeller(cacheKey, fromParallel);
+        return fromParallel;
+      }
     }
 
     final lookups = <Future<int?>>[];
 
     if (sqlItemId != null && sqlItemId > 0) {
-      lookups.add(_ownerIdFromMarketplaceItem(sqlItemId, quiet: true));
+      lookups.add(
+        _ownerIdFromMarketplaceItem(sqlItemId, quiet: true)
+            .then((id) => _verifiedSellerId(id, excludeUserId)),
+      );
     }
 
     if (serviceProviderId != null && serviceProviderId.trim().isNotEmpty) {
-      lookups.add(_userIdFromServiceProvider(serviceProviderId.trim(), quiet: true));
+      lookups.add(
+        _userIdFromServiceProvider(serviceProviderId.trim(), quiet: true)
+            .then((id) => _verifiedSellerId(id, excludeUserId)),
+      );
     }
 
     for (final raw in [sellerUserId, merchantId]) {
       if (raw == null || raw.trim().isEmpty) continue;
       final trimmed = raw.trim();
       if (_looksLikeFirebaseUid(trimmed)) {
-        lookups.add(getUserIdByFirebaseUid(trimmed, quiet: true));
+        lookups.add(
+          getUserIdByFirebaseUidValidated(
+            trimmed,
+            excludeUserId: excludeUserId,
+            quiet: true,
+          ).then((id) => _verifiedSellerId(id, excludeUserId)),
+        );
       }
     }
 
     if (lookups.isEmpty) return null;
 
-    return _firstSuccessfulId(lookups);
+    final resolved = await _firstSuccessfulId(lookups);
+    final acceptedResolved = await _verifiedSellerId(resolved, excludeUserId);
+    if (acceptedResolved != null) {
+      _rememberMarketplaceSeller(cacheKey, acceptedResolved);
+    }
+    return acceptedResolved;
   }
 
   /// Returns the first positive id from [futures], without waiting for slower ones.
@@ -778,35 +1093,176 @@ class BackendChatService {
     String? sellerUserId,
     String? serviceProviderId,
     String? merchantId,
-    required int myUserId,
+    String? firestoreItemDocId,
+    int? myUserId,
   }) async {
-    final sellerId = await resolveMarketplaceSeller(
+    await ensureAuth();
+    final myId = myUserId ?? _userId!;
+
+    if (_isOwnMarketplaceListing(
+      myBackendId: myId,
+      ownerId: ownerId,
+      sellerUserId: sellerUserId,
+      merchantId: merchantId,
+    )) {
+      throw Exception(_ownListingChatMessage);
+    }
+
+    final cacheKey = _marketplaceSellerCacheKey(
+      firestoreItemDocId: firestoreItemDocId,
+      merchantId: merchantId,
+      sellerUserId: sellerUserId,
+      sqlItemId: sqlItemId,
+    );
+
+    int? sellerId = await _verifiedSellerId(ownerId, myId);
+    sellerId ??= await resolveMarketplaceSeller(
       sqlItemId: sqlItemId,
       ownerId: ownerId,
       sellerUserId: sellerUserId,
       serviceProviderId: serviceProviderId,
       merchantId: merchantId,
+      firestoreItemDocId: firestoreItemDocId,
+      excludeUserId: myId,
+      skipEnsureAuth: true,
+      skipOwnerId: ownerId != null && sellerId == null,
     ).timeout(
-      const Duration(seconds: 12),
+      const Duration(seconds: 8),
       onTimeout: () => null,
     );
 
     if (sellerId == null || sellerId <= 0) {
-      throw Exception(
-        'Seller chat unavailable — could not link this listing to a seller account.',
+      sellerId = await resolveMarketplaceSeller(
+        sqlItemId: sqlItemId,
+        sellerUserId: sellerUserId,
+        serviceProviderId: serviceProviderId,
+        merchantId: merchantId,
+        firestoreItemDocId: firestoreItemDocId,
+        excludeUserId: myId,
+        skipEnsureAuth: true,
+        skipOwnerId: true,
+        skipNumericParse: true,
+      ).timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => null,
       );
     }
-    if (sellerId == myUserId) {
-      throw Exception('This is your own listing');
+
+    if (sellerId == null || sellerId <= 0) {
+      if (_isOwnMarketplaceListing(
+            myBackendId: myId,
+            ownerId: ownerId,
+            sellerUserId: sellerUserId,
+            merchantId: merchantId,
+          ) ||
+          await _isOwnMarketplaceListingFromFirestore(
+            myBackendId: myId,
+            firestoreItemDocId: firestoreItemDocId,
+            merchantId: merchantId,
+            sellerUserId: sellerUserId,
+          )) {
+        throw Exception(_ownListingChatMessage);
+      }
+      throw Exception(
+        'Seller chat is unavailable — we could not find this seller\'s account. Try again later.',
+      );
+    }
+    if (sellerId == myId) {
+      throw Exception(_ownListingChatMessage);
     }
 
-    final chat = await ensureChat(peerUserId: sellerId).timeout(
-      const Duration(seconds: 12),
-      onTimeout: () => throw Exception(
-        'Chat server is not responding. Check your connection and try again.',
-      ),
-    );
-    return MerchantChatResult(chat: chat, sellerId: sellerId);
+    final cached = findCachedDirectChatWithPeer(sellerId);
+    if (cached != null) {
+      return MerchantChatResult(chat: cached, sellerId: sellerId);
+    }
+
+    try {
+      final chat = await ensureChat(peerUserId: sellerId).timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => throw Exception(
+          'Chat server is not responding. Check your connection and try again.',
+        ),
+      );
+      return MerchantChatResult(chat: chat, sellerId: sellerId);
+    } catch (e) {
+      _forgetSellerCache(cacheKey);
+      _verifiedBackendUserCache[sellerId] = false;
+      final msg = e.toString();
+      if (msg.contains('404') || msg.contains('not found')) {
+        throw Exception(
+          'Seller chat is unavailable — this seller\'s account is not linked on the server yet. Ask them to open the merchant dashboard once while logged in.',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  static final Map<String, int> _marketplaceSellerCache = {};
+
+  static String _marketplaceSellerCacheKey({
+    String? firestoreItemDocId,
+    String? merchantId,
+    String? sellerUserId,
+    int? sqlItemId,
+  }) {
+    if (firestoreItemDocId != null && firestoreItemDocId.trim().isNotEmpty) {
+      return 'doc:${firestoreItemDocId.trim()}';
+    }
+    for (final raw in [merchantId, sellerUserId]) {
+      if (raw != null && raw.trim().isNotEmpty) return 'uid:${raw.trim()}';
+    }
+    if (sqlItemId != null && sqlItemId > 0) return 'sql:$sqlItemId';
+    return '';
+  }
+
+  static void _rememberMarketplaceSeller(String cacheKey, int sellerId) {
+    if (cacheKey.isEmpty || sellerId <= 0) return;
+    _marketplaceSellerCache[cacheKey] = sellerId;
+  }
+
+  /// Warm auth + disk thread cache so marketplace chat opens faster.
+  static Future<void> warmForMarketplaceChat() async {
+    try {
+      await ensureAuth();
+      await BackendMessagingCache.initialize();
+      final userId = _userId;
+      if (userId == null) return;
+      await _loadDeletedThreadIds(userId);
+      if (_cachedThreads.isEmpty) {
+        final diskThreads = BackendMessagingCache.peekThreads(userId);
+        if (diskThreads.isNotEmpty) {
+          _cachedThreads = _filterDeletedThreads(diskThreads);
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// Create or cache a direct chat in the background (product details prefetch).
+  static Future<void> prefetchDirectChat(int peerUserId) async {
+    if (peerUserId <= 0) return;
+    try {
+      await warmForMarketplaceChat();
+      final myId = _userId;
+      if (myId == null || myId == peerUserId) return;
+      if (!(await verifyBackendUserExists(peerUserId))) return;
+      if (findCachedDirectChatWithPeer(peerUserId) != null) return;
+
+      final chat = await ensureChat(peerUserId: peerUserId);
+      _cachedThreads.removeWhere((t) => t.id == chat.id);
+      _cachedThreads.insert(0, chat);
+      unawaited(BackendMessagingCache.saveThreads(myId, _cachedThreads));
+    } catch (_) {}
+  }
+
+  static BackendChatThread? findCachedDirectChatWithPeer(int peerUserId) {
+    if (peerUserId <= 0) return null;
+    for (final thread in _cachedThreads) {
+      if (thread.type != 'direct') continue;
+      for (final participant in thread.participants) {
+        if (participant.id == peerUserId) return thread;
+      }
+    }
+    return null;
   }
 
   static bool _looksLikeFirebaseUid(String value) {
@@ -817,6 +1273,169 @@ class BackendChatService {
     if (raw == null) return null;
     if (raw is int) return raw > 0 ? raw : null;
     return int.tryParse(raw.toString());
+  }
+
+  static Future<int?> _sellerIdFromFirestoreItemDoc(
+    String docId, {
+    bool quiet = false,
+  }) async {
+    if (docId.isEmpty) return null;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('marketplace_items')
+          .doc(docId)
+          .get();
+      if (!doc.exists) return null;
+      final data = doc.data();
+      if (data == null) return null;
+
+      for (final key in [
+        'merchantBackendId',
+        'backendUserId',
+        'ownerId',
+        'userId',
+      ]) {
+        final parsed = _parseNumericId(data[key]);
+        if (parsed != null) return parsed;
+      }
+
+      final sellerRaw = data['sellerUserId'];
+      if (sellerRaw != null &&
+          !_looksLikeFirebaseUid(sellerRaw.toString().trim())) {
+        final parsed = _parseNumericId(sellerRaw);
+        if (parsed != null) return parsed;
+      }
+
+      final merchantUid = data['merchantId']?.toString().trim() ?? '';
+      if (_looksLikeFirebaseUid(merchantUid)) {
+        return _sellerIdFromFirestoreMerchant(merchantUid, quiet: quiet);
+      }
+    } catch (e) {
+      if (!quiet) {
+        print('[BackendChatService] Firestore item doc lookup failed: $e');
+      }
+    }
+    return null;
+  }
+
+  static Future<int?> _sellerIdFromUsersQuery(
+    String firebaseUid, {
+    bool quiet = false,
+  }) async {
+    if (firebaseUid.isEmpty) return null;
+    const fields = ['firebaseUid', 'uid', 'firebase_uid'];
+    for (final field in fields) {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .where(field, isEqualTo: firebaseUid)
+            .limit(1)
+            .get();
+        if (snap.docs.isEmpty) continue;
+        final data = snap.docs.first.data();
+        for (final key in ['backendUserId', 'userId', 'nestUserId', 'id']) {
+          final parsed = _parseNumericId(data[key]);
+          if (parsed != null) return parsed;
+        }
+      } catch (e) {
+        if (!quiet) {
+          print('[BackendChatService] users query ($field) failed: $e');
+        }
+      }
+    }
+    return null;
+  }
+
+  static Future<int?> _sellerIdFromFirestoreMerchant(
+    String firebaseUid, {
+    bool quiet = false,
+  }) async {
+    if (firebaseUid.isEmpty) return null;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('marketplace_merchants')
+          .doc(firebaseUid)
+          .get();
+      if (!doc.exists) return null;
+      final data = doc.data();
+      if (data == null) return null;
+
+      for (final key in [
+        'backendUserId',
+        'userId',
+        'merchantUserId',
+        'ownerId',
+      ]) {
+        final parsed = _parseNumericId(data[key]);
+        if (parsed != null) return parsed;
+      }
+    } catch (e) {
+      if (!quiet) {
+        print('[BackendChatService] Firestore merchant lookup failed: $e');
+      }
+    }
+    return null;
+  }
+
+  static Future<int?> _sellerIdFromFirestoreItems(
+    String firebaseUid, {
+    bool quiet = false,
+  }) async {
+    if (firebaseUid.isEmpty) return null;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('marketplace_items')
+          .where('merchantId', isEqualTo: firebaseUid)
+          .limit(5)
+          .get();
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        for (final key in [
+          'merchantBackendId',
+          'backendUserId',
+          'ownerId',
+          'userId',
+        ]) {
+          final parsed = _parseNumericId(data[key]);
+          if (parsed != null) return parsed;
+        }
+        final sellerRaw = data['sellerUserId'];
+        if (sellerRaw != null &&
+            !_looksLikeFirebaseUid(sellerRaw.toString().trim())) {
+          final parsed = _parseNumericId(sellerRaw);
+          if (parsed != null) return parsed;
+        }
+      }
+    } catch (e) {
+      if (!quiet) {
+        print('[BackendChatService] Firestore items lookup failed: $e');
+      }
+    }
+    return null;
+  }
+
+  static Future<int?> _sellerIdFromFirestoreUser(
+    String firebaseUid, {
+    bool quiet = false,
+  }) async {
+    if (firebaseUid.isEmpty) return null;
+    try {
+      final doc =
+          await FirebaseFirestore.instance.collection('users').doc(firebaseUid).get();
+      if (!doc.exists) return null;
+      final data = doc.data();
+      if (data == null) return null;
+
+      for (final key in ['backendUserId', 'userId', 'nestUserId', 'id']) {
+        final parsed = _parseNumericId(data[key]);
+        if (parsed != null) return parsed;
+      }
+    } catch (e) {
+      if (!quiet) {
+        print('[BackendChatService] Firestore user lookup failed: $e');
+      }
+    }
+    return null;
   }
 
   static Future<int?> _ownerIdFromMarketplaceItem(int itemId, {bool quiet = false}) async {
@@ -872,6 +1491,25 @@ class BackendChatService {
     return _userId!;
   }
 
+  /// Like [getUserIdByFirebaseUid] but rejects ids that map to a different Firebase UID.
+  static Future<int?> getUserIdByFirebaseUidValidated(
+    String firebaseUid, {
+    int excludeUserId = 0,
+    bool quiet = false,
+  }) async {
+    final id = await getUserIdByFirebaseUid(firebaseUid, quiet: quiet);
+    if (id == null || id <= 0) return null;
+    if (excludeUserId > 0 && id == excludeUserId) return null;
+
+    final resolvedUid = await getFirebaseUidByUserId(id, quiet: true);
+    if (resolvedUid != null &&
+        resolvedUid.isNotEmpty &&
+        resolvedUid != firebaseUid) {
+      return null;
+    }
+    return id;
+  }
+
   /// Get numeric user ID by Firebase UID (for looking up seller/merchant IDs)
   static Future<int?> getUserIdByFirebaseUid(
     String firebaseUid, {
@@ -880,30 +1518,54 @@ class BackendChatService {
     if (firebaseUid.isEmpty) return null;
     await ensureAuth();
 
-    try {
-      // Try to get the user by their Firebase UID
-      final url = ApiConfig.endpoint('/users').replace(
+    final attempts = <Uri>[
+      ApiConfig.endpoint('/users').replace(
         queryParameters: {'firebaseUid': firebaseUid},
-      );
-      final response = await http.get(
-        url,
-        headers: {'Authorization': _authHeader},
-      ).timeout(_lookupTimeout);
+      ),
+      ApiConfig.endpoint('/users').replace(
+        queryParameters: {'uid': firebaseUid},
+      ),
+    ];
 
-      if (response.statusCode == 200) {
+    for (final url in attempts) {
+      try {
+        final response = await http.get(
+          url,
+          headers: {'Authorization': _authHeader, 'Accept': 'application/json'},
+        ).timeout(_lookupTimeout);
+
+        if (response.statusCode != 200) continue;
         final json = jsonDecode(response.body);
-        final users = json['data'] as List?;
-        if (users != null && users.isNotEmpty) {
-          final user = users.first as Map<String, dynamic>;
-          final id = user['id'];
-          if (id != null) {
-            return id is int ? id : int.tryParse(id.toString());
+        if (json is! Map) continue;
+
+        final data = json['data'];
+        if (data is List && data.isNotEmpty) {
+          for (final user in data) {
+            if (user is! Map) continue;
+            final uid = (user['firebaseUid'] ?? user['uid'] ?? user['firebase_uid'])
+                ?.toString()
+                .trim();
+            if ((uid ?? '').isNotEmpty && uid != firebaseUid) continue;
+            final id = _parseNumericId(user['id'] ?? user['userId']);
+            if (id != null) return id;
           }
         }
-      }
-    } catch (e) {
-      if (!quiet) {
-        print('[BackendChatService] Error fetching user by Firebase UID: $e');
+        if (data is Map) {
+          final uid = (data['firebaseUid'] ?? data['uid'] ?? data['firebase_uid'])
+              ?.toString()
+              .trim();
+          if ((uid ?? '').isEmpty || uid == firebaseUid) {
+            final id = _parseNumericId(data['id'] ?? data['userId']);
+            if (id != null) return id;
+          }
+        }
+
+        final topLevel = _parseNumericId(json['id'] ?? json['userId']);
+        if (topLevel != null) return topLevel;
+      } catch (e) {
+        if (!quiet) {
+          print('[BackendChatService] Error fetching user by Firebase UID: $e');
+        }
       }
     }
     return null;
@@ -1613,8 +2275,14 @@ class BackendChatService {
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final body = jsonDecode(response.body);
-        final chatData = body is Map ? body : body['data'] ?? body;
-        return BackendChatThread.fromJson(chatData as Map<String, dynamic>);
+        final chatData = body is Map<String, dynamic>
+            ? (body['data'] is Map
+                ? Map<String, dynamic>.from(body['data'] as Map)
+                : body)
+            : body;
+        return BackendChatThread.fromJson(
+          Map<String, dynamic>.from(chatData as Map),
+        );
       } else {
         print('[BackendChatService] Create chat error: ${response.statusCode}');
         print('[BackendChatService] Response body: ${response.body}');

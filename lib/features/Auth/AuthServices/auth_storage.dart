@@ -1,5 +1,6 @@
 // lib/services/auth_storage.dart
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -63,6 +64,23 @@ class AuthStorage {
       if (id == null || id <= 0) return null;
       await sp.setInt('userId', id);
       await sp.setInt('user_id', id);
+
+      try {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(firebaseUser.uid)
+            .set(
+          {
+            'userId': id,
+            'backendUserId': id,
+            'firebaseUid': firebaseUser.uid,
+            'uid': firebaseUser.uid,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+      } catch (_) {}
+
       return id;
     } catch (_) {
       return null;

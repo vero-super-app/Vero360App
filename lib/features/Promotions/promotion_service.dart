@@ -5,14 +5,62 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
+
+/// Promo date labels without `initializeDateFormatting` (avoids LocaleDataException).
+class PromoDateFormat {
+  PromoDateFormat._();
+
+  static const _months = <String>[
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+
+  static String dayMonth(DateTime dt) {
+    final local = dt.toLocal();
+    return '${local.day} ${_months[local.month - 1]}';
+  }
+
+  static String dayMonthYearTime(DateTime dt) {
+    final local = dt.toLocal();
+    final hour = local.hour;
+    final minute = local.minute.toString().padLeft(2, '0');
+    final h12 = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+    final ampm = hour >= 12 ? 'PM' : 'AM';
+    return '${local.day} ${_months[local.month - 1]} ${local.year}, $h12:$minute $ampm';
+  }
+
+  static String periodRange(DateTime start, DateTime? end) {
+    final startLabel = dayMonth(start);
+    if (end == null) return startLabel;
+    final endLabel = dayMonth(end);
+    if (startLabel == endLabel) return startLabel;
+    return '$startLabel – $endLabel';
+  }
+}
 
 class PromoModel {
   final int id;
   final int merchantId;
   final int? serviceProviderId;
+  final String? merchantFirebaseUid;
+  final String? merchantBusinessName;
   final String title;
   final String? description;
   final double? price;
@@ -20,6 +68,8 @@ class PromoModel {
   final bool isActive;
   final DateTime? freeTrialEndsAt;
   final DateTime? subscribedAt;
+  final DateTime? startsAt;
+  final DateTime? endsAt;
   final DateTime createdAt;
 
   PromoModel({
@@ -29,22 +79,78 @@ class PromoModel {
     required this.isActive,
     required this.createdAt,
     this.serviceProviderId,
+    this.merchantFirebaseUid,
+    this.merchantBusinessName,
     this.description,
     this.price,
     this.image,
     this.freeTrialEndsAt,
     this.subscribedAt,
+    this.startsAt,
+    this.endsAt,
   });
 
   double get displayPrice => price ?? 0;
 
   bool get isFree => displayPrice <= 0;
 
-  String get formattedPrice =>
-      isFree ? 'Free' : 'MWK ${displayPrice.toStringAsFixed(0)}';
+  static final NumberFormat _mwkFmt = NumberFormat('#,##0', 'en');
+
+  String get formattedPrice {
+    final p = displayPrice;
+    if (p <= 0) return 'MWK 0';
+    if (p == p.roundToDouble()) {
+      return 'MWK ${_mwkFmt.format(p.round())}';
+    }
+    return 'MWK ${p.toStringAsFixed(2)}';
+  }
+
+  MarketplaceDetailModel toCheckoutItem({PromoMerchantInfo? merchant}) {
+    final m = merchant;
+    return MarketplaceDetailModel(
+      id: id,
+      name: title,
+      image: resolvedImageUrl ?? '',
+      price: displayPrice,
+      description: (description ?? '').trim().isNotEmpty
+          ? description!.trim()
+          : 'Vero360 promotion',
+      location: 'Promotion',
+      serviceType: 'promotion',
+      merchantId: m?.merchantRef ?? merchantId.toString(),
+      merchantName: m?.displayName ?? 'Merchant',
+      sellerBusinessName: m?.businessName,
+      sellerStatus: m?.status,
+      sellerBusinessDescription: m?.description,
+      sellerRating: m?.rating,
+      sellerLogoUrl: m?.logoUrl,
+      serviceProviderId:
+          m?.serviceProviderId ?? serviceProviderId?.toString(),
+      sellerUserId: m?.sellerUserId ?? merchantId.toString(),
+    );
+  }
 
   bool get hasFreeTrial =>
       freeTrialEndsAt != null && freeTrialEndsAt!.isAfter(DateTime.now());
+
+  DateTime get promoStart => startsAt ?? createdAt;
+
+  DateTime? get promoEnd => endsAt ?? freeTrialEndsAt;
+
+  String get formattedPromoStart =>
+      PromoDateFormat.dayMonthYearTime(promoStart);
+
+  String get formattedPromoEnd {
+    final end = promoEnd;
+    if (end == null) return '—';
+    return PromoDateFormat.dayMonthYearTime(end);
+  }
+
+  /// e.g. "2 January – 10 January"
+  String get formattedPromoPeriodRange =>
+      PromoDateFormat.periodRange(promoStart, promoEnd);
+
+  static String toApiIso(DateTime dt) => dt.toUtc().toIso8601String();
 
   String? get resolvedImageUrl {
     final raw = image?.trim();
@@ -55,39 +161,215 @@ class PromoModel {
     return '$root/$raw';
   }
 
-  factory PromoModel.fromJson(Map<String, dynamic> j) => PromoModel(
+  factory PromoModel.fromJson(Map<String, dynamic> j) {
+    final merchant = j['merchant'] is Map
+        ? Map<String, dynamic>.from(j['merchant'] as Map)
+        : null;
+
+    var merchantId = 0;
+    String? firebaseUid;
+    final rawMerchantId = j['merchantId'];
+    final merchantIdAsUid = _parseFirebaseUid(rawMerchantId);
+    if (merchantIdAsUid != null) {
+      firebaseUid = merchantIdAsUid;
+    } else {
+      merchantId = _parseMerchantId(rawMerchantId) ?? 0;
+    }
+
+    if (merchantId <= 0 && merchant != null) {
+      merchantId = _parseMerchantId(
+            merchant['id'] ?? merchant['userId'] ?? merchant['merchantId'],
+          ) ??
+          0;
+    }
+
+    firebaseUid ??= _parseFirebaseUid(
+      j['merchantFirebaseUid'] ??
+          j['merchantUid'] ??
+          j['sellerUserId'] ??
+          merchant?['firebaseUid'] ??
+          merchant?['uid'] ??
+          merchant?['merchantUid'] ??
+          merchant?['sellerUserId'],
+    );
+
+    final merchantName = (j['merchantName'] ??
+            j['merchantBusinessName'] ??
+            merchant?['businessName'] ??
+            merchant?['merchantName'] ??
+            merchant?['name'])
+        ?.toString()
+        .trim();
+
+    var serviceProviderId = _parseMerchantId(
+      j['serviceProviderId'] ?? merchant?['serviceProviderId'],
+    );
+
+    return PromoModel(
         id: (j['id'] as num?)?.toInt() ?? 0,
-        merchantId: (j['merchantId'] as num?)?.toInt() ?? 0,
-        serviceProviderId: (j['serviceProviderId'] as num?)?.toInt(),
+        merchantId: merchantId,
+        serviceProviderId: serviceProviderId,
+        merchantFirebaseUid: firebaseUid,
+        merchantBusinessName:
+            (merchantName != null && merchantName.isNotEmpty) ? merchantName : null,
         title: j['title']?.toString() ?? '',
         description: j['description']?.toString(),
-        price: j['price'] == null ? null : (j['price'] as num).toDouble(),
+        price: _parsePrice(j),
         image: j['image']?.toString(),
         isActive: j['isActive'] != false,
-        freeTrialEndsAt: j['freeTrialEndsAt'] == null
-            ? null
-            : DateTime.tryParse(j['freeTrialEndsAt'].toString()),
-        subscribedAt: j['subscribedAt'] == null
-            ? null
-            : DateTime.tryParse(j['subscribedAt'].toString()),
-        createdAt: DateTime.tryParse(j['createdAt']?.toString() ?? '') ??
-            DateTime.now(),
+        freeTrialEndsAt: _parseDate(
+          j['freeTrialEndsAt'] ?? j['freeTrialEndAt'],
+        ),
+        subscribedAt: _parseDate(j['subscribedAt']),
+        startsAt: _parseDate(
+          j['startsAt'] ??
+              j['startDate'] ??
+              j['startAt'] ??
+              j['validFrom'] ??
+              j['promoStart'],
+        ),
+        endsAt: _parseDate(
+          j['endsAt'] ??
+              j['endDate'] ??
+              j['endAt'] ??
+              j['validTo'] ??
+              j['expiresAt'] ??
+              j['promoEnd'],
+        ),
+        createdAt: _parseDate(j['createdAt']) ?? DateTime.now(),
       );
+  }
 
-  Map<String, dynamic> toCreateJson() => {
-        'title': title,
-        'description': description,
-        'price': price,
-        'image': image,
-      };
+  static int? _parseMerchantId(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw.toString().trim());
+  }
+
+  static String? _parseFirebaseUid(dynamic raw) {
+    final s = raw?.toString().trim() ?? '';
+    if (s.isEmpty) return null;
+    if (RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(s)) return s;
+    return null;
+  }
+
+  static DateTime? _parseDate(dynamic v) {
+    if (v == null) return null;
+    return DateTime.tryParse(v.toString());
+  }
+
+  static double? _parsePrice(Map<String, dynamic> j) {
+    dynamic v = j['price'] ??
+        j['amount'] ??
+        j['promoPrice'] ??
+        j['cost'] ??
+        j['salePrice'];
+    if (v == null && j['pricing'] is Map) {
+      final pricing = Map<String, dynamic>.from(j['pricing'] as Map);
+      v = pricing['price'] ?? pricing['amount'];
+    }
+    if (v == null) return null;
+    if (v is num) return v.toDouble();
+    final cleaned = v.toString().replaceAll(',', '').trim();
+    if (cleaned.isEmpty) return null;
+    return double.tryParse(cleaned);
+  }
+
+  Map<String, dynamic> toCreateJson() {
+    final map = <String, dynamic>{
+      'title': title.trim(),
+      'price': price ?? 0,
+    };
+    final desc = description?.trim();
+    if (desc != null && desc.isNotEmpty) map['description'] = desc;
+    final img = image?.trim();
+    if (img != null && img.isNotEmpty) map['image'] = img;
+    if (startsAt != null) map['startDate'] = toApiIso(startsAt!);
+    if (endsAt != null) map['endDate'] = toApiIso(endsAt!);
+    return map;
+  }
+}
+
+class PromoMerchantInfo {
+  final String displayName;
+  final String? businessName;
+  final String? status;
+  final String? description;
+  final String? logoUrl;
+  final double? rating;
+  final int reviewCount;
+  final String merchantRef;
+  final int backendMerchantId;
+  final String? serviceProviderId;
+  final String? sellerUserId;
+  final List<MerchantReview> recentReviews;
+
+  const PromoMerchantInfo({
+    required this.displayName,
+    required this.merchantRef,
+    required this.backendMerchantId,
+    this.businessName,
+    this.status,
+    this.description,
+    this.logoUrl,
+    this.rating,
+    this.reviewCount = 0,
+    this.serviceProviderId,
+    this.sellerUserId,
+    this.recentReviews = const [],
+  });
 }
 
 class PromoService {
+  static Future<PromoMerchantInfo> resolvePromoMerchant(PromoModel promo) async {
+    final seller = await MerchantSellerLoader.load(
+      merchantId: promo.merchantFirebaseUid,
+      serviceProviderId: promo.serviceProviderId?.toString(),
+      sellerBusinessName: promo.merchantBusinessName,
+      backendUserIdHint: promo.merchantId > 0 ? promo.merchantId : null,
+      backendMerchantIdForReviews:
+          promo.merchantId > 0 ? promo.merchantId : null,
+    );
+
+    final merchantRef = RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(seller.merchantRef.trim())
+        ? seller.merchantRef.trim()
+        : (promo.merchantFirebaseUid?.trim().isNotEmpty == true
+            ? promo.merchantFirebaseUid!.trim()
+            : (seller.serviceProviderId?.trim().isNotEmpty == true
+                ? seller.serviceProviderId!.trim()
+                : promo.merchantId.toString()));
+
+    return PromoMerchantInfo(
+      displayName: seller.displayName,
+      businessName: seller.businessName,
+      status: seller.status,
+      description: seller.description,
+      logoUrl: seller.logoUrl,
+      rating: seller.rating,
+      reviewCount: seller.reviewCount,
+      merchantRef: merchantRef,
+      backendMerchantId: seller.backendMerchantId ?? promo.merchantId,
+      serviceProviderId: seller.serviceProviderId ?? promo.serviceProviderId?.toString(),
+      sellerUserId: seller.sellerUserId ??
+          (RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(merchantRef)
+              ? merchantRef
+              : promo.merchantId.toString()),
+      recentReviews: seller.recentReviews,
+    );
+  }
   Future<String> _token() async {
     final firebase = await AuthHandler.getTokenForApi();
     if (firebase != null && firebase.isNotEmpty) return firebase;
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('jwt_token') ?? prefs.getString('token') ?? '';
+  }
+
+  Map<String, dynamic> _unwrapPromoMap(dynamic body) {
+    if (body is Map && body['data'] is Map) {
+      return Map<String, dynamic>.from(body['data'] as Map);
+    }
+    if (body is Map) return Map<String, dynamic>.from(body);
+    return const {};
   }
 
   List<PromoModel> _parsePromoList(dynamic body, {bool publicActiveList = false}) {
@@ -231,7 +513,7 @@ class PromoService {
       body: jsonEncode(p.toCreateJson()),
     );
     final body = _decode(r, where: 'POST /promos');
-    return PromoModel.fromJson(Map<String, dynamic>.from(body));
+    return PromoModel.fromJson(_unwrapPromoMap(body));
   }
 
   Future<void> subscribe(int promoId, double amountPaid) async {

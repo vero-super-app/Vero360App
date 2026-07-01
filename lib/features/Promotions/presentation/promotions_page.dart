@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -17,14 +18,39 @@ class _PromotionsPageState extends State<PromotionsPage> {
   static const _bg = Color(0xFFF7F8FA);
 
   final _svc = PromoService();
+  final _searchController = TextEditingController();
   List<PromoModel> _promos = [];
   bool _loading = true;
   String? _error;
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(() {
+      final q = _searchController.text.trim().toLowerCase();
+      if (q == _searchQuery) return;
+      setState(() => _searchQuery = q);
+    });
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<PromoModel> get _filteredPromos {
+    if (_searchQuery.isEmpty) return _promos;
+    return _promos.where((p) {
+      final title = p.title.toLowerCase();
+      final desc = (p.description ?? '').toLowerCase();
+      final priceStr = p.displayPrice.round().toString();
+      return title.contains(_searchQuery) ||
+          desc.contains(_searchQuery) ||
+          priceStr.contains(_searchQuery);
+    }).toList();
   }
 
   Future<void> _load() async {
@@ -56,9 +82,22 @@ class _PromotionsPageState extends State<PromotionsPage> {
     );
   }
 
+  void _sharePromo(PromoModel promo) {
+    final url = 'https://vero360.app/promotions/${promo.id}';
+    final desc = (promo.description ?? '').trim();
+    final buffer = StringBuffer()
+      ..writeln('Check out this Vero360 promotion!')
+      ..writeln('${promo.title} — ${promo.formattedPrice}')
+      ..writeln('Valid: ${promo.formattedPromoPeriodRange}');
+    if (desc.isNotEmpty) buffer.writeln(desc);
+    buffer.write(url);
+    Share.share(buffer.toString().trim());
+  }
+
   @override
   Widget build(BuildContext context) {
     final top = MediaQuery.of(context).padding.top;
+    final filtered = _filteredPromos;
 
     return Scaffold(
       backgroundColor: _bg,
@@ -69,6 +108,8 @@ class _PromotionsPageState extends State<PromotionsPage> {
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverToBoxAdapter(child: _buildHeader(top)),
+            if (!_loading && _error == null && _promos.isNotEmpty)
+              SliverToBoxAdapter(child: _buildSearchBar()),
             if (_loading)
               const SliverFillRemaining(
                 hasScrollBody: false,
@@ -86,23 +127,77 @@ class _PromotionsPageState extends State<PromotionsPage> {
                 hasScrollBody: false,
                 child: _EmptyState(),
               )
+            else if (filtered.isEmpty)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: _NoSearchResults(query: _searchQuery),
+              )
             else ...[
-              if (_promos.length > 1)
-                SliverToBoxAdapter(child: _FeaturedStrip(promos: _promos, onTap: _openPromo)),
+              if (filtered.length > 1)
+                SliverToBoxAdapter(
+                  child: _FeaturedStrip(
+                    promos: filtered,
+                    onTap: _openPromo,
+                    onShare: _sharePromo,
+                  ),
+                ),
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
                 sliver: SliverList.separated(
-                  itemCount: _promos.length,
+                  itemCount: filtered.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 14),
                   itemBuilder: (_, i) => _PromoCard(
-                    promo: _promos[i],
+                    promo: filtered[i],
                     index: i,
-                    onTap: () => _openPromo(_promos[i]),
+                    onTap: () => _openPromo(filtered[i]),
+                    onShare: () => _sharePromo(filtered[i]),
                   ),
                 ),
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFECEEF2)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: TextField(
+          controller: _searchController,
+          decoration: InputDecoration(
+            hintText: 'Search promotions by title, description, or price…',
+            hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+            prefixIcon: Icon(Icons.search_rounded, color: Colors.grey.shade600),
+            suffixIcon: _searchQuery.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() => _searchQuery = '');
+                    },
+                  )
+                : null,
+            border: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
+          ),
         ),
       ),
     );
@@ -201,10 +296,15 @@ class _PromotionsPageState extends State<PromotionsPage> {
 }
 
 class _FeaturedStrip extends StatelessWidget {
-  const _FeaturedStrip({required this.promos, required this.onTap});
+  const _FeaturedStrip({
+    required this.promos,
+    required this.onTap,
+    required this.onShare,
+  });
 
   final List<PromoModel> promos;
   final void Function(PromoModel) onTap;
+  final void Function(PromoModel) onShare;
 
   @override
   Widget build(BuildContext context) {
@@ -271,23 +371,32 @@ class _FeaturedStrip extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                promo.formattedPrice,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 11,
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    promo.formattedPrice,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 11,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                const Spacer(),
+                                _ShareIconButton(
+                                  onPressed: () => onShare(promo),
+                                  light: true,
+                                ),
+                              ],
                             ),
                             const Spacer(),
                             Text(
@@ -299,6 +408,17 @@ class _FeaturedStrip extends StatelessWidget {
                                 fontWeight: FontWeight.w900,
                                 fontSize: 16,
                                 height: 1.2,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              promo.formattedPromoPeriodRange,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.85),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
@@ -333,11 +453,13 @@ class _PromoCard extends StatelessWidget {
     required this.promo,
     required this.index,
     required this.onTap,
+    required this.onShare,
   });
 
   final PromoModel promo;
   final int index;
   final VoidCallback onTap;
+  final VoidCallback onShare;
 
   static const _orange = Color(0xFFFF6B00);
 
@@ -438,29 +560,33 @@ class _PromoCard extends StatelessWidget {
                           ),
                         ),
                       ],
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Icon(
+                            PhosphorIconsBold.calendarBlank,
+                            size: 13,
+                            color: Colors.grey.shade600,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              promo.formattedPromoPeriodRange,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.grey.shade700,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                       const SizedBox(height: 10),
                       Row(
                         children: [
-                          if (promo.hasFreeTrial)
-                            Container(
-                              margin: const EdgeInsets.only(right: 8),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE8F8F1),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: const Text(
-                                'Free trial',
-                                style: TextStyle(
-                                  color: Color(0xFF047857),
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 10,
-                                ),
-                              ),
-                            ),
+                          _ShareIconButton(onPressed: onShare),
                           const Spacer(),
                           const Text(
                             'View',
@@ -490,6 +616,40 @@ class _PromoCard extends StatelessWidget {
   }
 }
 
+class _ShareIconButton extends StatelessWidget {
+  const _ShareIconButton({
+    required this.onPressed,
+    this.light = false,
+  });
+
+  final VoidCallback onPressed;
+  final bool light;
+
+  static const _orange = Color(0xFFFF6B00);
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: light
+          ? Colors.white.withValues(alpha: 0.2)
+          : const Color(0xFFFFF3E8),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(
+            PhosphorIconsBold.shareNetwork,
+            size: 18,
+            color: light ? Colors.white : _orange,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PriceChip extends StatelessWidget {
   const _PriceChip({required this.promo});
 
@@ -497,17 +657,16 @@ class _PriceChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final free = promo.isFree;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: free ? const Color(0xFFE8F8F1) : const Color(0xFFFFF3E8),
+        color: const Color(0xFFFFF3E8),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
         promo.formattedPrice,
-        style: TextStyle(
-          color: free ? const Color(0xFF047857) : const Color(0xFFFF6B00),
+        style: const TextStyle(
+          color: Color(0xFFFF6B00),
           fontWeight: FontWeight.w800,
           fontSize: 11,
         ),
@@ -550,6 +709,38 @@ class _EmptyState extends StatelessWidget {
               'Check back soon for new deals from Vero360 merchants.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Color(0xFF6B7280), height: 1.4),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NoSearchResults extends StatelessWidget {
+  const _NoSearchResults({required this.query});
+
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.search_off_rounded, size: 48, color: Colors.grey.shade400),
+            const SizedBox(height: 16),
+            const Text(
+              'No matching promotions',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Nothing found for “$query”. Try another search.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFF6B7280), height: 1.4),
             ),
           ],
         ),

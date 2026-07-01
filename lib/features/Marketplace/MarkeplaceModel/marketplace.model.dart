@@ -103,6 +103,8 @@ class MarketplaceDetailModel {
   final String? sellerUserId;
   final String? merchantId;
   final String? merchantName;
+  final int? merchantBackendId;
+  final String? firestoreDocId;
   final String? serviceType;
   final DateTime? createdAt;
   final double? latitude;
@@ -129,6 +131,8 @@ class MarketplaceDetailModel {
     this.sellerUserId,
     this.merchantId,
     this.merchantName,
+    this.merchantBackendId,
+    this.firestoreDocId,
     this.serviceType,
     this.createdAt,
     this.latitude,
@@ -211,6 +215,11 @@ class MarketplaceDetailModel {
       sellerUserId: sellerUserId,
       merchantId: j['merchantId']?.toString(),
       merchantName: j['merchantName']?.toString(),
+      merchantBackendId: () {
+        final raw = j['merchantBackendId'] ?? j['backendUserId'];
+        if (raw is num) return raw.toInt();
+        return int.tryParse('${raw ?? ''}');
+      }(),
       serviceType: j['serviceType']?.toString() ?? 'marketplace',
       createdAt: j['createdAt'] != null ? DateTime.tryParse(j['createdAt'].toString()) : null,
       latitude: optDouble(j['latitude'] ?? j['lat']),

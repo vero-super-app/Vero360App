@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
@@ -45,6 +46,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
   bool _loading = true;
   bool _refreshing = false;
   bool _isLoggedIn = false;
+  bool _loginRequired = false;
   String? _error;
   int? _myUserId;
   int? _resolvedMerchantId;
@@ -65,6 +67,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       setState(() {
         _loading = true;
         _error = null;
+        _loginRequired = false;
       });
     } else {
       setState(() => _refreshing = true);
@@ -90,7 +93,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       );
 
       final results = await Future.wait([
-        _service.getMerchantSummary(merchantBackendId),
+        _service.getMerchantReviewSummary(merchantBackendId),
         _service.getMerchantReviews(merchantBackendId),
       ]);
 
@@ -115,8 +118,17 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
         _loading = false;
         _refreshing = false;
         _error = e is ApiException ? e.message : 'Could not load reviews.';
+        _loginRequired = e is ApiException && e.requiresLogin;
       });
     }
+  }
+
+  Future<void> _goToLogin() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
+    );
+    if (!mounted) return;
+    await _load();
   }
 
   double get _displayRating {
@@ -199,8 +211,8 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
 
   Future<bool> _requireLogin() async {
     if (await AuthHandler.isAuthenticated()) return true;
-    _toast('Please sign in to continue.', error: true);
-    return false;
+    await _goToLogin();
+    return AuthHandler.isAuthenticated();
   }
 
   Future<void> _openReviewEditor({MerchantReview? existing}) async {
@@ -402,12 +414,15 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
                 ),
               ),
               const SizedBox(height: 16),
-              FilledButton(
-                onPressed: _load,
+              FilledButton.icon(
+                onPressed: _loginRequired ? _goToLogin : _load,
                 style: FilledButton.styleFrom(
                   backgroundColor: MerchantReviewsPage._brandOrange,
                 ),
-                child: const Text('Retry'),
+                icon: Icon(
+                  _loginRequired ? Icons.login_rounded : Icons.refresh_rounded,
+                ),
+                label: Text(_loginRequired ? 'Log in' : 'Retry'),
               ),
             ],
           ),

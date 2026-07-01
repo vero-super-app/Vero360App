@@ -26,7 +26,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/PostlatestArrival.dart';
-import 'package:vero360_app/features/Promotions/Postpromotion.dart';
+import 'package:vero360_app/features/Promotions/presentation/Postpromotion.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 
@@ -250,13 +250,14 @@ class _MarketplaceMerchantDashboardState
   static const Color _dialogFieldFill = Color(0xFFF4F6FA);
 
   InputDecoration _walletPinFieldDecoration(String hint) {
-    final r = BorderRadius.circular(14);
+    final r = BorderRadius.circular(12);
     return InputDecoration(
       hintText: hint,
       counterText: '',
+      isDense: true,
       filled: true,
       fillColor: _dialogFieldFill,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       border: OutlineInputBorder(borderRadius: r),
       enabledBorder: OutlineInputBorder(
         borderRadius: r,
@@ -272,11 +273,11 @@ class _MarketplaceMerchantDashboardState
   Widget _walletPinDialogHeader({
     required IconData icon,
     required String title,
-    required String subtitle,
+    String? subtitle,
   }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -285,45 +286,85 @@ class _MarketplaceMerchantDashboardState
         ),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.22),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(icon, color: Colors.white, size: 26),
-          ),
-          const SizedBox(width: 14),
+          Icon(icon, color: Colors.white, size: 22),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   title,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
-                    fontSize: 20,
-                    letterSpacing: -0.35,
-                    height: 1.15,
+                    fontSize: 17,
+                    letterSpacing: -0.2,
+                    height: 1.1,
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.92),
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
-                    height: 1.35,
+                if (subtitle != null && subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.92),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.2,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _walletPinDialogShell({
+    required BuildContext context,
+    required Widget header,
+    required Widget body,
+    required Widget footer,
+  }) {
+    final viewInsets = MediaQuery.viewInsetsOf(context);
+    final maxHeight = MediaQuery.sizeOf(context).height - viewInsets.vertical - 24;
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 340,
+          maxHeight: maxHeight,
+        ),
+        child: Material(
+          color: Colors.white,
+          elevation: 18,
+          shadowColor: Colors.black.withValues(alpha: 0.2),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.only(bottom: viewInsets.bottom),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                header,
+                body,
+                const Divider(height: 1, thickness: 1),
+                footer,
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -449,179 +490,107 @@ class _MarketplaceMerchantDashboardState
       barrierColor: Colors.black.withValues(alpha: 0.45),
       builder: (dialogContext) => StatefulBuilder(
         builder: (ctx, setLocal) {
-          final kb = MediaQuery.viewInsetsOf(ctx).bottom;
-          return Dialog(
-            backgroundColor: Colors.transparent,
-            insetPadding:
-                const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 400),
-              child: Material(
-                color: Colors.white,
-                elevation: 18,
-                shadowColor: Colors.black.withValues(alpha: 0.2),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _walletPinDialogHeader(
-                      icon: Icons.account_balance_wallet_rounded,
-                      title: 'Unlock wallet',
-                      subtitle:
-                          'Enter your wallet PIN to view balance and manage payouts.',
+          return _walletPinDialogShell(
+            context: ctx,
+            header: _walletPinDialogHeader(
+              icon: Icons.account_balance_wallet_rounded,
+              title: 'Unlock wallet',
+              subtitle: 'Enter your 4–6 digit PIN.',
+            ),
+            body: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    onChanged: (_) {
+                      if (shortPinHint != null) {
+                        setLocal(() => shortPinHint = null);
+                      }
+                    },
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2,
                     ),
-                    Padding(
-                      padding: EdgeInsets.only(bottom: kb),
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-                              child: Text(
-                                'PIN',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.grey.shade700,
-                                  letterSpacing: 0.4,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                              child: TextField(
-                                controller: controller,
-                                autofocus: true,
-                                obscureText: true,
-                                keyboardType: TextInputType.number,
-                                maxLength: 6,
-                                onChanged: (_) {
-                                  if (shortPinHint != null) {
-                                    setLocal(() => shortPinHint = null);
-                                  }
-                                },
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 2,
-                                ),
-                                decoration:
-                                    _walletPinFieldDecoration('4–6 digits'),
-                              ),
-                            ),
-                            if (shortPinHint != null)
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                    20, 0, 20, 12),
-                                child: Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    color: _brandOrange.withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: _brandOrange
-                                          .withValues(alpha: 0.35),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.info_outline_rounded,
-                                        color: _brandNavy
-                                            .withValues(alpha: 0.9),
-                                        size: 22,
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          shortPinHint!,
-                                          style: TextStyle(
-                                            color: Colors.grey.shade900,
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 13,
-                                            height: 1.35,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const Divider(height: 1, thickness: 1),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () =>
-                                  Navigator.of(dialogContext).pop(null),
-                              style: OutlinedButton.styleFrom(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                side: BorderSide(color: Colors.grey.shade300),
-                              ),
-                              child: Text(
-                                'Cancel',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.grey.shade800,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            flex: 2,
-                            child: FilledButton(
-                              onPressed: () {
-                                final pin = controller.text.trim();
-                                if (pin.length < 4) {
-                                  setLocal(() => shortPinHint =
-                                      'Enter at least 4 digits to unlock.');
-                                  return;
-                                }
-                                Navigator.of(dialogContext).pop(pin);
-                              },
-                              style: FilledButton.styleFrom(
-                                backgroundColor: _brandOrange,
-                                foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                elevation: 0,
-                              ),
-                              child: const Text(
-                                'Unlock',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                    decoration: _walletPinFieldDecoration('Wallet PIN (4–6 digits)'),
+                  ),
+                  if (shortPinHint != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      shortPinHint!,
+                      style: TextStyle(
+                        color: _brandNavy.withValues(alpha: 0.9),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
                       ),
                     ),
                   ],
-                ),
+                ],
+              ),
+            ),
+            footer: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () =>
+                          Navigator.of(dialogContext).pop(null),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        side: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      child: Text(
+                        'Cancel',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: FilledButton(
+                      onPressed: () {
+                        final pin = controller.text.trim();
+                        if (pin.length < 4) {
+                          setLocal(() => shortPinHint =
+                              'Enter at least 4 digits.');
+                          return;
+                        }
+                        Navigator.of(dialogContext).pop(pin);
+                      },
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _brandOrange,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: const Text(
+                        'Unlock',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           );
@@ -641,220 +610,131 @@ class _MarketplaceMerchantDashboardState
       barrierColor: Colors.black.withValues(alpha: 0.45),
       builder: (dialogContext) => StatefulBuilder(
         builder: (ctx, setLocal) {
-          final kb = MediaQuery.viewInsetsOf(ctx).bottom;
-          return Dialog(
-            backgroundColor: Colors.transparent,
-            insetPadding:
-                const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 400),
-              child: Material(
-                color: Colors.white,
-                elevation: 18,
-                shadowColor: Colors.black.withValues(alpha: 0.2),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _walletPinDialogHeader(
-                      icon: Icons.pin_rounded,
-                      title: 'Set wallet PIN',
-                      subtitle:
-                          'Choose a 4–6 digit PIN. You’ll need it to unlock your wallet.',
+          return _walletPinDialogShell(
+            context: ctx,
+            header: _walletPinDialogHeader(
+              icon: Icons.pin_rounded,
+              title: 'Set wallet PIN',
+              subtitle: 'Create a 4–6 digit PIN.',
+            ),
+            body: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: p1,
+                    autofocus: true,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    onChanged: (_) {
+                      if (err != null) {
+                        setLocal(() => err = null);
+                      }
+                    },
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2,
                     ),
-                    Padding(
-                      padding: EdgeInsets.only(bottom: kb),
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Padding(
-                              padding:
-                                  const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                              child: Text(
-                                'New PIN',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.grey.shade700,
-                                  letterSpacing: 0.4,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                              child: TextField(
-                                controller: p1,
-                                autofocus: true,
-                                obscureText: true,
-                                keyboardType: TextInputType.number,
-                                maxLength: 6,
-                                onChanged: (_) {
-                                  if (err != null) {
-                                    setLocal(() => err = null);
-                                  }
-                                },
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 2,
-                                ),
-                                decoration:
-                                    _walletPinFieldDecoration('4–6 digits'),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                              child: Text(
-                                'Confirm PIN',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.grey.shade700,
-                                  letterSpacing: 0.4,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                              child: TextField(
-                                controller: p2,
-                                obscureText: true,
-                                keyboardType: TextInputType.number,
-                                maxLength: 6,
-                                onChanged: (_) {
-                                  if (err != null) {
-                                    setLocal(() => err = null);
-                                  }
-                                },
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 2,
-                                ),
-                                decoration:
-                                    _walletPinFieldDecoration('Re-enter PIN'),
-                              ),
-                            ),
-                            if (err != null)
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                    20, 0, 20, 8),
-                                child: Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 12),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFFEBEE),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: const Color(0xFFEF9A9A)
-                                          .withValues(alpha: 0.6),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Icon(
-                                        Icons.error_outline_rounded,
-                                        color: Color(0xFFC62828),
-                                        size: 22,
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          err!,
-                                          style: const TextStyle(
-                                            color: Color(0xFFB71C1C),
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 13,
-                                            height: 1.35,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
+                    decoration: _walletPinFieldDecoration('New PIN (4–6 digits)'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: p2,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    onChanged: (_) {
+                      if (err != null) {
+                        setLocal(() => err = null);
+                      }
+                    },
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2,
                     ),
-                    const Divider(height: 1, thickness: 1),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () =>
-                                  Navigator.of(dialogContext).pop(null),
-                              style: OutlinedButton.styleFrom(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                side: BorderSide(color: Colors.grey.shade300),
-                              ),
-                              child: Text(
-                                'Cancel',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.grey.shade800,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            flex: 2,
-                            child: FilledButton(
-                              onPressed: () {
-                                final a = p1.text.trim();
-                                final b = p2.text.trim();
-
-                                if (a.length < 4) {
-                                  setLocal(() =>
-                                      err = 'PIN must be at least 4 digits.');
-                                  return;
-                                }
-                                if (a != b) {
-                                  setLocal(() => err = 'PINs do not match.');
-                                  return;
-                                }
-                                Navigator.of(dialogContext).pop(a);
-                              },
-                              style: FilledButton.styleFrom(
-                                backgroundColor: _brandOrange,
-                                foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                elevation: 0,
-                              ),
-                              child: const Text(
-                                'Save PIN',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                    decoration: _walletPinFieldDecoration('Confirm PIN'),
+                  ),
+                  if (err != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      err!,
+                      style: const TextStyle(
+                        color: Color(0xFFB71C1C),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
                       ),
                     ),
                   ],
-                ),
+                ],
+              ),
+            ),
+            footer: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () =>
+                          Navigator.of(dialogContext).pop(null),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        side: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      child: Text(
+                        'Cancel',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: FilledButton(
+                      onPressed: () {
+                        final a = p1.text.trim();
+                        final b = p2.text.trim();
+
+                        if (a.length < 4) {
+                          setLocal(
+                              () => err = 'PIN must be at least 4 digits.');
+                          return;
+                        }
+                        if (a != b) {
+                          setLocal(() => err = 'PINs do not match.');
+                          return;
+                        }
+                        Navigator.of(dialogContext).pop(a);
+                      },
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _brandOrange,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: const Text(
+                        'Save PIN',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           );
@@ -874,6 +754,7 @@ class _MarketplaceMerchantDashboardState
     _loadMerchantProfileFromPrefs();
     _hydrateFromFirebaseAuth();
     _ensureBusinessName();
+    _syncBackendUserIdToFirestore();
     _pullPhoneAndProfileFromFirestore();
 
     _fetchCurrentUserMe();
@@ -960,6 +841,83 @@ class _MarketplaceMerchantDashboardState
         }
       });
     } catch (_) {}
+  }
+
+  Future<void> _syncBackendUserIdToFirestore() async {
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) return;
+    final nestRaw = await _getNestUserId();
+    final backendId = int.tryParse(nestRaw ?? '');
+    if (backendId == null || backendId <= 0) return;
+    try {
+      await _firestore.collection('marketplace_merchants').doc(uid).set(
+        {
+          'backendUserId': backendId,
+          'userId': backendId,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      await _firestore.collection('users').doc(uid).set(
+        {
+          'userId': backendId,
+          'backendUserId': backendId,
+          'firebaseUid': uid,
+          'uid': uid,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      await _backfillMerchantBackendIdOnItems(uid, backendId, nestRaw!);
+    } catch (e) {
+      debugPrint('sync backendUserId: $e');
+    }
+  }
+
+  /// Tags existing Firestore listings so buyers can open chat (merchantBackendId).
+  Future<void> _backfillMerchantBackendIdOnItems(
+    String firebaseUid,
+    int backendId,
+    String nestUserId,
+  ) async {
+    try {
+      final snap = await _firestore
+          .collection('marketplace_items')
+          .where('merchantId', isEqualTo: firebaseUid)
+          .limit(100)
+          .get();
+      if (snap.docs.isEmpty) return;
+
+      final batch = _firestore.batch();
+      var updates = 0;
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final existing = data['merchantBackendId'];
+        final seller = data['sellerUserId']?.toString().trim() ?? '';
+        final existingId = existing is num
+            ? existing.toInt()
+            : int.tryParse('${existing ?? ''}');
+        final needsBackendId = existingId == null || existingId <= 0;
+        final sellerIsUid = seller.isEmpty ||
+            RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(seller);
+        if (!needsBackendId && !sellerIsUid) continue;
+
+        batch.set(
+          doc.reference,
+          {
+            if (needsBackendId) 'merchantBackendId': backendId,
+            if (sellerIsUid) 'sellerUserId': nestUserId,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+        updates++;
+        if (updates >= 450) break;
+      }
+      if (updates > 0) await batch.commit();
+    } catch (e) {
+      debugPrint('backfill merchantBackendId: $e');
+    }
   }
 
   Future<void> _ensureBusinessName() async {
@@ -2039,6 +1997,8 @@ class _MarketplaceMerchantDashboardState
         'createdAt': FieldValue.serverTimestamp(),
         'sellerUserId': effectiveSellerId,
         'merchantId': firebaseUid,
+        if (sellerId != null)
+          'merchantBackendId': int.tryParse(sellerId.trim()),
         'merchantName': merchantDisplay,
         'serviceType': 'marketplace',
       };

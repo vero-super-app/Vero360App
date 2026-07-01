@@ -2,12 +2,13 @@
 import 'dart:io' show File;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kIsWeb;import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
-import '../../utils/toasthelper.dart';
+import '../../../utils/toasthelper.dart';
 
 class PromotionsCrudPage extends StatefulWidget {
   const PromotionsCrudPage({super.key});
@@ -25,6 +26,8 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
   final _title = TextEditingController();
   final _desc = TextEditingController();
   final _price = TextEditingController();
+  DateTime? _startDate;
+  DateTime? _endDate;
   bool _submitting = false;
 
   // image
@@ -109,8 +112,85 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
     setState(() {});
   }
 
+  String _formatPickedDateTime(DateTime? dt) {
+    if (dt == null) return 'Tap to select';
+    return PromoDateFormat.dayMonthYearTime(dt);
+  }
+
+  Future<void> _pickDateTime({
+    required bool isStart,
+  }) async {
+    final now = DateTime.now();
+    final initial = isStart
+        ? (_startDate ?? now)
+        : (_endDate ?? _startDate?.add(const Duration(days: 7)) ?? now);
+
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 5),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.light(primary: _brandOrange),
+        ),
+        child: child!,
+      ),
+    );
+    if (date == null || !mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.light(primary: _brandOrange),
+        ),
+        child: child!,
+      ),
+    );
+    if (time == null || !mounted) return;
+
+    final picked = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
+
+    setState(() {
+      if (isStart) {
+        _startDate = picked;
+        if (_endDate != null && !_endDate!.isAfter(_startDate!)) {
+          _endDate = _startDate!.add(const Duration(hours: 1));
+        }
+      } else {
+        _endDate = picked;
+      }
+    });
+  }
+
   Future<void> _create() async {
     if (!_form.currentState!.validate()) return;
+    if (_startDate == null || _endDate == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please set promotion start and end dates.',
+        isSuccess: false,
+        errorMessage: 'Dates required',
+      );
+      return;
+    }
+    if (!_endDate!.isAfter(_startDate!)) {
+      ToastHelper.showCustomToast(
+        context,
+        'End date must be after the start date.',
+        isSuccess: false,
+        errorMessage: 'Invalid dates',
+      );
+      return;
+    }
 
     setState(() => _submitting = true);
     try {
@@ -124,19 +204,30 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
         );
       }
 
-      final price = double.tryParse(_price.text.trim()) ?? 0;
+      final priceRaw = _price.text.trim();
+      final price = double.tryParse(priceRaw);
+      if (price == null || price <= 0) {
+        ToastHelper.showCustomToast(
+          context,
+          'Enter a valid promotion price greater than zero.',
+          isSuccess: false,
+          errorMessage: 'Price required',
+        );
+        setState(() => _submitting = false);
+        return;
+      }
 
       await svc.createPromo(PromoModel(
         id: 0,
-        merchantId: 0, // server stamps from JWT
-        serviceProviderId: null, // mapped internally on server
+        merchantId: 0,
+        serviceProviderId: null,
         title: _title.text.trim(),
         description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         price: price,
         image: imageUrl,
         isActive: true,
-        freeTrialEndsAt: null,
-        subscribedAt: null,
+        startsAt: _startDate,
+        endsAt: _endDate,
         createdAt: DateTime.now(),
       ));
 
@@ -151,6 +242,8 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       _title.clear();
       _desc.clear();
       _price.clear();
+      _startDate = null;
+      _endDate = null;
       _picked = null;
       _pickedBytes = null;
       setState(() {});
@@ -391,14 +484,43 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                 TextFormField(
                   controller: _price,
                   keyboardType:
-                      const TextInputType.numberWithOptions(decimal: false),
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: _inputDecoration(label: 'Price (MK)'),
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(
+                      RegExp(r'^\d*\.?\d{0,2}'),
+                    ),
+                  ],
+                  decoration: _inputDecoration(
+                    label: 'Price (MWK) *',
+                    hint: 'e.g. 100000 or 19.99',
+                  ),
                   validator: (v) {
-                    final pv = double.tryParse(v?.trim() ?? '');
-                    if (pv == null || pv < 0) return 'Enter a valid price';
+                    final raw = v?.trim() ?? '';
+                    if (raw.isEmpty) return 'Price is required';
+                    final pv = double.tryParse(raw);
+                    if (pv == null || pv <= 0) {
+                      return 'Enter price';
+                    }
                     return null;
                   },
+                ),
+                const SizedBox(height: 12),
+
+                const Text(
+                  'Promotion period',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+                const SizedBox(height: 8),
+                _DateTimePickerTile(
+                  label: 'Start date & time',
+                  value: _formatPickedDateTime(_startDate),
+                  onTap: () => _pickDateTime(isStart: true),
+                ),
+                const SizedBox(height: 8),
+                _DateTimePickerTile(
+                  label: 'End date & time',
+                  value: _formatPickedDateTime(_endDate),
+                  onTap: () => _pickDateTime(isStart: false),
                 ),
                 const SizedBox(height: 16),
 
@@ -525,20 +647,63 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                                 border: Border.all(color: _brandOrange, width: 1),
                               ),
                               child: Text(
-                                'MWK ${((p.price ?? 0).toStringAsFixed(0))}',
+                                p.formattedPrice,
                                 style: const TextStyle(fontWeight: FontWeight.w700),
                               ),
                             ),
 
-                            if (p.freeTrialEndsAt != null)
-                              Text(
-                                'Trial ends: ${p.freeTrialEndsAt}',
-                                style: const TextStyle(color: Colors.black54, fontSize: 12),
+                            const SizedBox(height: 8),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
                               ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF7F8FA),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.black12),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    p.formattedPromoPeriodRange,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Starts on ${p.formattedPromoStart}',
+                                    style: const TextStyle(
+                                      color: Colors.black54,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  if (p.promoEnd != null)
+                                    Text(
+                                      'Ends on ${p.formattedPromoEnd}',
+                                      style: const TextStyle(
+                                        color: Colors.black54,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+
                             if (p.subscribedAt != null)
-                              Text(
-                                'Subscribed: ${p.subscribedAt}',
-                                style: const TextStyle(color: Colors.black54, fontSize: 12),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Text(
+                                  'Subscribed: ${PromoDateFormat.dayMonthYearTime(p.subscribedAt!)}',
+                                  style: const TextStyle(
+                                    color: Colors.black54,
+                                    fontSize: 12,
+                                  ),
+                                ),
                               ),
                             const SizedBox(height: 10),
 
@@ -578,6 +743,69 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
 }
 
 /* ---------- helper widgets: full-bleed, no empty space ---------- */
+
+class _DateTimePickerTile extends StatelessWidget {
+  const _DateTimePickerTile({
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.black),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.event_rounded, size: 22),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: value == 'Tap to select'
+                            ? Colors.black38
+                            : Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: Colors.black45),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _FullBleedPicker extends StatelessWidget {
   const _FullBleedPicker({

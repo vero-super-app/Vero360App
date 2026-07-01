@@ -18,6 +18,37 @@ class MerchantReviewService {
     return _parseReviewList(jsonDecode(res.body));
   }
 
+  /// Uses `/summary` when available; otherwise derives stats from the review list.
+  Future<MerchantReviewSummary> getMerchantReviewSummary(int merchantId) async {
+    try {
+      final summary = await getMerchantSummary(merchantId);
+      if (summary.count > 0 || summary.average > 0) return summary;
+    } catch (_) {}
+
+    final reviews = await getMerchantReviews(merchantId);
+    if (reviews.isEmpty) {
+      return const MerchantReviewSummary(average: 0, count: 0);
+    }
+
+    final total = reviews.fold<int>(0, (sum, r) => sum + r.rating);
+    return MerchantReviewSummary(
+      average: total / reviews.length,
+      count: reviews.length,
+    );
+  }
+
+  Future<({MerchantReviewSummary summary, List<MerchantReview> reviews})>
+      loadMerchantReviewsBundle(int merchantId) async {
+    final results = await Future.wait([
+      getMerchantReviewSummary(merchantId),
+      getMerchantReviews(merchantId),
+    ]);
+    return (
+      summary: results[0] as MerchantReviewSummary,
+      reviews: results[1] as List<MerchantReview>,
+    );
+  }
+
   Future<MerchantReview> createReview({
     required int merchantId,
     required int customerId,

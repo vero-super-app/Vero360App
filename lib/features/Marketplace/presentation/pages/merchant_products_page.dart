@@ -15,6 +15,10 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_det
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as marketplaceModel;
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
@@ -63,6 +67,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       CartService('unused', apiPrefix: ApiConfig.apiPrefix);
 
   double? _merchantRating;
+  int _merchantReviewCount = 0;
+  int? _merchantBackendId;
+  List<MerchantReview> _recentReviews = const [];
   String? _merchantStatus;
   String? _merchantProfileUrl;
   String? _merchantEmail;
@@ -1492,6 +1499,25 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       }
     } catch (e) {
       debugPrint('Error loading merchant header: $e');
+    }
+
+    try {
+      final backendId = await MerchantReviewIdResolver.resolveMerchantId(
+        merchantRef: widget.merchantId.trim(),
+        preResolvedBackendId: _merchantBackendId,
+      );
+      const reviewService = MerchantReviewService();
+      final bundle = await reviewService.loadMerchantReviewsBundle(backendId);
+      if (mounted) {
+        setState(() {
+          _merchantBackendId = backendId;
+          _merchantRating = bundle.summary.average;
+          _merchantReviewCount = bundle.summary.count;
+          _recentReviews = bundle.reviews.take(3).toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading merchant reviews: $e');
     } finally {
       if (mounted) {
         setState(() => _loadingHeader = false);
@@ -1684,6 +1710,114 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
+  void _openMerchantReviews() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MerchantReviewsPage(
+          merchantId: widget.merchantId,
+          merchantName: widget.merchantName,
+          logoUrl: _merchantProfileUrl,
+          rating: _merchantRating,
+          merchantBackendId: _merchantBackendId,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecentReviewsSection() {
+    if (_recentReviews.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _surfaceBorder),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Customer reviews',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 15,
+                      color: Color(0xFF1A1D26),
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _openMerchantReviews,
+                  child: const Text('See all'),
+                ),
+              ],
+            ),
+            ..._recentReviews.map((review) {
+              final comment = review.comment.trim();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            review.authorName.trim().isEmpty
+                                ? 'Customer'
+                                : review.authorName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: List.generate(5, (i) {
+                            return Icon(
+                              i < review.rating
+                                  ? Icons.star
+                                  : Icons.star_border,
+                              size: 14,
+                              color: Colors.amber,
+                            );
+                          }),
+                        ),
+                      ],
+                    ),
+                    if (comment.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        comment,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade700,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1752,6 +1886,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             email: _merchantEmail,
             phone: _merchantPhone,
             rating: _merchantRating,
+            reviewCount: _merchantReviewCount,
             status: _merchantStatus,
             profileUrl: _merchantProfileUrl,
             loading: _loadingHeader,
@@ -1761,7 +1896,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             onBlock: _blockMerchant,
             onReport: _reportMerchant,
             onViewProfile: _showMerchantProfileViewer,
+            onOpenReviews: _openMerchantReviews,
           ),
+          _buildRecentReviewsSection(),
           Expanded(
             child: FutureBuilder<bool>(
               future: _isAccommodationMerchantFuture,
@@ -2345,6 +2482,7 @@ class _MerchantProfileCard extends StatelessWidget {
   final String? email;
   final String? phone;
   final double? rating;
+  final int reviewCount;
   final String? status;
   final String? profileUrl;
   final bool loading;
@@ -2354,6 +2492,7 @@ class _MerchantProfileCard extends StatelessWidget {
   final VoidCallback onBlock;
   final VoidCallback onReport;
   final VoidCallback onViewProfile;
+  final VoidCallback onOpenReviews;
 
   const _MerchantProfileCard({
     required this.merchantId,
@@ -2361,6 +2500,7 @@ class _MerchantProfileCard extends StatelessWidget {
     required this.email,
     required this.phone,
     required this.rating,
+    required this.reviewCount,
     required this.status,
     required this.profileUrl,
     required this.loading,
@@ -2370,6 +2510,7 @@ class _MerchantProfileCard extends StatelessWidget {
     required this.onBlock,
     required this.onReport,
     required this.onViewProfile,
+    required this.onOpenReviews,
   });
 
   ImageProvider? _profileImageProvider() {
@@ -2492,26 +2633,40 @@ class _MerchantProfileCard extends StatelessWidget {
                       runSpacing: 6,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.amber.shade100,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.star,
-                                  size: 14, color: Colors.amber),
-                              Text(
-                                ' ${rating?.toStringAsFixed(1) ?? '0.0'}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 12,
+                        InkWell(
+                          onTap: onOpenReviews,
+                          borderRadius: BorderRadius.circular(999),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.shade100,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.star,
+                                    size: 14, color: Colors.amber),
+                                Text(
+                                  ' ${rating?.toStringAsFixed(1) ?? '0.0'}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 12,
+                                  ),
                                 ),
-                              ),
-                            ],
+                                if (reviewCount > 0) ...[
+                                  Text(
+                                    ' · $reviewCount',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 11,
+                                      color: Colors.grey.shade800,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                           ),
                         ),
                         Container(

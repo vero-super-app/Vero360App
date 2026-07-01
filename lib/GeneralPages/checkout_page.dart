@@ -16,6 +16,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
+import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
@@ -23,7 +24,13 @@ enum DeliveryType { speed, cts, ankolo, smart, pickup }
 
 class CheckoutPage extends StatefulWidget {
   final MarketplaceDetailModel item;
-  const CheckoutPage({required this.item, super.key});
+  final int? promoSubscribeId;
+
+  const CheckoutPage({
+    required this.item,
+    this.promoSubscribeId,
+    super.key,
+  });
 
   @override
   State<CheckoutPage> createState() => _CheckoutPageState();
@@ -53,9 +60,19 @@ class _CheckoutPageState extends State<CheckoutPage> {
       NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
   String _mwk(num v) => _mwkFmt.format(v);
 
+  String _formatMoney(num v) {
+    if (v != v.roundToDouble()) {
+      return 'MWK ${v.toStringAsFixed(2)}';
+    }
+    return _mwk(v);
+  }
+
   double get _subtotal => widget.item.price * _qty;
 
   double get _total => _subtotal;
+
+  bool get _isPromotion =>
+      widget.item.serviceType == 'promotion' || widget.promoSubscribeId != null;
 
   @override
   void initState() {
@@ -408,7 +425,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
               'email': email,
               'phone_number': phoneNumber,
               'currency': 'MWK',
-              'amount': _total.round().toString(),
+              'amount': _total == _total.roundToDouble()
+                  ? _total.round().toString()
+                  : _total.toStringAsFixed(2),
               'payment_methods': ['card', 'mobile_money', 'bank'],
               'callback_url': PayChanguConfig.callbackUrl,
               'return_url': PayChanguConfig.returnUrl,
@@ -443,10 +462,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     description: widget.item.description,
                     merchantId: mid,
                     merchantName: mname,
-                    serviceType: 'marketplace',
+                    serviceType: _isPromotion ? 'promotion' : 'marketplace',
                   ),
                 ]
               : null;
+          final promoId = widget.promoSubscribeId;
           await Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => InAppPaymentPage(
@@ -457,6 +477,23 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 cartItemsForMerchantCredit: listForCredit,
                 shippingAddress: _deliveryType == DeliveryType.pickup ? null : _defaultAddr,
                 deliveryType: _deliveryType,
+                popOnlyOnSuccess: promoId != null,
+                onSuccessNavigate: promoId != null
+                    ? (root) async {
+                        try {
+                          await PromoService()
+                              .subscribe(promoId, _total.toDouble());
+                        } catch (_) {}
+                        if (!root.mounted) return;
+                        ToastHelper.showCustomToast(
+                          root,
+                          'Promotion activated!',
+                          isSuccess: true,
+                          errorMessage: '',
+                        );
+                        Navigator.of(root).pop();
+                      }
+                    : null,
               ),
             ),
           );
@@ -698,7 +735,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                 border: Border.all(color: _brandOrange),
                               ),
                               child: Text(
-                                _mwk(item.price),
+                                _formatMoney(item.price),
                                 style: const TextStyle(fontWeight: FontWeight.w800),
                               ),
                             ),
@@ -712,7 +749,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                   padding: const EdgeInsets.symmetric(horizontal: 12),
                                   child: Text(
                                     '$_qty',
-                                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                    ),
                                   ),
                                 ),
                                 _qtyBtn(Icons.add, () => setState(() => _qty++)),
@@ -900,11 +940,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    _rowLine('Subtotal', _mwk(_subtotal)),
+                    _rowLine('Subtotal', _formatMoney(_subtotal)),
                     const SizedBox(height: 8),
                     const Divider(thickness: 1),
                     const SizedBox(height: 8),
-                    _rowLine('Total', _mwk(_total), bold: true),
+                    _rowLine('Total', _formatMoney(_total), bold: true),
                     const SizedBox(height: 20),
                     SizedBox(
                       width: double.infinity,

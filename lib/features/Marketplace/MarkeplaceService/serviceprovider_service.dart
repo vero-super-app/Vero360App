@@ -72,17 +72,26 @@ class ServiceProviderServicess {
     );
   }
 
+  static ServiceProvider? _parseServiceProviderResponse(dynamic body) {
+    if (body is! Map) return null;
+    final map = body is Map<String, dynamic>
+        ? body
+        : Map<String, dynamic>.from(body);
+    final data = map['data'];
+    final payload = data is Map
+        ? Map<String, dynamic>.from(data)
+        : map;
+    if (payload['id'] == null) return null;
+    return ServiceProvider.fromJson(payload);
+  }
+
   static Future<ServiceProvider?> fetchByNumber(String spNumber) async {
     final uri = await _u('/serviceprovider/search/$spNumber');
     final res = await http.get(uri, headers: {'Accept': 'application/json'});
 
     if (res.statusCode == 200) {
       final body = jsonDecode(res.body);
-      // If not found your backend returns a string message; guard for that.
-      if (body is Map<String, dynamic> && body['id'] != null) {
-        return ServiceProvider.fromJson(body);
-      }
-      return null;
+      return _parseServiceProviderResponse(body);
     }
 
     debugPrint('fetchByNumber failed: ${res.statusCode} ${res.body}');
@@ -90,6 +99,19 @@ class ServiceProviderServicess {
       message: 'fetchByNumber failed',
       statusCode: res.statusCode,
     );
+  }
+
+  static Future<ServiceProvider?> fetchById(int id) async {
+    if (id <= 0) return null;
+    final uri = await _u('/serviceprovider/$id');
+    final res = await http.get(uri, headers: {'Accept': 'application/json'});
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body);
+      return _parseServiceProviderResponse(body);
+    }
+    if (res.statusCode == 404) return null;
+    debugPrint('fetchById failed: ${res.statusCode} ${res.body}');
+    return null;
   }
 
   static Future<ServiceProvider> create({

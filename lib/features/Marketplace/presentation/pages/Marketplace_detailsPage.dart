@@ -3,7 +3,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -26,8 +25,8 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.mod
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
-import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
-import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
@@ -57,15 +56,20 @@ class _SellerInfo {
       logoUrl,
       serviceProviderId;
   double? rating;
+  int reviewCount;
   int? backendMerchantId;
+  List<MerchantReview> recentReviews;
   _SellerInfo({
     this.businessName,
     this.openingHours,
     this.status,
     this.description,
     this.rating,
+    this.reviewCount = 0,
     this.logoUrl,
     this.serviceProviderId,
+    this.backendMerchantId,
+    this.recentReviews = const [],
   });
 }
 
@@ -150,10 +154,11 @@ class _DetailsPageState extends State<DetailsPage> {
   @override
   void initState() {
     super.initState();
-    unawaited(BackendChatService.ensureAuth().catchError((_) {}));
+    unawaited(BackendChatService.warmForMarketplaceChat().catchError((_) {}));
     unawaited(BackendMessagingSocket.connect().catchError((_) {}));
     _pc = PageController();
     _sellerFuture = _loadSeller();
+    _prefetchSellerChat();
     _fToast.init(context);
 
     final it = widget.item;
@@ -214,108 +219,46 @@ class _DetailsPageState extends State<DetailsPage> {
   // seller/data
   Future<_SellerInfo> _loadSeller() async {
     final i = widget.item;
-    final info = _SellerInfo(
-      businessName: i.sellerBusinessName,
-      openingHours: i.sellerOpeningHours,
-      status: i.sellerStatus,
-      description: i.sellerBusinessDescription,
-      rating: i.sellerRating,
-      logoUrl: i.sellerLogoUrl,
+    final seller = await MerchantSellerLoader.load(
+      merchantId: i.merchantId,
+      sellerUserId: i.sellerUserId,
       serviceProviderId: i.serviceProviderId,
+      sellerBusinessName: i.sellerBusinessName,
+      sellerOpeningHours: i.sellerOpeningHours,
+      sellerStatus: i.sellerStatus,
+      sellerBusinessDescription: i.sellerBusinessDescription,
+      sellerRating: i.sellerRating,
+      sellerLogoUrl: i.sellerLogoUrl,
     );
+    return _SellerInfo(
+      businessName: seller.businessName,
+      openingHours: seller.openingHours,
+      status: seller.status,
+      description: seller.description,
+      rating: seller.rating,
+      reviewCount: seller.reviewCount,
+      logoUrl: seller.logoUrl,
+      serviceProviderId: seller.serviceProviderId,
+      backendMerchantId: seller.backendMerchantId,
+      recentReviews: seller.recentReviews,
+    );
+  }
 
-    final missing = info.businessName == null ||
-        info.openingHours == null ||
-        info.status == null ||
-        info.description == null ||
-        info.rating == null ||
-        info.logoUrl == null;
-
-    final spId = info.serviceProviderId?.trim();
-    if (missing && spId != null && spId.isNotEmpty) {
-      try {
-        final ServiceProvider? sp =
-            await ServiceProviderServicess.fetchByNumber(spId);
-        if (sp != null) {
-          info.businessName ??= sp.businessName;
-          info.openingHours ??= sp.openingHours;
-          info.status ??= sp.status;
-          info.description ??= sp.businessDescription;
-          info.logoUrl ??= sp.logoUrl;
-          if (sp.id != null && sp.id! > 0) {
-            info.backendMerchantId = sp.id;
-          }
-          final r = sp.rating;
-          if (info.rating == null && r != null) {
-            info.rating = (r as num).toDouble();
-          }
-        }
-      } catch (_) {}
+  void _prefetchSellerChat() {
+    final item = widget.item;
+    final immediate = item.merchantBackendId;
+    if (immediate != null && immediate > 0) {
+      unawaited(BackendChatService.prefetchDirectChat(immediate).catchError((_) {}));
+      return;
     }
-
-    if (info.backendMerchantId == null) {
-      for (final raw in [i.merchantId, i.sellerUserId]) {
-        final key = raw?.trim();
-        if (key == null || key.isEmpty) continue;
-        if (RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(key)) continue;
-        try {
-          final sp = await ServiceProviderServicess.fetchByNumber(key);
-          if (sp?.id != null && sp!.id! > 0) {
-            info.backendMerchantId = sp.id;
-            break;
-          }
-        } catch (_) {}
-      }
-    }
-
-    // Fallback profile data source (same family as merchant dashboard):
-    // 1) marketplace_merchants/{merchantUid}
-    // 2) users/{merchantUid}
-    final merchantUid = (i.merchantId ?? '').trim();
-    if (merchantUid.isNotEmpty) {
-      try {
-        final mDoc = await FirebaseFirestore.instance
-            .collection('marketplace_merchants')
-            .doc(merchantUid)
-            .get();
-        if (mDoc.exists) {
-          final m = mDoc.data() ?? <String, dynamic>{};
-          info.businessName ??=
-              (m['businessName'] ?? m['merchantName'] ?? '').toString().trim().isEmpty
-                  ? null
-                  : (m['businessName'] ?? m['merchantName']).toString().trim();
-          info.status ??= (m['status'] ?? m['verificationStatus'] ?? '')
-              .toString()
-              .trim()
-              .isEmpty
-              ? null
-              : (m['status'] ?? m['verificationStatus']).toString().trim();
-          final p = (m['profilePicture'] ?? m['profilepicture'] ?? '')
-              .toString()
-              .trim();
-          if (p.isNotEmpty) info.logoUrl ??= p;
+    unawaited(
+      (_sellerFuture ?? _loadSeller()).then((seller) {
+        final backendId = seller.backendMerchantId;
+        if (backendId != null && backendId > 0) {
+          return BackendChatService.prefetchDirectChat(backendId);
         }
-      } catch (_) {}
-
-      try {
-        final uDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(merchantUid)
-            .get();
-        if (uDoc.exists) {
-          final u = uDoc.data() ?? <String, dynamic>{};
-          final p = (u['profilepicture'] ??
-                  u['profilePicture'] ??
-                  u['photoUrl'] ??
-                  u['photoURL'] ??
-                  '')
-              .toString()
-              .trim();
-          if (p.isNotEmpty) info.logoUrl ??= p;
-        }
-      } catch (_) {}
-    }
-    return info;
+      }).catchError((_) {}),
+    );
   }
 
   Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
@@ -441,7 +384,7 @@ class _DetailsPageState extends State<DetailsPage> {
     return '$years ${years == 1 ? 'year' : 'years'} ago';
   }
 
-  Widget _ratingStars(double? rating) {
+  Widget _ratingStars(double? rating, {bool showScore = true}) {
     final rr = ((rating ?? 0).clamp(0, 5)).toDouble();
     final filled = rr.floor();
     final hasHalf = (rr - filled) >= 0.5 && filled < 5;
@@ -453,9 +396,11 @@ class _DetailsPageState extends State<DetailsPage> {
         const Icon(Icons.star_half, size: 16, color: Colors.amber),
       for (int i = 0; i < empty; i++)
         const Icon(Icons.star_border, size: 16, color: Colors.amber),
-      const SizedBox(width: 6),
-      Text(_fmtRating(rr),
-          style: const TextStyle(fontWeight: FontWeight.w600)),
+      if (showScore && rr > 0) ...[
+        const SizedBox(width: 6),
+        Text(_fmtRating(rr),
+            style: const TextStyle(fontWeight: FontWeight.w600)),
+      ],
     ]);
   }
 
@@ -492,6 +437,8 @@ class _DetailsPageState extends State<DetailsPage> {
     String? businessName,
     String? status,
     double? rating,
+    int reviewCount = 0,
+    List<MerchantReview> recentReviews = const [],
     String? businessDesc,
     String? logo,
     int? merchantBackendId,
@@ -539,14 +486,16 @@ class _DetailsPageState extends State<DetailsPage> {
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          _ratingStars(rating),
+                          _ratingStars(rating, showScore: reviewCount > 0),
                           const SizedBox(width: 8),
                           Text(
-                            _fmtRating(rating ?? 0),
+                            reviewCount > 0
+                                ? '$reviewCount review${reviewCount == 1 ? '' : 's'}'
+                                : 'No reviews yet',
                             style: const TextStyle(
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w600,
                               fontSize: 13,
-                              color: ink,
+                              color: muted,
                             ),
                           ),
                         ],
@@ -603,6 +552,19 @@ class _DetailsPageState extends State<DetailsPage> {
               ),
             ),
             const SizedBox(height: 14),
+            if (recentReviews.isNotEmpty) ...[
+              const Text(
+                'Recent reviews',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: muted,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...recentReviews.map((review) => _recentReviewTile(review)),
+              const SizedBox(height: 14),
+            ],
             Material(
               color: const Color(0xFFFFF8F0),
               borderRadius: BorderRadius.circular(12),
@@ -681,6 +643,66 @@ class _DetailsPageState extends State<DetailsPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _recentReviewTile(MerchantReview review) {
+    final comment = review.comment.trim();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFECEEF2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  review.authorName.trim().isEmpty
+                      ? 'Customer'
+                      : review.authorName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: Color(0xFF101010),
+                  ),
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: List.generate(5, (i) {
+                  return Icon(
+                    i < review.rating ? Icons.star : Icons.star_border,
+                    size: 14,
+                    color: Colors.amber,
+                  );
+                }),
+              ),
+            ],
+          ),
+          if (comment.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              comment,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF4B5563),
+                height: 1.35,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -773,9 +795,16 @@ class _DetailsPageState extends State<DetailsPage> {
     setState(() => _openingChat = true);
 
     try {
-      final myId = await BackendChatService.getUserId();
+      var ownerId = item.merchantBackendId;
 
-      final ownerId = int.tryParse((item.sellerUserId ?? '').trim());
+      if (ownerId == null || ownerId <= 0) {
+        try {
+          final seller = await (_sellerFuture ?? _loadSeller())
+              .timeout(const Duration(milliseconds: 600));
+          ownerId = seller.backendMerchantId ?? ownerId;
+        } catch (_) {}
+      }
+
       final sqlItemId = item.id > 0 ? item.id : null;
 
       final result = await BackendChatService.startMerchantChat(
@@ -784,7 +813,7 @@ class _DetailsPageState extends State<DetailsPage> {
         sellerUserId: item.sellerUserId,
         serviceProviderId: item.serviceProviderId,
         merchantId: item.merchantId,
-        myUserId: myId,
+        firestoreItemDocId: item.firestoreDocId,
       );
 
       if (kDebugMode) {
@@ -823,7 +852,19 @@ class _DetailsPageState extends State<DetailsPage> {
     } catch (e) {
       if (kDebugMode) debugPrint('[_openChat] Exception: $e');
       if (mounted) {
-        _toast('Error opening chat: ${e.toString()}', Icons.error, Colors.red);
+        final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+        final message = raw.contains('own listing') ||
+                raw.contains('cannot chat with yourself') ||
+                raw.contains('cannot chat with ur self')
+            ? raw
+            : raw.contains('could not find this seller') ||
+                    raw.contains('not linked on the server')
+                ? raw
+                : raw.contains('Failed to create chat') ||
+                        raw.contains('User ') && raw.contains('not found')
+                    ? 'Seller chat is unavailable — this seller\'s account is not linked on the server yet. Ask them to open the merchant dashboard once while logged in.'
+                    : raw;
+        _toast(message, Icons.error, Colors.red);
       }
     } finally {
       if (mounted) setState(() => _openingChat = false);
@@ -1358,6 +1399,8 @@ class _DetailsPageState extends State<DetailsPage> {
           final businessName = s?.businessName;
           final status = s?.status;
           final rating = s?.rating;
+          final reviewCount = s?.reviewCount ?? 0;
+          final recentReviews = s?.recentReviews ?? const <MerchantReview>[];
           final businessDesc = s?.description;
           final logo = s?.logoUrl;
 
@@ -1392,6 +1435,8 @@ class _DetailsPageState extends State<DetailsPage> {
                 businessName: businessName,
                 status: status,
                 rating: rating,
+                reviewCount: reviewCount,
+                recentReviews: recentReviews,
                 businessDesc: businessDesc,
                 logo: logo,
                 merchantBackendId: s?.backendMerchantId,

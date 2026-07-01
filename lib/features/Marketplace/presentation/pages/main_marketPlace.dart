@@ -262,6 +262,7 @@ class MarketplaceDetailModel {
   final String? sellerLogoUrl;
   final String? serviceProviderId;
   final String? sellerUserId;
+  final int? merchantBackendId;
 
   MarketplaceDetailModel({
     required this.id, required this.name, required this.category,
@@ -272,6 +273,7 @@ class MarketplaceDetailModel {
     this.sellerBusinessDescription, this.sellerRating, this.sellerLogoUrl,
     this.serviceProviderId, this.sellerUserId, this.merchantId,
     this.merchantName, this.serviceType = 'marketplace',
+    this.merchantBackendId,
   });
 
   bool get hasValidSqlItemId => sqlItemId != null && sqlItemId! > 0;
@@ -328,6 +330,7 @@ class MarketplaceDetailModel {
       sellerUserId: (data['sellerUserId'] ?? data['ownerId'])?.toString(),
       merchantId: data['merchantId']?.toString(), merchantName: data['merchantName']?.toString(),
       serviceType: data['serviceType']?.toString() ?? 'marketplace',
+      merchantBackendId: parseInt(data['merchantBackendId'] ?? data['backendUserId']),
     );
   }
 }
@@ -911,7 +914,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
   core.MarketplaceDetailModel _toCoreDetailModel(MarketplaceDetailModel item) {
     final id = item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id);
-    return core.MarketplaceDetailModel(id: id, name: item.name, category: item.category, price: item.price, image: item.image, description: item.description ?? '', location: item.location ?? '', comment: null, gallery: item.gallery, videos: const [], sellerBusinessName: item.sellerBusinessName, sellerOpeningHours: item.sellerOpeningHours, sellerStatus: item.sellerStatus, sellerBusinessDescription: item.sellerBusinessDescription, sellerRating: item.sellerRating, sellerLogoUrl: item.sellerLogoUrl, serviceProviderId: item.serviceProviderId, sellerUserId: item.sellerUserId, merchantId: item.merchantId, merchantName: item.merchantName, serviceType: item.serviceType ?? 'marketplace', createdAt: item.createdAt);
+    return core.MarketplaceDetailModel(id: id, name: item.name, category: item.category, price: item.price, image: item.image, description: item.description ?? '', location: item.location ?? '', comment: null, gallery: item.gallery, videos: const [], sellerBusinessName: item.sellerBusinessName, sellerOpeningHours: item.sellerOpeningHours, sellerStatus: item.sellerStatus, sellerBusinessDescription: item.sellerBusinessDescription, sellerRating: item.sellerRating, sellerLogoUrl: item.sellerLogoUrl, serviceProviderId: item.serviceProviderId, sellerUserId: item.sellerUserId, merchantId: item.merchantId, merchantName: item.merchantName, merchantBackendId: item.merchantBackendId, firestoreDocId: item.id, serviceType: item.serviceType ?? 'marketplace', createdAt: item.createdAt);
   }
 
   void _openDetailsPage(MarketplaceDetailModel item) {
@@ -999,9 +1002,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     MerchantChatResult? result;
 
     try {
-      final myId = await BackendChatService.getUserId();
-
-      final ownerId = int.tryParse((item.sellerUserId ?? '').trim());
+      final ownerId = item.merchantBackendId;
       final sqlItemId = item.hasValidSqlItemId ? item.sqlItemId : null;
 
       result = await BackendChatService.startMerchantChat(
@@ -1010,12 +1011,22 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         sellerUserId: item.sellerUserId,
         serviceProviderId: item.serviceProviderId,
         merchantId: item.merchantId,
-        myUserId: myId,
+        firestoreItemDocId: item.id,
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[_openChatWithMerchant] Error: $e');
       if (mounted) {
-        ToastHelper.showCustomToast(context, 'Error opening chat', isSuccess: false, errorMessage: e.toString());
+        final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+        final message = raw.contains('own listing') ||
+                raw.contains('cannot chat with yourself😂😂')
+            ? raw
+            : 'Error opening chat';
+        ToastHelper.showCustomToast(
+          context,
+          message,
+          isSuccess: false,
+          errorMessage: raw,
+        );
       }
     }
 

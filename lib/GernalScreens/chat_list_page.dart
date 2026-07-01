@@ -500,6 +500,7 @@ class _ThreadTile {
   final String avatarUrl;
   final String? productImageUrl;
   final String preview;
+  final ChatLastMessagePreviewKind previewKind;
   final DateTime updatedAt;
   final int unreadCount;
   final ChatProductContext? product;
@@ -515,6 +516,7 @@ class _ThreadTile {
     required this.avatarUrl,
     required this.productImageUrl,
     required this.preview,
+    this.previewKind = ChatLastMessagePreviewKind.text,
     required this.updatedAt,
     required this.unreadCount,
     required this.product,
@@ -545,12 +547,17 @@ class _ThreadTile {
     }
 
     final product = t.lastProductTag;
-    final previewRaw = (t.lastMessagePreview ?? '').trim();
-    final preview = previewRaw.isNotEmpty
-        ? previewRaw
+    final display = BackendChatService.describeLastMessagePreview(
+      t.lastMessagePreview,
+    );
+    final preview = display.label.isNotEmpty
+        ? display.label
         : (product != null
             ? 'Enquiry about ${product.name}'
             : (t.type == 'direct' ? 'Tap to open chat' : (t.name ?? 'Group chat')));
+    final previewKind = display.label.isNotEmpty
+        ? display.kind
+        : ChatLastMessagePreviewKind.text;
 
     final title = product?.name ?? (peerName.isEmpty ? 'Contact' : peerName);
     final peerLabel = product != null
@@ -565,6 +572,7 @@ class _ThreadTile {
       avatarUrl: otherParticipant.profilePicture ?? '',
       productImageUrl: product?.image,
       preview: preview,
+      previewKind: previewKind,
       updatedAt: t.updatedAt,
       unreadCount: t.unreadCount,
       product: product,
@@ -928,16 +936,10 @@ class _ChatRow extends StatelessWidget {
                     Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            tile.preview,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 14,
-                              height: 1.2,
-                              color: unread ? _ink.withValues(alpha: 0.82) : _muted,
-                              fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
-                            ),
+                          child: _ThreadPreviewLine(
+                            preview: tile.preview,
+                            kind: tile.previewKind,
+                            unread: unread,
                           ),
                         ),
                         if (unread && !hasProductImage) ...[
@@ -981,6 +983,63 @@ class _ChatRow extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ThreadPreviewLine extends StatelessWidget {
+  const _ThreadPreviewLine({
+    required this.preview,
+    required this.kind,
+    required this.unread,
+  });
+
+  final String preview;
+  final ChatLastMessagePreviewKind kind;
+  final bool unread;
+
+  static const _ink = Color(0xFF101010);
+  static const _muted = Color(0xFF6B7280);
+
+  @override
+  Widget build(BuildContext context) {
+    final color = unread ? _ink.withValues(alpha: 0.82) : _muted;
+    final style = TextStyle(
+      fontSize: 14,
+      height: 1.2,
+      color: color,
+      fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
+    );
+
+    final icon = switch (kind) {
+      ChatLastMessagePreviewKind.voice => Icons.mic_rounded,
+      ChatLastMessagePreviewKind.photo => Icons.photo_camera_outlined,
+      ChatLastMessagePreviewKind.video => Icons.videocam_outlined,
+      ChatLastMessagePreviewKind.text => null,
+    };
+
+    if (icon == null) {
+      return Text(
+        preview,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: style,
+      );
+    }
+
+    return Row(
+      children: [
+        Icon(icon, size: 17, color: color),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            preview,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+      ],
     );
   }
 }

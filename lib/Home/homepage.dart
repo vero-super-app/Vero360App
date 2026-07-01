@@ -134,13 +134,13 @@ const List<DigitalProduct> kDigitalProducts = [
   ),
   DigitalProduct(
     key: 'netflix', name: 'Netflix',
-    subtitle: '1-month subscription', price: 'MWK 12,000',
+    subtitle: '1-month subscription', price: 'MWK 15,000',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
   ),
   DigitalProduct(
     key: 'chatgpt_plus', name: 'ChatGPT Plus',
-    subtitle: '1-month subscription', price: 'MWK 25,000',
+    subtitle: '1-month subscription', price: 'MWK 35,000',
     logoAsset: 'assets/brands/chatgpt.png',
     icon: Icons.chat_bubble_outline_rounded,
   ),

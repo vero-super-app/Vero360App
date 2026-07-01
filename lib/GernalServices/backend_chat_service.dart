@@ -395,6 +395,7 @@ class BackendChatService {
   static List<BackendChatThread> _cachedThreads = [];
   static Set<String> _deletedThreadIds = {};
   static bool _threadsWatchReady = false;
+  static bool _threadsRefreshListenerAttached = false;
   static Timer? _threadsFallbackPollTimer;
   static String? _activeChatId;
   static bool _wsConnected = false;
@@ -425,6 +426,7 @@ class BackendChatService {
     if (connected) {
       _threadsFallbackPollTimer?.cancel();
       _threadsFallbackPollTimer = null;
+      refreshThreads();
     } else {
       _ensureThreadsFallbackPoll();
     }
@@ -441,13 +443,21 @@ class BackendChatService {
       }
     }
 
-    if (!_threadsWatchReady || _cachedThreads.isEmpty) {
-      refreshThreads();
+    final myId = _userId;
+    if (myId == null) {
+      unawaited(
+        ensureAuth().then((_) => notifyRealtimeMessage(message)).catchError((_) {
+          refreshThreads();
+        }),
+      );
       return;
     }
 
-    final myId = _userId;
-    if (myId == null) return;
+    final idx = _cachedThreads.indexWhere((t) => t.id.trim() == chatId);
+    if (idx < 0) {
+      unawaited(_ingestIncomingMessageForThreadList(message));
+      return;
+    }
 
     final preview = (message.content ?? '').trim();
     final display = describeLastMessagePreview(
@@ -466,12 +476,6 @@ class BackendChatService {
         );
         break;
       }
-    }
-
-    final idx = _cachedThreads.indexWhere((t) => t.id == message.chatId);
-    if (idx < 0) {
-      refreshThreads();
-      return;
     }
 
     final old = _cachedThreads[idx];
@@ -500,6 +504,116 @@ class BackendChatService {
     }
   }
 
+  static void _mergeThreadIntoCache(BackendChatThread thread) {
+    final id = thread.id.trim();
+    if (id.isEmpty) return;
+    _cachedThreads.removeWhere((t) => t.id.trim() == id);
+    _cachedThreads.insert(0, thread);
+    _threadsWatchReady = true;
+    _emitCachedThreads();
+  }
+
+  static String _senderDisplayNameFromMessage(BackendChatMessage message) {
+    final sender = message.sender;
+    if (sender != null) {
+      for (final key in ['name', 'fullName', 'displayName', 'username']) {
+        final raw = sender[key]?.toString().trim() ?? '';
+        if (raw.isNotEmpty && raw.toLowerCase() != 'user') return raw;
+      }
+      final email = sender['email']?.toString().trim() ?? '';
+      if (email.contains('@') && !email.startsWith('+firebase_')) {
+        return email.split('@').first;
+      }
+    }
+    return 'New message';
+  }
+
+  static BackendChatThread _minimalThreadFromMessage(
+    BackendChatMessage message,
+    int myId,
+  ) {
+    final preview = describeLastMessagePreview(
+      message.content,
+      messageType: message.type,
+    );
+    final sender = message.sender;
+    final participants = <ChatParticipant>[];
+    if (message.senderId > 0 && message.senderId != myId) {
+      participants.add(
+        ChatParticipant(
+          id: message.senderId,
+          name: _senderDisplayNameFromMessage(message),
+          email: sender?['email']?.toString() ?? '',
+          profilePicture:
+              sender?['profilePicture'] ?? sender?['profilepicture'],
+        ),
+      );
+    }
+
+    ChatProductContext? productTag;
+    for (final tag in message.tags ?? const []) {
+      if (tag['tagType'] == 'product') {
+        productTag = ChatProductContext.fromTagMap(
+          Map<String, dynamic>.from(tag),
+        );
+        break;
+      }
+    }
+
+    return BackendChatThread(
+      id: message.chatId,
+      type: 'direct',
+      participantCount: participants.isEmpty ? 1 : participants.length + 1,
+      unreadCount: message.isMine(myId) ? 0 : 1,
+      lastMessagePreview: preview.label.isNotEmpty ? preview.label : null,
+      lastProductTag: productTag,
+      createdAt: message.createdAt,
+      updatedAt: message.createdAt,
+      participants: participants,
+    );
+  }
+
+  static Future<void> _ingestIncomingMessageForThreadList(
+    BackendChatMessage message,
+  ) async {
+    try {
+      await ensureAuth();
+      final myId = _userId;
+      if (myId == null) {
+        refreshThreads();
+        return;
+      }
+
+      final chatId = message.chatId.trim();
+      if (_cachedThreads.indexWhere((t) => t.id.trim() == chatId) < 0) {
+        _mergeThreadIntoCache(_minimalThreadFromMessage(message, myId));
+      }
+
+      unawaited(BackendMessagingCache.upsertMessage(myId, message));
+
+      try {
+        final fresh = await getChat(chatId);
+        _mergeThreadIntoCache(fresh);
+        unawaited(BackendMessagingCache.saveThreads(myId, _cachedThreads));
+      } catch (e) {
+        if (kDebugMode) {
+          print('[BackendChatService] getChat after WS message failed: $e');
+        }
+        unawaited(BackendMessagingCache.saveThreads(myId, _cachedThreads));
+      }
+
+      if (!message.isMine(myId) && message.chatId != _activeChatId) {
+        final thread = _cachedThreads.firstWhere(
+          (t) => t.id.trim() == chatId,
+          orElse: () => _minimalThreadFromMessage(message, myId),
+        );
+        unawaited(_notifyIncomingMessage(message, thread));
+      }
+    } catch (_) {
+      refreshThreads();
+    }
+  }
+
   static Future<void> _notifyIncomingMessage(
     BackendChatMessage message,
     BackendChatThread thread,
@@ -516,13 +630,16 @@ class BackendChatService {
             ? thread.participants.first
             : ChatParticipant(id: 0, name: 'Someone', email: ''),
       );
-      var senderName = sender.name.trim();
-      if (senderName.isEmpty || senderName.toLowerCase() == 'user') {
-        final email = sender.email.trim();
-        if (email.contains('@') && !email.startsWith('+firebase_')) {
-          senderName = email.split('@').first;
-        } else {
-          senderName = 'New message';
+      var senderName = _senderDisplayNameFromMessage(message);
+      if (senderName == 'New message') {
+        senderName = sender.name.trim();
+        if (senderName.isEmpty || senderName.toLowerCase() == 'user') {
+          final email = sender.email.trim();
+          if (email.contains('@') && !email.startsWith('+firebase_')) {
+            senderName = email.split('@').first;
+          } else {
+            senderName = 'New message';
+          }
         }
       }
 
@@ -606,15 +723,51 @@ class BackendChatService {
     }
   }
 
+  static List<BackendChatThread> _mergeServerThreads(
+    List<BackendChatThread> server,
+    List<BackendChatThread> prior,
+  ) {
+    final serverIds = server
+        .map((t) => t.id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final extras = prior.where((t) {
+      final id = t.id.trim();
+      return id.isNotEmpty && !serverIds.contains(id);
+    });
+    final merged = [...server, ...extras];
+    merged.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return merged;
+  }
+
+  static List<dynamic> _extractThreadListFromJson(dynamic json) {
+    if (json is List) return json;
+    if (json is! Map) return const [];
+    final data = json['data'];
+    if (data is List) return data;
+    if (data is Map) {
+      for (final key in ['items', 'chats', 'threads', 'results']) {
+        final raw = data[key];
+        if (raw is List) return raw;
+      }
+    }
+    for (final key in ['items', 'chats', 'threads', 'results']) {
+      final raw = json[key];
+      if (raw is List) return raw;
+    }
+    return const [];
+  }
+
   static Future<void> _reloadThreadCache() async {
     await BackendMessagingCache.initialize();
     await ensureAuth();
     final userId = _userId;
+    final prior = List<BackendChatThread>.from(_cachedThreads);
 
     if (userId != null) {
       await _loadDeletedThreadIds(userId);
       final diskThreads = BackendMessagingCache.peekThreads(userId);
-      if (diskThreads.isNotEmpty) {
+      if (diskThreads.isNotEmpty && prior.isEmpty) {
         _cachedThreads = _filterDeletedThreads(diskThreads);
         _threadsWatchReady = true;
         _emitCachedThreads();
@@ -623,19 +776,19 @@ class BackendChatService {
 
     try {
       final fresh = await getThreads();
-      _deletedThreadIds.clear();
-      _cachedThreads = fresh;
+      _cachedThreads = _mergeServerThreads(fresh, prior.isNotEmpty ? prior : _cachedThreads);
       _threadsWatchReady = true;
       _emitCachedThreads();
       if (userId != null) {
-        await BackendMessagingCache.saveThreads(userId, fresh);
-        await BackendMessagingCache.clearDeletedThreadIds(userId);
+        await BackendMessagingCache.saveThreads(userId, _cachedThreads);
       }
     } catch (e) {
       if (_cachedThreads.isEmpty) rethrow;
       if (kDebugMode) {
         print('[BackendChatService] Thread refresh failed, using cache: $e');
       }
+      _threadsWatchReady = true;
+      _emitCachedThreads();
     }
   }
 
@@ -648,15 +801,17 @@ class BackendChatService {
   }
 
   static Future<void> _ensureThreadsWatchInitialized() async {
-    if (_threadsWatchReady) return;
+    if (!_threadsWatchReady) {
+      await _reloadThreadCache();
+    }
 
-    await _reloadThreadCache();
-
-    _threadsRefresh.listen((_) {
-      unawaited(_reloadThreadCache());
-    });
-
-    _ensureThreadsFallbackPoll();
+    if (!_threadsRefreshListenerAttached) {
+      _threadsRefreshListenerAttached = true;
+      _threadsRefresh.listen((_) {
+        unawaited(_reloadThreadCache());
+      });
+      _ensureThreadsFallbackPoll();
+    }
   }
 
   /// Notify all listeners to refresh threads (called after sending a message)
@@ -749,6 +904,7 @@ class BackendChatService {
     _cachedThreads = [];
     _deletedThreadIds = {};
     _threadsWatchReady = false;
+    _threadsRefreshListenerAttached = false;
     _activeChatId = null;
     _wsConnected = false;
     _threadsFallbackPollTimer?.cancel();
@@ -1616,7 +1772,7 @@ class BackendChatService {
   /// Get user's chat threads
   static Future<List<BackendChatThread>> getThreads({
     int page = 1,
-    int pageSize = 20,
+    int pageSize = 50,
   }) async {
     await ensureAuth();
 
@@ -1628,9 +1784,12 @@ class BackendChatService {
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
-        final data = json['data'] as List? ?? [];
+        final data = _extractThreadListFromJson(json);
         return data
-            .map((t) => BackendChatThread.fromJson(t as Map<String, dynamic>))
+            .whereType<Map>()
+            .map((t) => BackendChatThread.fromJson(
+                  Map<String, dynamic>.from(t),
+                ))
             .toList();
       } else if (response.statusCode == 401) {
         throw Exception('Unauthorized - please log in again');
@@ -1644,10 +1803,25 @@ class BackendChatService {
   }
 
   /// Live thread list: initial REST load, WebSocket patches, manual refresh.
-  static Stream<List<BackendChatThread>> watchThreads() async* {
-    await _ensureThreadsWatchInitialized();
-    yield _filterDeletedThreads(_cachedThreads);
-    yield* _threadsLiveController.stream;
+  /// Broadcast — safe for multiple listeners (chat list, providers, badges).
+  static Stream<List<BackendChatThread>> watchThreads() {
+    return Stream.multi((multi) async {
+      try {
+        await _ensureThreadsWatchInitialized();
+        if (!multi.isClosed) {
+          multi.add(_filterDeletedThreads(_cachedThreads));
+        }
+      } catch (e, st) {
+        if (!multi.isClosed) multi.addError(e, st);
+        return;
+      }
+
+      final sub = _threadsLiveController.stream.listen(
+        multi.add,
+        onError: multi.addError,
+      );
+      multi.onCancel = () => sub.cancel();
+    });
   }
 
   /// @deprecated Use [watchThreads] — kept for older call sites.
@@ -1667,8 +1841,15 @@ class BackendChatService {
       ).timeout(_lookupTimeout);
 
       if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        final chatData = body is Map<String, dynamic>
+            ? (body['data'] is Map
+                ? Map<String, dynamic>.from(body['data'] as Map)
+                : body)
+            : body;
         return BackendChatThread.fromJson(
-            jsonDecode(response.body) as Map<String, dynamic>);
+          Map<String, dynamic>.from(chatData as Map),
+        );
       } else {
         throw Exception('Failed to fetch chat: ${response.statusCode}');
       }

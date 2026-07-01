@@ -34,14 +34,30 @@ class _ChatListPageState extends State<ChatListPage> {
 
   final List<String> _pinnedIds = [];
   final Set<String> _hiddenIds = {};
+  StreamSubscription<BackendChatMessage>? _messageSub;
+  late final Stream<List<BackendChatThread>> _threadsStream;
+  Timer? _pollTimer;
+
   @override
   void initState() {
     super.initState();
+    _threadsStream = BackendChatService.watchThreads();
+    _messageSub = BackendMessagingSocket.messageStream.listen((message) async {
+      final chatId = message.chatId.trim();
+      if (chatId.isEmpty) return;
+      await BackendChatService.restoreThreadLocally(chatId);
+      if (_hiddenIds.remove(chatId)) {
+        await _persistChatListPrefs();
+      }
+      if (mounted) setState(() {});
+    });
     _boot();
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
+    _messageSub?.cancel();
     _wsConnectionSub?.cancel();
     _searchCtrl.dispose();
     super.dispose();
@@ -87,6 +103,13 @@ class _ChatListPageState extends State<ChatListPage> {
       if (!mounted) return;
       await _loadChatListPrefs(userId);
       if (!mounted) return;
+      BackendChatService.refreshThreads();
+      _pollTimer?.cancel();
+      _pollTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+        if (!BackendMessagingSocket.isConnected) {
+          BackendChatService.refreshThreads();
+        }
+      });
       setState(() {
         _myUserId = userId;
         _error = null;
@@ -255,7 +278,7 @@ class _ChatListPageState extends State<ChatListPage> {
           _buildWhatsAppSearch(),
           Expanded(
             child: StreamBuilder<List<BackendChatThread>>(
-        stream: BackendChatService.watchThreads(),
+        stream: _threadsStream,
         builder: (context, snap) {
           if (snap.hasError && (snap.data == null || snap.data!.isEmpty)) {
             final ui = _friendlyChatError(snap.error!);

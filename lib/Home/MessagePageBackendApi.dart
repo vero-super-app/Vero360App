@@ -19,6 +19,7 @@ import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/chat_notification_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -449,17 +450,37 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     return false;
   }
 
+  Future<String> _currentSenderDisplayName() async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in ['name', 'displayName', 'username']) {
+      final raw = prefs.getString(key)?.trim() ?? '';
+      if (raw.isNotEmpty) return raw;
+    }
+
+    final fromToken = await AuthStorage.userNameFromToken();
+    if (fromToken != null && fromToken.trim().isNotEmpty) {
+      final t = fromToken.trim();
+      return t.contains('@') ? t.split('@').first : t;
+    }
+
+    final fb = FirebaseAuth.instance.currentUser?.displayName?.trim();
+    if (fb != null && fb.isNotEmpty) return fb;
+
+    final email = prefs.getString('email') ??
+        FirebaseAuth.instance.currentUser?.email;
+    if (email != null && email.contains('@')) {
+      return email.split('@').first;
+    }
+
+    return 'Someone';
+  }
+
   Future<void> _pushNotifyPeer({required String body}) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final senderName = (prefs.getString('displayName') ??
-              prefs.getString('username') ??
-              prefs.getString('email')?.split('@').first ??
-              'Someone')
-          .trim();
+      final senderName = await _currentSenderDisplayName();
       await ChatNotificationService.notifyRecipientOfMessage(
         chatId: widget.peerId,
-        senderName: senderName.isEmpty ? 'Someone' : senderName,
+        senderName: senderName,
         body: body,
         recipientFirebaseUid: widget.peerMerchantId,
         recipientUserId: widget.peerUserId,

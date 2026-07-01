@@ -264,6 +264,7 @@ class NotificationService {
           continue;
         }
 
+        BackendChatService.refreshThreads();
         await showNewChatMessageNotification(
           senderName: title,
           body: body.isEmpty ? 'Sent you a message' : body,
@@ -612,7 +613,6 @@ class NotificationService {
     required String body,
     required String chatId,
   }) async {
-    BackendChatService.refreshThreads();
     final payload = jsonEncode({
       'type': 'new_message',
       'chatId': chatId,

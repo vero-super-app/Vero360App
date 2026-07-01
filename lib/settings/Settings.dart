@@ -89,9 +89,9 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _biometricLockEnabled = false;
 
   // customer service & app links
-  static const String _supportPhone = '+265999955270';
+  static const String _supportPhone = '+265992695612';
   static const String _supportWhatsApp = '+265992695612';
-  static const String _supportEmail = 'support@vero360.app';
+  static const String _supportEmail = 'info@vero360.app';
   static const String _playStoreId = 'com.vero.vero360';
 
   /// Display phone; filters out Firebase identifiers so we never show +firebase_xxx.

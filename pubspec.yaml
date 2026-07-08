@@ -2,7 +2,7 @@ name: vero360_app
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.1.1+10003
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -79,7 +79,6 @@ dependencies:
   webview_flutter_android: ^4.3.1
   webview_flutter_wkwebview: ^3.17.0
   webview_windows: ^0.4.0
-  flutter_inappwebview: ^6.0.0
   jwt_decoder: ^2.0.1
   flutter_map: ^6.1.0
   latlong2: ^0.9.0

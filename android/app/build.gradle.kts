@@ -36,7 +36,7 @@ android {
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = 10003
-        versionName = "1.0.3"
+        versionName = "1.1.1"
         multiDexEnabled = true
         
         // Load Google Maps API key from .env

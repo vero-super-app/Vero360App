@@ -80,7 +80,9 @@ android {
             signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
             } else {
-                signingConfigs.getByName("debug")
+                throw GradleException(
+                    "Release builds require android/key.properties with your Play upload keystore."
+                )
             }
         }
     }

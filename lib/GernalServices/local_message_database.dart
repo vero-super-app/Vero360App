@@ -1,4 +1,4 @@
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive_ce.dart';
 import 'package:vero360_app/GeneralModels/messaging_models.dart';
 
 part 'local_message_database.g.dart';

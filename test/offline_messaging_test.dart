@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive_ce.dart';
 import 'package:vero360_app/GeneralModels/messaging_models.dart';
 import 'package:vero360_app/GernalServices/local_message_database.dart';
 import 'package:vero360_app/GernalServices/offline_message_queue.dart';

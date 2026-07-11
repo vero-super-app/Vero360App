@@ -25,6 +25,7 @@ import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 // Merchant dashboards
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
@@ -64,6 +65,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
   bool _isLoggedIn = false;
 
   late List<Widget> _pages;
+  bool _pagesReady = false;
 
   final cartService = CartServiceProvider.getInstance();
 
@@ -93,11 +95,36 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   Future<void> _initialize() async {
     try {
+      // Show home ASAP from cached role — do not await network here.
       await _checkUserRoleAndSetup();
-      await _refreshAuthState();
-      await _bootstrapMessaging();
     } catch (e, st) {
-      assert(() { debugPrint('BottomNavbar._initialize: $e\n$st'); return true; }());
+      assert(() {
+        debugPrint('BottomNavbar._initialize: $e\n$st');
+        return true;
+      }());
+      // Ensure pages exist even on failure so UI can render.
+      if (!_pagesReady) {
+        _pages = [
+          Vero360Homepage(email: widget.email, isDriverHome: false),
+          MarketPage(cartService: cartService),
+          const AuthGuard(
+            featureName: 'Messages',
+            showChildBehindDialog: true,
+            child: ChatListPage(),
+          ),
+          AuthGuard(
+            featureName: 'Cart',
+            showChildBehindDialog: true,
+            child: CartPage(cartService: cartService),
+          ),
+          const AuthGuard(
+            featureName: 'Profile',
+            showChildBehindDialog: true,
+            child: ProfilePage(),
+          ),
+        ];
+        _pagesReady = true;
+      }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -110,6 +137,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
         }
       }
     }
+
+    // Auth refresh + messaging warm in background (must not block home).
+    unawaited(_refreshAuthState());
   }
 
   Future<void> _refreshAuthState() async {
@@ -119,8 +149,10 @@ class _BottomnavbarState extends State<Bottomnavbar>
     if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
       setState(() => _selectedIndex = 0);
     }
-    if (loggedIn) await _fetchAndUpdateRoleFromServer();
-    if (loggedIn) unawaited(_bootstrapMessaging());
+    if (loggedIn) {
+      unawaited(_fetchAndUpdateRoleFromServer());
+      unawaited(_bootstrapMessaging());
+    }
   }
 
   /// Keep WebSocket + thread cache warm so unread badges and push paths work.
@@ -141,7 +173,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
       final resp = await http.get(
         ApiConfig.endpoint('/users/me'),
         headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-      ).timeout(const Duration(seconds: 8));
+      ).timeout(const Duration(seconds: 3));
       if (resp.statusCode != 200) return;
       final decoded = json.decode(resp.body);
       final user = (decoded is Map && decoded['data'] is Map)
@@ -219,6 +251,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
         child: _isMerchant ? _merchantProfileTab(prefs) : const ProfilePage(),
       ),
     ];
+    _pagesReady = true;
 
     if (_isMerchant && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _redirectMerchant(prefs); });
@@ -415,7 +448,11 @@ class _BottomnavbarState extends State<Bottomnavbar>
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator(color: _kOrange)));
+      return const VeroLaunchSplash(
+        title: 'Opening…',
+        message: 'Loading your home…',
+        showSpinner: true,
+      );
     }
 
     final isDark = Theme.of(context).brightness == Brightness.dark;

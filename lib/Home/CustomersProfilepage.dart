@@ -1,6 +1,7 @@
 // lib/Pages/profile_page.dart
 import 'dart:async'; // <-- for FutureOr
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,6 +34,8 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/Home/homepage.dart' show LatestArrivalsSection;
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
+import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_profile_hub_screen.dart';
@@ -58,6 +61,8 @@ class _ProfilePageState extends State<ProfilePage> {
   String phone = "No Phone";
   String address = "No Address";
   String profileUrl = "";
+  /// Local disk path for avatar — preferred over network when present.
+  String? _localPhotoPath;
 
   bool _loading = false;
   bool _isDriver = false;
@@ -98,6 +103,7 @@ class _ProfilePageState extends State<ProfilePage> {
     String loadedPhone = prefs.getString('phone') ?? 'No Phone';
     final address = prefs.getString('address') ?? 'No Address';
     String loadedProfileUrl = prefs.getString('profilepicture') ?? '';
+    final localPath = await ProfilePhotoCache.peekLocalPath();
     // Fallback to Firebase Auth so name/email/phone/photo show after password change or when API hasn't synced
     final firebaseUser = FirebaseAuth.instance.currentUser;
     if (firebaseUser != null) {
@@ -133,9 +139,67 @@ class _ProfilePageState extends State<ProfilePage> {
         phone = loadedPhone;
         this.address = address;
         profileUrl = loadedProfileUrl;
+        _localPhotoPath = localPath;
         _isDriver = role == 'driver';
       });
     }
+
+    // Warm/refresh local disk cache in background (no UI wait).
+    if (loadedProfileUrl.isNotEmpty) {
+      unawaited(_cacheProfilePhoto(loadedProfileUrl));
+    }
+  }
+
+  Future<void> _cacheProfilePhoto(String url) async {
+    final file = await ProfilePhotoCache.ensureCached(url);
+    if (!mounted || file == null) return;
+    if (_localPhotoPath == file.path) return;
+    setState(() => _localPhotoPath = file.path);
+  }
+
+  Widget _profileAvatarImage({
+    required double size,
+    BoxFit fit = BoxFit.cover,
+  }) {
+    final local = _localPhotoPath;
+    if (!kIsWeb && local != null && local.isNotEmpty && File(local).existsSync()) {
+      return Image.file(
+        File(local),
+        width: size,
+        height: size,
+        fit: fit,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) {
+          if (profileUrl.isEmpty) {
+            return Icon(Icons.person, size: size * 0.54, color: Colors.black45);
+          }
+          return ResilientCachedNetworkImage(
+            url: profileUrl,
+            width: size,
+            height: size,
+            fit: fit,
+          );
+        },
+      );
+    }
+    if (profileUrl.isNotEmpty) {
+      return ResilientCachedNetworkImage(
+        url: profileUrl,
+        width: size,
+        height: size,
+        fit: fit,
+      );
+    }
+    return Icon(Icons.person, size: size * 0.54, color: Colors.black45);
+  }
+
+  bool get _hasPhoto {
+    if (profileUrl.trim().isNotEmpty) return true;
+    final local = _localPhotoPath;
+    return !kIsWeb &&
+        local != null &&
+        local.isNotEmpty &&
+        File(local).existsSync();
   }
 
   /// Firebase can expose internal provider IDs (e.g. +firebase_xxx). Don't show in UI.
@@ -205,12 +269,24 @@ class _ProfilePageState extends State<ProfilePage> {
       }
     }
 
-    final picVal = (user['profilepicture'] ??
+    var picVal = (user['profilepicture'] ??
             user['profilePicture'] ??
             user['photoURL'] ??
             user['photoUrl'] ??
             '')
-        .toString();
+        .toString()
+        .trim();
+    // Don't wipe a working local/Firebase photo if the API omits the field.
+    if (picVal.isEmpty) {
+      final existingPic = (prefs.getString('profilepicture') ?? '').trim();
+      if (existingPic.isNotEmpty) {
+        picVal = existingPic;
+      } else {
+        final fbPhoto =
+            (FirebaseAuth.instance.currentUser?.photoURL ?? '').trim();
+        if (fbPhoto.isNotEmpty) picVal = fbPhoto;
+      }
+    }
 
     String addr = 'No Address';
     final addresses = user['addresses'];
@@ -238,7 +314,10 @@ class _ProfilePageState extends State<ProfilePage> {
     await prefs.setString('email', email);
     await prefs.setString('phone', phone);
     await prefs.setString('address', address);
-    await prefs.setString('profilepicture', profileUrl);
+    if (picVal.isNotEmpty) {
+      await prefs.setString('profilepicture', picVal);
+      unawaited(_cacheProfilePhoto(picVal));
+    }
   }
 
   Future<void> _deleteProfilePicture() async {
@@ -261,9 +340,13 @@ class _ProfilePageState extends State<ProfilePage> {
         },
       );
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
-        setState(() => profileUrl = '');
+        setState(() {
+          profileUrl = '';
+          _localPhotoPath = null;
+        });
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('profilepicture', '');
+        await ProfilePhotoCache.clear();
         ToastHelper.showCustomToast(context, 'Profile picture removed',
             isSuccess: true, errorMessage: '');
       } else {
@@ -480,7 +563,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   // ---- Profile picture flow ----
   void _showProfilePictureViewer() {
-    if (profileUrl.isEmpty) return;
+    if (!_hasPhoto) return;
     showDialog(
       context: context,
       barrierColor: Colors.black87,
@@ -495,13 +578,14 @@ class _ProfilePageState extends State<ProfilePage> {
               maxScale: 4,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.network(
-                  profileUrl,
-                  fit: BoxFit.contain,
-                  loadingBuilder: (_, child, progress) =>
-                      progress == null ? child : const Center(child: CircularProgressIndicator()),
-                  errorBuilder: (_, __, ___) => const Center(
-                    child: Icon(Icons.broken_image_outlined, size: 64, color: Colors.white70),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(context).size.width,
+                    maxHeight: MediaQuery.of(context).size.height * 0.75,
+                  ),
+                  child: _profileAvatarImage(
+                    size: MediaQuery.of(context).size.width,
+                    fit: BoxFit.contain,
                   ),
                 ),
               ),
@@ -573,7 +657,7 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
-            if (profileUrl.isNotEmpty)
+            if (_hasPhoto)
               ListTile(
                 leading: const Icon(Icons.visibility_outlined),
                 title: const Text('View profile picture'),
@@ -680,7 +764,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 ),
               ),
             ),
-            if (profileUrl.isNotEmpty)
+            if (_hasPhoto)
               ListTile(
                 leading: const Icon(Icons.remove_circle_outline),
                 title: const Text('Remove current photo'),
@@ -837,7 +921,22 @@ class _ProfilePageState extends State<ProfilePage> {
       url ??= await uploadGetUrlThenPutUser();
 
       final profilePictureUrl = url;
-      setState(() => profileUrl = profilePictureUrl);
+      // Cache local bytes immediately so next opens never need the network.
+      try {
+        final bytes = await picked.readAsBytes();
+        final local = await ProfilePhotoCache.saveBytes(
+          bytes,
+          remoteUrl: profilePictureUrl,
+        );
+        if (mounted) {
+          setState(() {
+            profileUrl = profilePictureUrl;
+            _localPhotoPath = local?.path;
+          });
+        }
+      } catch (_) {
+        if (mounted) setState(() => profileUrl = profilePictureUrl);
+      }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('profilepicture', profilePictureUrl);
 
@@ -864,7 +963,19 @@ class _ProfilePageState extends State<ProfilePage> {
       if (user != null) {
         try {
           final url = await uploadToFirebaseStorage(user.uid, picked);
-          setState(() => profileUrl = url);
+          try {
+            final bytes = await picked.readAsBytes();
+            final local =
+                await ProfilePhotoCache.saveBytes(bytes, remoteUrl: url);
+            if (mounted) {
+              setState(() {
+                profileUrl = url;
+                _localPhotoPath = local?.path;
+              });
+            }
+          } catch (_) {
+            if (mounted) setState(() => profileUrl = url);
+          }
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('profilepicture', url);
           await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
@@ -907,6 +1018,7 @@ class _ProfilePageState extends State<ProfilePage> {
       await prefs.remove('phone');
       await prefs.remove('address');
       await prefs.remove('profilepicture');
+      await ProfilePhotoCache.clear();
 
       if (mounted) {
         ToastHelper.showCustomToast(
@@ -970,7 +1082,7 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _topProfileCard() {
     final avatar = GestureDetector(
       onTap: () {
-        if (profileUrl.isNotEmpty) {
+        if (_hasPhoto) {
           _showProfilePictureViewer();
         } else {
           _showPhotoSheet();
@@ -980,11 +1092,9 @@ class _ProfilePageState extends State<ProfilePage> {
       child: CircleAvatar(
         radius: 26,
         backgroundColor: Colors.black12,
-        backgroundImage:
-            profileUrl.isNotEmpty ? NetworkImage(profileUrl) : null,
-        child: profileUrl.isEmpty
-            ? const Icon(Icons.person, size: 28, color: Colors.black45)
-            : null,
+        child: ClipOval(
+          child: _profileAvatarImage(size: 52),
+        ),
       ),
     );
 

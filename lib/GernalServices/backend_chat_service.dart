@@ -1242,7 +1242,30 @@ class BackendChatService {
     return completer.future;
   }
 
+  /// In-memory backend user id when auth is already warm (sync, may be null).
+  static int? peekUserId() => _userId;
+
+  /// Sync own-listing check for marketplace chat (no network).
+  static bool isOwnMarketplaceListingSync({
+    required int myBackendId,
+    int? ownerId,
+    String? sellerUserId,
+    String? merchantId,
+  }) {
+    return _isOwnMarketplaceListing(
+      myBackendId: myBackendId,
+      ownerId: ownerId,
+      sellerUserId: sellerUserId,
+      merchantId: merchantId,
+    );
+  }
+
+  static final Map<String, Future<MerchantChatResult>> _merchantChatInFlight =
+      {};
+  static final Map<int, Future<BackendChatThread>> _ensureChatInFlight = {};
+
   /// Resolve seller and create/open a direct chat (bounded time).
+  /// Concurrent callers with the same listing key share one in-flight request.
   static Future<MerchantChatResult> startMerchantChat({
     int? sqlItemId,
     int? ownerId,
@@ -1251,6 +1274,47 @@ class BackendChatService {
     String? merchantId,
     String? firestoreItemDocId,
     int? myUserId,
+  }) async {
+    final cacheKey = _marketplaceSellerCacheKey(
+      firestoreItemDocId: firestoreItemDocId,
+      merchantId: merchantId,
+      sellerUserId: sellerUserId,
+      sqlItemId: sqlItemId,
+    );
+    final inflightKey = cacheKey.isNotEmpty
+        ? cacheKey
+        : 'owner:${ownerId ?? 0}|su:${sellerUserId ?? ''}|sp:${serviceProviderId ?? ''}';
+
+    final existing = _merchantChatInFlight[inflightKey];
+    if (existing != null) return existing;
+
+    final future = _startMerchantChatBody(
+      sqlItemId: sqlItemId,
+      ownerId: ownerId,
+      sellerUserId: sellerUserId,
+      serviceProviderId: serviceProviderId,
+      merchantId: merchantId,
+      firestoreItemDocId: firestoreItemDocId,
+      myUserId: myUserId,
+      cacheKey: cacheKey,
+    );
+    _merchantChatInFlight[inflightKey] = future;
+    try {
+      return await future;
+    } finally {
+      _merchantChatInFlight.remove(inflightKey);
+    }
+  }
+
+  static Future<MerchantChatResult> _startMerchantChatBody({
+    int? sqlItemId,
+    int? ownerId,
+    String? sellerUserId,
+    String? serviceProviderId,
+    String? merchantId,
+    String? firestoreItemDocId,
+    int? myUserId,
+    required String cacheKey,
   }) async {
     await ensureAuth();
     final myId = myUserId ?? _userId!;
@@ -1264,14 +1328,48 @@ class BackendChatService {
       throw Exception(_ownListingChatMessage);
     }
 
-    final cacheKey = _marketplaceSellerCacheKey(
-      firestoreItemDocId: firestoreItemDocId,
-      merchantId: merchantId,
-      sellerUserId: sellerUserId,
-      sqlItemId: sqlItemId,
-    );
+    // Memory seller id from a previous open of this listing.
+    final remembered = cacheKey.isNotEmpty ? _marketplaceSellerCache[cacheKey] : null;
+    if (remembered != null && remembered > 0 && remembered != myId) {
+      final cachedThread = findCachedDirectChatWithPeer(remembered);
+      if (cachedThread != null) {
+        return MerchantChatResult(chat: cachedThread, sellerId: remembered);
+      }
+    }
 
-    int? sellerId = await _verifiedSellerId(ownerId, myId);
+    // Fast path: listing already has owner id + we have a cached thread.
+    final ownerAccepted = _acceptSellerId(ownerId ?? remembered, myId);
+    if (ownerAccepted != null) {
+      final cachedForOwner = findCachedDirectChatWithPeer(ownerAccepted);
+      if (cachedForOwner != null) {
+        _rememberMarketplaceSeller(cacheKey, ownerAccepted);
+        return MerchantChatResult(chat: cachedForOwner, sellerId: ownerAccepted);
+      }
+    }
+
+    // Prefer known owner id → create/open chat directly (skip extra /users lookup).
+    int? sellerId = ownerAccepted;
+    if (sellerId != null) {
+      try {
+        final chat = await ensureChat(peerUserId: sellerId).timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => throw Exception(
+            'Chat server is not responding. Check your connection and try again.',
+          ),
+        );
+        _rememberMarketplaceSeller(cacheKey, sellerId);
+        _cachedThreads.removeWhere((t) => t.id == chat.id);
+        _cachedThreads.insert(0, chat);
+        return MerchantChatResult(chat: chat, sellerId: sellerId);
+      } catch (e) {
+        // Fall through to full seller resolution when owner id is stale/wrong.
+        if (kDebugMode) {
+          print('[BackendChatService] ensureChat(ownerId=$sellerId) failed: $e');
+        }
+        sellerId = null;
+      }
+    }
+
     sellerId ??= await resolveMarketplaceSeller(
       sqlItemId: sqlItemId,
       ownerId: ownerId,
@@ -1281,9 +1379,9 @@ class BackendChatService {
       firestoreItemDocId: firestoreItemDocId,
       excludeUserId: myId,
       skipEnsureAuth: true,
-      skipOwnerId: ownerId != null && sellerId == null,
+      skipOwnerId: ownerId != null,
     ).timeout(
-      const Duration(seconds: 8),
+      const Duration(seconds: 5),
       onTimeout: () => null,
     );
 
@@ -1299,7 +1397,7 @@ class BackendChatService {
         skipOwnerId: true,
         skipNumericParse: true,
       ).timeout(
-        const Duration(seconds: 8),
+        const Duration(seconds: 5),
         onTimeout: () => null,
       );
     }
@@ -1329,16 +1427,18 @@ class BackendChatService {
 
     final cached = findCachedDirectChatWithPeer(sellerId);
     if (cached != null) {
+      _rememberMarketplaceSeller(cacheKey, sellerId);
       return MerchantChatResult(chat: cached, sellerId: sellerId);
     }
 
     try {
       final chat = await ensureChat(peerUserId: sellerId).timeout(
-        const Duration(seconds: 8),
+        const Duration(seconds: 5),
         onTimeout: () => throw Exception(
           'Chat server is not responding. Check your connection and try again.',
         ),
       );
+      _rememberMarketplaceSeller(cacheKey, sellerId);
       return MerchantChatResult(chat: chat, sellerId: sellerId);
     } catch (e) {
       _forgetSellerCache(cacheKey);
@@ -2426,8 +2526,30 @@ class BackendChatService {
     }
   }
 
-  /// Create or get direct chat with a user
+  /// Create or get direct chat with a user.
+  /// Concurrent callers for the same peer share one in-flight POST.
   static Future<BackendChatThread> ensureChat({
+    required int peerUserId,
+    String? peerName,
+    String? peerAvatar,
+  }) async {
+    final existing = _ensureChatInFlight[peerUserId];
+    if (existing != null) return existing;
+
+    final future = _ensureChatBody(
+      peerUserId: peerUserId,
+      peerName: peerName,
+      peerAvatar: peerAvatar,
+    );
+    _ensureChatInFlight[peerUserId] = future;
+    try {
+      return await future;
+    } finally {
+      _ensureChatInFlight.remove(peerUserId);
+    }
+  }
+
+  static Future<BackendChatThread> _ensureChatBody({
     required int peerUserId,
     String? peerName,
     String? peerAvatar,
@@ -2437,6 +2559,9 @@ class BackendChatService {
     if (peerUserId == _userId) {
       throw Exception('Cannot create a chat with yourself');
     }
+
+    final cached = findCachedDirectChatWithPeer(peerUserId);
+    if (cached != null) return cached;
 
     try {
       final response = await http
@@ -2452,7 +2577,7 @@ class BackendChatService {
               'participantIds': [peerUserId],
             }),
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final body = jsonDecode(response.body);
@@ -2461,9 +2586,12 @@ class BackendChatService {
                 ? Map<String, dynamic>.from(body['data'] as Map)
                 : body)
             : body;
-        return BackendChatThread.fromJson(
+        final thread = BackendChatThread.fromJson(
           Map<String, dynamic>.from(chatData as Map),
         );
+        _cachedThreads.removeWhere((t) => t.id == thread.id);
+        _cachedThreads.insert(0, thread);
+        return thread;
       } else {
         print('[BackendChatService] Create chat error: ${response.statusCode}');
         print('[BackendChatService] Response body: ${response.body}');

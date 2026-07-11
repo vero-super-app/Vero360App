@@ -3,11 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart'
-    show
-        kIsWeb,
-        defaultTargetPlatform,
-        TargetPlatform,
-        ValueListenable;
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -59,7 +55,7 @@ import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
-import 'package:vero360_app/widgets/app_skeleton.dart';
+import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 final GlobalKey<NavigatorState> navKey = appNavKey;
 
@@ -107,7 +103,7 @@ void Function()? _onOnboardingGateCompletedHook;
 // ───────────────────────────────────────────────
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  await _ensureFirebaseHealthy(quiet: true);
 
   final data = message.data;
   if (data['type'] == 'ride_status' && data['rideId'] != null) {
@@ -125,47 +121,94 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 }
 
+const FirebaseOptions _kFirebaseOptions = FirebaseOptions(
+  apiKey: 'AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk',
+  authDomain: 'vero360app-ca423.firebaseapp.com',
+  projectId: 'vero360app-ca423',
+  storageBucket: 'vero360app-ca423.firebasestorage.app',
+  messagingSenderId: '1010595167807',
+  appId: '1:1010595167807:android:87af3098cda575fd1dc28a',
+);
+
+bool _fcmBackgroundHandlerRegistered = false;
+Future<bool>? _firebaseHealInFlight;
+
+/// Modern Firebase self-heal: init / verify / retry without blocking first paint.
+Future<bool> _ensureFirebaseHealthy({
+  void Function(String msg)? log,
+  bool quiet = false,
+}) async {
+  if (_firebaseHealInFlight != null) return _firebaseHealInFlight!;
+
+  _firebaseHealInFlight = () async {
+    void say(String msg) {
+      if (!quiet) log?.call(msg);
+    }
+
+    const maxAttempts = 3;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        if (Firebase.apps.isEmpty) {
+          say('Firebase init (attempt $attempt/$maxAttempts)…');
+          await Firebase.initializeApp(options: _kFirebaseOptions);
+        } else {
+          say('Firebase already warm ✅');
+        }
+
+        // Touch core services to confirm the default app is usable.
+        final _ = FirebaseAuth.instance.currentUser;
+        Firebase.app();
+
+        if (!_fcmBackgroundHandlerRegistered) {
+          FirebaseMessaging.onBackgroundMessage(
+            _firebaseMessagingBackgroundHandler,
+          );
+          _fcmBackgroundHandlerRegistered = true;
+        }
+
+        say('Firebase healthy ✅');
+        return true;
+      } catch (e) {
+        say('Firebase heal failed ($attempt): $e');
+        if (attempt < maxAttempts) {
+          await Future<void>.delayed(Duration(milliseconds: 180 * attempt));
+        }
+      }
+    }
+    return false;
+  }();
+
+  final ok = await _firebaseHealInFlight!;
+  // Allow launcher Retry to run a fresh heal after a hard failure.
+  if (!ok) _firebaseHealInFlight = null;
+  return ok;
+}
+
 // ───────────────────────────────────────────────
-//  MAIN
+//  MAIN — paint launcher first, heal Firebase after
 // ───────────────────────────────────────────────
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await loadDriverStatusFromPrefs();
-
-  try {
-    // Keep only absolutely critical init work here so the first frame appears fast.
-    await Firebase.initializeApp(
-      options: const FirebaseOptions(
-        apiKey: "AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk",
-        authDomain: "vero360app-ca423.firebaseapp.com",
-        projectId: "vero360app-ca423",
-        storageBucket: "vero360app-ca423.firebasestorage.app",
-        messagingSenderId: "1010595167807",
-        appId: "1:1010595167807:android:87af3098cda575fd1dc28a",
-      ),
-    );
-    // debugPrint("Firebase initialized ✅");
-
-    // Register background handler FIRST (important for FCM)
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  } catch (e) {
-    debugPrint('Firebase init error: $e');
-  }
+  // Start Firebase self-heal immediately, but do not block first paint.
+  unawaited(_ensureFirebaseHealthy(quiet: true));
 
   runApp(
     ScreenUtilInit(
       designSize: const Size(390, 844),
       minTextAdapt: true,
       splitScreenMode: true,
-      builder: (_, child) => child ?? const AppBootstrap(),
+      builder: (_, child) => ColoredBox(
+        color: const Color(0xFFFFFBF6),
+        child: child ?? const AppBootstrap(),
+      ),
       child: const AppBootstrap(),
     ),
   );
 }
 
 // ───────────────────────────────────────────────
-//  AppBootstrap (self-healing bootstrap) - unchanged
+//  AppBootstrap — launcher + Firebase self-heal
 // ───────────────────────────────────────────────
 class AppBootstrap extends StatefulWidget {
   const AppBootstrap({super.key});
@@ -176,17 +219,13 @@ class AppBootstrap extends StatefulWidget {
 
 class _AppBootstrapState extends State<AppBootstrap> {
   late Future<_BootState> _bootFuture;
+  String _bootTitle = 'Starting…';
+  String _bootMessage = 'Preparing and optimizing your app.';
+  bool _showLauncher = true;
+  bool _bootFailed = false;
 
-  final ValueNotifier<List<String>> _logs =
-      ValueNotifier<List<String>>(<String>[]);
-  bool _goMain = false;
-  bool _scheduled = false;
-
-  void _log(String msg) {
-    final t = DateTime.now().toIso8601String().substring(11, 19);
-    final next = List<String>.from(_logs.value)..add("[$t] $msg");
-    _logs.value = next.length > 150 ? next.sublist(next.length - 150) : next;
-  }
+  static const _minLauncher = Duration(milliseconds: 350);
+  static const _splashBg = Color(0xFFFFFBF6);
 
   @override
   void initState() {
@@ -194,45 +233,50 @@ class _AppBootstrapState extends State<AppBootstrap> {
     _bootFuture = _boot();
 
     // Defer heavier, non-blocking services until after the first frame.
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      // Google Maps config (reads .env, sets up API keys). Safe to skip if offline.
-      try {
-        await GoogleMapsConfig.initialize();
-      } catch (e) {
-        // debugPrint("GoogleMapsConfig init warning (offline?): $e");
-      }
-
-      // Push notifications (channels, permissions, listeners)
-      try {
-        await NotificationService.instance.initialize();
-        NotificationService.setNavigatorKey(navKey);
-        // debugPrint("NotificationService initialized ✅");
-      } catch (e) {
-        // debugPrint("NotificationService init error: $e");
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(() async {
+        try {
+          await GoogleMapsConfig.initialize();
+        } catch (_) {}
+        try {
+          await NotificationService.instance.initialize();
+          NotificationService.setNavigatorKey(navKey);
+        } catch (_) {}
+      }());
     });
   }
 
   Future<_BootState> _boot() async {
-    bool firebaseOk = false;
-    bool clearedOldCache = false;
+    final started = DateTime.now();
 
-    _log("Starting Vero360App…");
-    _log("Firebase already initialized in main()");
+    // Parallel warm-ups while Firebase self-heals.
+    final prefsWarm = SharedPreferences.getInstance();
+    unawaited(Future(() async {
+      try {
+        await loadDriverStatusFromPrefs();
+      } catch (_) {}
+    }));
 
-    firebaseOk = true; // since we did it in main()
+    final firebaseOk = await _ensureFirebaseHealthy();
 
-    // Keep boot work as light as possible so we hit the home UI quickly.
-    // _log("Configuring API…");
-    try {
-      await ApiConfig.useProd();
-      // _log("API config OK ✅");
-    } catch (e) {
-      // If this fails (e.g., no internet), continue in a degraded/offline mode.
-      // _log("API config warning (using offline/defaults): $e");
+    if (!firebaseOk) {
+      throw Exception('Firebase could not start after self-heal retries');
     }
 
-    // Connect backend messaging WebSocket when user is signed in.
+    if (mounted) {
+      setState(() {
+        _bootTitle = 'Almost ready…';
+        _bootMessage = 'Opening Vero360…';
+      });
+    }
+
+    // Never block homepage on API / messaging / prefs.
+    unawaited(Future(() async {
+      try {
+        await ApiConfig.useProd();
+      } catch (_) {}
+    }));
+    unawaited(prefsWarm);
     unawaited(Future(() async {
       try {
         if (FirebaseAuth.instance.currentUser != null) {
@@ -242,9 +286,23 @@ class _AppBootstrapState extends State<AppBootstrap> {
       } catch (_) {}
     }));
 
-    // _log("Launch ready 🚀");
+    // Tiny minimum so native → Flutter handoff isn't a flash.
+    final elapsed = DateTime.now().difference(started);
+    if (elapsed < _minLauncher) {
+      await Future<void>.delayed(_minLauncher - elapsed);
+    }
 
-    return _BootState(firebaseOk: firebaseOk, clearedOldCache: clearedOldCache);
+    return const _BootState(firebaseOk: true, clearedOldCache: false);
+  }
+
+  void _retryBoot() {
+    setState(() {
+      _showLauncher = true;
+      _bootFailed = false;
+      _bootTitle = 'Starting…';
+      _bootMessage = 'Preparing and optimizing your app.';
+      _bootFuture = _boot();
+    });
   }
 
   @override
@@ -252,57 +310,41 @@ class _AppBootstrapState extends State<AppBootstrap> {
     return FutureBuilder<_BootState>(
       future: _bootFuture,
       builder: (context, snap) {
-        if (snap.connectionState != ConnectionState.done) {
-          return MaterialApp(
-            debugShowCheckedModeBanner: false,
-            home: SelfHealPage(
-              title: 'Starting…',
-              message: 'Preparing and optimizing your app.',
-              showSpinner: true,
-              // logs: _logs,
-            ),
-          );
+        final booting = snap.connectionState != ConnectionState.done;
+        final failed =
+            !booting && (snap.hasError || snap.data?.firebaseOk != true);
+        final ready = !booting && !failed;
+
+        if (failed && !_bootFailed) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _bootFailed = true);
+          });
         }
 
-        if (snap.hasError || !snap.hasData) {
-          _log("Boot failed: ${snap.error}");
-          return MaterialApp(
-            debugShowCheckedModeBanner: false,
-            home: SelfHealPage(
-              title: 'Could not start',
-              message: 'Tap retry to start again.',
-              showSpinner: false,
-              // logs: _logs,
-              actionLabel: 'Retry',
-              onAction: () {
-                setState(() {
-                  _goMain = false;
-                  _scheduled = false;
-                  _bootFuture = _boot();
-                });
-              },
-            ),
-          );
+        if (ready && _showLauncher) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _showLauncher = false);
+          });
         }
 
-        final state = snap.data!;
-
-        if (state.clearedOldCache && !_goMain) {
-          if (!_scheduled) {
-            _scheduled = true;
-            Future.delayed(const Duration(milliseconds: 1100), () {
-              if (!mounted) return;
-              setState(() => _goMain = true);
-            });
-          }
-
+        // Hold launcher until boot is done (and min time elapsed inside _boot).
+        if (_showLauncher || booting || failed) {
           return MaterialApp(
             debugShowCheckedModeBanner: false,
-            home: SelfHealPage(
-              title: 'Repair completed',
-              message: 'We repaired local data to prevent crashes. Launching…',
-              showSpinner: true,
-              // logs: _logs,
+            color: _splashBg,
+            theme: ThemeData(
+              useMaterial3: true,
+              scaffoldBackgroundColor: _splashBg,
+              colorSchemeSeed: const Color(0xFFFF6B00),
+            ),
+            home: VeroLaunchSplash(
+              title: failed ? 'Could not start' : _bootTitle,
+              message: failed
+                  ? 'We could not finish repairing Firebase. Check your connection and retry.'
+                  : _bootMessage,
+              showSpinner: !failed,
+              actionLabel: failed ? 'Retry' : null,
+              onAction: failed ? _retryBoot : null,
             ),
           );
         }
@@ -319,309 +361,8 @@ class _BootState {
   const _BootState({required this.firebaseOk, required this.clearedOldCache});
 }
 
-/// ----------------- ✅ BRANDED HEALING PAGE (motion + log) -----------------
-class SelfHealPage extends StatefulWidget {
-  final String title;
-  final String message;
-  final bool showSpinner;
-
-  final ValueListenable<List<String>>? logs;
-
-  final String? actionLabel;
-  final VoidCallback? onAction;
-
-  const SelfHealPage({
-    super.key,
-    required this.title,
-    required this.message,
-    required this.showSpinner,
-    this.logs,
-    this.actionLabel,
-    this.onAction,
-  });
-
-  @override
-  State<SelfHealPage> createState() => _SelfHealPageState();
-}
-
-/// ✅ Logo mark that starts small then scales up (modern feel)
-class AnimatedLogoMark extends StatefulWidget {
-  const AnimatedLogoMark({super.key, this.size = 30});
-
-  final double size;
-
-  @override
-  State<AnimatedLogoMark> createState() => _AnimatedLogoMarkState();
-}
-
-class _AnimatedLogoMarkState extends State<AnimatedLogoMark>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _scale;
-  late final Animation<double> _opacity;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 850),
-    );
-
-    _scale = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutBack, // subtle overshoot
-    );
-
-    _opacity = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeIn,
-    );
-
-    // small delay feels more premium
-    Future.delayed(const Duration(milliseconds: 120), () {
-      if (mounted) _controller.forward();
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _opacity,
-      child: ScaleTransition(
-        scale: _scale,
-        child: Image.asset(
-          'assets/logo_mark.png',
-          width: widget.size,
-          height: widget.size,
-          fit: BoxFit.contain,
-        ),
-      ),
-    );
-  }
-}
-
-class _SelfHealPageState extends State<SelfHealPage>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
-  late final Animation<double> _pulse;
-  final ScrollController _scroll = ScrollController();
-
-  final _slogans = const [
-    "Buy anything, anytime",
-    "Fast • Reliable • Local",
-    "Vero360App",
-  ];
-  int _sloganIndex = 0;
-  Timer? _sloganTimer;
-  bool _showLogs = false;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _c = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 1200))
-      ..repeat(reverse: true);
-    _pulse = CurvedAnimation(parent: _c, curve: Curves.easeInOut);
-
-    _sloganTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (!mounted) return;
-      setState(() => _sloganIndex = (_sloganIndex + 1) % _slogans.length);
-    });
-
-    widget.logs?.addListener(_autoScrollLogs);
-  }
-
-  void _autoScrollLogs() {
-    if (!_showLogs) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scroll.hasClients) return;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
-    });
-  }
-
-  @override
-  void dispose() {
-    widget.logs?.removeListener(_autoScrollLogs);
-    _sloganTimer?.cancel();
-    _c.dispose();
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Color(0xFFFFF3E6),
-          Color(0xFFFFFFFF),
-        ],
-      ),
-    );
-
-    return Scaffold(
-      body: Container(
-        decoration: bg,
-        child: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: Padding(
-                padding: const EdgeInsets.all(22),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    AnimatedBuilder(
-                      animation: _pulse,
-                      builder: (_, __) {
-                        final s = 1.0 + (_pulse.value * 0.06);
-                        return Transform.scale(
-                          scale: s,
-                          child: Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(20),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.06),
-                                  blurRadius: 18,
-                                  offset: const Offset(0, 10),
-                                )
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: const [
-                                // ✅ replaced icon with animated logo
-                                AnimatedLogoMark(size: 30),
-                                SizedBox(width: 10),
-                                Text(
-                                  "Vero360App",
-                                  style: TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 14),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 350),
-                      transitionBuilder: (child, anim) => FadeTransition(
-                        opacity: anim,
-                        child: SlideTransition(
-                          position: Tween<Offset>(
-                            begin: const Offset(0, 0.2),
-                            end: Offset.zero,
-                          ).animate(anim),
-                          child: child,
-                        ),
-                      ),
-                      child: Text(
-                        _slogans[_sloganIndex],
-                        key: ValueKey(_sloganIndex),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Text(
-                      widget.title,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      widget.message,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                    const SizedBox(height: 16),
-                    if (widget.showSpinner) const AppSkeletonBootLines(),
-                    if (!widget.showSpinner &&
-                        widget.actionLabel != null &&
-                        widget.onAction != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 14),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: widget.onAction,
-                            child: Text(widget.actionLabel!),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 14),
-                    if (widget.logs != null)
-                      TextButton(
-                        onPressed: () => setState(() => _showLogs = !_showLogs),
-                        // (keep blank if you want hidden button)
-                        child: Text(_showLogs ? "" : ""),
-                      ),
-                    if (_showLogs && widget.logs != null)
-                      Expanded(
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: Colors.black.withOpacity(0.06),
-                            ),
-                          ),
-                          child: ValueListenableBuilder<List<String>>(
-                            valueListenable: widget.logs!,
-                            builder: (_, lines, __) {
-                              final text = lines.isEmpty
-                                  ? "No logs yet…"
-                                  : lines.join("\n");
-                              return SingleChildScrollView(
-                                controller: _scroll,
-                                child: SelectableText(
-                                  text,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    height: 1.25,
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
+/// Back-compat alias used by older call sites / mental model.
+typedef SelfHealPage = VeroLaunchSplash;
 
 /// Loads driver prefs locally and triggers a background sync **under** [ProviderScope].
 class _DriverStatusBootstrap extends ConsumerStatefulWidget {
@@ -854,8 +595,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             navigatorKey: appNavKey,
           debugShowCheckedModeBanner: false,
           title: 'Vero360',
+          color: const Color(0xFFFFFBF6),
           theme: ThemeData(
             useMaterial3: true,
+            scaffoldBackgroundColor: const Color(0xFFFFFBF6),
             colorSchemeSeed: const Color(0xFFFF8A00),
           ),
 

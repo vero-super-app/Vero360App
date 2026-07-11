@@ -32,7 +32,8 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.mod
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 
 class MessagePageBackendApi extends StatefulWidget {
-  final String peerId; // Chat ID from backend
+  /// Chat ID from backend. Empty when chat is resolved after open (marketplace).
+  final String peerId;
   final String peerName;
   final String? peerAvatarUrl;
   final ChatProductContext? productContext;
@@ -41,6 +42,17 @@ class MessagePageBackendApi extends StatefulWidget {
 
   /// When true, sends the marketplace enquiry once (product page only).
   final bool sendProductEnquiry;
+
+  /// Optional marketplace resolve args when [peerId] is empty.
+  final int? resolveSqlItemId;
+  final int? resolveOwnerId;
+  final String? resolveSellerUserId;
+  final String? resolveServiceProviderId;
+  final String? resolveMerchantId;
+  final String? resolveFirestoreItemDocId;
+
+  /// In-flight marketplace resolve started before navigation (shared request).
+  final Future<MerchantChatResult>? pendingMerchantChat;
 
   const MessagePageBackendApi({
     super.key,
@@ -51,6 +63,13 @@ class MessagePageBackendApi extends StatefulWidget {
     this.peerMerchantId,
     this.peerUserId,
     this.sendProductEnquiry = false,
+    this.resolveSqlItemId,
+    this.resolveOwnerId,
+    this.resolveSellerUserId,
+    this.resolveServiceProviderId,
+    this.resolveMerchantId,
+    this.resolveFirestoreItemDocId,
+    this.pendingMerchantChat,
   });
 
   @override
@@ -60,6 +79,8 @@ class MessagePageBackendApi extends StatefulWidget {
 class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   String? _me;
   int? _myUserId;
+  late String _chatId;
+  int? _peerUserId;
 
   final _input = TextEditingController();
   final _scroll = ScrollController();
@@ -67,6 +88,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   bool _sending = false;
   bool _loading = true;
   bool _bootComplete = false;
+  bool _resolvingChat = false;
   bool _wsConnected = false;
   bool _productTagAttached = false;
   String? _loadError;
@@ -99,16 +121,24 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   @override
   void initState() {
     super.initState();
-    BackendChatService.setActiveChatId(widget.peerId);
-    BackendChatService.clearThreadUnread(widget.peerId);
+    _chatId = widget.peerId.trim();
+    _peerUserId = widget.peerUserId;
+    _resolvingChat = _chatId.isEmpty;
+    // Show seller chat chrome immediately (messages may still be loading).
+    _bootComplete = widget.peerName.trim().isNotEmpty;
 
-    final cached = BackendChatService.peekCachedMessages(widget.peerId);
-    if (cached.isNotEmpty) {
-      _messages = cached;
-      _loading = false;
-      _bootComplete = true;
-      if (_hasProductTagInMessages(_messages)) {
-        _productTagAttached = true;
+    if (_chatId.isNotEmpty) {
+      BackendChatService.setActiveChatId(_chatId);
+      BackendChatService.clearThreadUnread(_chatId);
+
+      final cached = BackendChatService.peekCachedMessages(_chatId);
+      if (cached.isNotEmpty) {
+        _messages = cached;
+        _loading = false;
+        _bootComplete = true;
+        if (_hasProductTagInMessages(_messages)) {
+          _productTagAttached = true;
+        }
       }
     }
 
@@ -124,7 +154,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   void _startRealtime() {
     _wsMessageSub = BackendMessagingSocket.messageStream.listen((msg) {
-      if (!mounted || msg.chatId != widget.peerId) return;
+      if (!mounted || _chatId.isEmpty || msg.chatId != _chatId) return;
       setState(() {
         _upsertMessage(msg);
         if (_hasProductTagInMessages(_messages)) {
@@ -149,7 +179,9 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     _startFallbackPoll();
     _readStatusPollTimer?.cancel();
     _readStatusPollTimer = Timer.periodic(const Duration(seconds: 18), (_) {
-      if (mounted && !_sending) _loadMessages(silent: true);
+      if (mounted && !_sending && _chatId.isNotEmpty) {
+        _loadMessages(silent: true);
+      }
     });
   }
 
@@ -157,7 +189,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     _fallbackPollTimer?.cancel();
     if (BackendMessagingSocket.isConnected) return;
     _fallbackPollTimer = Timer.periodic(_fallbackPollInterval, (_) {
-      if (mounted && !_sending && !BackendMessagingSocket.isConnected) {
+      if (mounted &&
+          !_sending &&
+          _chatId.isNotEmpty &&
+          !BackendMessagingSocket.isConnected) {
         _loadMessages(silent: true);
       }
     });
@@ -172,29 +207,96 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     unawaited(_recorder.dispose());
     _wsMessageSub?.cancel();
     _wsConnectionSub?.cancel();
-    unawaited(BackendMessagingSocket.leaveChat(widget.peerId));
+    if (_chatId.isNotEmpty) {
+      unawaited(BackendMessagingSocket.leaveChat(_chatId));
+    }
     _input.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
+  Future<bool> _resolveChatIfNeeded() async {
+    if (_chatId.isNotEmpty) return true;
+
+    setState(() {
+      _resolvingChat = true;
+      _loading = true;
+      _loadError = null;
+      // Show chat chrome immediately while resolve finishes.
+      _bootComplete = true;
+    });
+
+    try {
+      final result = await (widget.pendingMerchantChat ??
+          BackendChatService.startMerchantChat(
+            sqlItemId: widget.resolveSqlItemId,
+            ownerId: widget.resolveOwnerId ?? widget.peerUserId,
+            sellerUserId: widget.resolveSellerUserId,
+            serviceProviderId: widget.resolveServiceProviderId,
+            merchantId: widget.resolveMerchantId,
+            firestoreItemDocId: widget.resolveFirestoreItemDocId,
+          ));
+
+      if (!mounted) return false;
+
+      _chatId = result.chat.id;
+      _peerUserId = result.sellerId;
+      BackendChatService.setActiveChatId(_chatId);
+      BackendChatService.clearThreadUnread(_chatId);
+
+      final cached = BackendChatService.peekCachedMessages(_chatId);
+      setState(() {
+        _resolvingChat = false;
+        if (cached.isNotEmpty) {
+          _messages = cached;
+          _loading = false;
+          if (_hasProductTagInMessages(_messages)) {
+            _productTagAttached = true;
+          }
+        }
+      });
+      return true;
+    } catch (e) {
+      if (!mounted) return false;
+      final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+      setState(() {
+        _resolvingChat = false;
+        _loading = false;
+        _loadError = raw;
+        _bootComplete = false;
+      });
+      _toast(raw);
+      return false;
+    }
+  }
+
   Future<void> _boot() async {
     try {
-      BackendChatService.setActiveChatId(widget.peerId);
+      unawaited(BackendMessagingSocket.connect().catchError((_) {}));
 
-      try {
-        final prefs = await SharedPreferences.getInstance();
+      // Warm local user id without blocking resolve.
+      final prefsFuture = SharedPreferences.getInstance();
+      unawaited(prefsFuture.then((prefs) {
         final cachedUserId = prefs.getInt('userId') ?? prefs.getInt('user_id');
         if (cachedUserId != null && cachedUserId > 0 && mounted) {
           setState(() {
             _myUserId = cachedUserId;
             _me = cachedUserId.toString();
-            _bootComplete = true;
+            if (_chatId.isNotEmpty) _bootComplete = true;
           });
         }
-      } catch (_) {}
+      }).catchError((_) {}));
 
-      final cached = BackendChatService.peekCachedMessages(widget.peerId);
+      // Resolve chat + auth in parallel when needed.
+      final resolveFuture = _resolveChatIfNeeded();
+      final authFuture = BackendChatService.ensureAuth();
+
+      final resolved = await resolveFuture;
+      if (!resolved || !mounted) return;
+
+      BackendChatService.setActiveChatId(_chatId);
+
+      final cached = BackendChatService.peekCachedMessages(_chatId);
       if (cached.isNotEmpty && mounted) {
         setState(() {
           _messages = cached;
@@ -204,23 +306,21 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
             _productTagAttached = true;
           }
         });
+      } else if (mounted) {
+        setState(() => _bootComplete = true);
       }
 
-      unawaited(
-        BackendMessagingSocket.connect().catchError((_) {}),
-      );
-
-      await BackendChatService.ensureAuth();
-      final userId = await BackendChatService.getUserId();
-
-      try {
-        await BackendMessagingSocket.joinChat(widget.peerId);
+      // Don't block message fetch on joinChat.
+      unawaited(BackendMessagingSocket.joinChat(_chatId).then((_) {
         if (mounted) {
           setState(() => _wsConnected = BackendMessagingSocket.isConnected);
         }
-      } catch (_) {
+      }).catchError((_) {
         if (mounted) setState(() => _wsConnected = false);
-      }
+      }));
+
+      await authFuture;
+      final userId = await BackendChatService.getUserId();
 
       unawaited(_loadMessages(silent: cached.isNotEmpty));
       unawaited(_maybeSendProductEnquiry(userId));
@@ -236,6 +336,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       if (!mounted) return;
       setState(() {
         _loading = false;
+        _resolvingChat = false;
         _loadError = _friendlyError(e);
         _bootComplete = _messages.isNotEmpty;
       });
@@ -263,7 +364,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   }
 
   String _enquiryClientMessageId(String productId) =>
-      'mp-enquiry-${widget.peerId}-$productId';
+      'mp-enquiry-${_chatId}-$productId';
 
   bool _hasExistingProductEnquiry(int myUserId, String productId) {
     if (_hasProductTagInMessages(_messages, productId: productId)) {
@@ -298,7 +399,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final clientMessageId = _enquiryClientMessageId(product.productId);
     try {
       final saved = await BackendChatService.sendMessage(
-        chatId: widget.peerId,
+        chatId: _chatId,
         content: enquiryText,
         type: 'text',
         tags: [product.toMessageTag()],
@@ -337,7 +438,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   Future<void> _loadMessages({bool silent = false}) async {
     try {
-      final messages = await BackendChatService.getMessages(widget.peerId);
+      final messages = await BackendChatService.getMessages(_chatId);
       if (!mounted) return;
       messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
       setState(() {
@@ -374,10 +475,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (unreadIds.isEmpty) return;
     try {
       await BackendChatService.markRead(
-        chatId: widget.peerId,
+        chatId: _chatId,
         messageIds: unreadIds,
       );
-      BackendChatService.clearThreadUnread(widget.peerId);
+      BackendChatService.clearThreadUnread(_chatId);
       BackendChatService.refreshThreads();
     } catch (_) {}
   }
@@ -479,11 +580,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     try {
       final senderName = await _currentSenderDisplayName();
       await ChatNotificationService.notifyRecipientOfMessage(
-        chatId: widget.peerId,
+        chatId: _chatId,
         senderName: senderName,
         body: body,
         recipientFirebaseUid: widget.peerMerchantId,
-        recipientUserId: widget.peerUserId,
+        recipientUserId: _peerUserId,
       );
     } catch (_) {}
   }
@@ -511,7 +612,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final clientMessageId = const Uuid().v4();
     final pending = BackendChatMessage(
       id: clientMessageId,
-      chatId: widget.peerId,
+      chatId: _chatId,
       senderId: myId,
       content: content,
       type: 'text',
@@ -530,7 +631,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
     try {
       final saved = await BackendChatService.sendMessage(
-        chatId: widget.peerId,
+        chatId: _chatId,
         content: content,
         type: 'text',
         tags: tags,
@@ -573,7 +674,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final clientMessageId = const Uuid().v4();
     final pending = BackendChatMessage(
       id: clientMessageId,
-      chatId: widget.peerId,
+      chatId: _chatId,
       senderId: myId,
       content: caption,
       type: 'image',
@@ -595,7 +696,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     try {
       final url = await _uploadImageBytes(image);
       final saved = await BackendChatService.sendImageMessage(
-        chatId: widget.peerId,
+        chatId: _chatId,
         imageUrl: url,
         caption: caption,
         clientMessageId: clientMessageId,
@@ -642,7 +743,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   Future<String> _uploadImageBytes(_PendingImage image) async {
     try {
       final ref = FirebaseStorage.instance.ref().child(
-            'chat_media/${widget.peerId}/'
+            'chat_media/${_chatId}/'
             '${DateTime.now().millisecondsSinceEpoch}_${image.filename}',
           );
       await ref.putData(
@@ -792,7 +893,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final clientMessageId = const Uuid().v4();
     final pending = BackendChatMessage(
       id: clientMessageId,
-      chatId: widget.peerId,
+      chatId: _chatId,
       senderId: myId,
       content: 'Voice note',
       type: 'audio',
@@ -815,7 +916,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       final bytes = await File(filePath).readAsBytes();
       final url = await _uploadAudioBytes(bytes, firebaseUser.uid);
       final saved = await BackendChatService.sendAudioMessage(
-        chatId: widget.peerId,
+        chatId: _chatId,
         audioUrl: url,
         durationMs: durationMs,
         clientMessageId: clientMessageId,
@@ -1049,7 +1150,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
     try {
       await BackendChatService.deleteMessage(
-        chatId: widget.peerId,
+        chatId: _chatId,
         messageId: m.id,
       );
       if (!mounted) return;
@@ -1072,7 +1173,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
     try {
       final saved = await BackendChatService.editMessage(
-        chatId: widget.peerId,
+        chatId: _chatId,
         messageId: m.id,
         newContent: updated,
       );
@@ -1133,7 +1234,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (!ok || !mounted) return;
 
     try {
-      await BackendChatService.clearChatHistory(widget.peerId);
+      await BackendChatService.clearChatHistory(_chatId);
       if (!mounted) return;
       setState(() {
         _messages = [];
@@ -1329,7 +1430,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   Future<void> _openMerchantProfile() async {
     var merchantId = _resolvedMerchantId();
     if (merchantId == null || merchantId.isEmpty) {
-      final peerUserId = widget.peerUserId;
+      final peerUserId = _peerUserId;
       if (peerUserId != null && peerUserId > 0) {
         merchantId =
             await BackendChatService.getFirebaseUidByUserId(peerUserId);
@@ -1532,7 +1633,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_bootComplete && _messages.isEmpty) {
+    // Keep seller chrome visible while chat/messages resolve (feels much faster).
+    if (_messages.isEmpty &&
+        _loadError == null &&
+        !_bootComplete &&
+        widget.peerName.trim().isEmpty) {
       return const ChatBootLoadingScaffold();
     }
 
@@ -1541,6 +1646,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final hasText = _input.text.trim().isNotEmpty;
     final hasPendingImage = _pendingImage != null;
     final canSend = (hasText || hasPendingImage) &&
+        _chatId.isNotEmpty &&
+        !_resolvingChat &&
         !_sending &&
         !_uploadingImage &&
         !_uploadingAudio &&
@@ -1588,7 +1695,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                     _loading = true;
                     _loadError = null;
                   });
-                  _loadMessages();
+                  if (_chatId.isEmpty) {
+                    unawaited(_boot());
+                  } else {
+                    unawaited(_loadMessages());
+                  }
                 },
                 style: FilledButton.styleFrom(
                   backgroundColor: _brandOrange,

@@ -795,34 +795,68 @@ class _DetailsPageState extends State<DetailsPage> {
     setState(() => _openingChat = true);
 
     try {
-      var ownerId = item.merchantBackendId;
+      unawaited(BackendChatService.warmForMarketplaceChat().catchError((_) {}));
+      unawaited(BackendMessagingSocket.connect().catchError((_) {}));
 
-      if (ownerId == null || ownerId <= 0) {
+      final ownerId = item.merchantBackendId;
+      final myId = BackendChatService.peekUserId();
+      if (myId != null &&
+          BackendChatService.isOwnMarketplaceListingSync(
+            myBackendId: myId,
+            ownerId: ownerId,
+            sellerUserId: item.sellerUserId,
+            merchantId: item.merchantId,
+          )) {
+        throw Exception(
+          'This is your own listing — you cannot chat with yourself😂😂.',
+        );
+      }
+
+      String peerId = '';
+      int? peerUserId =
+          (ownerId != null && ownerId > 0) ? ownerId : null;
+      if (peerUserId != null) {
+        final cached =
+            BackendChatService.findCachedDirectChatWithPeer(peerUserId);
+        if (cached != null) {
+          peerId = cached.id;
+        }
+      }
+
+      // Start resolve immediately; share the same Future with the chat page.
+      Future<MerchantChatResult>? pendingChat;
+      if (peerId.isEmpty) {
+        pendingChat = BackendChatService.startMerchantChat(
+          sqlItemId: item.id > 0 ? item.id : null,
+          ownerId: ownerId,
+          sellerUserId: item.sellerUserId,
+          serviceProviderId: item.serviceProviderId,
+          merchantId: item.merchantId,
+          firestoreItemDocId: item.firestoreDocId,
+        );
+
+        // Brief race: if server answers quickly, open with real chat id.
         try {
-          final seller = await (_sellerFuture ?? _loadSeller())
-              .timeout(const Duration(milliseconds: 600));
-          ownerId = seller.backendMerchantId ?? ownerId;
-        } catch (_) {}
+          final quick = await pendingChat.timeout(
+            const Duration(milliseconds: 550),
+          );
+          peerId = quick.chat.id;
+          peerUserId = quick.sellerId;
+          pendingChat = null;
+        } on TimeoutException {
+          // Continue into chat UI; page awaits the same in-flight future.
+        } catch (e) {
+          // Hard failure before navigation — surface on details page.
+          rethrow;
+        }
+      } else {
+        // Warm messages for this chat while we push the route.
+        unawaited(BackendChatService.getMessages(peerId).catchError((_) =>
+            <BackendChatMessage>[]));
       }
 
-      final sqlItemId = item.id > 0 ? item.id : null;
-
-      final result = await BackendChatService.startMerchantChat(
-        sqlItemId: sqlItemId,
-        ownerId: ownerId,
-        sellerUserId: item.sellerUserId,
-        serviceProviderId: item.serviceProviderId,
-        merchantId: item.merchantId,
-        firestoreItemDocId: item.firestoreDocId,
-      );
-
-      if (kDebugMode) {
-        debugPrint('[_openChat] Opened chat ${result.chat.id} with seller');
-      }
-
-      if (!mounted) return;
-
-      final sellerName = item.sellerBusinessName ?? item.merchantName ?? 'Seller';
+      final sellerName =
+          item.sellerBusinessName ?? item.merchantName ?? 'Seller';
       final sellerAvatar = item.sellerLogoUrl ?? '';
       final productContext = ChatProductContext(
         productId: item.id.toString(),
@@ -830,22 +864,34 @@ class _DetailsPageState extends State<DetailsPage> {
         image: item.image,
         price: item.price,
         description: item.description,
-        merchantId: (item.merchantId ?? item.serviceProviderId ?? '').trim().isEmpty
+        merchantId: (item.merchantId ?? item.serviceProviderId ?? '')
+                .trim()
+                .isEmpty
             ? null
             : (item.merchantId ?? item.serviceProviderId),
       );
+
+      if (!mounted) return;
+      setState(() => _openingChat = false);
 
       await Navigator.push<void>(
         context,
         MaterialPageRoute(
           builder: (_) => MessagePageBackendApi(
-            peerId: result.chat.id,
+            peerId: peerId,
             peerName: sellerName,
             peerAvatarUrl: sellerAvatar,
             productContext: productContext,
             peerMerchantId: item.merchantId ?? item.serviceProviderId,
-            peerUserId: result.sellerId,
+            peerUserId: peerUserId,
             sendProductEnquiry: true,
+            resolveSqlItemId: item.id > 0 ? item.id : null,
+            resolveOwnerId: ownerId,
+            resolveSellerUserId: item.sellerUserId,
+            resolveServiceProviderId: item.serviceProviderId,
+            resolveMerchantId: item.merchantId,
+            resolveFirestoreItemDocId: item.firestoreDocId,
+            pendingMerchantChat: pendingChat,
           ),
         ),
       );

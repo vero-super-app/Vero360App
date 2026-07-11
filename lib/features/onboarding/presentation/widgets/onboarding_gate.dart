@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/onboarding/presentation/pages/app_onboarding_page.dart';
+import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 /// Full-screen onboarding before the main shell (e.g. [Bottomnavbar] from `BottomNavbar.dart`).
 ///
@@ -24,6 +25,7 @@ class OnboardingGate extends StatefulWidget {
 }
 
 class _OnboardingGateState extends State<OnboardingGate> {
+  // Optimistic: returning users skip the splash gate frame when prefs are warm.
   bool _loading = true;
   bool _onboardingDone = false;
 
@@ -34,13 +36,23 @@ class _OnboardingGateState extends State<OnboardingGate> {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final done = prefs.getBool('onboarding_completed_v1') ?? false;
-    if (!mounted) return;
-    setState(() {
-      _onboardingDone = done;
-      _loading = false;
-    });
+    try {
+      final prefs = await SharedPreferences.getInstance()
+          .timeout(const Duration(milliseconds: 250));
+      final done = prefs.getBool('onboarding_completed_v1') ?? false;
+      if (!mounted) return;
+      setState(() {
+        _onboardingDone = done;
+        _loading = false;
+      });
+    } catch (_) {
+      // Prefs slow/unavailable — prefer home over a long branded wait.
+      if (!mounted) return;
+      setState(() {
+        _onboardingDone = true;
+        _loading = false;
+      });
+    }
   }
 
   Future<void> _finishOnboarding() async {
@@ -54,8 +66,10 @@ class _OnboardingGateState extends State<OnboardingGate> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+      return const VeroLaunchSplash(
+        title: 'Opening…',
+        message: 'Loading your home…',
+        showSpinner: true,
       );
     }
     if (!_onboardingDone) {

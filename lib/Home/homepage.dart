@@ -924,7 +924,7 @@ class _FilterChips extends StatefulWidget {
 class _FilterChipsState extends State<_FilterChips> {
   int _active = 0;
   static const _items = [
-    ['⚡', 'Lightning deals'],
+    ['⚡', 'Lightning deal'],
     ['🗺️', 'Explore nearby'],
     ['⭐', 'Top rated'],
     ['🛟', 'Support'],
@@ -1176,13 +1176,7 @@ class _NearbySectionState extends State<_NearbySection> {
           child: _SectionHeader(
             title:    'Nearby Services',
             subtitle: 'Popular around you',
-            action: TextButton(
-              onPressed: () => widget.onOpenService('more'),
-              child: const Text(
-                'See all',
-                style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800, fontSize: 13),
-              ),
-            ),
+        
           ),
         ),
         CarouselSlider.builder(

@@ -423,7 +423,10 @@ Widget _statusChip(String? status) {
 // ─────────────────────────────────────────────
 class MarketPage extends StatefulWidget {
   final CartService cartService;
-  const MarketPage({required this.cartService, super.key});
+  /// When Marketplace is embedded as a bottom-nav tab, back should switch to
+  /// Home instead of popping the app shell (which leaves a blank screen).
+  final VoidCallback? onBackToHome;
+  const MarketPage({required this.cartService, this.onBackToHome, super.key});
   @override
   State<MarketPage> createState() => _MarketPageState();
 }
@@ -1631,7 +1634,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         backgroundColor: _kCream,
         body: Column(children: [
           // ── BEAUTIFUL HEADER ──
-          _MarketAppBar(showBlur: _showHeaderBlur),
+          _MarketAppBar(showBlur: _showHeaderBlur, onBackToHome: widget.onBackToHome),
 
           // ── SEARCH BAR ──
           _SearchSection(
@@ -1751,10 +1754,29 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
 class _MarketAppBar extends StatelessWidget {
   final bool showBlur;
-  const _MarketAppBar({required this.showBlur});
+  final VoidCallback? onBackToHome;
+  const _MarketAppBar({required this.showBlur, this.onBackToHome});
+
+  /// True only when this page was pushed on top of another Flutter route.
+  /// Do not use [Navigator.canPop] alone — on web it can be true from browser
+  /// history even when Marketplace is the root shell tab, and popping then
+  /// leaves a blank white screen.
+  bool _wasPushed(BuildContext context) {
+    final route = ModalRoute.of(context);
+    return route != null && !route.isFirst;
+  }
+
+  void _onBack(BuildContext context) {
+    if (_wasPushed(context)) {
+      Navigator.of(context).maybePop();
+      return;
+    }
+    onBackToHome?.call();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final showBack = _wasPushed(context) || onBackToHome != null;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1766,10 +1788,9 @@ class _MarketAppBar extends StatelessWidget {
           height: 56,
           child: Row(children: [
             const SizedBox(width: 16),
-            // Back arrow if we can pop
-            if (Navigator.of(context).canPop()) ...[
+            if (showBack) ...[
               GestureDetector(
-                onTap: () => Navigator.of(context).pop(),
+                onTap: () => _onBack(context),
                 child: Container(
                   width: 38, height: 38,
                   decoration: BoxDecoration(color: _kAmberLight, shape: BoxShape.circle),

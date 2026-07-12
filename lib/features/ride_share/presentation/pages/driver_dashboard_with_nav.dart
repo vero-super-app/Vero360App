@@ -2093,7 +2093,10 @@ class _MarketplaceMerchantDashboardState
       case 0:
         return Vero360Homepage(email: widget.email);
       case 1:
-        return MarketPage(cartService: _cartService);
+        return MarketPage(
+          cartService: _cartService,
+          onBackToHome: () => setState(() => _selectedIndex = 0),
+        );
       case 2:
         return CartPage(cartService: _cartService);
       case 3:

@@ -3541,7 +3541,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       case 0: // Home (First position)
         return Vero360Homepage(email: widget.email);
       case 1: // Marketplace (Second position)
-        return MarketPage(cartService: _cartService);
+        return MarketPage(
+          cartService: _cartService,
+          onBackToHome: () => setState(() => _selectedIndex = 0),
+        );
       case 2: // Cart (Third position)
         return CartPage(cartService: _cartService);
       case 3: // Messages (Fourth position)

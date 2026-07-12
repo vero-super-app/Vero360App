@@ -106,7 +106,10 @@ class _BottomnavbarState extends State<Bottomnavbar>
       if (!_pagesReady) {
         _pages = [
           Vero360Homepage(email: widget.email, isDriverHome: false),
-          MarketPage(cartService: cartService),
+          MarketPage(
+            cartService: cartService,
+            onBackToHome: () => setState(() => _selectedIndex = 0),
+          ),
           const AuthGuard(
             featureName: 'Messages',
             showChildBehindDialog: true,
@@ -242,7 +245,10 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
     _pages = [
       homePage,
-      MarketPage(cartService: cartService),
+      MarketPage(
+        cartService: cartService,
+        onBackToHome: () => setState(() => _selectedIndex = 0),
+      ),
       const AuthGuard(featureName: 'Messages', showChildBehindDialog: true, child: ChatListPage()),
       AuthGuard(featureName: 'Cart', showChildBehindDialog: true, child: CartPage(cartService: cartService)),
       AuthGuard(

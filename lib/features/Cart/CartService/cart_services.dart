@@ -266,11 +266,11 @@ class CartService {
       final userKey = await _userKey();
       if (userKey == null || userKey.isEmpty) return [];
 
+      // No orderBy — avoids composite-index waits and failed queries.
       final snapshot = await _firestore
           .collection('backup_carts')
           .doc(userKey)
           .collection('items')
-          .orderBy('updatedAt', descending: true)
           .get();
 
       int safeInt(Object? v, {int def = 0}) {
@@ -280,12 +280,13 @@ class CartService {
       }
 
       double safeDouble(Object? v, {double def = 0}) {
+        if (v is double) return v;
         if (v is num) return v.toDouble();
         return double.tryParse('${v ?? ''}') ?? def;
       }
 
-      return snapshot.docs.map((d) {
-        final data = d.data();
+      final items = snapshot.docs.map((doc) {
+        final data = doc.data();
         return CartModel(
           userId: userKey,
           item: safeInt(data['itemId'] ?? data['item']),
@@ -294,12 +295,15 @@ class CartService {
           image: (data['image'] ?? '').toString(),
           price: safeDouble(data['price']),
           description: (data['description'] ?? '').toString(),
-          comment: data['comment']?.toString(),
+          comment: (data['comment'] ?? '').toString(),
           merchantId: (data['merchantId'] ?? '').toString(),
           merchantName: (data['merchantName'] ?? '').toString(),
           serviceType: (data['serviceType'] ?? 'marketplace').toString(),
         );
       }).toList();
+
+      items.sort((a, b) => b.item.compareTo(a.item));
+      return items;
     } catch (_) {
       return [];
     }
@@ -368,20 +372,28 @@ class CartService {
     }
   }
 
+  /// Instant local cart (Firestore backup). Safe to call before network.
+  Future<List<CartModel>> loadLocalCart() => _loadCartFromFirestore();
+
   /// Fetch:
-  /// - tries backend GET /cart/me
+  /// - loads Firestore backup in parallel with auth token
+  /// - tries backend GET /cart/me (warmup is non-blocking)
   /// - falls back to Firestore if backend is down or returns HTML
   /// - NEVER clears Firestore on 404 (route mismatch / server issues)
   Future<List<CartModel>> fetchCartItems() async {
-    await warmup();
+    // Don't block the cart UI on a health-check ping.
+    unawaited(warmup());
 
-    final token = await _getToken();
+    final tokenFuture = _getToken();
+    final localFuture = _loadCartFromFirestore();
+
+    final local = await localFuture;
+    final token = await tokenFuture;
     if (token == null || token.isEmpty) {
+      if (local.isNotEmpty) return local;
       throw const ApiException(
           message: 'You need to be signed in to view your cart.');
     }
-
-    final local = await _loadCartFromFirestore();
 
     try {
       final res = await ApiClient.get(
@@ -419,7 +431,8 @@ class CartService {
         }
       }
 
-      await _saveCartListToFirestore(items);
+      // Persist in background so UI can return immediately.
+      unawaited(_saveCartListToFirestore(items));
       return items;
     } on ApiException catch (e) {
       if (_looksLikeAuthError(e)) {

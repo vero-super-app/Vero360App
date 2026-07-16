@@ -56,10 +56,27 @@ class _CartPageState extends State<CartPage> {
         });
       }
     });
-    _cartFuture = _hasSession().then((has) async {
-      if (!has) return <CartModel>[];
-      return _fetch();
-    });
+    _cartFuture = _bootstrapCart();
+  }
+
+  /// Paint local cart first, then refresh from the API in the background path.
+  Future<List<CartModel>> _bootstrapCart() async {
+    final hasSession = _auth.currentUser != null || await _hasSession();
+    if (!hasSession) return <CartModel>[];
+
+    try {
+      final local = await widget.cartService.loadLocalCart();
+      final valid = local.where((item) => item.hasValidMerchant).toList();
+      if (valid.isNotEmpty && mounted) {
+        setState(() {
+          _items
+            ..clear()
+            ..addAll(valid);
+        });
+      }
+    } catch (_) {}
+
+    return _fetch(keepExistingWhileLoading: _items.isNotEmpty);
   }
 
   @override
@@ -146,7 +163,6 @@ class _CartPageState extends State<CartPage> {
           .collection('backup_carts')
           .doc(userId)
           .collection('items')
-          .orderBy('updatedAt', descending: true)
           .get();
 
       return snapshot.docs.map((doc) {
@@ -227,55 +243,68 @@ class _CartPageState extends State<CartPage> {
   }
 
   // -------- MAIN FETCH (UPDATED FOR MERCHANT INFO) --------
-  Future<List<CartModel>> _fetch() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<List<CartModel>> _fetch({bool keepExistingWhileLoading = false}) async {
+    if (!keepExistingWhileLoading && mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
 
     try {
-      if (!await _hasSession()) {
+      if (_auth.currentUser == null && !await _hasSession()) {
         _items.clear();
-        ToastHelper.showCustomToast(
-          context,
-          'Please log in to view your cart.',
-          isSuccess: false,
-          errorMessage: 'Not logged in',
-        );
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            'Please log in to view your cart.',
+            isSuccess: false,
+            errorMessage: 'Not logged in',
+          );
+        }
         return _items;
       }
 
       try {
-        // 1) Try main backend (NestJS)
+        // 1) Try main backend (NestJS) — service already mirrors to Firestore.
         final data = await widget.cartService.fetchCartItems();
 
         // Validate merchant info
         final validatedItems =
             data.where((item) => item.hasValidMerchant).toList();
 
-        _items
-          ..clear()
-          ..addAll(validatedItems);
-
-        // 2) Mirror to Firebase backup
-        await _saveCartToFirestore(_items);
+        if (mounted) {
+          setState(() {
+            _items
+              ..clear()
+              ..addAll(validatedItems);
+          });
+        } else {
+          _items
+            ..clear()
+            ..addAll(validatedItems);
+        }
 
         return _items;
       } catch (_) {
-        // Fallback to Firebase backup
+        // Fallback to Firebase backup only if we have nothing on screen yet.
+        if (_items.isNotEmpty) return _items;
+
         final backup = await _loadCartFromFirestore();
         _items
           ..clear()
           ..addAll(backup);
 
-        ToastHelper.showCustomToast(
-          context,
-          backup.isEmpty
-              ? 'Unable to load cart. Please check your connection.'
-              : 'Showing your last saved cart from backup.',
-          isSuccess: backup.isNotEmpty,
-          errorMessage: backup.isEmpty ? 'No backup available' : '',
-        );
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            backup.isEmpty
+                ? 'Unable to load cart. Please check your connection.'
+                : 'Showing your last saved cart from backup.',
+            isSuccess: backup.isNotEmpty,
+            errorMessage: backup.isEmpty ? 'No backup available' : '',
+          );
+        }
         return _items;
       }
     } finally {

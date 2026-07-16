@@ -50,6 +50,9 @@ class StoryProfileRing extends StatelessWidget {
   final ImageProvider? imageProvider;
   final IconData placeholderIcon;
   final List<MerchantStoryGroup>? allGroups;
+  /// When set (e.g. home stories row), reuse preloaded group data instead of
+  /// opening a separate Firestore stream per ring.
+  final MerchantStoryGroup? fixedGroup;
   final VoidCallback? onNoStoriesTap;
 
   const StoryProfileRing({
@@ -62,11 +65,23 @@ class StoryProfileRing extends StatelessWidget {
     this.imageProvider,
     this.placeholderIcon = Icons.store_rounded,
     this.allGroups,
+    this.fixedGroup,
     this.onNoStoriesTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    if (fixedGroup != null) {
+      final group = fixedGroup!;
+      final state = MerchantStoryRingState(
+        items: group.items,
+        hasStories: group.items.isNotEmpty,
+        hasUnviewed: group.hasUnviewed,
+        group: group,
+      );
+      return _buildRing(context, state);
+    }
+
     final viewerId = FirebaseAuth.instance.currentUser?.uid;
     final service = StoryService();
 
@@ -77,36 +92,39 @@ class StoryProfileRing extends StatelessWidget {
       ),
       builder: (context, snapshot) {
         final state = snapshot.data ?? MerchantStoryRingState.empty;
-        final hasStories = state.hasStories;
-        final hasUnviewed = state.hasUnviewed;
-        final ringPadding = hasStories ? 3.0 : 0.0;
-        final innerSize = size - ringPadding * 2;
-
-        return InkWell(
-          onTap: () => _onTap(context, state),
-          borderRadius: BorderRadius.circular(size / 2 + 4),
-          child: Container(
-            width: size,
-            height: size,
-            padding: EdgeInsets.all(ringPadding),
-            decoration: StoryRingDecoration.ring(
-              hasStories: hasStories,
-              hasUnviewed: hasUnviewed,
-            ),
-            child: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: hasStories ? Colors.white : Colors.transparent,
-              ),
-              padding: hasStories ? const EdgeInsets.all(2) : EdgeInsets.zero,
-              child: ClipOval(
-                child: child ??
-                    _defaultAvatar(innerSize, state),
-              ),
-            ),
-          ),
-        );
+        return _buildRing(context, state);
       },
+    );
+  }
+
+  Widget _buildRing(BuildContext context, MerchantStoryRingState state) {
+    final hasStories = state.hasStories;
+    final hasUnviewed = state.hasUnviewed;
+    final ringPadding = hasStories ? 3.0 : 0.0;
+    final innerSize = size - ringPadding * 2;
+
+    return InkWell(
+      onTap: () => _onTap(context, state),
+      borderRadius: BorderRadius.circular(size / 2 + 4),
+      child: Container(
+        width: size,
+        height: size,
+        padding: EdgeInsets.all(ringPadding),
+        decoration: StoryRingDecoration.ring(
+          hasStories: hasStories,
+          hasUnviewed: hasUnviewed,
+        ),
+        child: Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: hasStories ? Colors.white : Colors.transparent,
+          ),
+          padding: hasStories ? const EdgeInsets.all(2) : EdgeInsets.zero,
+          child: ClipOval(
+            child: child ?? _defaultAvatar(innerSize, state),
+          ),
+        ),
+      ),
     );
   }
 
@@ -208,6 +226,7 @@ class StoryListRing extends StatelessWidget {
             merchantImageUrl: group.merchantImageUrl,
             size: size,
             allGroups: allGroups,
+            fixedGroup: group,
             placeholderIcon: Icons.store_rounded,
           ),
           const SizedBox(height: 6),

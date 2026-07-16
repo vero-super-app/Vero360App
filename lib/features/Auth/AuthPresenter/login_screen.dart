@@ -237,16 +237,27 @@ class _LoginScreenState extends State<LoginScreen> {
       user = Map<String, dynamic>.from(rawUser);
     }
 
-    final displayId = user['email']?.toString() ??
-        user['phone']?.toString() ??
-        _identifier.text.trim();
+    final displayId = FirebaseAuth.instance.currentUser?.email?.trim().isNotEmpty == true
+        ? FirebaseAuth.instance.currentUser!.email!.trim()
+        : (user['email']?.toString() ??
+            user['phone']?.toString() ??
+            _identifier.text.trim());
     await prefs.setString('email', displayId);
 
-    // Persist name and phone so other screens (e.g. airport pickup, profile) can auto-fill
-    final nameVal = (user['name'] ?? user['fullName'] ?? user['displayName'] ?? '').toString().trim();
+    // Always overwrite identity fields so a previous account cannot linger.
+    final nameVal = (user['name'] ??
+            user['fullName'] ??
+            user['displayName'] ??
+            FirebaseAuth.instance.currentUser?.displayName ??
+            '')
+        .toString()
+        .trim();
     if (nameVal.isNotEmpty) {
       await prefs.setString('fullName', nameVal);
       await prefs.setString('name', nameVal);
+    } else {
+      await prefs.remove('fullName');
+      await prefs.remove('name');
     }
     final phoneVal = (user['phone'] ?? user['phoneNumber'] ?? user['mobile'] ?? '').toString().trim();
     if (phoneVal.isNotEmpty) {

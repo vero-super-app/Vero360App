@@ -1,6 +1,7 @@
 // lib/screens/chat_list_page.dart
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,6 +27,8 @@ class _ChatListPageState extends State<ChatListPage> {
   static const _maxPinnedChats = 3;
 
   int? _myUserId;
+  String? _myEmail;
+  String? _myName;
   String? _error;
   bool _wsConnected = false;
 
@@ -45,10 +48,8 @@ class _ChatListPageState extends State<ChatListPage> {
     _messageSub = BackendMessagingSocket.messageStream.listen((message) async {
       final chatId = message.chatId.trim();
       if (chatId.isEmpty) return;
-      await BackendChatService.restoreThreadLocally(chatId);
-      if (_hiddenIds.remove(chatId)) {
-        await _persistChatListPrefs();
-      }
+      // Do not resurrect chats the user deleted.
+      if (_hiddenIds.contains(chatId)) return;
       if (mounted) setState(() {});
     });
     _boot();
@@ -80,6 +81,8 @@ class _ChatListPageState extends State<ChatListPage> {
         if (!mounted) return;
         setState(() {
           _myUserId = cached;
+          _myEmail = FirebaseAuth.instance.currentUser?.email;
+          _myName = FirebaseAuth.instance.currentUser?.displayName;
           _error = null;
         });
       }
@@ -88,6 +91,7 @@ class _ChatListPageState extends State<ChatListPage> {
     try {
       await BackendChatService.ensureAuth();
       final userId = await BackendChatService.getUserId();
+      final authUser = FirebaseAuth.instance.currentUser;
 
       unawaited(
         BackendMessagingSocket.connect().catchError((_) {}),
@@ -112,6 +116,8 @@ class _ChatListPageState extends State<ChatListPage> {
       });
       setState(() {
         _myUserId = userId;
+        _myEmail = authUser?.email ?? _myEmail;
+        _myName = authUser?.displayName ?? _myName;
         _error = null;
         _wsConnected = BackendMessagingSocket.isConnected;
       });    } catch (e) {
@@ -165,6 +171,8 @@ class _ChatListPageState extends State<ChatListPage> {
           (t) => _ThreadTile.fromThread(
             t,
             me,
+            myEmail: _myEmail,
+            myName: _myName,
             isPinned: _pinnedIds.contains(t.id),
           ),
         )
@@ -218,24 +226,24 @@ class _ChatListPageState extends State<ChatListPage> {
     );
     if (!ok || !mounted) return;
 
-    try {
-      await BackendChatService.deleteChat(tile.threadId);
+    // Clear from the list immediately — don't wait on the network.
+    setState(() {
       _hiddenIds.add(tile.threadId);
       _pinnedIds.remove(tile.threadId);
-      await _persistChatListPrefs();
-      BackendChatService.refreshThreads();
+    });
+    unawaited(_persistChatListPrefs());
+
+    try {
+      await BackendChatService.deleteChat(tile.threadId);
       if (!mounted) return;
-      setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Chat deleted')),
       );
     } catch (e) {
       if (!mounted) return;
+      // Local delete already applied; keep it hidden even if server call fails.
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not delete chat: ${_friendlyChatError(e).message}'),
-          backgroundColor: Colors.red,
-        ),
+        const SnackBar(content: Text('Chat deleted')),
       );
     }
   }
@@ -551,23 +559,64 @@ class _ThreadTile {
   factory _ThreadTile.fromThread(
     BackendChatThread t,
     int me, {
+    String? myEmail,
+    String? myName,
     bool isPinned = false,
-  }) {    final otherParticipant = t.participants.firstWhere(
-      (p) => p.id != me,
-      orElse: () => t.participants.isNotEmpty
-          ? t.participants.first
-          : ChatParticipant(id: 0, name: 'Contact', email: ''),
+  }) {
+    // Never fall back to the current user — that made the list show your own name.
+    final otherParticipant = t.otherParticipant(
+      me,
+      myEmail: myEmail,
+      myName: myName,
     );
+    final threadTitle = (t.name ?? '').trim();
+    final myEmailNorm = (myEmail ?? '').trim().toLowerCase();
+    final myNameNorm = (myName ?? '').trim().toLowerCase();
+    final myEmailLocal = myEmailNorm.contains('@')
+        ? myEmailNorm.split('@').first
+        : myEmailNorm;
 
-    var peerName = otherParticipant.name.trim();
-    if (peerName.isEmpty || peerName.toLowerCase() == 'user') {
-      final email = otherParticipant.email.trim();
-      if (email.contains('@') && !email.startsWith('+firebase_')) {
+    bool looksLikeMe(String raw) {
+      final n = raw.trim().toLowerCase();
+      if (n.isEmpty) return false;
+      if (myNameNorm.isNotEmpty && n == myNameNorm) return true;
+      if (myEmailNorm.isNotEmpty && n == myEmailNorm) return true;
+      if (myEmailLocal.isNotEmpty && n == myEmailLocal) return true;
+      return false;
+    }
+
+    var peerName = (otherParticipant?.name ?? '').trim();
+    if (peerName.isEmpty ||
+        peerName.toLowerCase() == 'user' ||
+        peerName.toLowerCase() == 'unknown' ||
+        peerName.toLowerCase() == 'contact' ||
+        looksLikeMe(peerName)) {
+      final email = (otherParticipant?.email ?? '').trim();
+      if (email.contains('@') &&
+          !email.startsWith('+firebase_') &&
+          email.toLowerCase() != myEmailNorm) {
         peerName = email.split('@').first;
-      } else if (t.name != null && t.name!.trim().isNotEmpty) {
-        peerName = t.name!.trim();
+      } else if (threadTitle.isNotEmpty &&
+          threadTitle.toLowerCase() != 'direct' &&
+          threadTitle.toLowerCase() != 'user' &&
+          !looksLikeMe(threadTitle)) {
+        peerName = threadTitle;
+      } else {
+        // Last resort: any other participant we haven't tried.
+        for (final p in t.participants) {
+          if (me > 0 && p.id > 0 && p.id == me) continue;
+          if (looksLikeMe(p.name) || looksLikeMe(p.email)) continue;
+          final candidate = p.name.trim();
+          if (candidate.isNotEmpty &&
+              candidate.toLowerCase() != 'contact' &&
+              candidate.toLowerCase() != 'user') {
+            peerName = candidate;
+            break;
+          }
+        }
       }
     }
+    if (peerName.isEmpty || looksLikeMe(peerName)) peerName = 'Contact';
 
     final product = t.lastProductTag;
     final display = BackendChatService.describeLastMessagePreview(
@@ -582,17 +631,18 @@ class _ThreadTile {
         ? display.kind
         : ChatLastMessagePreviewKind.text;
 
-    final title = product?.name ?? (peerName.isEmpty ? 'Contact' : peerName);
-    final peerLabel = product != null
-        ? (peerName.isEmpty ? 'Seller' : peerName)
-        : null;
+    // Prefer the peer's name for the row title; product name is secondary label.
+    final title = peerName;
+    final peerLabel = product != null ? product.name : null;
+    final avatarUrl = (otherParticipant?.profilePicture ?? t.avatarUrl ?? '')
+        .trim();
 
     return _ThreadTile(
       threadId: t.id,
       title: title,
-      peerName: peerName.isEmpty ? 'Contact' : peerName,
+      peerName: peerName,
       peerLabel: peerLabel,
-      avatarUrl: otherParticipant.profilePicture ?? '',
+      avatarUrl: avatarUrl,
       productImageUrl: product?.image,
       preview: preview,
       previewKind: previewKind,
@@ -607,8 +657,11 @@ class _ThreadTile {
         preview,
       ].join(' ').toLowerCase(),
       isPinned: isPinned,
-      peerUserId: otherParticipant.id > 0 ? otherParticipant.id : null,
-    );  }
+      peerUserId: otherParticipant != null && otherParticipant.id > 0
+          ? otherParticipant.id
+          : null,
+    );
+  }
 }
 
 String _fmtTime(DateTime dt) {

@@ -60,6 +60,45 @@ class BackendChatThread {
     return others.isNotEmpty ? others.first.id.toString() : me;
   }
 
+  /// Peer for a direct chat — never returns the current user.
+  ChatParticipant? otherParticipant(
+    int myUserId, {
+    String? myEmail,
+    String? myName,
+  }) {
+    if (participants.isEmpty) return null;
+
+    final myEmailNorm = (myEmail ?? '').trim().toLowerCase();
+    final myNameNorm = (myName ?? '').trim().toLowerCase();
+
+    bool isMe(ChatParticipant p) {
+      if (myUserId > 0 && p.id > 0 && p.id == myUserId) return true;
+      final email = p.email.trim().toLowerCase();
+      if (myEmailNorm.isNotEmpty && email.isNotEmpty && email == myEmailNorm) {
+        return true;
+      }
+      // Only treat name as "me" when we also lack a usable id mismatch signal
+      // and there is more than one participant to choose from.
+      if (myNameNorm.isNotEmpty && participants.length > 1) {
+        final n = p.name.trim().toLowerCase();
+        if (n.isNotEmpty && n == myNameNorm) return true;
+      }
+      return false;
+    }
+
+    final others = participants.where((p) => !isMe(p)).toList();
+    if (others.isEmpty) return null;
+
+    // Prefer a participant with a real display name.
+    for (final p in others) {
+      final n = p.name.trim().toLowerCase();
+      if (n.isNotEmpty && n != 'contact' && n != 'user' && n != 'unknown') {
+        return p;
+      }
+    }
+    return others.first;
+  }
+
   factory BackendChatThread.fromJson(Map<String, dynamic> json) {
     return BackendChatThread(
       id: json['id']?.toString() ?? '',
@@ -263,17 +302,80 @@ class ChatParticipant {
   });
 
   factory ChatParticipant.fromJson(Map<String, dynamic> json) {
+    // Some payloads nest the user under `user` / `profile`.
+    final nested = json['user'] is Map
+        ? Map<String, dynamic>.from(json['user'] as Map)
+        : (json['profile'] is Map
+            ? Map<String, dynamic>.from(json['profile'] as Map)
+            : null);
+
+    // Prefer explicit userId. On many backends `id` is the membership row PK,
+    // not the user id — using it makes "other participant" resolve to yourself.
+    final int id;
+    if (nested != null) {
+      id = _jsonInt(
+        nested['userId'] ??
+            nested['id'] ??
+            json['userId'] ??
+            json['participantUserId'],
+      );
+    } else {
+      id = _jsonInt(
+        json['userId'] ??
+            json['participantUserId'] ??
+            json['uid'] ??
+            json['id'],
+      );
+    }
+
+    final src = nested ?? json;
+    final email = (src['email'] ?? json['email'] ?? '').toString().trim();
+    final picture = (src['profilePicture'] ??
+            src['profilepicture'] ??
+            json['profilePicture'] ??
+            json['profilepicture'])
+        ?.toString();
+
+    String name = '';
+    for (final key in [
+      'name',
+      'fullName',
+      'displayName',
+      'businessName',
+      'username',
+    ]) {
+      final raw = (src[key] ?? json[key])?.toString().trim() ?? '';
+      if (raw.isNotEmpty &&
+          raw.toLowerCase() != 'user' &&
+          raw.toLowerCase() != 'unknown' &&
+          raw.toLowerCase() != 'contact') {
+        name = raw;
+        break;
+      }
+    }
+    if (name.isEmpty) {
+      final first =
+          (src['firstName'] ?? src['firstname'] ?? '').toString().trim();
+      final last = (src['lastName'] ?? src['lastname'] ?? '').toString().trim();
+      name = '$first $last'.trim();
+    }
+    if (name.isEmpty && email.contains('@') && !email.startsWith('+firebase_')) {
+      name = email.split('@').first;
+    }
+    if (name.isEmpty) name = 'Contact';
+
     return ChatParticipant(
-      id: _jsonInt(json['id']),
-      name: json['name'] ?? 'Unknown',
-      email: json['email'] ?? '',
-      profilePicture: json['profilepicture'] ?? json['profilePicture'],
+      id: id,
+      name: name,
+      email: email,
+      profilePicture: picture != null && picture.isNotEmpty ? picture : null,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'userId': id,
       'name': name,
       'email': email,
       'profilepicture': profilePicture,
@@ -435,12 +537,9 @@ class BackendChatService {
   /// Apply a real-time message to the in-memory thread list.
   static void notifyRealtimeMessage(BackendChatMessage message) {
     final chatId = message.chatId.trim();
-    if (_deletedThreadIds.contains(chatId)) {
-      _deletedThreadIds.remove(chatId);
-      final userId = _userId;
-      if (userId != null) {
-        unawaited(BackendMessagingCache.unmarkThreadDeleted(userId, chatId));
-      }
+    // Keep intentionally deleted chats out of the inbox (even if messages arrive).
+    if (chatId.isNotEmpty && _deletedThreadIds.contains(chatId)) {
+      return;
     }
 
     final myId = _userId;
@@ -481,6 +580,23 @@ class BackendChatService {
     final old = _cachedThreads[idx];
     final bumpUnread =
         !message.isMine(myId) && message.chatId != _activeChatId;
+
+    var participants = old.participants;
+    if (!message.isMine(myId) &&
+        message.senderId > 0 &&
+        old.otherParticipant(myId) == null) {
+      participants = [
+        ...old.participants.where((p) => p.id != message.senderId),
+        ChatParticipant(
+          id: message.senderId,
+          name: _senderDisplayNameFromMessage(message),
+          email: message.sender?['email']?.toString() ?? '',
+          profilePicture: message.sender?['profilePicture'] ??
+              message.sender?['profilepicture'],
+        ),
+      ];
+    }
+
     final updated = old.copyWith(
       lastMessagePreview: previewText ??
           (productUpdate != null
@@ -490,6 +606,7 @@ class BackendChatService {
       updatedAt: message.createdAt,
       lastMessageAt: message.createdAt,
       unreadCount: bumpUnread ? old.unreadCount + 1 : old.unreadCount,
+      participants: participants,
     );
 
     _cachedThreads.removeAt(idx);
@@ -507,8 +624,24 @@ class BackendChatService {
   static void _mergeThreadIntoCache(BackendChatThread thread) {
     final id = thread.id.trim();
     if (id.isEmpty) return;
+    if (_deletedThreadIds.contains(id)) return;
+    final existingIdx = _cachedThreads.indexWhere((t) => t.id.trim() == id);
+    BackendChatThread toStore = thread;
+    if (existingIdx >= 0) {
+      // Prefer the richer peer participant list when merging.
+      final prior = _cachedThreads[existingIdx];
+      if (thread.participants.isEmpty && prior.participants.isNotEmpty) {
+        toStore = thread.copyWith(participants: prior.participants);
+      } else if (thread.participants.isNotEmpty && prior.participants.isNotEmpty) {
+        final byId = <int, ChatParticipant>{
+          for (final p in prior.participants) if (p.id > 0) p.id: p,
+          for (final p in thread.participants) if (p.id > 0) p.id: p,
+        };
+        toStore = thread.copyWith(participants: byId.values.toList());
+      }
+    }
     _cachedThreads.removeWhere((t) => t.id.trim() == id);
-    _cachedThreads.insert(0, thread);
+    _cachedThreads.insert(0, toStore);
     _threadsWatchReady = true;
     _emitCachedThreads();
   }
@@ -585,6 +718,8 @@ class BackendChatService {
       }
 
       final chatId = message.chatId.trim();
+      if (chatId.isEmpty || _deletedThreadIds.contains(chatId)) return;
+
       if (_cachedThreads.indexWhere((t) => t.id.trim() == chatId) < 0) {
         _mergeThreadIntoCache(_minimalThreadFromMessage(message, myId));
       }
@@ -776,7 +911,12 @@ class BackendChatService {
 
     try {
       final fresh = await getThreads();
-      _cachedThreads = _mergeServerThreads(fresh, prior.isNotEmpty ? prior : _cachedThreads);
+      final merged = _mergeServerThreads(
+        fresh,
+        prior.isNotEmpty ? prior : _cachedThreads,
+      );
+      // Drop deleted chats from the in-memory + disk cache so they stay gone.
+      _cachedThreads = _filterDeletedThreads(merged);
       _threadsWatchReady = true;
       _emitCachedThreads();
       if (userId != null) {
@@ -2391,7 +2531,7 @@ class BackendChatService {
     }
   }
 
-  /// Archive/remove a chat from the current user's inbox (server + local).
+  /// Archive/remove a chat from the current user's inbox (local first, then server).
   static Future<void> deleteChat(String chatId) async {
     await ensureAuth();
     final userId = _userId;
@@ -2402,15 +2542,22 @@ class BackendChatService {
     final normalizedId = chatId.trim();
     if (normalizedId.isEmpty) return;
 
-    final archived = await _archiveChatOnServer(normalizedId);
-    if (!archived) {
-      throw Exception('Could not remove chat from your inbox');
-    }
-
+    // Instant local removal so the list clears immediately.
     _deletedThreadIds.add(normalizedId);
     removeThreadLocally(normalizedId);
-    await BackendMessagingCache.deleteMessagesForChat(userId, normalizedId);
     await BackendMessagingCache.markThreadDeleted(userId, normalizedId);
+    await BackendMessagingCache.deleteMessagesForChat(userId, normalizedId);
+
+    // Best-effort server archive/delete — do not block the UI on network.
+    unawaited(() async {
+      final archived = await _archiveChatOnServer(normalizedId);
+      if (!archived && kDebugMode) {
+        print(
+          '[BackendChatService] Server archive failed for $normalizedId '
+          '(kept deleted locally)',
+        );
+      }
+    }());
   }
 
   static bool _isArchiveResponseSuccess(http.Response response) {

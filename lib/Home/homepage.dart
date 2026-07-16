@@ -77,18 +77,20 @@ class Mini {
   final String keyId;
   final String label;
   final IconData icon;
-  const Mini(this.keyId, this.label, this.icon);
+  /// Colorful emoji icon shown on the home Quick Services grid.
+  final String emoji;
+  const Mini(this.keyId, this.label, this.icon, {required this.emoji});
 }
 
 const List<Mini> kQuickServices = [
-  Mini('taxi',          'Vero Ride',     Icons.local_taxi_rounded),
-  Mini('airport_pickup','Airport Pickup',Icons.flight_takeoff_rounded),
-  Mini('courier',       'Courier',       Icons.local_shipping_rounded),
-  Mini('vero_bike',     'Vero Bike',     Icons.pedal_bike_rounded),
-  Mini('fx',            'Forex Rates',   Icons.currency_exchange_rounded),
-  Mini('food',          'Food',          Icons.fastfood_rounded),
-  Mini('jobs',          'Jobs',          Icons.business_center_rounded),
-  Mini('accommodation', 'Stay',          Icons.hotel_rounded),
+  Mini('taxi',           'Vero Ride', Icons.local_taxi_rounded,          emoji: '🚗'),
+  Mini('airport_pickup', 'Airport',   Icons.flight_takeoff_rounded,      emoji: '✈️'),
+  Mini('courier',        'Courier',   Icons.local_shipping_rounded,      emoji: '🚚'),
+  Mini('vero_bike',      'Vero Bike', Icons.pedal_bike_rounded,          emoji: '🚲'),
+  Mini('fx',             'Forex',     Icons.currency_exchange_rounded,   emoji: '💱'),
+  Mini('food',           'Food',      Icons.fastfood_rounded,            emoji: '🍔'),
+  Mini('jobs',           'Jobs',      Icons.business_center_rounded,     emoji: '💼'),
+  Mini('accommodation',  'Stay',      Icons.hotel_rounded,               emoji: '🛏️'),
 ];
 
 const Map<String, String> kQuickServiceGuideNotes = {
@@ -181,6 +183,8 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
 
   String? _resolvedGreetingName;
   bool    _greetingResolved = false;
+  StreamSubscription<User?>? _authSub;
+  String? _greetingUid;
 
   /* ── helpers ─────────────────────────────────── */
   String _greeting() {
@@ -200,16 +204,21 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     return '${first[0].toUpperCase()}${first.substring(1).toLowerCase()}';
   }
 
+  String _firstNameFromRaw(String raw) {
+    final cleaned = raw.replaceAll(RegExp(r'[^a-zA-Z]'), ' ').trim();
+    if (cleaned.isEmpty) return 'there';
+    final parts = cleaned.split(RegExp(r'\s+'));
+    final first = parts.isNotEmpty ? parts.first : 'there';
+    if (first.isEmpty) return 'there';
+    return '${first[0].toUpperCase()}${first.substring(1).toLowerCase()}';
+  }
+
   String _displayName() {
-    if (widget.email.isNotEmpty) return _firstNameFromEmail(widget.email);
     if (_resolvedGreetingName != null && _resolvedGreetingName!.isNotEmpty) {
-      final cleaned =
-          _resolvedGreetingName!.replaceAll(RegExp(r'[^a-zA-Z]'), ' ').trim();
-      final parts = cleaned.split(RegExp(r'\s+'));
-      final first = parts.isNotEmpty ? parts.first : 'there';
-      if (first.isEmpty) return 'there';
-      return '${first[0].toUpperCase()}${first.substring(1).toLowerCase()}';
+      return _firstNameFromRaw(_resolvedGreetingName!);
     }
+    // Never trust a stale constructor email alone after account switch —
+    // wait until auth/prefs resolve for the current user.
     return _greetingResolved ? 'there' : '...';
   }
 
@@ -243,6 +252,12 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     });
 
     _resolveGreetingName();
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+      final uid = user?.uid;
+      if (uid != _greetingUid) {
+        _resolveGreetingName(force: true);
+      }
+    });
     _maybeShowServicesHint();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -254,36 +269,73 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   @override
   void didUpdateWidget(Vero360Homepage old) {
     super.didUpdateWidget(old);
-    if (old.email != widget.email && widget.email.isEmpty) {
-      _resolveGreetingName();
+    if (old.email != widget.email) {
+      _resolveGreetingName(force: true);
     }
   }
 
   @override
   void dispose() {
+    _authSub?.cancel();
     _heroCtrl.dispose();
     super.dispose();
   }
 
   /* ── data fetching ───────────────────────────── */
-  Future<void> _resolveGreetingName() async {
-    if (widget.email.isNotEmpty) return;
+  Future<void> _resolveGreetingName({bool force = false}) async {
+    final authUser = FirebaseAuth.instance.currentUser;
+    final uid = authUser?.uid;
+    if (!force &&
+        uid != null &&
+        uid == _greetingUid &&
+        _resolvedGreetingName != null &&
+        _resolvedGreetingName!.isNotEmpty) {
+      return;
+    }
+
     String? name;
-    final prefs = await SharedPreferences.getInstance();
-    name = prefs.getString('fullName') ?? prefs.getString('name');
-    if (name != null && name.trim().isNotEmpty && !name.contains('@')) {
-      // use prefs name as-is
-    } else {
-      name = await AuthStorage.userNameFromToken();
-      if (name != null && name.contains('@')) {
-        final local = name.split('@').first.trim();
-        name = RegExp(r'^\d+$').hasMatch(local) ? null : local;
+
+    // 1) Live Firebase session wins (correct after account switch).
+    if (authUser != null) {
+      final display = (authUser.displayName ?? '').trim();
+      if (display.isNotEmpty && !display.contains('@')) {
+        name = display;
+      } else {
+        final email = (authUser.email ?? '').trim();
+        if (email.isNotEmpty) name = _firstNameFromEmail(email);
       }
     }
+
+    // 2) Prefs for this session (written on login).
+    if (name == null || name.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      final prefsName = prefs.getString('fullName') ?? prefs.getString('name');
+      if (prefsName != null &&
+          prefsName.trim().isNotEmpty &&
+          !prefsName.contains('@')) {
+        name = prefsName.trim();
+      } else {
+        final prefsEmail = (prefs.getString('email') ?? '').trim();
+        if (prefsEmail.isNotEmpty) name = _firstNameFromEmail(prefsEmail);
+      }
+    }
+
+    // 3) Token / constructor email as last resort.
+    if (name == null || name.isEmpty) {
+      name = await AuthStorage.userNameFromToken();
+      if (name != null && name.contains('@')) {
+        name = _firstNameFromEmail(name);
+      }
+    }
+    if ((name == null || name.isEmpty) && widget.email.isNotEmpty) {
+      name = _firstNameFromEmail(widget.email);
+    }
+
     if (!mounted) return;
     setState(() {
+      _greetingUid = uid;
       _resolvedGreetingName = name;
-      _greetingResolved     = true;
+      _greetingResolved = true;
     });
   }
 
@@ -1063,7 +1115,7 @@ class _MiniIconsGrid extends StatelessWidget {
             final m = items[i];
             return _MiniIconTile(
               tileKey: tileKeys[m.keyId],
-              icon:    m.icon,
+              emoji:   m.emoji,
               label:   m.label,
               onTap:   () => onOpen(m.keyId),
             );
@@ -1076,10 +1128,15 @@ class _MiniIconsGrid extends StatelessWidget {
 
 class _MiniIconTile extends StatefulWidget {
   final Key?         tileKey;
-  final IconData     icon;
+  final String       emoji;
   final String       label;
   final VoidCallback onTap;
-  const _MiniIconTile({this.tileKey, required this.icon, required this.label, required this.onTap});
+  const _MiniIconTile({
+    this.tileKey,
+    required this.emoji,
+    required this.label,
+    required this.onTap,
+  });
 
   @override
   State<_MiniIconTile> createState() => _MiniIconTileState();
@@ -1117,13 +1174,17 @@ class _MiniIconTileState extends State<_MiniIconTile> with SingleTickerProviderS
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 52, height: 52,
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
-                color:  AppColors.brandOrangePale,
-                shape:  BoxShape.circle,
-                border: Border.all(color: AppColors.brandOrangeSoft, width: 1.5),
+                color: AppColors.brandOrangePale,
+                borderRadius: BorderRadius.circular(16),
               ),
-              child: Icon(widget.icon, size: 22, color: AppColors.brandOrange),
+              alignment: Alignment.center,
+              child: Text(
+                widget.emoji,
+                style: const TextStyle(fontSize: 28, height: 1),
+              ),
             ),
             const SizedBox(height: 6),
             Flexible(
@@ -1437,7 +1498,7 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
           child: ListTile(
             leading: CircleAvatar(
               backgroundColor: AppColors.brandOrangePale,
-              child: Icon(m.icon, color: AppColors.brandOrange),
+              child: Text(m.emoji, style: const TextStyle(fontSize: 20)),
             ),
             title: Text(m.label,
                 style: const TextStyle(fontWeight: FontWeight.w800)),

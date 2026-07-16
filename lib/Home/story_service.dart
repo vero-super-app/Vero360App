@@ -37,6 +37,7 @@ class StoryService {
 
   /// Stream of active story groups (non-expired), grouped by merchant.
   /// When [viewerId] is set, each group includes [MerchantStoryGroup.hasUnviewed].
+  /// Emits grouped stories immediately, then re-emits once viewed-state is resolved.
   Stream<List<MerchantStoryGroup>> getActiveStoriesStream({String? viewerId}) {
     final now = Timestamp.now();
     return _firestore
@@ -45,10 +46,11 @@ class StoryService {
         .orderBy('expiresAt', descending: false)
         .limit(100)
         .snapshots()
-        .asyncMap((snap) async {
+        .asyncExpand((snap) async* {
           final groups = _groupByMerchant(snap.docs);
-          if (viewerId == null || viewerId.isEmpty) return groups;
-          return _attachUnviewedFlags(groups, viewerId);
+          yield groups;
+          if (viewerId == null || viewerId.isEmpty || groups.isEmpty) return;
+          yield await _attachUnviewedFlags(groups, viewerId);
         });
   }
 
@@ -137,12 +139,13 @@ class StoryService {
     List<MerchantStoryGroup> groups,
     String viewerId,
   ) async {
-    final out = <MerchantStoryGroup>[];
-    for (final g in groups) {
-      final hasUnviewed = await _groupHasUnviewedForViewer(g.items, viewerId);
-      out.add(g.copyWith(hasUnviewed: hasUnviewed));
-    }
-    return out;
+    final flags = await Future.wait(
+      groups.map((g) => _groupHasUnviewedForViewer(g.items, viewerId)),
+    );
+    return [
+      for (var i = 0; i < groups.length; i++)
+        groups[i].copyWith(hasUnviewed: flags[i]),
+    ];
   }
 
   Future<bool> _groupHasUnviewedForViewer(
@@ -151,16 +154,18 @@ class StoryService {
   ) async {
     if (items.isEmpty) return false;
     if (viewerId == null || viewerId.isEmpty) return true;
-    for (final item in items) {
-      final viewed = await _firestore
-          .collection(_collection)
-          .doc(item.storyId)
-          .collection(_viewersSubcollection)
-          .doc(viewerId)
-          .get();
-      if (!viewed.exists) return true;
-    }
-    return false;
+
+    final viewedDocs = await Future.wait(
+      items.map(
+        (item) => _firestore
+            .collection(_collection)
+            .doc(item.storyId)
+            .collection(_viewersSubcollection)
+            .doc(viewerId)
+            .get(),
+      ),
+    );
+    return viewedDocs.any((doc) => !doc.exists);
   }
 
   List<MerchantStoryGroup> _groupByMerchant(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {

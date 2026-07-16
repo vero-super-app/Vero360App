@@ -239,6 +239,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _isDriver = raw == 'driver';
 
     final homePage = Vero360Homepage(
+      key: ValueKey(
+        'home_${FirebaseAuth.instance.currentUser?.uid ?? widget.email}',
+      ),
       email: widget.email,
       isDriverHome: _isDriver,
     );

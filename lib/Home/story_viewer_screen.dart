@@ -9,12 +9,11 @@ import 'package:video_player/video_player.dart';
 import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/Home/story_service.dart';
 import 'package:vero360_app/Home/story_ring_widget.dart';
-import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
-import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
-import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
-import 'package:vero360_app/features/ride_share/ride_share_entry_resolver.dart';
-import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 
 class StoryViewerScreen extends StatefulWidget {
   final List<MerchantStoryGroup> groups;
@@ -39,11 +38,20 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   static const Duration _autoAdvance = Duration(seconds: 8);
   DateTime _lastTap = DateTime.fromMillisecondsSinceEpoch(0);
   bool _isPaused = false;
+  bool _sendingReply = false;
+  bool _replyFocused = false;
   late AnimationController _progressController;
   final StoryService _storyService = StoryService();
+  final TextEditingController _replyController = TextEditingController();
+  final FocusNode _replyFocus = FocusNode();
 
   MerchantStoryGroup get _currentGroup => _groups[_groupIndex];
   List<MerchantStoryItem> get _items => _currentGroup.items;
+
+  bool get _isOwnStory {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    return uid != null && uid == _currentGroup.merchantId;
+  }
 
   @override
   void initState() {
@@ -51,6 +59,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _groups = List<MerchantStoryGroup>.from(widget.groups);
     _groupIndex = widget.initialGroupIndex;
     _pageController = PageController();
+    _replyFocus.addListener(_onReplyFocusChanged);
     _progressController = AnimationController(
       vsync: this,
       duration: _autoAdvance,
@@ -61,6 +70,21 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       });
     _restartProgress();
     WidgetsBinding.instance.addPostFrameCallback((_) => _recordViewForCurrentSlide());
+  }
+
+  void _onReplyFocusChanged() {
+    final focused = _replyFocus.hasFocus;
+    if (focused == _replyFocused) return;
+    setState(() {
+      _replyFocused = focused;
+      if (focused) {
+        _isPaused = true;
+        _progressController.stop();
+      } else if (!_sendingReply) {
+        _isPaused = false;
+        _progressController.forward();
+      }
+    });
   }
 
   void _recordViewForCurrentSlide() {
@@ -136,6 +160,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
   @override
   void dispose() {
+    _replyFocus.removeListener(_onReplyFocusChanged);
+    _replyFocus.dispose();
+    _replyController.dispose();
     _progressController.dispose();
     _pageController.dispose();
     super.dispose();
@@ -238,31 +265,16 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
             Positioned(
               left: 0,
               right: 0,
-              bottom: 24,
+              bottom: 0,
               child: SafeArea(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_groups.length > 1) _buildGroupsTray(),
-                    const SizedBox(height: 8),
-                    Center(
-                      child: InkWell(
-                        onTap: _showDetails,
-                        borderRadius: BorderRadius.circular(24),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.4),
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          child: const Icon(
-                            Icons.keyboard_arrow_up_rounded,
-                            color: Colors.white,
-                            size: 28,
-                          ),
-                        ),
-                      ),
-                    ),
+                    if (_groups.length > 1 && !_replyFocused) _buildGroupsTray(),
+                    if (_groups.length > 1 && !_replyFocused)
+                      const SizedBox(height: 8),
+                    if (!_isOwnStory) _buildReplyBar(),
+                    if (_isOwnStory) const SizedBox(height: 16),
                   ],
                 ),
               ),
@@ -507,149 +519,232 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     );
   }
 
-  void _showDetails() {
+  Widget _buildReplyBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _replyController,
+              focusNode: _replyFocus,
+              enabled: !_sendingReply,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _sendStoryReply(),
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              cursorColor: const Color(0xFFFF8A00),
+              decoration: InputDecoration(
+                hintText: 'Reply to ${_currentGroup.merchantName}…',
+                hintStyle: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.55),
+                  fontSize: 14,
+                ),
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: 0.14),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: BorderSide(
+                    color: Colors.white.withValues(alpha: 0.28),
+                  ),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: BorderSide(
+                    color: Colors.white.withValues(alpha: 0.28),
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: const BorderSide(color: Color(0xFFFF8A00)),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Material(
+            color: const Color(0xFFFF8A00),
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: _sendingReply ? null : _sendStoryReply,
+              child: SizedBox(
+                width: 46,
+                height: 46,
+                child: Center(
+                  child: _sendingReply
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _sendStoryReply() async {
+    final text = _replyController.text.trim();
+    if (text.isEmpty || _sendingReply || _isOwnStory) return;
     if (_items.isEmpty) return;
-    final item = _items[_currentIndex.clamp(0, _items.length - 1)];
 
-    final type = (item.serviceType ?? 'marketplace').toLowerCase();
-    String primaryLabel;
-    VoidCallback onPrimary;
-
-    switch (type) {
-      case 'accommodation':
-        primaryLabel = 'Book now';
-        onPrimary = () {
-          Navigator.of(context).pop();
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => const AccommodationMainPage(),
-            ),
-          );
-        };
-        break;
-      case 'ride':
-      case 'taxi':
-      case 'ride_share':
-        primaryLabel = 'Book now';
-        onPrimary = () {
-          Navigator.of(context).pop();
-          RideShareEntryResolver.open(
-            context,
-            isDriverHome: false,
-          );
-        };
-        break;
-      case 'food':
-        primaryLabel = 'Order now';
-        onPrimary = () {
-          Navigator.of(context).pop();
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => const FoodPage(),
-            ),
-          );
-        };
-        break;
-      default:
-        primaryLabel = 'Buy now ';
-        onPrimary = () {
-          Navigator.of(context).pop();
-          final cart = CartServiceProvider.getInstance();
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => MarketPage(cartService: cart),
-            ),
-          );
-        };
-        break;
+    // Guests can view stories, but inbox replies need an account.
+    if (FirebaseAuth.instance.currentUser == null) {
+      _replyFocus.unfocus();
+      await _promptLoginToReply();
+      return;
     }
 
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade400,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ),
-              Text(
-                item.title?.isNotEmpty == true ? item.title! : _currentGroup.merchantName,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 6),
-              if (item.price != null)
-                Text(
-                  'MWK ${item.price!.toStringAsFixed(0)}',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFFFF8A00),
-                  ),
-                ),
-              const SizedBox(height: 6),
-              if (item.description != null && item.description!.isNotEmpty)
-                Text(
-                  item.description!,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13),
-                )
-              else if (item.caption != null && item.caption!.trim().isNotEmpty)
-                Text(
-                  item.caption!,
-                  style: const TextStyle(fontSize: 14),
-                )
-              else
-                const Text(
-                  'Open the relevant service to book or purchase this item.',
-                  style: TextStyle(fontSize: 13),
-                ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: onPrimary,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF8A00),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Text(
-                        primaryLabel,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+    final item = _items[_currentIndex.clamp(0, _items.length - 1)];
+    final merchantId = _currentGroup.merchantId.trim();
+    if (merchantId.isEmpty) return;
+
+    setState(() {
+      _sendingReply = true;
+      _isPaused = true;
+    });
+    _progressController.stop();
+    _replyFocus.unfocus();
+
+    try {
+      final result = await BackendChatService.startMerchantChat(
+        merchantId: merchantId,
+      );
+
+      final caption = item.caption?.trim();
+      final content = (caption != null && caption.isNotEmpty)
+          ? '↩️ Story reply:\n"$caption"\n\n$text'
+          : '↩️ Story reply:\n\n$text';
+
+      await BackendChatService.sendMessage(
+        chatId: result.chat.id,
+        content: content,
+        type: 'text',
+        metadata: {
+          'source': 'story_reply',
+          'storyId': item.storyId,
+          'merchantId': merchantId,
+          if (caption != null && caption.isNotEmpty) 'storyCaption': caption,
+        },
+      );
+
+      if (!mounted) return;
+      _replyController.clear();
+
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => MessagePageBackendApi(
+            peerId: result.chat.id,
+            peerName: _currentGroup.merchantName,
+            peerAvatarUrl: _currentGroup.merchantImageUrl,
+            peerMerchantId: merchantId,
+            peerUserId: result.sellerId,
           ),
-        );
-      },
+        ),
+      );
+
+      if (!mounted) return;
+      // Close story after opening inbox so user lands back on home/inbox flow.
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+      final lower = raw.toLowerCase();
+      if (lower.contains('not authenticated') ||
+          lower.contains('unauthorized') ||
+          lower.contains('401')) {
+        await _promptLoginToReply();
+        if (mounted) {
+          setState(() {
+            _sendingReply = false;
+            _isPaused = false;
+          });
+          _progressController.forward();
+        }
+        return;
+      }
+      final message = raw.contains('own listing') ||
+              raw.contains('cannot chat with yourself') ||
+              raw.contains('cannot chat with ur self')
+          ? 'You can’t reply to your own story.'
+          : raw.contains('could not find') ||
+                  raw.contains('not linked') ||
+                  raw.contains('User ') && raw.contains('not found')
+              ? 'Couldn’t open inbox — this merchant’s account isn’t linked for chat yet.'
+              : 'Couldn’t send reply. Check your connection and try again.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      if (mounted) {
+        setState(() {
+          _sendingReply = false;
+          _isPaused = false;
+        });
+        _progressController.forward();
+      }
+    }
+  }
+
+  Future<void> _promptLoginToReply() async {
+    setState(() {
+      _isPaused = true;
+    });
+    _progressController.stop();
+
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Login required'),
+        content: const Text(
+          'Sign in to reply to this story in your inbox.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'login'),
+            child: const Text('Login'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'signup'),
+            child: const Text('Sign Up'),
+          ),
+        ],
+      ),
     );
+
+    if (!mounted) return;
+
+    if (action == 'login') {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    } else if (action == 'signup') {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const RegisterScreen()),
+      );
+    }
+
+    if (!mounted) return;
+    setState(() => _isPaused = false);
+    if (!_replyFocused) _progressController.forward();
   }
 }
 
@@ -699,7 +794,7 @@ class _StoryPageState extends State<_StoryPage> {
           Positioned(
             left: 16,
             right: 16,
-            bottom: 40,
+            bottom: 88,
             child: SafeArea(
               top: false,
               child: Container(

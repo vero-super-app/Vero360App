@@ -273,7 +273,10 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
   Future<void> _initializeWallet() async {
     try {
-      await _processDueEscrowReleases();
+      // Run the escrow auto-release sweep in the background: it fetches orders
+      // and walks escrow docs one by one, which is far too slow to block the
+      // first paint. The wallet/escrow streams pick up any releases it makes.
+      unawaited(_processDueEscrowReleases());
 
       // Get or create wallet
       final wallet = await FirebaseWalletService.getOrCreateWallet(

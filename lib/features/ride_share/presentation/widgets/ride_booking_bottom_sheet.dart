@@ -14,12 +14,16 @@ class RideBookingBottomSheet extends ConsumerStatefulWidget {
   final Place? pickupPlace;
   final void Function(int rideId) onRideRequested;
   final VoidCallback? onClearDropoff;
+  final VoidCallback? onOpenSavedPlaces;
+  final VoidCallback? onSetOnMap;
 
   const RideBookingBottomSheet({
     required this.dropoffPlace,
     required this.pickupPlace,
     required this.onRideRequested,
     this.onClearDropoff,
+    this.onOpenSavedPlaces,
+    this.onSetOnMap,
     super.key,
   });
 
@@ -344,15 +348,16 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                           iconBg: RideShareColors.primaryContainer,
                           title: 'Set on map',
                           subtitle: 'Pick a location visually',
-                          onTap: () {},
+                          onTap: widget.onSetOnMap ?? () {},
                         ),
                         const SizedBox(height: 12),
                         _QuickShortcut(
                           icon: Icons.bookmark_outline,
                           iconBg: RideShareColors.primarySoft,
+                          iconColor: RideShareColors.primary,
                           title: 'Saved places',
                           subtitle: 'Home, work & favourites',
-                          onTap: _openSearch,
+                          onTap: widget.onOpenSavedPlaces ?? _openSearch,
                         ),
                       ],
                     ],
@@ -625,6 +630,7 @@ class _PaymentRow extends StatelessWidget {
 class _QuickShortcut extends StatelessWidget {
   final IconData icon;
   final Color iconBg;
+  final Color? iconColor;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
@@ -635,6 +641,7 @@ class _QuickShortcut extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.iconColor,
   });
 
   @override
@@ -660,7 +667,11 @@ class _QuickShortcut extends StatelessWidget {
                   color: iconBg,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(icon, color: Colors.white, size: 22),
+                child: Icon(
+                  icon,
+                  color: iconColor ?? Colors.white,
+                  size: 22,
+                ),
               ),
               const SizedBox(width: 16),
               Expanded(

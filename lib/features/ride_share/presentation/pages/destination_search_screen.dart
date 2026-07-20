@@ -1,11 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/map_location_picker_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
 class DestinationSearchScreen extends ConsumerStatefulWidget {
-  const DestinationSearchScreen({super.key});
+  /// When set, selecting a place saves Home/Work instead of booking dropoff.
+  final PlaceType? saveAsType;
+
+  /// When true, selecting a place only returns it (no dropoff / recent side effects).
+  final bool returnPlaceOnly;
+
+  const DestinationSearchScreen({
+    this.saveAsType,
+    this.returnPlaceOnly = false,
+    super.key,
+  });
 
   @override
   ConsumerState<DestinationSearchScreen> createState() =>
@@ -17,11 +28,15 @@ class _DestinationSearchScreenState
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
 
+  bool get _isSaveMode =>
+      widget.saveAsType == PlaceType.HOME || widget.saveAsType == PlaceType.WORK;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       RecentPlacesManager.loadAndSet(ref);
+      BookmarkedPlacesManager.loadAndSet(ref);
     });
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted && !_searchFocusNode.hasFocus) {
@@ -37,14 +52,78 @@ class _DestinationSearchScreenState
     super.dispose();
   }
 
-  void _selectPlace(Place place) {
-    RecentPlacesManager.addPlace(ref, place);
+  Future<void> _selectPlace(Place place) async {
+    if (_isSaveMode) {
+      await BookmarkedPlacesManager.setHomeOrWork(
+        ref,
+        place,
+        widget.saveAsType!,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              widget.saveAsType == PlaceType.HOME
+                  ? 'Home saved'
+                  : 'Work saved',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        Navigator.pop(context, place);
+      }
+      return;
+    }
+
+    if (widget.returnPlaceOnly) {
+      if (mounted) Navigator.pop(context, place);
+      return;
+    }
+
+    await RecentPlacesManager.addPlace(ref, place);
     ref.read(selectedDropoffPlaceProvider.notifier).state = place;
-    Navigator.pop(context);
+    if (mounted) Navigator.pop(context, place);
+  }
+
+  Future<void> _openMapPicker({PlaceType? saveAs}) async {
+    final result = await Navigator.push<Place>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MapLocationPickerScreen(
+          saveAsType: saveAs ?? widget.saveAsType,
+        ),
+      ),
+    );
+    if (result != null && mounted && !_isSaveMode && saveAs == null) {
+      Navigator.pop(context, result);
+    } else if (result != null && mounted && (_isSaveMode || saveAs != null)) {
+      // Home/Work already saved by picker; refresh and close if we were in save mode
+      if (_isSaveMode) Navigator.pop(context, result);
+    }
+  }
+
+  Future<void> _startSaveHomeOrWork(PlaceType type) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DestinationSearchScreen(saveAsType: type),
+      ),
+    );
   }
 
   void _clearRecentPlaces() {
     RecentPlacesManager.clearAll(ref);
+  }
+
+  String get _title {
+    switch (widget.saveAsType) {
+      case PlaceType.HOME:
+        return 'Set Home';
+      case PlaceType.WORK:
+        return 'Set Work';
+      default:
+        return 'Search';
+    }
   }
 
   @override
@@ -75,9 +154,9 @@ class _DestinationSearchScreenState
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Text(
-                    'Search',
-                    style: TextStyle(
+                  Text(
+                    _title,
+                    style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w600,
                       color: RideShareColors.titleText,
@@ -94,20 +173,51 @@ class _DestinationSearchScreenState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (_isSaveMode)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Text(
+                          'Search for an address or pick on the map',
+                          style: TextStyle(
+                            color: RideShareColors.onSurfaceVariant,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
                     _SearchInput(
                       controller: _searchController,
                       focusNode: _searchFocusNode,
                       onPlaceSelected: _selectPlace,
+                      confirmLabel: _isSaveMode ? 'Save' : null,
                     ),
                     const SizedBox(height: 24),
-                    _ShortcutsSection(onPlaceSelected: _selectPlace),
-                    const SizedBox(height: 24),
-                    _RecentDestinationsSection(
-                      onPlaceSelected: _selectPlace,
-                      onClear: _clearRecentPlaces,
-                    ),
-                    const SizedBox(height: 24),
-                    _LocationPreviewCard(),
+                    if (!_isSaveMode)
+                      _ShortcutsSection(
+                        onPlaceSelected: _selectPlace,
+                        onSetOnMap: () => _openMapPicker(),
+                        onSetHome: () => _startSaveHomeOrWork(PlaceType.HOME),
+                        onSetWork: () => _startSaveHomeOrWork(PlaceType.WORK),
+                      )
+                    else
+                      _ShortcutTile(
+                        icon: Icons.map,
+                        iconBg: RideShareColors.primaryContainer,
+                        iconColor: Colors.white,
+                        title: 'Set on map',
+                        subtitle: 'Pick a location visually',
+                        onTap: () => _openMapPicker(),
+                      ),
+                    if (!_isSaveMode) ...[
+                      const SizedBox(height: 24),
+                      _RecentDestinationsSection(
+                        onPlaceSelected: _selectPlace,
+                        onClear: _clearRecentPlaces,
+                      ),
+                      const SizedBox(height: 24),
+                      _LocationPreviewCard(
+                        onRecenter: () => _openMapPicker(),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -151,11 +261,13 @@ class _SearchInput extends ConsumerStatefulWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final ValueChanged<Place> onPlaceSelected;
+  final String? confirmLabel;
 
   const _SearchInput({
     required this.controller,
     required this.focusNode,
     required this.onPlaceSelected,
+    this.confirmLabel,
   });
 
   @override
@@ -165,11 +277,38 @@ class _SearchInput extends ConsumerStatefulWidget {
 class _SearchInputState extends ConsumerState<_SearchInput> {
   String _searchQuery = '';
   bool _isFocused = false;
+  String? _loadingPlaceId;
+
+  Future<void> _pickPrediction(dynamic prediction) async {
+    setState(() => _loadingPlaceId = prediction.placeId);
+    try {
+      final placeDetails = await ref.read(
+        placeDetailsProvider(prediction.placeId).future,
+      );
+      final geometry = placeDetails['geometry'] as Map<String, dynamic>?;
+      final location = geometry?['location'] as Map<String, dynamic>?;
+      if (location != null && mounted) {
+        widget.onPlaceSelected(
+          Place(
+            id: prediction.placeId,
+            name: prediction.mainText,
+            address: prediction.fullText,
+            latitude: (location['lat'] as num?)?.toDouble() ?? 0,
+            longitude: (location['lng'] as num?)?.toDouble() ?? 0,
+            type: PlaceType.RECENT,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loadingPlaceId = null);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final searchResults =
         ref.watch(serpapiPlacesAutocompleteProvider(_searchQuery));
+    final bookmarked = ref.watch(bookmarkedPlacesProvider);
 
     return Column(
       children: [
@@ -233,7 +372,7 @@ class _SearchInputState extends ConsumerState<_SearchInput> {
         if (_searchQuery.length >= 4)
           Container(
             margin: const EdgeInsets.only(top: 8),
-            constraints: const BoxConstraints(maxHeight: 280),
+            constraints: const BoxConstraints(maxHeight: 320),
             decoration: BoxDecoration(
               color: RideShareColors.surface,
               borderRadius: BorderRadius.circular(12),
@@ -259,23 +398,37 @@ class _SearchInputState extends ConsumerState<_SearchInput> {
                   itemCount: predictions.length,
                   separatorBuilder: (_, __) => Divider(
                     height: 1,
-                    color: RideShareColors.outlineVariant.withValues(alpha: 0.5),
+                    color:
+                        RideShareColors.outlineVariant.withValues(alpha: 0.5),
                   ),
                   itemBuilder: (context, index) {
                     final prediction = predictions[index];
+                    final isLoading = _loadingPlaceId == prediction.placeId;
+                    final isSaved =
+                        bookmarked.any((p) => p.id == prediction.placeId);
                     return ListTile(
                       leading: Container(
                         width: 40,
                         height: 40,
-                        decoration: BoxDecoration(
+                        decoration: const BoxDecoration(
                           color: RideShareColors.primarySoft,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
-                          Icons.location_on_outlined,
-                          color: RideShareColors.primary,
-                          size: 20,
-                        ),
+                        child: isLoading
+                            ? const Padding(
+                                padding: EdgeInsets.all(10),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation(
+                                    RideShareColors.primary,
+                                  ),
+                                ),
+                              )
+                            : const Icon(
+                                Icons.location_on_outlined,
+                                color: RideShareColors.primary,
+                                size: 20,
+                              ),
                       ),
                       title: Text(
                         prediction.mainText,
@@ -295,16 +448,22 @@ class _SearchInputState extends ConsumerState<_SearchInput> {
                           color: RideShareColors.onSurfaceVariant,
                         ),
                       ),
-                      onTap: () async {
-                        final placeDetails = await ref.read(
-                          placeDetailsProvider(prediction.placeId).future,
-                        );
-                        final geometry =
-                            placeDetails['geometry'] as Map<String, dynamic>?;
-                        final location =
-                            geometry?['location'] as Map<String, dynamic>?;
-                        if (location != null && context.mounted) {
-                          widget.onPlaceSelected(
+                      trailing: IconButton(
+                        icon: Icon(
+                          isSaved ? Icons.star : Icons.star_border,
+                          color: RideShareColors.primary,
+                        ),
+                        onPressed: () async {
+                          final details = await ref.read(
+                            placeDetailsProvider(prediction.placeId).future,
+                          );
+                          final geometry =
+                              details['geometry'] as Map<String, dynamic>?;
+                          final location =
+                              geometry?['location'] as Map<String, dynamic>?;
+                          if (location == null) return;
+                          await BookmarkedPlacesManager.toggleFavorite(
+                            ref,
                             Place(
                               id: prediction.placeId,
                               name: prediction.mainText,
@@ -313,11 +472,12 @@ class _SearchInputState extends ConsumerState<_SearchInput> {
                                   (location['lat'] as num?)?.toDouble() ?? 0,
                               longitude:
                                   (location['lng'] as num?)?.toDouble() ?? 0,
-                              type: PlaceType.RECENT,
+                              type: PlaceType.FAVORITE,
                             ),
                           );
-                        }
-                      },
+                        },
+                      ),
+                      onTap: isLoading ? null : () => _pickPrediction(prediction),
                     );
                   },
                 );
@@ -343,8 +503,16 @@ class _SearchInputState extends ConsumerState<_SearchInput> {
 
 class _ShortcutsSection extends ConsumerWidget {
   final ValueChanged<Place> onPlaceSelected;
+  final VoidCallback onSetOnMap;
+  final VoidCallback onSetHome;
+  final VoidCallback onSetWork;
 
-  const _ShortcutsSection({required this.onPlaceSelected});
+  const _ShortcutsSection({
+    required this.onPlaceSelected,
+    required this.onSetOnMap,
+    required this.onSetHome,
+    required this.onSetWork,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -364,7 +532,7 @@ class _ShortcutsSection extends ConsumerWidget {
           iconColor: Colors.white,
           title: 'Set on map',
           subtitle: 'Pick a location visually',
-          onTap: () => Navigator.pop(context),
+          onTap: onSetOnMap,
         ),
         const SizedBox(height: 12),
         if (home != null) ...[
@@ -375,6 +543,7 @@ class _ShortcutsSection extends ConsumerWidget {
             title: 'Home',
             subtitle: home.address,
             onTap: () => onPlaceSelected(home!),
+            onLongPress: onSetHome,
           ),
         ] else
           _ShortcutTile(
@@ -383,7 +552,7 @@ class _ShortcutsSection extends ConsumerWidget {
             iconColor: RideShareColors.primary,
             title: 'Home',
             subtitle: 'Add your home address',
-            onTap: () {},
+            onTap: onSetHome,
           ),
         const SizedBox(height: 12),
         if (work != null) ...[
@@ -394,6 +563,7 @@ class _ShortcutsSection extends ConsumerWidget {
             title: 'Work',
             subtitle: work.address,
             onTap: () => onPlaceSelected(work!),
+            onLongPress: onSetWork,
           ),
         ] else
           _ShortcutTile(
@@ -402,8 +572,26 @@ class _ShortcutsSection extends ConsumerWidget {
             iconColor: RideShareColors.primary,
             title: 'Work',
             subtitle: 'Add your work address',
-            onTap: () {},
+            onTap: onSetWork,
           ),
+        ...bookmarked
+            .where((p) =>
+                p.type == PlaceType.FAVORITE ||
+                (p.type != PlaceType.HOME && p.type != PlaceType.WORK))
+            .take(5)
+            .map(
+              (place) => Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: _ShortcutTile(
+                  icon: Icons.star,
+                  iconBg: RideShareColors.primarySoft,
+                  iconColor: RideShareColors.primary,
+                  title: place.name,
+                  subtitle: place.address,
+                  onTap: () => onPlaceSelected(place),
+                ),
+              ),
+            ),
       ],
     );
   }
@@ -416,6 +604,7 @@ class _ShortcutTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   const _ShortcutTile({
     required this.icon,
@@ -424,6 +613,7 @@ class _ShortcutTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.onLongPress,
   });
 
   @override
@@ -433,6 +623,7 @@ class _ShortcutTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(12),
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -497,6 +688,7 @@ class _RecentDestinationsSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final recentPlaces = ref.watch(recentPlacesProvider);
+    final bookmarked = ref.watch(bookmarkedPlacesProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -542,15 +734,19 @@ class _RecentDestinationsSection extends ConsumerWidget {
             ),
           )
         else
-          ...recentPlaces.map(
-            (place) => Padding(
+          ...recentPlaces.map((place) {
+            final isSaved = place.isBookmarked ||
+                bookmarked.any((b) => b.id == place.id);
+            return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: _RecentPlaceTile(
-                place: place,
+                place: place.copyWith(isBookmarked: isSaved),
                 onTap: () => onPlaceSelected(place),
+                onToggleStar: () =>
+                    BookmarkedPlacesManager.toggleFavorite(ref, place),
               ),
-            ),
-          ),
+            );
+          }),
       ],
     );
   }
@@ -559,8 +755,13 @@ class _RecentDestinationsSection extends ConsumerWidget {
 class _RecentPlaceTile extends StatelessWidget {
   final Place place;
   final VoidCallback onTap;
+  final VoidCallback onToggleStar;
 
-  const _RecentPlaceTile({required this.place, required this.onTap});
+  const _RecentPlaceTile({
+    required this.place,
+    required this.onTap,
+    required this.onToggleStar,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -585,10 +786,8 @@ class _RecentPlaceTile extends StatelessWidget {
                   color: RideShareColors.surfaceContainer,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(
-                  place.type == PlaceType.HOME
-                      ? Icons.home_outlined
-                      : Icons.history,
+                child: const Icon(
+                  Icons.history,
                   color: RideShareColors.onSurfaceVariant,
                   size: 20,
                 ),
@@ -618,29 +817,34 @@ class _RecentPlaceTile extends StatelessWidget {
                   ],
                 ),
               ),
-              if (place.isBookmarked)
-                const Icon(Icons.star, color: RideShareColors.primary, size: 20)
-              else
-                TextButton(
-                  onPressed: onTap,
-                  style: TextButton.styleFrom(
-                    backgroundColor: RideShareColors.primarySoft,
-                    foregroundColor: RideShareColors.primaryDeep,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 4,
-                    ),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                    ),
+              IconButton(
+                onPressed: onToggleStar,
+                icon: Icon(
+                  place.isBookmarked ? Icons.star : Icons.star_border,
+                  color: RideShareColors.primary,
+                  size: 22,
+                ),
+              ),
+              TextButton(
+                onPressed: onTap,
+                style: TextButton.styleFrom(
+                  backgroundColor: RideShareColors.primarySoft,
+                  foregroundColor: RideShareColors.primaryDeep,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
                   ),
-                  child: const Text(
-                    'Book',
-                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
                   ),
                 ),
+                child: const Text(
+                  'Book',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                ),
+              ),
             ],
           ),
         ),
@@ -650,6 +854,10 @@ class _RecentPlaceTile extends StatelessWidget {
 }
 
 class _LocationPreviewCard extends ConsumerWidget {
+  final VoidCallback onRecenter;
+
+  const _LocationPreviewCard({required this.onRecenter});
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final pickupAsync = ref.watch(pickupDisplayProvider);
@@ -737,23 +945,26 @@ class _LocationPreviewCard extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: RideShareColors.primary,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.2),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.my_location,
-                      color: Colors.white,
+                  GestureDetector(
+                    onTap: onRecenter,
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: RideShareColors.primary,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.my_location,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ],

@@ -13,6 +13,7 @@ import 'package:vero360_app/features/ride_share/presentation/providers/ride_shar
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/map_location_picker_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
 class RideShareMapScreen extends ConsumerStatefulWidget {
@@ -39,6 +40,15 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
 
   void _toggleBookmarkedPlacesModal() {
     setState(() => _showBookmarkedPlaces = !_showBookmarkedPlaces);
+  }
+
+  Future<void> _openMapPicker() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const MapLocationPickerScreen(),
+      ),
+    );
   }
 
   void _recenterMap() {
@@ -109,6 +119,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       }
       if (!mounted) return;
       RecentPlacesManager.loadAndSet(ref);
+      BookmarkedPlacesManager.loadAndSet(ref);
       ref.invalidate(currentLocationProvider);
     });
   }
@@ -195,6 +206,10 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
             pickupPlace: _cachedPickupPlace,
             onClearDropoff: _clearDropoff,
             onRideRequested: _navigateToTracking,
+            onOpenSavedPlaces: () {
+              setState(() => _showBookmarkedPlaces = true);
+            },
+            onSetOnMap: _openMapPicker,
           ),
         ),
         if (_showBookmarkedPlaces)

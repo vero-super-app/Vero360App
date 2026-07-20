@@ -298,29 +298,125 @@ class RecentPlacesManager {
 }
 
 // ==================== BOOKMARKED PLACES ====================
-final bookmarkedPlacesProvider = StateProvider<List<Place>>(
-  (ref) {
-    // TODO: Load from local storage (Hive/SharedPreferences)
-    return [];
-  },
-);
+const String _bookmarkedPlacesStorageKey = 'ride_share_bookmarked_places';
 
-// ==================== ADD/REMOVE BOOKMARKED PLACES ====================
-// Helper functions for managing bookmarked places
+final bookmarkedPlacesProvider = StateProvider<List<Place>>((ref) => []);
+
 class BookmarkedPlacesManager {
-  /// Add a place to bookmarked places
-  static Future<void> addPlace(dynamic ref, Place place) async {
-    final places = ref.read(bookmarkedPlacesProvider);
-    ref.read(bookmarkedPlacesProvider.notifier).state = [...places, place];
-    // TODO: Implement local storage persistence
+  static Future<void> loadAndSet(dynamic ref) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonList = prefs.getStringList(_bookmarkedPlacesStorageKey);
+      if (jsonList == null || jsonList.isEmpty) return;
+      final places = <Place>[];
+      for (final jsonStr in jsonList) {
+        try {
+          places.add(Place.fromJson(jsonDecode(jsonStr) as Map<String, dynamic>));
+        } catch (_) {}
+      }
+      ref.read(bookmarkedPlacesProvider.notifier).state = places;
+    } catch (_) {}
   }
 
-  /// Remove a place from bookmarked places
+  static Future<void> _persist(dynamic ref, List<Place> places) async {
+    ref.read(bookmarkedPlacesProvider.notifier).state = places;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+        _bookmarkedPlacesStorageKey,
+        places.map((p) => jsonEncode(p.toJson())).toList(),
+      );
+    } catch (_) {}
+  }
+
+  /// Save a favourite (or Home/Work). Replaces existing Home/Work of same type.
+  static Future<void> addPlace(dynamic ref, Place place) async {
+    final typed = place.copyWith(
+      isBookmarked: true,
+      savedAt: DateTime.now(),
+      type: place.type == PlaceType.RECENT ? PlaceType.FAVORITE : place.type,
+    );
+    final existing = ref.read(bookmarkedPlacesProvider);
+    List<Place> updated;
+    if (typed.type == PlaceType.HOME || typed.type == PlaceType.WORK) {
+      updated = [
+        typed,
+        ...existing.where((p) => p.type != typed.type && p.id != typed.id),
+      ];
+    } else {
+      updated = [
+        typed,
+        ...existing.where((p) => p.id != typed.id),
+      ];
+    }
+    await _persist(ref, updated);
+    await _syncRecentBookmarkFlag(ref, typed.id, true);
+  }
+
   static Future<void> removePlace(dynamic ref, String placeId) async {
     final places = ref.read(bookmarkedPlacesProvider);
-    ref.read(bookmarkedPlacesProvider.notifier).state =
-        places.where((p) => p.id != placeId).toList();
-    // TODO: Implement local storage persistence
+    await _persist(ref, places.where((p) => p.id != placeId).toList());
+    await _syncRecentBookmarkFlag(ref, placeId, false);
+  }
+
+  static Future<void> setHomeOrWork(
+    dynamic ref,
+    Place place,
+    PlaceType type,
+  ) async {
+    assert(type == PlaceType.HOME || type == PlaceType.WORK);
+    await addPlace(
+      ref,
+      place.copyWith(
+        type: type,
+        name: type == PlaceType.HOME ? 'Home' : 'Work',
+        isBookmarked: true,
+      ),
+    );
+  }
+
+  /// Toggle favourite bookmark for a place (not Home/Work slots).
+  static Future<void> toggleFavorite(dynamic ref, Place place) async {
+    final places = ref.read(bookmarkedPlacesProvider);
+    final existing = places.where((p) => p.id == place.id).toList();
+    if (existing.isNotEmpty) {
+      await removePlace(ref, place.id);
+    } else {
+      await addPlace(
+        ref,
+        place.copyWith(type: PlaceType.FAVORITE, isBookmarked: true),
+      );
+    }
+  }
+
+  static bool isSaved(dynamic ref, String placeId) {
+    return ref
+        .read(bookmarkedPlacesProvider)
+        .any((p) => p.id == placeId);
+  }
+
+  static Future<void> _syncRecentBookmarkFlag(
+    dynamic ref,
+    String placeId,
+    bool isBookmarked,
+  ) async {
+    final recent = ref.read(recentPlacesProvider);
+    final updated = recent
+        .map((p) => p.id == placeId ? p.copyWith(isBookmarked: isBookmarked) : p)
+        .toList();
+    if (updated.length != recent.length) return;
+    final changed = recent.any(
+      (p) => p.id == placeId && p.isBookmarked != isBookmarked,
+    );
+    if (!changed) return;
+    ref.read(recentPlacesProvider.notifier).state = updated;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+        _recentPlacesStorageKey,
+        updated.map((p) => jsonEncode(p.toJson())).toList(),
+      );
+    } catch (_) {}
   }
 }
 

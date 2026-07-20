@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
 class DestinationSearchScreen extends ConsumerStatefulWidget {
   const DestinationSearchScreen({super.key});
@@ -22,7 +23,6 @@ class _DestinationSearchScreenState
     WidgetsBinding.instance.addPostFrameCallback((_) {
       RecentPlacesManager.loadAndSet(ref);
     });
-    // Auto-focus the search field when screen opens
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted && !_searchFocusNode.hasFocus) {
         _searchFocusNode.requestFocus();
@@ -37,223 +37,79 @@ class _DestinationSearchScreenState
     super.dispose();
   }
 
-  void _showLoadingAndReturn() async {
-    // Show loading overlay for 2 seconds
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return WillPopScope(
-          onWillPop: () async => false,
-          child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00)),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Fetching routes...',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w500,
-                      ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-
-    // Wait for 2 seconds
-    await Future.delayed(const Duration(seconds: 2));
-
-    if (mounted) {
-      // Close loading dialog
-      Navigator.pop(context);
-      // Pop destination search screen and return to map
-      Navigator.pop(context);
-    }
+  void _selectPlace(Place place) {
+    RecentPlacesManager.addPlace(ref, place);
+    ref.read(selectedDropoffPlaceProvider.notifier).state = place;
+    Navigator.pop(context);
   }
 
-  Widget _buildBackButton() {
-    return GestureDetector(
-      onTap: () => Navigator.pop(context),
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: const Icon(
-          Icons.arrow_back_ios_new,
-          color: Colors.black87,
-          size: 18,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRecentPlacesSection() {
-    final recentPlaces = ref.watch(recentPlacesProvider);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            color: Colors.transparent,
-            width: MediaQuery.of(context).size.width,
-            child: Center(
-              child: Text(
-                'Recent Places',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black87,
-                    ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (recentPlaces.isEmpty)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  'No recent searches yet.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[500],
-                      ),
-                ),
-              ),
-            )
-          else
-            ...recentPlaces.map((place) => _buildRecentPlaceItem(place)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecentPlaceItem(Place place) {
-    return GestureDetector(
-      onTap: () {
-        ref.read(selectedDropoffPlaceProvider.notifier).state = place;
-        _showLoadingAndReturn();
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFF8A00).withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.history,
-                color: Color(0xFFFF8A00),
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    place.name,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    place.address,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.grey[500],
-                        ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  void _clearRecentPlaces() {
+    RecentPlacesManager.clearAll(ref);
   }
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        Navigator.pop(context);
-        return false;
-      },
-      child: Scaffold(
-        resizeToAvoidBottomInset: false,
-        appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(70),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+    final pickupAsync = ref.watch(pickupDisplayProvider);
+    final profilePictureUrl = pickupAsync.maybeWhen(
+      data: (p) => p.profilePictureUrl,
+      orElse: () => '',
+    );
+
+    return Scaffold(
+      backgroundColor: RideShareColors.background,
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
               child: Row(
                 children: [
-                  _buildBackButton(),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Where are you going?',
-                      style:
-                          Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black87,
-                              ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.arrow_back),
+                    color: RideShareColors.titleText,
+                    style: IconButton.styleFrom(
+                      backgroundColor: RideShareColors.surfaceContainerLow,
+                      shape: const CircleBorder(),
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Search',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: RideShareColors.titleText,
+                    ),
+                  ),
+                  const Spacer(),
+                  _ProfileAvatar(url: profilePictureUrl),
                 ],
               ),
             ),
-          ),
-        ),
-        body: Column(
-          children: [
-            // Search field at top
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: _CustomPlaceSearchWidget(
-                searchController: _searchController,
-                focusNode: _searchFocusNode,
-                onLocationSelected: (place) {
-                  RecentPlacesManager.addPlace(ref, place);
-                  ref.read(selectedDropoffPlaceProvider.notifier).state = place;
-                  _showLoadingAndReturn();
-                },
-              ),
-            ),
-            // Recent places shown when search is empty
             Expanded(
-              child: Container(
-                color: Colors.grey[50],
-                child: _buildRecentPlacesSection(),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _SearchInput(
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
+                      onPlaceSelected: _selectPlace,
+                    ),
+                    const SizedBox(height: 24),
+                    _ShortcutsSection(onPlaceSelected: _selectPlace),
+                    const SizedBox(height: 24),
+                    _RecentDestinationsSection(
+                      onPlaceSelected: _selectPlace,
+                      onClear: _clearRecentPlaces,
+                    ),
+                    const SizedBox(height: 24),
+                    _LocationPreviewCard(),
+                  ],
+                ),
               ),
             ),
           ],
@@ -263,32 +119,52 @@ class _DestinationSearchScreenState
   }
 }
 
-class _CustomPlaceSearchWidget extends ConsumerStatefulWidget {
-  final TextEditingController searchController;
-  final FocusNode focusNode;
-  final Function(Place) onLocationSelected;
+class _ProfileAvatar extends StatelessWidget {
+  final String url;
 
-  const _CustomPlaceSearchWidget({
-    required this.searchController,
+  const _ProfileAvatar({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: RideShareColors.outlineVariant),
+        image: url.isNotEmpty
+            ? DecorationImage(
+                image: NetworkImage(url),
+                fit: BoxFit.cover,
+              )
+            : null,
+        color: RideShareColors.primarySoft,
+      ),
+      child: url.isEmpty
+          ? const Icon(Icons.person, color: RideShareColors.primary, size: 22)
+          : null,
+    );
+  }
+}
+
+class _SearchInput extends ConsumerStatefulWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final ValueChanged<Place> onPlaceSelected;
+
+  const _SearchInput({
+    required this.controller,
     required this.focusNode,
-    required this.onLocationSelected,
+    required this.onPlaceSelected,
   });
 
   @override
-  ConsumerState<_CustomPlaceSearchWidget> createState() =>
-      _CustomPlaceSearchWidgetState();
+  ConsumerState<_SearchInput> createState() => _SearchInputState();
 }
 
-class _CustomPlaceSearchWidgetState
-    extends ConsumerState<_CustomPlaceSearchWidget> {
+class _SearchInputState extends ConsumerState<_SearchInput> {
   String _searchQuery = '';
   bool _isFocused = false;
-
-  void _onSearchChanged(String value) {
-    setState(() {
-      _searchQuery = value;
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -297,249 +173,595 @@ class _CustomPlaceSearchWidgetState
 
     return Column(
       children: [
-        // Modern search bar
         Focus(
-          onFocusChange: (focused) {
-            setState(() => _isFocused = focused);
-          },
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: _isFocused ? const Color(0xFFFF8A00) : Colors.grey[200]!,
-                width: _isFocused ? 2 : 1,
-              ),
-              boxShadow: [
-                if (_isFocused)
+          onFocusChange: (focused) => setState(() => _isFocused = focused),
+          child: AnimatedScale(
+            scale: _isFocused ? 1.01 : 1.0,
+            duration: const Duration(milliseconds: 150),
+            child: Container(
+              height: 56,
+              decoration: BoxDecoration(
+                color: RideShareColors.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFFF8A00).withOpacity(0.15),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  )
-                else
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
+                    color: Colors.black.withValues(alpha: 0.04),
                     blurRadius: 8,
                     offset: const Offset(0, 2),
                   ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(left: 12),
-                  child: Icon(
-                    Icons.location_on_rounded,
-                    color:
-                        _isFocused ? const Color(0xFFFF8A00) : Colors.grey[400],
-                    size: 22,
-                  ),
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: widget.searchController,
-                    focusNode: widget.focusNode,
-                    decoration: InputDecoration(
-                      hintText: 'Where to?',
-                      hintStyle: TextStyle(
-                        color: Colors.grey[400],
-                        fontSize: 15,
-                        fontWeight: FontWeight.w400,
+                ],
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 16),
+                  const Icon(Icons.search, color: RideShareColors.primary),
+                  Expanded(
+                    child: TextField(
+                      controller: widget.controller,
+                      focusNode: widget.focusNode,
+                      decoration: const InputDecoration(
+                        hintText: 'Where to?',
+                        hintStyle: TextStyle(
+                          color: RideShareColors.onSurfaceVariant,
+                          fontSize: 18,
+                        ),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12),
                       ),
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 14,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w500,
+                        color: RideShareColors.titleText,
                       ),
+                      onChanged: (v) => setState(() => _searchQuery = v),
                     ),
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    onChanged: _onSearchChanged,
                   ),
-                ),
-                if (_searchQuery.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 4),
-                    child: IconButton(
+                  if (_searchQuery.isNotEmpty)
+                    IconButton(
                       icon: const Icon(Icons.close, size: 20),
-                      color: Colors.grey[600],
+                      color: RideShareColors.onSurfaceVariant,
                       onPressed: () {
-                        widget.searchController.clear();
+                        widget.controller.clear();
                         setState(() => _searchQuery = '');
                       },
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-        const SizedBox(height: 8),
-        // Search results dropdown
-        if (_searchQuery.isNotEmpty && _searchQuery.length >= 4)
+        if (_searchQuery.length >= 4)
           Container(
-            margin: const EdgeInsets.only(top: 4),
+            margin: const EdgeInsets.only(top: 8),
+            constraints: const BoxConstraints(maxHeight: 280),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: RideShareColors.surface,
               borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: RideShareColors.outlineVariant),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: .1),
+                  color: Colors.black.withValues(alpha: 0.08),
                   blurRadius: 12,
                   offset: const Offset(0, 4),
                 ),
               ],
             ),
-            constraints: const BoxConstraints(maxHeight: 300),
             child: searchResults.when(
               data: (predictions) {
                 if (predictions.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      'No results found',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
+                  return const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text('No results found'),
                   );
                 }
-
                 return ListView.separated(
                   shrinkWrap: true,
                   itemCount: predictions.length,
                   separatorBuilder: (_, __) => Divider(
                     height: 1,
-                    color: Colors.grey[200],
+                    color: RideShareColors.outlineVariant.withValues(alpha: 0.5),
                   ),
                   itemBuilder: (context, index) {
                     final prediction = predictions[index];
-
-                    return Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () async {
-                          final placeDetails = await ref.read(
-                              placeDetailsProvider(prediction.placeId).future);
-                          final geometry =
-                              placeDetails['geometry'] as Map<String, dynamic>?;
-                          final location =
-                              geometry?['location'] as Map<String, dynamic>?;
-
-                          if (location != null) {
-                            final place = Place(
+                    return ListTile(
+                      leading: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: RideShareColors.primarySoft,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.location_on_outlined,
+                          color: RideShareColors.primary,
+                          size: 20,
+                        ),
+                      ),
+                      title: Text(
+                        prediction.mainText,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                        ),
+                      ),
+                      subtitle: Text(
+                        prediction.secondaryText.isNotEmpty
+                            ? prediction.secondaryText
+                            : prediction.fullText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: RideShareColors.onSurfaceVariant,
+                        ),
+                      ),
+                      onTap: () async {
+                        final placeDetails = await ref.read(
+                          placeDetailsProvider(prediction.placeId).future,
+                        );
+                        final geometry =
+                            placeDetails['geometry'] as Map<String, dynamic>?;
+                        final location =
+                            geometry?['location'] as Map<String, dynamic>?;
+                        if (location != null && context.mounted) {
+                          widget.onPlaceSelected(
+                            Place(
                               id: prediction.placeId,
                               name: prediction.mainText,
                               address: prediction.fullText,
                               latitude:
-                                  (location['lat'] as num?)?.toDouble() ?? 0.0,
+                                  (location['lat'] as num?)?.toDouble() ?? 0,
                               longitude:
-                                  (location['lng'] as num?)?.toDouble() ?? 0.0,
+                                  (location['lng'] as num?)?.toDouble() ?? 0,
                               type: PlaceType.RECENT,
-                            );
-
-                            widget.onLocationSelected(place);
-                          }
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 12),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color:
-                                      const Color(0xFFFF8A00).withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: const Icon(
-                                  Icons.location_on_rounded,
-                                  color: Color(0xFFFF8A00),
-                                  size: 20,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      prediction.mainText,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      prediction.secondaryText.isNotEmpty
-                                          ? prediction.secondaryText
-                                          : prediction.fullText,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[600],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
+                            ),
+                          );
+                        }
+                      },
                     );
                   },
                 );
               },
-              loading: () => Padding(
-                padding: const EdgeInsets.all(12),
-                child: SizedBox(
-                  height: 100,
-                  child: Center(
-                    child: CircularProgressIndicator(
-                      valueColor:
-                          AlwaysStoppedAnimation<Color>(Colors.grey[400]!),
-                    ),
+              loading: () => const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(
+                  child: CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation(RideShareColors.primary),
                   ),
                 ),
               ),
-              error: (error, stackTrace) {
-                debugPrint('Search error: $error');
-                return Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.error_outline,
-                        color: Colors.grey[400],
-                        size: 40,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Couldn\'t search locations',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Colors.grey[600],
-                            ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Check your connection and try again',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Colors.grey[400],
-                            ),
-                      ),
-                    ],
-                  ),
-                );
-              },
+              error: (_, __) => const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('Could not search locations'),
+              ),
             ),
           ),
       ],
+    );
+  }
+}
+
+class _ShortcutsSection extends ConsumerWidget {
+  final ValueChanged<Place> onPlaceSelected;
+
+  const _ShortcutsSection({required this.onPlaceSelected});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bookmarked = ref.watch(bookmarkedPlacesProvider);
+    Place? home;
+    Place? work;
+    for (final p in bookmarked) {
+      if (p.type == PlaceType.HOME && home == null) home = p;
+      if (p.type == PlaceType.WORK && work == null) work = p;
+    }
+
+    return Column(
+      children: [
+        _ShortcutTile(
+          icon: Icons.map,
+          iconBg: RideShareColors.primaryContainer,
+          iconColor: Colors.white,
+          title: 'Set on map',
+          subtitle: 'Pick a location visually',
+          onTap: () => Navigator.pop(context),
+        ),
+        const SizedBox(height: 12),
+        if (home != null) ...[
+          _ShortcutTile(
+            icon: Icons.home,
+            iconBg: RideShareColors.primarySoft,
+            iconColor: RideShareColors.primary,
+            title: 'Home',
+            subtitle: home.address,
+            onTap: () => onPlaceSelected(home!),
+          ),
+        ] else
+          _ShortcutTile(
+            icon: Icons.home_outlined,
+            iconBg: RideShareColors.primarySoft,
+            iconColor: RideShareColors.primary,
+            title: 'Home',
+            subtitle: 'Add your home address',
+            onTap: () {},
+          ),
+        const SizedBox(height: 12),
+        if (work != null) ...[
+          _ShortcutTile(
+            icon: Icons.work,
+            iconBg: RideShareColors.primarySoft,
+            iconColor: RideShareColors.primary,
+            title: 'Work',
+            subtitle: work.address,
+            onTap: () => onPlaceSelected(work!),
+          ),
+        ] else
+          _ShortcutTile(
+            icon: Icons.work_outline,
+            iconBg: RideShareColors.primarySoft,
+            iconColor: RideShareColors.primary,
+            title: 'Work',
+            subtitle: 'Add your work address',
+            onTap: () {},
+          ),
+      ],
+    );
+  }
+}
+
+class _ShortcutTile extends StatelessWidget {
+  final IconData icon;
+  final Color iconBg;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _ShortcutTile({
+    required this.icon,
+    required this.iconBg,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: RideShareColors.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: RideShareColors.outlineVariant),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: iconBg,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: iconColor, size: 22),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: RideShareColors.titleText,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: RideShareColors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: RideShareColors.outline),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentDestinationsSection extends ConsumerWidget {
+  final ValueChanged<Place> onPlaceSelected;
+  final VoidCallback onClear;
+
+  const _RecentDestinationsSection({
+    required this.onPlaceSelected,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final recentPlaces = ref.watch(recentPlacesProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Recent Destinations',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: RideShareColors.titleText,
+              ),
+            ),
+            if (recentPlaces.isNotEmpty)
+              TextButton(
+                onPressed: onClear,
+                child: const Text(
+                  'Clear',
+                  style: TextStyle(
+                    color: RideShareColors.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (recentPlaces.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: RideShareColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: RideShareColors.outlineVariant),
+            ),
+            child: const Text(
+              'No recent searches yet.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: RideShareColors.onSurfaceVariant),
+            ),
+          )
+        else
+          ...recentPlaces.map(
+            (place) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _RecentPlaceTile(
+                place: place,
+                onTap: () => onPlaceSelected(place),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _RecentPlaceTile extends StatelessWidget {
+  final Place place;
+  final VoidCallback onTap;
+
+  const _RecentPlaceTile({required this.place, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: RideShareColors.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: RideShareColors.outlineVariant),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: const BoxDecoration(
+                  color: RideShareColors.surfaceContainer,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  place.type == PlaceType.HOME
+                      ? Icons.home_outlined
+                      : Icons.history,
+                  color: RideShareColors.onSurfaceVariant,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      place.name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                        color: RideShareColors.titleText,
+                      ),
+                    ),
+                    Text(
+                      place.address,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: RideShareColors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (place.isBookmarked)
+                const Icon(Icons.star, color: RideShareColors.primary, size: 20)
+              else
+                TextButton(
+                  onPressed: onTap,
+                  style: TextButton.styleFrom(
+                    backgroundColor: RideShareColors.primarySoft,
+                    foregroundColor: RideShareColors.primaryDeep,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                  child: const Text(
+                    'Book',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LocationPreviewCard extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pickupAsync = ref.watch(pickupDisplayProvider);
+    final locationLabel = pickupAsync.maybeWhen(
+      data: (p) => p.userName,
+      orElse: () => 'Current Location',
+    );
+    final address = pickupAsync.maybeWhen(
+      data: (p) => p.address,
+      orElse: () => 'Detecting location…',
+    );
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        height: 180,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    RideShareColors.primarySoft,
+                    RideShareColors.primary.withValues(alpha: 0.3),
+                  ],
+                ),
+              ),
+              child: Icon(
+                Icons.map_outlined,
+                size: 64,
+                color: RideShareColors.primary.withValues(alpha: 0.25),
+              ),
+            ),
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    RideShareColors.primaryContainer.withValues(alpha: 0.85),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Current Location',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.white.withValues(alpha: 0.8),
+                          ),
+                        ),
+                        Text(
+                          locationLabel,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                        Text(
+                          address,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.white.withValues(alpha: 0.75),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: RideShareColors.primary,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.2),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.my_location,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

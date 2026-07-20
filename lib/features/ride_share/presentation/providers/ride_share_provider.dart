@@ -271,6 +271,15 @@ class RecentPlacesManager {
     }
   }
 
+  /// Clear all recent places from memory and storage.
+  static Future<void> clearAll(dynamic ref) async {
+    ref.read(recentPlacesProvider.notifier).state = [];
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_recentPlacesStorageKey);
+    } catch (_) {}
+  }
+
   /// Add a place to recent (e.g. when user selects a destination). Dedupes by id, keeps latest first, caps at [_maxRecentPlaces].
   static Future<void> addPlace(dynamic ref, Place place) async {
     final list = ref.read(recentPlacesProvider);

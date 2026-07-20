@@ -77,12 +77,12 @@ android {
 
     buildTypes {
         getByName("release") {
+            // Local/dev: fall back to debug signing when key.properties is absent.
+            // Play Store uploads still need android/key.properties (gitignored).
             signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
             } else {
-                throw GradleException(
-                    "Release builds require android/key.properties with your Play upload keystore."
-                )
+                signingConfigs.getByName("debug")
             }
         }
     }

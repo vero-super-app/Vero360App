@@ -1,9 +1,14 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
+import 'package:vero360_app/GeneralModels/place_prediction_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/map_location_picker_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 
 class DestinationSearchScreen extends ConsumerStatefulWidget {
   /// When set, selecting a place saves Home/Work instead of booking dropoff.
@@ -59,30 +64,30 @@ class _DestinationSearchScreenState
         place,
         widget.saveAsType!,
       );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              widget.saveAsType == PlaceType.HOME
-                  ? 'Home saved'
-                  : 'Work saved',
-            ),
-            behavior: SnackBarBehavior.floating,
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.saveAsType == PlaceType.HOME ? 'Home saved' : 'Work saved',
           ),
-        );
-        Navigator.pop(context, place);
-      }
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      Navigator.of(context).pop(place);
       return;
     }
 
     if (widget.returnPlaceOnly) {
-      if (mounted) Navigator.pop(context, place);
+      if (mounted) Navigator.of(context).pop(place);
       return;
     }
 
-    await RecentPlacesManager.addPlace(ref, place);
+    // Set dropoff + leave search immediately. Persist history after.
     ref.read(selectedDropoffPlaceProvider.notifier).state = place;
-    if (mounted) Navigator.pop(context, place);
+    if (!mounted) return;
+    FocusScope.of(context).unfocus();
+    Navigator.of(context).pop(place);
+    unawaited(RecentPlacesManager.addPlace(ref, place));
   }
 
   Future<void> _openMapPicker({PlaceType? saveAs}) async {
@@ -260,7 +265,7 @@ class _ProfileAvatar extends StatelessWidget {
 class _SearchInput extends ConsumerStatefulWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
-  final ValueChanged<Place> onPlaceSelected;
+  final FutureOr<void> Function(Place) onPlaceSelected;
   final String? confirmLabel;
 
   const _SearchInput({
@@ -280,23 +285,60 @@ class _SearchInputState extends ConsumerState<_SearchInput> {
   String? _loadingPlaceId;
 
   Future<void> _pickPrediction(dynamic prediction) async {
-    setState(() => _loadingPlaceId = prediction.placeId);
+    if (_loadingPlaceId != null) return;
+
+    final placePrediction = prediction is PlacePrediction
+        ? prediction
+        : PlacePrediction(
+            placeId: '${prediction.placeId ?? ''}',
+            mainText: '${prediction.mainText ?? ''}',
+            secondaryText: '${prediction.secondaryText ?? ''}',
+            fullText: '${prediction.fullText ?? ''}',
+            types: const [],
+          );
+
+    final trackingId = placePrediction.placeId.isNotEmpty
+        ? placePrediction.placeId
+        : placePrediction.fullText;
+
+    setState(() => _loadingPlaceId = trackingId);
+
     try {
-      final placeDetails = await ref.read(
-        placeDetailsProvider(prediction.placeId).future,
-      );
-      final geometry = placeDetails['geometry'] as Map<String, dynamic>?;
-      final location = geometry?['location'] as Map<String, dynamic>?;
-      if (location != null && mounted) {
-        widget.onPlaceSelected(
-          Place(
-            id: prediction.placeId,
-            name: prediction.mainText,
-            address: prediction.fullText,
-            latitude: (location['lat'] as num?)?.toDouble() ?? 0,
-            longitude: (location['lng'] as num?)?.toDouble() ?? 0,
-            type: PlaceType.RECENT,
-          ),
+      if (kDebugMode) {
+        debugPrint(
+          '[DestinationSearch] Resolving "${placePrediction.mainText}" '
+          'id=${placePrediction.placeId}',
+        );
+      }
+
+      final place = await ref
+          .read(googlePlacesServiceProvider)
+          .resolvePrediction(placePrediction)
+          .timeout(const Duration(seconds: 20));
+
+      if (kDebugMode) {
+        debugPrint(
+          '[DestinationSearch] Resolved → ${place.name} '
+          '(${place.latitude}, ${place.longitude})',
+        );
+      }
+
+      if (!mounted) return;
+
+      // Parent sets dropoff + pops. Await so errors still show here.
+      await widget.onPlaceSelected(place);
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('[DestinationSearch] Failed to resolve place: $e');
+        debugPrint('$st');
+      }
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Could not set destination',
+          isSuccess: false,
+          errorMessage:
+              'We found the place but could not get its map location. Try another result or Set on map.',
         );
       }
     } finally {
@@ -403,7 +445,10 @@ class _SearchInputState extends ConsumerState<_SearchInput> {
                   ),
                   itemBuilder: (context, index) {
                     final prediction = predictions[index];
-                    final isLoading = _loadingPlaceId == prediction.placeId;
+                    final rowId = prediction.placeId.isNotEmpty
+                        ? prediction.placeId
+                        : prediction.fullText;
+                    final isLoading = _loadingPlaceId == rowId;
                     final isSaved =
                         bookmarked.any((p) => p.id == prediction.placeId);
                     return ListTile(
@@ -454,30 +499,30 @@ class _SearchInputState extends ConsumerState<_SearchInput> {
                           color: RideShareColors.primary,
                         ),
                         onPressed: () async {
-                          final details = await ref.read(
-                            placeDetailsProvider(prediction.placeId).future,
-                          );
-                          final geometry =
-                              details['geometry'] as Map<String, dynamic>?;
-                          final location =
-                              geometry?['location'] as Map<String, dynamic>?;
-                          if (location == null) return;
-                          await BookmarkedPlacesManager.toggleFavorite(
-                            ref,
-                            Place(
-                              id: prediction.placeId,
-                              name: prediction.mainText,
-                              address: prediction.fullText,
-                              latitude:
-                                  (location['lat'] as num?)?.toDouble() ?? 0,
-                              longitude:
-                                  (location['lng'] as num?)?.toDouble() ?? 0,
-                              type: PlaceType.FAVORITE,
-                            ),
-                          );
+                          try {
+                            final place = await ref
+                                .read(googlePlacesServiceProvider)
+                                .resolvePrediction(prediction);
+                            await BookmarkedPlacesManager.toggleFavorite(
+                              ref,
+                              place.copyWith(type: PlaceType.FAVORITE),
+                            );
+                          } catch (_) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Could not save that place'),
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            }
+                          }
                         },
                       ),
-                      onTap: isLoading ? null : () => _pickPrediction(prediction),
+                      onTap: isLoading
+                          ? null
+                          : () => _pickPrediction(prediction),
+                      enabled: !isLoading && _loadingPlaceId == null,
                     );
                   },
                 );

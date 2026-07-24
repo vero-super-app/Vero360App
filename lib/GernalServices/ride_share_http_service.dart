@@ -281,14 +281,17 @@ class RideShareHttpService {
         }
       } else if (response.statusCode == 400) {
         print('[RideShareHttpService] Bad request (400): ${response.body}');
+        var message = 'Invalid request parameters';
         try {
           final errorData = jsonDecode(response.body);
-          final message = errorData['message'] ?? 'Invalid request parameters';
-          throw Exception(message);
-        } catch (e) {
-          throw Exception(
-              'Failed to request ride: Invalid parameters - ${response.body}');
-        }
+          final raw = errorData is Map ? errorData['message'] : null;
+          if (raw is String && raw.trim().isNotEmpty) {
+            message = raw.trim();
+          } else if (raw is List && raw.isNotEmpty) {
+            message = raw.map((e) => e.toString()).join(', ');
+          }
+        } catch (_) {}
+        throw Exception(message);
       } else {
         print(
             '[RideShareHttpService] Ride creation failed: ${response.statusCode}');
@@ -397,6 +400,19 @@ class RideShareHttpService {
       print('Error getting passenger ride history');
       rethrow;
     }
+  }
+
+  /// Newest completed trip that still needs payment, if any.
+  Future<Ride?> findUnpaidCompletedRide() async {
+    final page = await getPassengerRideHistory(
+      status: 'COMPLETED',
+      page: 1,
+      limit: 20,
+    );
+    for (final ride in page.rides) {
+      if (ride.needsPayment) return ride;
+    }
+    return null;
   }
 
   /// Get paginated ride history for authenticated driver

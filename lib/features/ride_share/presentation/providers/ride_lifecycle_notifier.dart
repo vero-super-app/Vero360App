@@ -50,6 +50,16 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
   }) async {
     state = const RideRequesting();
     try {
+      // Client-side gate (backend also enforces this).
+      final unpaid = await _httpService.findUnpaidCompletedRide();
+      if (unpaid != null) {
+        state = const RideError(
+          message:
+              'Please complete payment for your previous trip before booking a new ride.',
+        );
+        return;
+      }
+
       final ride = await _httpService.requestRide(
         pickupLatitude: pickupLat,
         pickupLongitude: pickupLng,

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
@@ -6,7 +7,9 @@ import 'package:vero360_app/features/ride_share/presentation/pages/destination_s
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 
 /// Bottom sheet on the taxi home screen — search bar, ride options, confirm.
 class RideBookingBottomSheet extends ConsumerStatefulWidget {
@@ -35,6 +38,9 @@ class RideBookingBottomSheet extends ConsumerStatefulWidget {
 class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet> {
   String? _selectedVehicleClass;
   bool _isRequesting = false;
+  String? _errorTitle;
+  String? _errorMessage;
+  Ride? _unpaidRide;
   double _distance = 0;
   int _duration = 0;
   Map<String, dynamic> _estimatedFares = {};
@@ -139,9 +145,22 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
     final pickup = widget.pickupPlace;
     final dropoff = widget.dropoffPlace;
     final vehicleClass = _selectedVehicleClass;
-    if (pickup == null || dropoff == null || vehicleClass == null) return;
+    if (dropoff == null || vehicleClass == null) return;
 
-    setState(() => _isRequesting = true);
+    if (pickup == null) {
+      _showRequestFailure(
+        title: 'Location needed',
+        detail: 'Waiting for your pickup location. Try again in a moment.',
+      );
+      return;
+    }
+
+    setState(() {
+      _isRequesting = true;
+      _errorTitle = null;
+      _errorMessage = null;
+      _unpaidRide = null;
+    });
 
     final lifecycle = ref.read(rideLifecycleProvider.notifier);
     await lifecycle.requestRide(
@@ -159,14 +178,122 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
     final result = ref.read(rideLifecycleProvider);
     switch (result) {
       case RideActive(:final ride):
+        setState(() => _isRequesting = false);
         widget.onRideRequested(ride.id);
-      case RideCancelled():
-        setState(() => _isRequesting = false);
-      case RideError():
-        setState(() => _isRequesting = false);
+
+      case RideCancelled(:final ride):
+        final detail = ride.cancellationReason?.trim().isNotEmpty == true
+            ? ride.cancellationReason!
+            : 'No drivers found in your area right now.';
+        _showRequestFailure(
+          title: 'No ride available',
+          detail: detail,
+        );
+        ref.read(rideLifecycleProvider.notifier).reset();
+
+      case RideError(:final message):
+        if (kDebugMode) {
+          debugPrint('[RideBookingBottomSheet] request error: $message');
+        }
+        final friendly = _friendlyError(message);
+        final unpaid = _isUnpaidPaymentError(friendly)
+            ? await ref.read(rideShareHttpServiceProvider).findUnpaidCompletedRide()
+            : null;
+        if (!mounted) return;
+        _showRequestFailure(
+          title: unpaid != null ? 'Payment required' : 'Could not request ride',
+          detail: friendly,
+          unpaidRide: unpaid,
+        );
+        ref.read(rideLifecycleProvider.notifier).reset();
+
       default:
-        setState(() => _isRequesting = false);
+        _showRequestFailure(
+          title: 'No ride available',
+          detail: 'No drivers found in your area right now.',
+        );
+        ref.read(rideLifecycleProvider.notifier).reset();
     }
+  }
+
+  void _showRequestFailure({
+    required String title,
+    required String detail,
+    Ride? unpaidRide,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      _isRequesting = false;
+      _errorTitle = title;
+      _errorMessage = detail;
+      _unpaidRide = unpaidRide;
+    });
+    ToastHelper.showCustomToast(
+      context,
+      title,
+      isSuccess: false,
+      errorMessage: detail,
+    );
+  }
+
+  bool _isUnpaidPaymentError(String message) {
+    final lower = message.toLowerCase();
+    return lower.contains('complete payment') ||
+        lower.contains('previous trip') ||
+        lower.contains('unpaid');
+  }
+
+  Future<void> _openUnpaidPayment() async {
+    final unpaid = _unpaidRide ??
+        await ref.read(rideShareHttpServiceProvider).findUnpaidCompletedRide();
+    if (!mounted || unpaid == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RideCompletionScreen(
+          ride: unpaid,
+          onDone: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _errorTitle = null;
+      _errorMessage = null;
+      _unpaidRide = null;
+    });
+  }
+
+  String _friendlyError(String raw) {
+    final lower = raw.toLowerCase();
+    if (lower.contains('complete payment') ||
+        lower.contains('previous trip')) {
+      return 'Please complete payment for your previous trip before booking a new ride.';
+    }
+    if (lower.contains('no driver') ||
+        lower.contains('no ride') ||
+        lower.contains('unavailable')) {
+      return 'No drivers found in your area right now.';
+    }
+    if (lower.contains('network') ||
+        lower.contains('socket') ||
+        lower.contains('timeout') ||
+        lower.contains('connection')) {
+      return 'Check your internet connection and try again.';
+    }
+    if (lower.contains('auth') || lower.contains('unauthorized')) {
+      return 'Please sign in again to request a ride.';
+    }
+    // Avoid dumping long stack traces into the UI.
+    final cleaned = raw
+        .replaceFirst(RegExp(r'^Exception:\s*'), '')
+        .replaceFirst(RegExp(r'^ApiException:\s*'), '')
+        .trim();
+    if (cleaned.length > 120) {
+      return 'Something went wrong while requesting your ride. Please try again.';
+    }
+    return cleaned.isEmpty
+        ? 'Something went wrong while requesting your ride. Please try again.'
+        : cleaned;
   }
 
   void _openSearch() {
@@ -283,14 +410,33 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                                 price: _fareLabel(v.class_),
                                 durationMin: _duration,
                                 isSelected: _selectedVehicleClass == v.class_,
-                                onTap: () => setState(
-                                  () => _selectedVehicleClass = v.class_,
-                                ),
+                                onTap: () => setState(() {
+                                  _selectedVehicleClass = v.class_;
+                                  _errorTitle = null;
+                                  _errorMessage = null;
+                                  _unpaidRide = null;
+                                }),
                               ),
                             ),
                           ),
                         const SizedBox(height: 8),
                         _PaymentRow(),
+                        if (_errorMessage != null) ...[
+                          const SizedBox(height: 12),
+                          _RequestErrorBanner(
+                            title: _errorTitle ?? 'No ride available',
+                            message: _errorMessage!,
+                            actionLabel:
+                                _unpaidRide != null ? 'Pay Now' : null,
+                            onAction:
+                                _unpaidRide != null ? _openUnpaidPayment : null,
+                            onDismiss: () => setState(() {
+                              _errorTitle = null;
+                              _errorMessage = null;
+                              _unpaidRide = null;
+                            }),
+                          ),
+                        ],
                         const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
@@ -367,6 +513,98 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _RequestErrorBanner extends StatelessWidget {
+  final String title;
+  final String message;
+  final VoidCallback onDismiss;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  const _RequestErrorBanner({
+    required this.title,
+    required this.message,
+    required this.onDismiss,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFEBEE),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFFCDD2)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.info_outline,
+            color: Color(0xFFC62828),
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    color: Color(0xFFC62828),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  message,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFFB71C1C),
+                    height: 1.35,
+                  ),
+                ),
+                if (actionLabel != null && onAction != null) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 36,
+                    child: ElevatedButton(
+                      onPressed: onAction,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: RideShareColors.primary,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
+                      child: Text(
+                        actionLabel!,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onDismiss,
+            icon: const Icon(Icons.close, size: 18),
+            color: const Color(0xFFC62828),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
       ),
     );
   }

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_history_ui.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
 enum RideHistoryPerspective { passenger, driver }
 
@@ -14,13 +17,9 @@ class RideHistoryDetailScreen extends StatelessWidget {
     required this.perspective,
   });
 
-  static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandNavy = Color(0xFF16284C);
-
   @override
   Widget build(BuildContext context) {
     final money = NumberFormat('#,##0', 'en');
-    final dateFmt = DateFormat('dd MMM yyyy, HH:mm');
     final summary = ride.tripSummary;
     final fare = summary?.fare ?? ride.resolvedFare;
     final distance = summary?.distance ?? ride.resolvedDistance;
@@ -33,325 +32,303 @@ class RideHistoryDetailScreen extends StatelessWidget {
         summary?.driverEarnings ?? ride.driverEarnings ?? (fare - platformFee);
     final when = ride.endTime ?? ride.createdAt;
     final isDriver = perspective == RideHistoryPerspective.driver;
+    final pending = ridePaymentPending(ride);
+    final counterpart = rideCounterpartName(ride, isDriver: isDriver);
+    final vehicle = rideVehicleLabel(ride);
+    final pickup = summary?.pickup ?? ride.pickupAddress ?? 'Pickup';
+    final dropoff = summary?.dropoff ?? ride.dropoffAddress ?? 'Dropoff';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FB),
-      appBar: AppBar(
-        title: Text(isDriver ? 'Trip Earnings' : 'Trip Receipt'),
-        backgroundColor: _brandOrange,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFE2E6EF)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: _brandOrange.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.local_taxi_rounded,
-                        color: _brandOrange,
+      backgroundColor: RideShareColors.background,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.arrow_back),
+                    style: IconButton.styleFrom(
+                      backgroundColor: RideShareColors.surfaceContainerLow,
+                      shape: const CircleBorder(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      isDriver ? 'Trip Earnings' : 'Trip Receipt',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: RideShareColors.titleText,
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Ride #${ride.id}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 17,
-                              color: _brandNavy,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            dateFmt.format(when),
-                            style: TextStyle(color: Colors.grey.shade700),
-                          ),
+                  ),
+                  RideHistoryStatusChip(status: ride.status),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          RideShareColors.primaryContainer,
+                          RideShareColors.primaryContainer
+                              .withValues(alpha: 0.9),
                         ],
                       ),
+                      borderRadius: BorderRadius.circular(22),
+                      boxShadow: [
+                        BoxShadow(
+                          color: RideShareColors.primaryContainer
+                              .withValues(alpha: 0.28),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
                     ),
-                    _statusChip(ride.status),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                _detailRow(
-                  'Route',
-                  ride.routeLabel,
-                  icon: Icons.route_rounded,
-                ),
-                const SizedBox(height: 10),
-                _detailRow(
-                  isDriver ? 'Passenger' : 'Driver',
-                  summary?.counterpartyName ??
-                      (isDriver
-                          ? (ride.passengerName ?? 'Passenger')
-                          : (ride.driver?.fullName ?? 'Driver')),
-                  icon: Icons.person_outline_rounded,
-                ),
-                if ((summary?.vehiclePlate ?? ride.taxi?.licensePlate)
-                        ?.isNotEmpty ==
-                    true) ...[
-                  const SizedBox(height: 10),
-                  _detailRow(
-                    'Vehicle',
-                    '${summary?.vehiclePlate ?? ride.taxi?.licensePlate}'
-                    '${summary?.vehicleClass != null ? ' • ${summary!.vehicleClass}' : ''}',
-                    icon: Icons.directions_car_outlined,
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFE2E6EF)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Trip Summary',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 16,
-                    color: _brandNavy,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                _metricRow('Distance', '${distance.toStringAsFixed(1)} km'),
-                _metricRow('Duration', duration > 0 ? '$duration mins' : '—'),
-                _metricRow(
-                  'Pickup',
-                  summary?.pickup ?? ride.pickupAddress ?? '—',
-                ),
-                _metricRow(
-                  'Dropoff',
-                  summary?.dropoff ?? ride.dropoffAddress ?? '—',
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFE2E6EF)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isDriver ? 'Earnings Breakdown' : 'Fare Breakdown',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 16,
-                    color: _brandNavy,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                _metricRow('Trip fare', 'MK ${money.format(fare)}'),
-                if (isDriver) ...[
-                  _metricRow(
-                    'Platform fee',
-                    'MK ${money.format(platformFee)}',
-                  ),
-                  const Divider(height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'You earned',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 16,
-                          color: _brandNavy,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          formatRideWhen(when),
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.75),
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      Text(
-                        'MK ${money.format(driverEarnings)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 20,
-                          color: _brandOrange,
+                        const SizedBox(height: 6),
+                        Text(
+                          formatRideMoney(
+                            isDriver ? driverEarnings : fare,
+                            money,
+                          ),
+                          style: const TextStyle(
+                            color: RideShareColors.primary,
+                            fontSize: 34,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
-                      ),
-                    ],
+                        Text(
+                          isDriver ? 'You earned' : 'Trip total',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.7),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        RideHistoryRouteTimeline(
+                          pickup: pickup,
+                          dropoff: dropoff,
+                          dark: true,
+                        ),
+                      ],
+                    ),
                   ),
-                ] else ...[
-                  const Divider(height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Total paid',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 16,
-                          color: _brandNavy,
+                  const SizedBox(height: 14),
+                  _card(
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 26,
+                          backgroundColor:
+                              RideShareColors.primary.withValues(alpha: 0.15),
+                          child: Text(
+                            counterpart.isNotEmpty
+                                ? counterpart[0].toUpperCase()
+                                : '?',
+                            style: const TextStyle(
+                              color: RideShareColors.primaryDeep,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 20,
+                            ),
+                          ),
                         ),
-                      ),
-                      Text(
-                        'MK ${money.format(fare)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 20,
-                          color: _brandOrange,
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                counterpart,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16,
+                                  color: RideShareColors.titleText,
+                                ),
+                              ),
+                              Text(
+                                vehicle,
+                                style: const TextStyle(
+                                  color: RideShareColors.onSurfaceVariant,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                        if (ride.isCompleted)
+                          RideHistoryPaymentChip(pending: pending),
+                      ],
+                    ),
                   ),
-                ],
-                if ((summary?.paymentStatus ?? ride.paymentStatus) != null) ...[
                   const SizedBox(height: 12),
-                  _metricRow(
-                    'Payment',
-                    _paymentLabel(
-                      summary?.paymentStatus ?? ride.paymentStatus ?? 'pending',
+                  _card(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Trip Summary',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _kv('Ride ID', '#${ride.id}'),
+                        _kv('Distance', '${distance.toStringAsFixed(1)} km'),
+                        _kv(
+                          'Duration',
+                          duration > 0 ? '$duration min' : '—',
+                        ),
+                        if (ride.paidAt != null)
+                          _kv(
+                            'Paid on',
+                            DateFormat('dd MMM yyyy, HH:mm')
+                                .format(ride.paidAt!),
+                          ),
+                      ],
                     ),
                   ),
-                  if (ride.paidAt != null)
-                    _metricRow(
-                      'Paid on',
-                      dateFmt.format(ride.paidAt!),
+                  const SizedBox(height: 12),
+                  _card(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isDriver ? 'Earnings breakdown' : 'Fare breakdown',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _kv('Trip fare', formatRideMoney(fare, money)),
+                        if (isDriver) ...[
+                          _kv(
+                            'Platform fee',
+                            formatRideMoney(platformFee, money),
+                          ),
+                          const Divider(height: 22),
+                          _kv(
+                            'You earned',
+                            formatRideMoney(driverEarnings, money),
+                            emphasize: true,
+                          ),
+                        ] else ...[
+                          const Divider(height: 22),
+                          _kv(
+                            pending ? 'Amount due' : 'Total paid',
+                            formatRideMoney(fare, money),
+                            emphasize: true,
+                          ),
+                        ],
+                      ],
                     ),
+                  ),
+                  if (!isDriver && pending) ...[
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 54,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => RideCompletionScreen(
+                                ride: ride,
+                                onDone: () => Navigator.of(context).pop(),
+                              ),
+                            ),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: RideShareColors.primary,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(28),
+                          ),
+                        ),
+                        icon: const Icon(Icons.payments_outlined),
+                        label: const Text(
+                          'Pay Now',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _card({required Widget child}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: RideShareColors.outlineVariant),
+        boxShadow: [
+          BoxShadow(
+            color: RideShareColors.primaryContainer.withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
+      child: child,
     );
   }
 
-  Widget _statusChip(String status) {
-    Color bg;
-    Color fg;
-    String label;
-    switch (status) {
-      case RideStatus.completed:
-        bg = const Color(0xFFE8F5E9);
-        fg = const Color(0xFF2E7D32);
-        label = 'Completed';
-        break;
-      case RideStatus.cancelled:
-        bg = const Color(0xFFFFEBEE);
-        fg = const Color(0xFFC62828);
-        label = 'Cancelled';
-        break;
-      default:
-        bg = const Color(0xFFFFF3E0);
-        fg = _brandOrange;
-        label = status.replaceAll('_', ' ');
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: fg,
-          fontWeight: FontWeight.w700,
-          fontSize: 12,
-        ),
-      ),
-    );
-  }
-
-  String _paymentLabel(String status) {
-    switch (status.toLowerCase()) {
-      case 'paid':
-        return 'Paid';
-      case 'failed':
-        return 'Failed';
-      default:
-        return 'Pending';
-    }
-  }
-
-  Widget _detailRow(String label, String value, {required IconData icon}) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18, color: Colors.grey.shade600),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: _brandNavy,
-                  height: 1.35,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _metricRow(String label, String value) {
+  Widget _kv(String label, String value, {bool emphasize = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: Text(
               label,
-              style: TextStyle(color: Colors.grey.shade700),
+              style: const TextStyle(
+                color: RideShareColors.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-          const SizedBox(width: 12),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                color: _brandNavy,
-              ),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: emphasize ? FontWeight.w900 : FontWeight.w700,
+              color: emphasize
+                  ? RideShareColors.primary
+                  : RideShareColors.titleText,
+              fontSize: emphasize ? 16 : 14,
             ),
           ),
         ],

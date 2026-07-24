@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
-import 'package:vero360_app/GeneralModels/place_model.dart';
+import 'package:vero360_app/GeneralModels/place_prediction_model.dart';
 import 'skeleton_loader.dart';
 
 class PlaceSearchWidget extends ConsumerStatefulWidget {
@@ -220,34 +220,35 @@ class _PlaceSearchWidgetState extends ConsumerState<PlaceSearchWidget> {
       color: Colors.transparent,
       child: InkWell(
         onTap: () async {
-          // Fetch place details to get coordinates
-          final placeDetails =
-              await ref.read(placeDetailsProvider(prediction.placeId).future);
+          try {
+            final placePrediction = prediction is PlacePrediction
+                ? prediction
+                : PlacePrediction(
+                    placeId: '${prediction.placeId ?? ''}',
+                    mainText: '${prediction.mainText ?? ''}',
+                    secondaryText: '${prediction.secondaryText ?? ''}',
+                    fullText: '${prediction.fullText ?? ''}',
+                    types: const [],
+                  );
 
-          final geometry = placeDetails['geometry'] as Map<String, dynamic>?;
-          final location = geometry?['location'] as Map<String, dynamic>?;
+            final place = await ref
+                .read(googlePlacesServiceProvider)
+                .resolvePrediction(placePrediction)
+                .timeout(const Duration(seconds: 20));
 
-          if (location != null) {
-            final place = Place(
-              id: prediction.placeId,
-              name: prediction.mainText,
-              address: prediction.fullText,
-              latitude: (location['lat'] as num?)?.toDouble() ?? 0.0,
-              longitude: (location['lng'] as num?)?.toDouble() ?? 0.0,
-              type: PlaceType.RECENT,
-            );
-
+            if (!mounted) return;
             ref.read(selectedDropoffPlaceProvider.notifier).state = place;
             widget.searchController.clear();
-
-            setState(() {
-              _searchQuery = '';
-            });
-          } else {
+            setState(() => _searchQuery = '');
+          } catch (e) {
+            if (kDebugMode) {
+              debugPrint('[PlaceSearch] Failed to resolve place: $e');
+            }
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Unable to get location coordinates'),
+                  content:
+                      Text('Could not get that location. Try another result.'),
                   behavior: SnackBarBehavior.floating,
                   margin: EdgeInsets.all(16),
                 ),

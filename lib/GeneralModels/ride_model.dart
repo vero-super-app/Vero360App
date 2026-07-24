@@ -468,6 +468,19 @@ class Ride {
   bool get isCompleted => status == RideStatus.completed;
   bool get isCancelled => status == RideStatus.cancelled;
 
+  /// Completed trip still awaiting passenger payment (blocks new bookings).
+  bool get needsPayment {
+    if (!isCompleted) return false;
+    final status =
+        (paymentStatus ?? tripSummary?.paymentStatus ?? 'pending')
+            .toLowerCase()
+            .trim();
+    return status != 'paid' &&
+        status != 'completed' &&
+        status != 'success' &&
+        status != 'settled';
+  }
+
   String get fareDisplay => 'MK${estimatedFare.toStringAsFixed(2)}';
   String get distanceDisplay => '${estimatedDistance.toStringAsFixed(1)} km';
 

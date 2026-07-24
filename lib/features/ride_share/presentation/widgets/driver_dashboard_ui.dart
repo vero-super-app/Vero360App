@@ -46,7 +46,8 @@ class DriverOnlineToggle extends StatelessWidget {
               width: 20,
               height: 20,
               decoration: BoxDecoration(
-                color: isOnline ? Colors.white : RideShareColors.onSurfaceVariant,
+                color:
+                    isOnline ? Colors.white : RideShareColors.onSurfaceVariant,
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
@@ -389,8 +390,8 @@ class DriverWeeklyGoalCard extends StatelessWidget {
                 ),
                 TextSpan(
                   text: progress >= 1
-                      ? ' — Goal crushed!'
-                      : ' — Keep going for your bonus',
+                      ? '  Goal crushed!'
+                      : '  Keep going for your bonus',
                   style: const TextStyle(
                     color: RideShareColors.onSurfaceVariant,
                     fontWeight: FontWeight.w600,
@@ -740,7 +741,8 @@ class DriverQuickActionButton extends StatelessWidget {
         child: OutlinedButton.icon(
           onPressed: onPressed,
           icon: Icon(icon, size: 20),
-          label: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+          label:
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
           style: OutlinedButton.styleFrom(
             foregroundColor: color,
             side: BorderSide(color: color),

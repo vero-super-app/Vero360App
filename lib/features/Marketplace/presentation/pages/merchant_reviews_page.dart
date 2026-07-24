@@ -139,15 +139,6 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
 
   int get _reviewCount => _summary?.count ?? _reviews.length;
 
-  MerchantReview? get _myExistingReview {
-    final me = _myUserId;
-    if (me == null) return null;
-    for (final r in _reviews) {
-      if (r.isMine(me)) return r;
-    }
-    return null;
-  }
-
   bool _isGenericName(String name) {
     final n = name.trim().toLowerCase();
     return n.isEmpty ||
@@ -215,7 +206,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
     return AuthHandler.isAuthenticated();
   }
 
-  Future<void> _openReviewEditor({MerchantReview? existing}) async {
+  Future<void> _openReviewEditor({required MerchantReview existing}) async {
     if (!await _requireLogin()) return;
 
     final result = await showModalBottomSheet<_ReviewDraft>(
@@ -224,39 +215,20 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       backgroundColor: Colors.transparent,
       builder: (_) => _ReviewEditorSheet(
         merchantName: widget.merchantName,
-        initialRating: existing?.rating ?? 5,
-        initialComment: existing?.comment ?? '',
-        isEditing: existing != null,
+        initialRating: existing.rating,
+        initialComment: existing.comment,
+        isEditing: true,
       ),
     );
     if (result == null || !mounted) return;
 
     try {
-      final merchantId = _resolvedMerchantId ??
-          await MerchantReviewIdResolver.resolveMerchantId(
-            merchantRef: widget.merchantId,
-            serviceProviderId: widget.serviceProviderId,
-            sellerUserId: widget.sellerUserId,
-            preResolvedBackendId: widget.merchantBackendId,
-          );
-      final customerId = await MerchantReviewIdResolver.resolveCustomerId();
-
-      if (existing != null) {
-        await _service.updateReview(
-          reviewId: existing.id,
-          rating: result.rating,
-          comment: result.comment,
-        );
-        _toast('Review updated');
-      } else {
-        await _service.createReview(
-          merchantId: merchantId,
-          customerId: customerId,
-          rating: result.rating,
-          comment: result.comment,
-        );
-        _toast('Review posted — thank you!');
-      }
+      await _service.updateReview(
+        reviewId: existing.id,
+        rating: result.rating,
+        comment: result.comment,
+      );
+      _toast('Review updated');
       await _load(silent: true);
     } catch (e) {
       if (!mounted) return;
@@ -363,28 +335,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
           ),
         ),
       ),
-      floatingActionButton: _loading || !_isLoggedIn
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: () {
-                final mine = _myExistingReview;
-                if (mine != null) {
-                  _openReviewEditor(existing: mine);
-                } else {
-                  _openReviewEditor();
-                }
-              },
-              backgroundColor: MerchantReviewsPage._brandOrange,
-              foregroundColor: Colors.white,
-              icon: Icon(
-                _myExistingReview != null
-                    ? Icons.edit_outlined
-                    : Icons.rate_review_outlined,
-              ),
-              label: Text(
-                _myExistingReview != null ? 'Edit your review' : 'Write review',
-              ),
-            ),
+      floatingActionButton: null,
       body: _buildBody(),
     );
   }
@@ -435,7 +386,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       onRefresh: () => _load(silent: true),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
           _summaryCard(),
           const SizedBox(height: 20),
@@ -634,7 +585,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
           ),
           const SizedBox(height: 6),
           Text(
-            'Be the first to share your experience with ${widget.merchantName}.',
+            'Ratings appear after a real chat or completed order with ${widget.merchantName}.',
             textAlign: TextAlign.center,
             style: const TextStyle(
               fontSize: 13,

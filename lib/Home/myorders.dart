@@ -14,6 +14,7 @@ import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/features/Marketplace/presentation/widgets/merchant_review_prompt.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -289,6 +290,20 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         errorMessage: '',
       );
       await _reloadCurrent();
+      if (!mounted) return;
+      // Facebook-style: rate after business is done (payment released).
+      final merchantName =
+          (o.merchantName ?? '').trim().isEmpty ? 'the seller' : o.merchantName!.trim();
+      await MerchantReviewPrompt.maybeShow(
+        context,
+        merchantName: merchantName,
+        reason: MerchantReviewReason.afterOrder,
+        contextKey: 'order:${o.id}',
+        merchantRef: (o.merchantUid ?? '').trim().isNotEmpty
+            ? o.merchantUid
+            : (o.merchantId > 0 ? '${o.merchantId}' : null),
+        merchantBackendId: o.merchantId > 0 ? o.merchantId : null,
+      );
     } catch (e) {
       if (!mounted) return;
       ToastHelper.showCustomToast(

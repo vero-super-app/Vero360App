@@ -18,9 +18,14 @@ import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/chat_notification_service.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
+import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/LatestArrival_page.dart';
+import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 
 /// Central service for handling Firebase Cloud Messaging (FCM) + local notifications
 class NotificationService {
@@ -170,17 +175,37 @@ class NotificationService {
         await NotificationStore.instance.ensureLoaded();
         _syncOrderPartyAlertListener(user);
         _syncChatAlertListener(user);
+        await EngagementNotificationService.instance.syncTopicSubscription();
+        // Soft keep-alive digest (max 1–2×/day when there is fresh content).
+        unawaited(
+          Future<void>.delayed(const Duration(seconds: 8), () {
+            unawaited(
+              EngagementNotificationService.instance.maybeSendDailyDigest(),
+            );
+          }),
+        );
       } else {
         // Ensure notifications from previous account do not remain visible.
         await NotificationStore.instance.clearAll();
         _syncOrderPartyAlertListener(null);
         _syncChatAlertListener(null);
+        await EngagementNotificationService.instance.syncTopicSubscription();
       }
     });
 
     await NotificationStore.instance.ensureLoaded();
     _syncOrderPartyAlertListener(FirebaseAuth.instance.currentUser);
     _syncChatAlertListener(FirebaseAuth.instance.currentUser);
+    await EngagementNotificationService.instance.syncTopicSubscription();
+    if (FirebaseAuth.instance.currentUser != null) {
+      unawaited(
+        Future<void>.delayed(const Duration(seconds: 12), () {
+          unawaited(
+            EngagementNotificationService.instance.maybeSendDailyDigest(),
+          );
+        }),
+      );
+    }
   }
 
   /// Listens for [OrderPartyNotificationService] docs so buyers/merchants get
@@ -558,7 +583,9 @@ class NotificationService {
     if (navigator == null) return;
 
     final type = (data['type'] as String?)?.toLowerCase();
- 
+    final badgeRoute = (data['badgeRoute'] as String?)?.toLowerCase() ??
+        (data[NotificationStore.kPayloadBadgeRoute] as String?)?.toLowerCase();
+
     switch (type ?? '') {
       case 'new_ride':
       case 'ride_update':
@@ -596,10 +623,77 @@ class NotificationService {
         ));
         break;
 
-      default:
+      case 'promo_digest':
+      case 'promotion':
+      case 'promotions':
+        if (kDebugMode) debugPrint("→ Open promotions");
         navigator.push(MaterialPageRoute(
-          builder: (_) => const NotificationsPage(),
+          builder: (_) => const PromotionsPage(),
         ));
+        break;
+
+      case 'arrivals_digest':
+      case 'latest_arrivals':
+      case 'todays_arrivals':
+        if (kDebugMode) debugPrint("→ Open today's arrivals");
+        navigator.push(MaterialPageRoute(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text("Today's arrivals")),
+            body: const LatestArrivalsSection(),
+          ),
+        ));
+        break;
+
+      case 'marketplace_digest':
+      case 'marketplace':
+      case 'new_product':
+        if (kDebugMode) debugPrint("→ Open marketplace");
+        navigator.push(MaterialPageRoute(
+          builder: (_) => MarketPage(
+            cartService: CartServiceProvider.getInstance(),
+          ),
+        ));
+        break;
+
+      case 'engagement':
+        // Generic keep-alive — route by badge if present.
+        if (badgeRoute == NotificationStore.kBadgePromotions) {
+          navigator.push(MaterialPageRoute(
+            builder: (_) => const PromotionsPage(),
+          ));
+        } else if (badgeRoute == NotificationStore.kBadgePostArrival) {
+          navigator.push(MaterialPageRoute(
+            builder: (_) => Scaffold(
+              appBar: AppBar(title: const Text("Today's arrivals")),
+              body: const LatestArrivalsSection(),
+            ),
+          ));
+        } else {
+          navigator.push(MaterialPageRoute(
+            builder: (_) => MarketPage(
+              cartService: CartServiceProvider.getInstance(),
+            ),
+          ));
+        }
+        break;
+
+      default:
+        if (badgeRoute == NotificationStore.kBadgePromotions) {
+          navigator.push(MaterialPageRoute(
+            builder: (_) => const PromotionsPage(),
+          ));
+        } else if (badgeRoute == NotificationStore.kBadgePostArrival) {
+          navigator.push(MaterialPageRoute(
+            builder: (_) => Scaffold(
+              appBar: AppBar(title: const Text("Today's arrivals")),
+              body: const LatestArrivalsSection(),
+            ),
+          ));
+        } else {
+          navigator.push(MaterialPageRoute(
+            builder: (_) => const NotificationsPage(),
+          ));
+        }
     }
   }
 

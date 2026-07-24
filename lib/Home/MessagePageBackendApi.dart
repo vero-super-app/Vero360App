@@ -30,6 +30,7 @@ import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as core;
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/features/Marketplace/presentation/widgets/merchant_review_prompt.dart';
 
 class MessagePageBackendApi extends StatefulWidget {
   /// Chat ID from backend. Empty when chat is resolved after open (marketplace).
@@ -1631,6 +1632,67 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     );
   }
 
+  bool _leaving = false;
+
+  /// Facebook-style: only prompt after a real two-way conversation.
+  bool _eligibleForChatRating() {
+    final myId = _myUserId;
+    if (myId == null) return false;
+
+    final merchantRef = (widget.peerMerchantId ??
+            widget.resolveMerchantId ??
+            widget.productContext?.merchantId ??
+            '')
+        .trim();
+    final backendId = widget.peerUserId ?? _peerUserId;
+    if (merchantRef.isEmpty && (backendId == null || backendId <= 0)) {
+      return false;
+    }
+
+    var mine = 0;
+    var theirs = 0;
+    for (final m in _messages) {
+      if (m.isMine(myId)) {
+        mine++;
+      } else {
+        theirs++;
+      }
+    }
+    // Need both sides to have talked (not a one-sided enquiry).
+    return mine >= 2 && theirs >= 1;
+  }
+
+  Future<void> _maybePromptChatRatingThenPop() async {
+    if (_leaving) return;
+    _leaving = true;
+    try {
+      if (_eligibleForChatRating() && mounted) {
+        final merchantRef = (widget.peerMerchantId ??
+                widget.resolveMerchantId ??
+                widget.productContext?.merchantId ??
+                '')
+            .trim();
+        final backendId = widget.peerUserId ?? _peerUserId;
+        final chatKey = _chatId.isNotEmpty
+            ? 'chat:$_chatId'
+            : 'chat_peer:${backendId ?? merchantRef}';
+
+        await MerchantReviewPrompt.maybeShow(
+          context,
+          merchantName: widget.peerName,
+          reason: MerchantReviewReason.afterChat,
+          contextKey: chatKey,
+          merchantRef: merchantRef.isEmpty ? null : merchantRef,
+          serviceProviderId: widget.resolveServiceProviderId,
+          sellerUserId: widget.resolveSellerUserId,
+          merchantBackendId: backendId,
+        );
+      }
+    } finally {
+      if (mounted) Navigator.of(context).pop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Keep seller chrome visible while chat/messages resolve (feels much faster).
@@ -1653,15 +1715,22 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         !_uploadingAudio &&
         !_recording;
 
-    return Scaffold(
-      backgroundColor: _bg,
-      appBar: _buildModernAppBar(title: title, activeProduct: activeProduct),
-      body: Column(
-        children: [
-          Expanded(child: _buildMessagesPane(activeProduct)),
-          if (activeProduct != null) _buildDiscussedProductBar(activeProduct),
-          _buildInputArea(canSend: canSend),
-        ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        unawaited(_maybePromptChatRatingThenPop());
+      },
+      child: Scaffold(
+        backgroundColor: _bg,
+        appBar: _buildModernAppBar(title: title, activeProduct: activeProduct),
+        body: Column(
+          children: [
+            Expanded(child: _buildMessagesPane(activeProduct)),
+            if (activeProduct != null) _buildDiscussedProductBar(activeProduct),
+            _buildInputArea(canSend: canSend),
+          ],
+        ),
       ),
     );
   }

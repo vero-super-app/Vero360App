@@ -23,6 +23,7 @@ import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 
 // REQUIRED PAGES
 import 'package:vero360_app/GeneralPages/address.dart'; // AddressPage
@@ -84,6 +85,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _notificationsEnabled = true;
   bool _notificationsOrders = true;
   bool _notificationsMessages = true;
+  bool _notificationsEngagement = true;
 
   // security: Face ID / fingerprint app lock
   bool _biometricLockEnabled = false;
@@ -197,6 +199,8 @@ class _SettingsPageState extends State<SettingsPage> {
       _notificationsEnabled = prefs.getBool('pref_notifications_enabled') ?? true;
       _notificationsOrders = prefs.getBool('pref_notifications_orders') ?? true;
       _notificationsMessages = prefs.getBool('pref_notifications_messages') ?? true;
+      _notificationsEngagement =
+          prefs.getBool(EngagementNotificationService.prefEnabled) ?? true;
       _biometricLockEnabled = prefs.getBool('pref_biometric_lock') ?? false;
     });
   }
@@ -214,6 +218,15 @@ class _SettingsPageState extends State<SettingsPage> {
     await prefs.setBool('pref_notifications_enabled', _notificationsEnabled);
     await prefs.setBool('pref_notifications_orders', _notificationsOrders);
     await prefs.setBool('pref_notifications_messages', _notificationsMessages);
+    await prefs.setBool(
+      EngagementNotificationService.prefEnabled,
+      _notificationsEngagement,
+    );
+    unawaited(
+      EngagementNotificationService.instance.syncTopicSubscription(
+        enabledOverride: _notificationsEnabled && _notificationsEngagement,
+      ),
+    );
     await prefs.setBool('pref_biometric_lock', _biometricLockEnabled);
   }
 
@@ -920,6 +933,26 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: Text(_t('Messages', 'Mauthenga'),
                       style: const TextStyle(fontWeight: FontWeight.w800)),
                   subtitle: Text(_t('Chat and support messages', 'Mauthenga a nkhani ndi thandizo')),
+                ),
+                SwitchListTile(
+                  value: _notificationsEngagement,
+                  onChanged: _notificationsEnabled
+                      ? (v) async {
+                          setLocal(() => _notificationsEngagement = v);
+                          setState(() => _notificationsEngagement = v);
+                          await _savePersonalizationPrefs();
+                        }
+                      : null,
+                  title: Text(
+                    _t('Deals & new listings', 'Zogulitsa ndi zatsopano'),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(
+                    _t(
+                      'Promotions, today’s arrivals, and marketplace (1–2×/day)',
+                      'Zotsatsa, zofika lero, ndi msika (1–2/tsiku)',
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 8),
               ],

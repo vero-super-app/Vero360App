@@ -2,8 +2,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 /// HTTP(S) images with disk cache ([CachedNetworkImage]). On failure, retries the
-/// other scheme (http ↔ https). Does not set disk or memory resize limits so the
-/// cached file and decode stay at full resolution.
+/// other scheme (http ↔ https). Pass [memCacheWidth]/[memCacheHeight] for
+/// thumbnails so Flutter does not decode full-resolution bitmaps.
 class ResilientCachedNetworkImage extends StatefulWidget {
   const ResilientCachedNetworkImage({
     required this.url,
@@ -11,12 +11,16 @@ class ResilientCachedNetworkImage extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.width,
     this.height,
+    this.memCacheWidth,
+    this.memCacheHeight,
   });
 
   final String url;
   final BoxFit fit;
   final double? width;
   final double? height;
+  final int? memCacheWidth;
+  final int? memCacheHeight;
 
   @override
   State<ResilientCachedNetworkImage> createState() =>
@@ -59,6 +63,8 @@ class _ResilientCachedNetworkImageState
       fit: widget.fit,
       width: widget.width,
       height: widget.height,
+      memCacheWidth: widget.memCacheWidth,
+      memCacheHeight: widget.memCacheHeight,
       fadeInDuration: Duration.zero,
       fadeOutDuration: Duration.zero,
       placeholder: (context, _) => Container(

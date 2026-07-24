@@ -632,14 +632,18 @@ class _SettingsPageState extends State<SettingsPage> {
     _maybeHaptic();
     final auth = LocalAuthentication();
     bool canCheck = false;
+    bool isSupported = false;
     List<BiometricType> available = [];
     try {
+      isSupported = await auth.isDeviceSupported();
       canCheck = await auth.canCheckBiometrics;
-      if (canCheck) available = await auth.getAvailableBiometrics();
+      available = await auth.getAvailableBiometrics();
     } catch (_) {}
 
     if (!mounted) return;
-    final hasBiometric = canCheck && available.isNotEmpty;
+    // Some Android devices report empty types while still supporting biometrics.
+    final hasBiometric =
+        isSupported && (canCheck || available.isNotEmpty);
     final isFace = available.contains(BiometricType.face);
     final isFinger = available.contains(BiometricType.fingerprint);
     final biometricLabel = isFace && isFinger
@@ -687,8 +691,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text(
                       _t(
-                        'Face ID or fingerprint is not available on this device.',
-                        'Face ID kapena chala silipezeka pa chipangizochi.',
+                        'Face ID or fingerprint is not available on this device. Set one up in your phone settings first.',
+                        'Face ID kapena chala silipezeka pa chipangizochi. Kayikani mu settings za foni yanu.',
                       ),
                       style: TextStyle(
                         color: Colors.grey.shade700,
@@ -700,6 +704,49 @@ class _SettingsPageState extends State<SettingsPage> {
                   SwitchListTile(
                     value: _biometricLockEnabled,
                     onChanged: (v) async {
+                      if (v) {
+                        // Verify biometrics work before enabling app lock.
+                        try {
+                          final ok = await auth.authenticate(
+                            localizedReason: _t(
+                              'Confirm $biometricLabel to enable app lock',
+                              'Tsimikizirani $biometricLabel kuti muyatsitse chitseko',
+                            ),
+                            options: const AuthenticationOptions(
+                              stickyAuth: true,
+                              useErrorDialogs: true,
+                              biometricOnly: false,
+                            ),
+                          );
+                          if (!ok) {
+                            if (mounted) {
+                              ToastHelper.showCustomToast(
+                                context,
+                                _t(
+                                  'Could not verify biometrics. App lock was not enabled.',
+                                  'Sitinathe kutsimikizira biometric. Chitseko sichinayatsidwe.',
+                                ),
+                                isSuccess: false,
+                                errorMessage: '',
+                              );
+                            }
+                            return;
+                          }
+                        } catch (_) {
+                          if (mounted) {
+                            ToastHelper.showCustomToast(
+                              context,
+                              _t(
+                                'Biometrics failed. Check phone settings and try again.',
+                                'Biometric yalephera. Onani settings za foni ndikuyesanso.',
+                              ),
+                              isSuccess: false,
+                              errorMessage: '',
+                            );
+                          }
+                          return;
+                        }
+                      }
                       setLocal(() => _biometricLockEnabled = v);
                       setState(() => _biometricLockEnabled = v);
                       await _saveBiometricLockPref(v);
@@ -1667,7 +1714,7 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final canCheck = await auth.canCheckBiometrics;
       final isSupported = await auth.isDeviceSupported();
-      if (!canCheck || !isSupported) {
+      if (!isSupported && !canCheck) {
         if (mounted) {
           ToastHelper.showCustomToast(
             context,
@@ -1688,8 +1735,9 @@ class _SettingsPageState extends State<SettingsPage> {
           'Tsimikizirani kuti ndinu inu kuti muchotse akaunti',
         ),
         options: const AuthenticationOptions(
-          biometricOnly: true,
+          biometricOnly: false,
           stickyAuth: true,
+          useErrorDialogs: true,
         ),
       );
       if (!ok && mounted) {

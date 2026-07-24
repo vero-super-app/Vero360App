@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +26,9 @@ class MerchantReviewsPage extends StatefulWidget {
   final String? serviceProviderId;
   final String? sellerUserId;
   final int? merchantBackendId;
+  /// Prefill so the page opens without waiting on the network.
+  final MerchantReviewSummary? initialSummary;
+  final List<MerchantReview>? initialReviews;
 
   const MerchantReviewsPage({
     super.key,
@@ -34,6 +39,8 @@ class MerchantReviewsPage extends StatefulWidget {
     this.serviceProviderId,
     this.sellerUserId,
     this.merchantBackendId,
+    this.initialSummary,
+    this.initialReviews,
   });
 
   @override
@@ -59,7 +66,43 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _seedFromPrefetch();
+    _load(silent: _summary != null || _reviews.isNotEmpty);
+  }
+
+  void _seedFromPrefetch() {
+    final backendId = widget.merchantBackendId;
+    final cached =
+        backendId != null ? MerchantReviewService.peekCache(backendId) : null;
+
+    final initialReviews = widget.initialReviews;
+    final initialSummary = widget.initialSummary;
+
+    if (cached != null) {
+      _resolvedMerchantId = backendId;
+      _summary = cached.summary;
+      _reviews = cached.reviews;
+      _loading = false;
+      return;
+    }
+
+    if ((initialReviews != null && initialReviews.isNotEmpty) ||
+        initialSummary != null) {
+      _resolvedMerchantId = backendId;
+      _summary = initialSummary ??
+          MerchantReviewSummary(
+            average: widget.rating ?? 0,
+            count: initialReviews?.length ?? 0,
+          );
+      _reviews = List<MerchantReview>.from(initialReviews ?? const []);
+      _loading = false;
+    } else if (widget.rating != null && widget.rating! > 0) {
+      _summary = MerchantReviewSummary(
+        average: widget.rating!,
+        count: 0,
+      );
+      // Still loading list, but header rating can show.
+    }
   }
 
   Future<void> _load({bool silent = false}) async {
@@ -70,12 +113,23 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
         _loginRequired = false;
       });
     } else {
-      setState(() => _refreshing = true);
+      if (mounted) setState(() => _refreshing = true);
     }
 
     try {
-      final loggedIn = await AuthHandler.isAuthenticated();
-      final prefs = await SharedPreferences.getInstance();
+      final loggedInFuture = AuthHandler.isAuthenticated();
+      final prefsFuture = SharedPreferences.getInstance();
+
+      final merchantBackendIdFuture =
+          MerchantReviewIdResolver.resolveMerchantId(
+        merchantRef: widget.merchantId,
+        serviceProviderId: widget.serviceProviderId,
+        sellerUserId: widget.sellerUserId,
+        preResolvedBackendId: widget.merchantBackendId ?? _resolvedMerchantId,
+      );
+
+      final loggedIn = await loggedInFuture;
+      final prefs = await prefsFuture;
       final myId = loggedIn
           ? (prefs.getInt('userId') ?? prefs.getInt('user_id'))
           : null;
@@ -85,17 +139,41 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       final myAvatar =
           loggedIn ? prefs.getString('profilepicture') : null;
 
-      final merchantBackendId = await MerchantReviewIdResolver.resolveMerchantId(
-        merchantRef: widget.merchantId,
-        serviceProviderId: widget.serviceProviderId,
-        sellerUserId: widget.sellerUserId,
-        preResolvedBackendId: widget.merchantBackendId,
-      );
+      final merchantBackendId = await merchantBackendIdFuture;
 
-      final results = await Future.wait([
-        _service.getMerchantReviewSummary(merchantBackendId),
-        _service.getMerchantReviews(merchantBackendId),
-      ]);
+      // Instant if shop page already warmed the cache.
+      final cached = MerchantReviewService.peekCache(merchantBackendId);
+      if (cached != null && silent) {
+        if (!mounted) return;
+        setState(() {
+          _isLoggedIn = loggedIn;
+          _myUserId = myId;
+          _myDisplayName = myName.trim();
+          _myAvatarUrl = myAvatar?.trim();
+          _resolvedMerchantId = merchantBackendId;
+          _summary = cached.summary;
+          _reviews = cached.reviews
+              .map((r) => _enrichReview(r.withNormalizedReaction()))
+              .toList();
+          _loading = false;
+          _refreshing = false;
+          _error = null;
+        });
+        // Refresh in background without blocking UI.
+        unawaited(_refreshFromNetwork(
+          merchantBackendId: merchantBackendId,
+          loggedIn: loggedIn,
+          myId: myId,
+          myName: myName,
+          myAvatar: myAvatar,
+        ));
+        return;
+      }
+
+      final bundle = await _service.loadFast(
+        merchantBackendId,
+        forceRefresh: silent && cached != null,
+      );
 
       if (!mounted) return;
       setState(() {
@@ -104,8 +182,8 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
         _myDisplayName = myName.trim();
         _myAvatarUrl = myAvatar?.trim();
         _resolvedMerchantId = merchantBackendId;
-        _summary = results[0] as MerchantReviewSummary;
-        _reviews = (results[1] as List<MerchantReview>)
+        _summary = bundle.summary;
+        _reviews = bundle.reviews
             .map((r) => _enrichReview(r.withNormalizedReaction()))
             .toList();
         _loading = false;
@@ -117,9 +195,42 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       setState(() {
         _loading = false;
         _refreshing = false;
-        _error = e is ApiException ? e.message : 'Could not load reviews.';
-        _loginRequired = e is ApiException && e.requiresLogin;
+        // Keep seeded data visible on refresh failure.
+        if (_reviews.isEmpty && _summary == null) {
+          _error = e is ApiException ? e.message : 'Could not load reviews.';
+          _loginRequired = e is ApiException && e.requiresLogin;
+        }
       });
+    }
+  }
+
+  Future<void> _refreshFromNetwork({
+    required int merchantBackendId,
+    required bool loggedIn,
+    required int? myId,
+    required String myName,
+    required String? myAvatar,
+  }) async {
+    try {
+      final bundle = await _service.loadFast(
+        merchantBackendId,
+        forceRefresh: true,
+      );
+      if (!mounted) return;
+      setState(() {
+        _isLoggedIn = loggedIn;
+        _myUserId = myId;
+        _myDisplayName = myName.trim();
+        _myAvatarUrl = myAvatar?.trim();
+        _resolvedMerchantId = merchantBackendId;
+        _summary = bundle.summary;
+        _reviews = bundle.reviews
+            .map((r) => _enrichReview(r.withNormalizedReaction()))
+            .toList();
+        _refreshing = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _refreshing = false);
     }
   }
 

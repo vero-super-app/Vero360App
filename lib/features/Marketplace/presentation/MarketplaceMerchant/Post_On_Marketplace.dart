@@ -59,9 +59,11 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   final _price = TextEditingController();
   final _location = TextEditingController();
   final _desc = TextEditingController();
+  final _stock = TextEditingController(text: '1');
 
   bool _isActive = true;
   bool _submitting = false;
+  int _stockQty = 1;
 
   static const List<String> _kCategories = <String>[
     'food',
@@ -152,6 +154,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     _price.dispose();
     _location.dispose();
     _desc.dispose();
+    _stock.dispose();
     super.dispose();
   }
 
@@ -401,8 +404,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   Future<void> _pickCover(ImageSource src) async {
     final x = await _picker.pickImage(
       source: src,
-      imageQuality: 90,
-      maxWidth: 2048,
+      // Smaller images = much faster uploads on mobile data.
+      imageQuality: 72,
+      maxWidth: 1280,
     );
     if (x == null) return;
     final bytes = await x.readAsBytes();
@@ -410,7 +414,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       _cover = LocalMedia(
         bytes: bytes,
         filename: x.name,
-        mime: lookupMimeType(x.name, headerBytes: bytes),
+        mime: lookupMimeType(x.name, headerBytes: bytes) ?? 'image/jpeg',
       );
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
@@ -418,8 +422,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
   Future<void> _pickGalleryMulti() async {
     final xs = await _picker.pickMultiImage(
-      imageQuality: 90,
-      maxWidth: 2048,
+      imageQuality: 72,
+      maxWidth: 1280,
     );
     for (final x in xs) {
       final bytes = await x.readAsBytes();
@@ -427,7 +431,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         LocalMedia(
           bytes: bytes,
           filename: x.name,
-          mime: lookupMimeType(x.name, headerBytes: bytes),
+          mime: lookupMimeType(x.name, headerBytes: bytes) ?? 'image/jpeg',
         ),
       );
     }
@@ -473,15 +477,12 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   // ---------------- BASE64 "COMPRESSION" (NO STORAGE) ----------------
   Future<Uint8List> _compressImage(Uint8List imageBytes) async {
     try {
-      // Minimal compression stub – you can plug in flutter_image_compress
-      // here if you like. For now we just return the bytes as-is.
       return imageBytes;
     } catch (_) {
       return imageBytes;
     }
   }
 
-  /// Compress (for images) and return base64 string.
   Future<String> _encodeMediaAsBase64(LocalMedia media) async {
     try {
       Uint8List bytesToEncode = media.bytes;
@@ -510,6 +511,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     _price.clear();
     _location.clear();
     _desc.clear();
+    _stock.text = '1';
+    _stockQty = 1;
     _cover = null;
     _gallery.clear();
     _videos.clear();
@@ -552,6 +555,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
   // ---------------- create ----------------
   Future<void> _create() async {
+    // Hard guard — setState is async; without this, double-taps start two posts.
+    if (_submitting) return;
+
     if (!_form.currentState!.validate()) return;
     if (_cover == null) {
       ToastHelper.showCustomToast(
@@ -615,6 +621,18 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       return;
     }
 
+    final stock = int.tryParse(_stock.text.trim()) ?? _stockQty;
+    if (stock < 1) {
+      ToastHelper.showCustomToast(
+        context,
+        'Stock quantity must be at least 1',
+        isSuccess: false,
+        errorMessage: 'Validation',
+      );
+      return;
+    }
+    _stockQty = stock;
+
     final firebaseUser = FirebaseAuth.instance.currentUser;
     if (firebaseUser == null) {
       ToastHelper.showCustomToast(
@@ -626,15 +644,19 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       );
       return;
     }
-    await AuthHandler.refreshFirebaseTokenIfSignedIn();
 
+    // Lock UI before any await so a second tap cannot start another write.
     setState(() => _submitting = true);
 
     try {
-      final sellerId = await _getNestUserId();
-      final firebaseUid = firebaseUser?.uid ??
-          (await SharedPreferences.getInstance()).getString('uid') ??
-          merchantIdFromShop();
+      // Don't block the post on token refresh — run in background.
+      unawaited(AuthHandler.refreshFirebaseTokenIfSignedIn());
+
+      final sellerId = await _getNestUserId(); // local JWT decode only
+      final firebaseUid = firebaseUser.uid.isNotEmpty
+          ? firebaseUser.uid
+          : ((await SharedPreferences.getInstance()).getString('uid') ??
+              merchantIdFromShop());
       final merchantId = _myShop!['id'].toString();
       final merchantName =
           (_myShop!['businessName'] ?? 'Food seller').toString();
@@ -646,42 +668,62 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       final svc = MarketplaceService();
       String? coverUrl;
       String? coverBase64;
-      String? coverHash;
       final galleryUrls = <String>[];
       final galleryBase64 = <String>[];
-      final galleryHashes = <String>[];
       final videoUrls = <String>[];
       var videosSkipped = false;
 
+      // Cap gallery for fast posts (still enough for a listing).
+      final galleryToUpload = _gallery.take(4).toList();
+      final videosToUpload = _videos.take(2).where((v) {
+        if (v.bytes.length > 15 * 1024 * 1024) {
+          videosSkipped = true;
+          return false;
+        }
+        return true;
+      }).toList();
+
+      // One token for all uploads (avoids repeated SharedPreferences reads).
+      final prefs = await SharedPreferences.getInstance();
+      final uploadToken = prefs.getString('jwt_token') ??
+          prefs.getString('token') ??
+          prefs.getString('jwt');
+
       try {
-        coverUrl = await svc.uploadBytes(
-          _cover!.bytes,
-          filename: _cover!.filename,
-          mimeType: _cover!.mime,
-        );
-        coverHash = await svc.computeVisualHash(_cover!.bytes);
-        for (final g in _gallery.take(8)) {
-          galleryUrls.add(
-            await svc.uploadBytes(
+        final uploadFutures = <Future<String>>[
+          svc.uploadBytes(
+            _cover!.bytes,
+            filename: _cover!.filename,
+            mimeType: _cover!.mime ?? 'image/jpeg',
+            token: uploadToken,
+          ),
+          ...galleryToUpload.map(
+            (g) => svc.uploadBytes(
               g.bytes,
               filename: g.filename,
-              mimeType: g.mime,
+              mimeType: g.mime ?? 'image/jpeg',
+              token: uploadToken,
             ),
-          );
-          final gHash = await svc.computeVisualHash(g.bytes);
-          if (gHash != null) galleryHashes.add(gHash);
-        }
-        for (final v in _videos.take(3)) {
-          if (v.bytes.length > 25 * 1024 * 1024) {
-            videosSkipped = true;
-            continue;
-          }
-          videoUrls.add(
-            await svc.uploadBytes(
+          ),
+          ...videosToUpload.map(
+            (v) => svc.uploadBytes(
               v.bytes,
               filename: v.filename,
               mimeType: v.mime,
+              token: uploadToken,
             ),
+          ),
+        ];
+        final uploaded = await Future.wait(uploadFutures);
+        coverUrl = uploaded.first;
+        if (galleryToUpload.isNotEmpty) {
+          galleryUrls.addAll(
+            uploaded.sublist(1, 1 + galleryToUpload.length),
+          );
+        }
+        if (videosToUpload.isNotEmpty) {
+          videoUrls.addAll(
+            uploaded.sublist(1 + galleryToUpload.length),
           );
         }
       } catch (uploadErr) {
@@ -695,21 +737,14 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
           );
         }
         coverBase64 = base64Encode(_cover!.bytes);
-        coverHash = await svc.computeVisualHash(_cover!.bytes);
-        for (final g in _gallery.take(4)) {
+        for (final g in galleryToUpload.take(3)) {
           if (g.bytes.length > 200000) continue;
           galleryBase64.add(base64Encode(g.bytes));
-          final gHash = await svc.computeVisualHash(g.bytes);
-          if (gHash != null) galleryHashes.add(gHash);
         }
         if (_videos.isNotEmpty) videosSkipped = true;
       }
 
-      final imageHashes = <String>{
-        if (coverHash != null) coverHash,
-        ...galleryHashes,
-      }.toList();
-
+      // Post immediately — do NOT wait for visual hashes (big speed win).
       final data = <String, dynamic>{
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? 0,
@@ -718,14 +753,13 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
         if (galleryBase64.isNotEmpty) 'gallery': galleryBase64,
         if (videoUrls.isNotEmpty) 'videos': videoUrls,
-        if (coverHash != null) 'imageHash': coverHash,
-        if (galleryHashes.isNotEmpty) 'galleryHashes': galleryHashes,
-        if (imageHashes.isNotEmpty) 'imageHashes': imageHashes,
         'description':
             _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         'location': _location.text.trim(),
         'isActive': _isActive,
         'category': _category ?? 'other',
+        'stockQuantity': _stockQty,
+        'quantity': _stockQty,
         'createdAt': FieldValue.serverTimestamp(),
         'sellerUserId': effectiveSellerId,
         'merchantId': firebaseUid.isNotEmpty ? firebaseUid : merchantId,
@@ -737,18 +771,31 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
       debugPrint('Writing marketplace_items to Firestore…');
       final docRef = await _db.collection('marketplace_items').add(data);
-      try {
-        await docRef.get(const GetOptions(source: Source.server));
-      } on FirebaseException catch (e) {
-        throw FirebaseException(
-          plugin: e.plugin,
-          code: e.code,
-          message: e.message ??
-              'Could not confirm save on Firestore server. '
-              'Create the Firestore database in Firebase Console, then try again.',
-        );
-      }
-      debugPrint('Firestore write OK (server): ${docRef.id}');
+      debugPrint('Firestore write OK: ${docRef.id}');
+
+      // Attach hashes in the background (duplicate detection) — never blocks UI.
+      final coverBytesForHash = _cover!.bytes;
+      final galleryForHash = List<LocalMedia>.from(galleryToUpload);
+      unawaited(() async {
+        try {
+          final coverHash = await svc.computeVisualHash(coverBytesForHash);
+          final gHashes = <String>[];
+          for (final g in galleryForHash) {
+            final h = await svc.computeVisualHash(g.bytes);
+            if (h != null) gHashes.add(h);
+          }
+          final imageHashes = <String>{
+            if (coverHash != null) coverHash,
+            ...gHashes,
+          }.toList();
+          if (imageHashes.isEmpty) return;
+          await docRef.set({
+            if (coverHash != null) 'imageHash': coverHash,
+            if (gHashes.isNotEmpty) 'galleryHashes': gHashes,
+            'imageHashes': imageHashes,
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      }());
 
       if (!mounted) return;
       var successMsg =
@@ -765,8 +812,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       );
 
       _resetAfterCreate();
-      await _loadItems();
       _tabs.animateTo(1);
+      // Refresh manage list in background — don't hold the submit spinner.
+      unawaited(_loadItems());
     } on FirebaseException catch (e) {
       debugPrint('Firestore error: ${e.code} ${e.message}');
       if (!mounted) return;
@@ -926,16 +974,169 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       labelText: label,
       hintText: hint,
       filled: true,
-      fillColor: Colors.white,
+      fillColor: const Color(0xFFF7F8FA),
       contentPadding:
-          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      border: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(14),
+      ),
       enabledBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: Colors.black, width: 1),
-        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(14),
       ),
       focusedBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: _brandOrange, width: 2),
-        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: _brandOrange, width: 1.6),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.red.shade300),
+        borderRadius: BorderRadius.circular(14),
+      ),
+    );
+  }
+
+  Widget _sectionCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE8EAEF)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: _brandSoft,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: _brandOrange, size: 22),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _stockStepper() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Available stock',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Buyers cannot order more than this',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF6B7280),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton.filledTonal(
+            onPressed: _stockQty <= 1
+                ? null
+                : () {
+                    setState(() {
+                      _stockQty = (_stockQty - 1).clamp(1, 99999);
+                      _stock.text = '$_stockQty';
+                    });
+                  },
+            icon: const Icon(Icons.remove_rounded),
+          ),
+          SizedBox(
+            width: 56,
+            child: TextField(
+              controller: _stock,
+              textAlign: TextAlign.center,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+              ),
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+              ),
+              onChanged: (v) {
+                final n = int.tryParse(v) ?? 1;
+                setState(() => _stockQty = n.clamp(1, 99999));
+              },
+            ),
+          ),
+          IconButton.filled(
+            style: IconButton.styleFrom(backgroundColor: _brandOrange),
+            onPressed: () {
+              setState(() {
+                _stockQty = (_stockQty + 1).clamp(1, 99999);
+                _stock.text = '$_stockQty';
+              });
+            },
+            icon: const Icon(Icons.add_rounded, color: Colors.white),
+          ),
+        ],
       ),
     );
   }
@@ -1143,16 +1344,11 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         : Container();
 
     // Normal form when a shop exists
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      child: Card(
-        elevation: 8,
-        shadowColor: Colors.black12,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20)),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-          child: Form(
+    return ColoredBox(
+      color: const Color(0xFFF3F4F7),
+      child: SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
+      child: Form(
             key: _form,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1162,27 +1358,31 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
+                    horizontal: 14,
+                    vertical: 12,
                   ),
                   decoration: BoxDecoration(
-                    color: _brandSoft,
-                    border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
-                    borderRadius: BorderRadius.circular(12),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFF4E5), Color(0xFFFFE8CC)],
+                    ),
+                    border: Border.all(color: _brandOrange.withValues(alpha: 0.28)),
+                    borderRadius: BorderRadius.circular(16),
                   ),
-                  child: Row(
-                    children: const [
+                  child: const Row(
+                    children: [
                       Icon(
-                        Icons.info_outline,
-                        color: Colors.black87,
+                        Icons.auto_awesome_rounded,
+                        color: _brandOrange,
                       ),
-                      SizedBox(width: 8),
+                      SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Add clear photos, set the right category, location and price. '
-                          'Images are automatically compressed and stored safely.\n'
-                          'NOTE: Payments for this item will go to your merchant wallet.',
-                          style: TextStyle(fontWeight: FontWeight.w600),
+                          'Clear photos, accurate stock, and a fair price help buyers trust your listing. Payments go to your merchant wallet.',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            height: 1.35,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     ],
@@ -1191,15 +1391,41 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 const SizedBox(height: 14),
 
                 const Text(
-                  'Add Product',
+                  'Add product',
                   style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.3,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 4),
+                Text(
+                  'List an item with photos, price, and available quantity',
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 14),
 
-                // Cover image preview – carousel when 2+ photos, auto-slide 1/sec
+                Container(
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFE8EAEF)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                 Builder(
                   builder: (context) {
                     final photos = <Uint8List>[
@@ -1340,6 +1566,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                     return null;
                   },
                 ),
+                const SizedBox(height: 12),
+                _stockStepper(),
                 const SizedBox(height: 12),
 
                 TextFormField(
@@ -1487,12 +1715,14 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                           ),
                         )
                       : const Icon(Icons.save),
-                  label: const Text('Post on Marketplace'),
+                  label: Text(_submitting ? 'Posting…' : 'Post on Marketplace'),
+                ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-        ),
       ),
     );
   }

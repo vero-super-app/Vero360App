@@ -29,6 +29,7 @@ import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/Home/story_ring_widget.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 int? _stayListingApiId(Map<String, dynamic> d) {
   final direct = d['apiAccommodationId'];
@@ -41,6 +42,30 @@ int? _stayListingApiId(Map<String, dynamic> d) {
     if (p != null && p > 0) return p;
   }
   return null;
+}
+
+class _MerchantShopHeaderCache {
+  final String? profileUrl;
+  final String? email;
+  final String? phone;
+  final String? status;
+  final double? rating;
+  final int reviewCount;
+  final int followerCount;
+  final int? backendId;
+  final List<MerchantReview> recentReviews;
+
+  const _MerchantShopHeaderCache({
+    required this.profileUrl,
+    required this.email,
+    required this.phone,
+    required this.status,
+    required this.rating,
+    required this.reviewCount,
+    required this.followerCount,
+    required this.backendId,
+    required this.recentReviews,
+  });
 }
 
 class MerchantProductsPage extends StatefulWidget {
@@ -62,14 +87,18 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   late Future<List<MarketplaceDetailModel>> _future;
   late Future<List<_MerchantStayPreview>> _staysFuture;
-  late Future<bool> _isAccommodationMerchantFuture;
   final CartService _cartService =
       CartService('unused', apiPrefix: ApiConfig.apiPrefix);
+
+  /// null while detecting — show products immediately (common case).
+  bool? _isAccommodationHost;
 
   double? _merchantRating;
   int _merchantReviewCount = 0;
   int? _merchantBackendId;
   List<MerchantReview> _recentReviews = const [];
+  List<MerchantReview> _cachedReviews = const [];
+  MerchantReviewSummary? _cachedReviewSummary;
   String? _merchantStatus;
   String? _merchantProfileUrl;
   String? _merchantEmail;
@@ -86,11 +115,45 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   static const Color _pageBg = Color(0xFFF4F6FA);
   static const Color _surfaceBorder = Color(0xFFE2E6EF);
 
+  /// Instant re-open of the same shop.
+  static final Map<String, List<MarketplaceDetailModel>> _itemsMemCache = {};
+  static final Map<String, bool> _accommodationMemCache = {};
+  static final Map<String, _MerchantShopHeaderCache> _headerMemCache = {};
+
   // Small cache for Firebase download URLs (gs:// or storage paths)
   final Map<String, Future<String?>> _dlUrlCache = {};
 
+  bool _reviewsLoading = false;
+
   bool _isHttp(String s) => s.startsWith('http://') || s.startsWith('https://');
   bool _isGs(String s) => s.startsWith('gs://');
+
+  /// Prefer local cache so first paint is not blocked on network.
+  Future<QuerySnapshot<Map<String, dynamic>>> _queryFast(
+    Query<Map<String, dynamic>> q,
+  ) async {
+    try {
+      final cached = await q.get(const GetOptions(source: Source.cache));
+      if (cached.docs.isNotEmpty) {
+        unawaited(q.get(const GetOptions(source: Source.serverAndCache)));
+        return cached;
+      }
+    } catch (_) {}
+    return q.get(const GetOptions(source: Source.serverAndCache));
+  }
+
+  Future<DocumentSnapshot<Map<String, dynamic>>> _docFast(
+    DocumentReference<Map<String, dynamic>> ref,
+  ) async {
+    try {
+      final cached = await ref.get(const GetOptions(source: Source.cache));
+      if (cached.exists) {
+        unawaited(ref.get(const GetOptions(source: Source.serverAndCache)));
+        return cached;
+      }
+    } catch (_) {}
+    return ref.get(const GetOptions(source: Source.serverAndCache));
+  }
 
   bool _looksLikeBase64(String s) {
     final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
@@ -333,13 +396,110 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   @override
   void initState() {
     super.initState();
-    _future = _loadMerchantItems();
+    final id = widget.merchantId.trim();
+    final memItems = _itemsMemCache[id];
+    if (memItems != null) {
+      _future = Future.value(memItems);
+      // Refresh quietly in background.
+      unawaited(_loadMerchantItems().then((fresh) {
+        if (!mounted) return;
+        setState(() => _future = Future.value(fresh));
+      }));
+    } else {
+      _future = _loadMerchantItems();
+    }
+
+    final memAccom = _accommodationMemCache[id];
+    if (memAccom != null) {
+      _isAccommodationHost = memAccom;
+    }
+
+    final memHeader = _headerMemCache[id];
+    if (memHeader != null) {
+      _merchantProfileUrl = memHeader.profileUrl;
+      _merchantEmail = memHeader.email;
+      _merchantPhone = memHeader.phone;
+      _merchantStatus = memHeader.status;
+      _merchantRating = memHeader.rating;
+      _merchantReviewCount = memHeader.reviewCount;
+      _followerCount = memHeader.followerCount;
+      _merchantBackendId = memHeader.backendId;
+      _recentReviews = memHeader.recentReviews;
+      _loadingHeader = false;
+      final bid = memHeader.backendId;
+      if (bid != null) {
+        final warm = MerchantReviewService.peekCache(bid);
+        if (warm != null) {
+          _cachedReviewSummary = warm.summary;
+          _cachedReviews = warm.reviews;
+          _recentReviews = warm.reviews.take(3).toList();
+          _merchantRating = warm.summary.average;
+          _merchantReviewCount = warm.summary.count;
+        }
+      }
+    }
+
     _staysFuture = _loadMerchantStays();
-    _isAccommodationMerchantFuture = _detectAccommodationMerchant();
-    _loadMerchantHeader();
+    unawaited(_resolveAccommodationMode());
+    unawaited(_loadMerchantHeader());
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
     });
+  }
+
+  void _persistHeaderCache() {
+    _headerMemCache[widget.merchantId.trim()] = _MerchantShopHeaderCache(
+      profileUrl: _merchantProfileUrl,
+      email: _merchantEmail,
+      phone: _merchantPhone,
+      status: _merchantStatus,
+      rating: _merchantRating,
+      reviewCount: _merchantReviewCount,
+      followerCount: _followerCount,
+      backendId: _merchantBackendId,
+      recentReviews: List<MerchantReview>.from(_recentReviews),
+    );
+  }
+
+  int? _parseBackendIdFromMap(Map<String, dynamic> data) {
+    for (final key in [
+      'backendUserId',
+      'userId',
+      'merchantUserId',
+      'ownerId',
+      'sellerUserId',
+      'sqlUserId',
+    ]) {
+      final raw = data[key];
+      if (raw is int && raw > 0) return raw;
+      if (raw is num && raw.toInt() > 0) return raw.toInt();
+      final p = int.tryParse('${raw ?? ''}'.trim());
+      if (p != null && p > 0) return p;
+    }
+    return null;
+  }
+
+  void _applyRatingFieldsFromMap(Map<String, dynamic> data) {
+    final rating = data['rating'] ??
+        data['averageRating'] ??
+        data['avgRating'] ??
+        data['merchantRating'];
+    if (rating is num) _merchantRating = rating.toDouble();
+
+    final count = data['reviewCount'] ??
+        data['reviewsCount'] ??
+        data['ratingCount'] ??
+        data['totalReviews'];
+    if (count is num) _merchantReviewCount = count.toInt();
+  }
+
+  Future<void> _resolveAccommodationMode() async {
+    final v = await _detectAccommodationMerchant();
+    _accommodationMemCache[widget.merchantId.trim()] = v;
+    if (!mounted) return;
+    if (_isAccommodationHost != v) {
+      setState(() => _isAccommodationHost = v);
+    }
   }
 
   @override
@@ -353,45 +513,46 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     final id = widget.merchantId.trim();
     if (id.isEmpty) return false;
     try {
-      final doc =
-          await _firestore.collection('accommodation_merchants').doc(id).get();
+      final results = await Future.wait([
+        _docFast(_firestore.collection('accommodation_merchants').doc(id)),
+        _queryFast(
+          _firestore
+              .collection('accommodation_rooms')
+              .where('merchantId', isEqualTo: id)
+              .limit(1),
+        ),
+      ]);
+      final doc = results[0] as DocumentSnapshot<Map<String, dynamic>>;
       if (doc.exists) return true;
-    } catch (e) {
-      debugPrint('detect accommodation_merchants: $e');
-    }
-    try {
-      final rooms = await _firestore
-          .collection('accommodation_rooms')
-          .where('merchantId', isEqualTo: id)
-          .limit(1)
-          .get();
+      final rooms = results[1] as QuerySnapshot<Map<String, dynamic>>;
       if (rooms.docs.isNotEmpty) return true;
     } catch (e) {
-      debugPrint('detect accommodation_rooms: $e');
+      debugPrint('detect accommodation: $e');
     }
     return false;
   }
 
   Future<List<MarketplaceDetailModel>> _loadMerchantItems() async {
     try {
-      // Same collection used elsewhere: 'marketplace_items'
       final String id = widget.merchantId.trim();
       final String name = widget.merchantName.trim();
 
-      // 1) Try match by merchantId (new items) – no orderBy here to avoid composite index requirement
-      final idSnap = await _firestore
-          .collection('marketplace_items')
-          .where('merchantId', isEqualTo: id)
-          .get();
+      // 1) Try match by merchantId (cache-first)
+      final idSnap = await _queryFast(
+        _firestore
+            .collection('marketplace_items')
+            .where('merchantId', isEqualTo: id),
+      );
 
       var docs = idSnap.docs;
 
-      // 2) Fallback: some older items may only have merchantName or numeric merchantId
+      // 2) Fallback: older items may only have merchantName
       if (docs.isEmpty && name.isNotEmpty) {
-        final nameSnap = await _firestore
-            .collection('marketplace_items')
-            .where('merchantName', isEqualTo: name)
-            .get();
+        final nameSnap = await _queryFast(
+          _firestore
+              .collection('marketplace_items')
+              .where('merchantName', isEqualTo: name),
+        );
         docs = nameSnap.docs;
       }
 
@@ -400,7 +561,6 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           .where((item) => item.isActive)
           .toList();
 
-      // Sort in-memory by createdAt desc so newest items appear first
       all.sort((a, b) {
         final da = a.createdAt;
         final db = b.createdAt;
@@ -410,10 +570,11 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         return db.compareTo(da);
       });
 
+      _itemsMemCache[id] = all;
       return all;
     } catch (e) {
       debugPrint('Error loading merchant items: $e');
-      return [];
+      return _itemsMemCache[widget.merchantId.trim()] ?? [];
     }
   }
 
@@ -422,53 +583,55 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     final merged = <_MerchantStayPreview>[];
     final apiIds = <int>{};
 
+    // Resolve email from likely sources in parallel.
     var email = '';
     try {
-      final uSnap = await _firestore.collection('users').doc(id).get();
-      email = (uSnap.data()?['email'] ?? '').toString().trim();
+      final snaps = await Future.wait([
+        _docFast(_firestore.collection('users').doc(id)),
+        _docFast(_firestore.collection('marketplace_merchants').doc(id)),
+        _docFast(_firestore.collection('accommodation_merchants').doc(id)),
+      ]);
+      for (final snap in snaps) {
+        final d = snap.data();
+        if (d == null) continue;
+        final e = (d['email'] ?? d['userEmail'] ?? '').toString().trim();
+        if (e.isNotEmpty) {
+          email = e;
+          break;
+        }
+      }
     } catch (_) {}
 
-    if (email.isEmpty) {
-      try {
-        final m = await _firestore
-            .collection('marketplace_merchants')
-            .doc(id)
-            .get();
-        final md = m.data();
-        email = (md?['email'] ?? md?['userEmail'] ?? '').toString().trim();
-      } catch (_) {}
-    }
-    if (email.isEmpty) {
-      try {
-        final a = await _firestore
-            .collection('accommodation_merchants')
-            .doc(id)
-            .get();
-        email = (a.data()?['email'] ?? '').toString().trim();
-      } catch (_) {}
-    }
+    // Firestore rooms + optional API ownership in parallel.
+    final roomsFuture = _queryFast(
+      _firestore
+          .collection('accommodation_rooms')
+          .where('merchantId', isEqualTo: id),
+    );
 
-    if (email.isNotEmpty) {
+    Future<List<_MerchantStayPreview>> apiFuture() async {
+      if (email.isEmpty) return const [];
       try {
-        final mine =
-            await AccommodationService().fetchOwnedByEmail(email);
+        final mine = await AccommodationService().fetchOwnedByEmail(email);
+        final out = <_MerchantStayPreview>[];
         for (final a in mine) {
           apiIds.add(a.id);
           final preview = _MerchantStayPreview.fromAccommodation(a);
-          if (!preview.isDummyListing) {
-            merged.add(preview);
-          }
+          if (!preview.isDummyListing) out.add(preview);
         }
+        return out;
       } catch (e) {
         debugPrint('Merchant stays (API): $e');
+        return const [];
       }
     }
 
+    final results = await Future.wait([roomsFuture, apiFuture()]);
+    final fromApi = results[1] as List<_MerchantStayPreview>;
+    merged.addAll(fromApi);
+
     try {
-      final fs = await _firestore
-          .collection('accommodation_rooms')
-          .where('merchantId', isEqualTo: id)
-          .get();
+      final fs = results[0] as QuerySnapshot<Map<String, dynamic>>;
       for (final doc in fs.docs) {
         final d = doc.data();
         final pid = _stayListingApiId(d);
@@ -1412,116 +1575,237 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   }
 
   Future<void> _loadMerchantHeader() async {
-    setState(() => _loadingHeader = true);
-    try {
-      final user = _auth.currentUser;
-
-      final doc = await _firestore
-          .collection('marketplace_merchants')
-          .doc(widget.merchantId.trim())
-          .get();
-      if (doc.exists) {
-        final data = doc.data() ?? <String, dynamic>{};
-        final rating = data['rating'];
-        final status = (data['status'] ?? data['verificationStatus'] ?? '')
-            .toString()
-            .trim();
-        final profileUrl =
-            (data['profilePicture'] ?? data['profilepicture'] ?? '')
-                .toString()
-                .trim();
-        final email =
-            (data['email'] ?? data['userEmail'] ?? '').toString().trim();
-        final phone = (data['phone'] ?? data['phoneNumber'] ?? '')
-            .toString()
-            .trim();
-        bool following = _following;
-        int followerCount = _followerCount;
-        if (user != null) {
-          final followSnap = await _firestore
-              .collection('merchant_followers')
-              .doc(widget.merchantId.trim())
-              .collection('followers')
-              .doc(user.uid)
-              .get();
-          following = followSnap.exists;
-        }
-        try {
-          final followersSnap = await _firestore
-              .collection('merchant_followers')
-              .doc(widget.merchantId.trim())
-              .collection('followers')
-              .get();
-          followerCount = followersSnap.size;
-        } catch (_) {}
-        setState(() {
-          if (rating is num) _merchantRating = rating.toDouble();
-          if (status.isNotEmpty) _merchantStatus = status;
-          if (profileUrl.isNotEmpty) _merchantProfileUrl = profileUrl;
-          if (email.isNotEmpty) _merchantEmail = email;
-          if (phone.isNotEmpty) _merchantPhone = phone;
-          _following = following;
-          _followerCount = followerCount;
-        });
-      }
-
-      // Fallback source to match dashboard profile data.
-      final needsProfileFallback =
-          (_merchantProfileUrl?.trim().isEmpty ?? true) ||
-          (_merchantEmail?.trim().isEmpty ?? true) ||
-          (_merchantPhone?.trim().isEmpty ?? true);
-      if (needsProfileFallback) {
-        final userDoc = await _firestore
-            .collection('users')
-            .doc(widget.merchantId.trim())
-            .get();
-        if (userDoc.exists) {
-          final u = userDoc.data() ?? <String, dynamic>{};
-          final profileUrl = (u['profilepicture'] ??
-                  u['profilePicture'] ??
-                  u['photoUrl'] ??
-                  u['photoURL'] ??
-                  '')
-              .toString()
-              .trim();
-          final email = (u['email'] ?? '').toString().trim();
-          final phone = (u['phone'] ?? u['phoneNumber'] ?? '')
-              .toString()
-              .trim();
-          if (mounted) {
-            setState(() {
-              if (profileUrl.isNotEmpty) _merchantProfileUrl = profileUrl;
-              if (email.isNotEmpty) _merchantEmail = email;
-              if (phone.isNotEmpty) _merchantPhone = phone;
-            });
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('Error loading merchant header: $e');
+    // Keep cached profile visible; only show skeleton on cold open.
+    if (_headerMemCache[widget.merchantId.trim()] == null && mounted) {
+      setState(() => _loadingHeader = true);
     }
 
     try {
-      final backendId = await MerchantReviewIdResolver.resolveMerchantId(
-        merchantRef: widget.merchantId.trim(),
-        preResolvedBackendId: _merchantBackendId,
-      );
-      const reviewService = MerchantReviewService();
-      final bundle = await reviewService.loadMerchantReviewsBundle(backendId);
-      if (mounted) {
-        setState(() {
-          _merchantBackendId = backendId;
-          _merchantRating = bundle.summary.average;
-          _merchantReviewCount = bundle.summary.count;
-          _recentReviews = bundle.reviews.take(3).toList();
-        });
+      final mid = widget.merchantId.trim();
+      final user = _auth.currentUser;
+
+      // Merchant + user profile in parallel (cache-first).
+      final snaps = await Future.wait([
+        _docFast(_firestore.collection('marketplace_merchants').doc(mid)),
+        _docFast(_firestore.collection('users').doc(mid)),
+      ]);
+      final merchantDoc = snaps[0];
+      final userDoc = snaps[1];
+
+      String? profileUrl;
+      String? email;
+      String? phone;
+      String? status;
+      int? backendId = _merchantBackendId;
+      int followerCount = _followerCount;
+      num? storedFollowerCount;
+
+      if (merchantDoc.exists) {
+        final data = merchantDoc.data() ?? <String, dynamic>{};
+        status = (data['status'] ?? data['verificationStatus'] ?? '')
+            .toString()
+            .trim();
+        if (status.isEmpty) status = null;
+        profileUrl = (data['profilePicture'] ?? data['profilepicture'] ?? '')
+            .toString()
+            .trim();
+        if (profileUrl.isEmpty) profileUrl = null;
+        email = (data['email'] ?? data['userEmail'] ?? '').toString().trim();
+        if (email.isEmpty) email = null;
+        phone = (data['phone'] ?? data['phoneNumber'] ?? '').toString().trim();
+        if (phone.isEmpty) phone = null;
+        backendId = _parseBackendIdFromMap(data) ?? backendId;
+        storedFollowerCount = data['followerCount'] ?? data['followersCount'];
+        if (storedFollowerCount is num) {
+          followerCount = storedFollowerCount.toInt();
+        }
+
+        if (mounted) {
+          setState(() {
+            _applyRatingFieldsFromMap(data);
+            if (status != null) _merchantStatus = status;
+            if (profileUrl != null) _merchantProfileUrl = profileUrl;
+            if (email != null) _merchantEmail = email;
+            if (phone != null) _merchantPhone = phone;
+            if (backendId != null) _merchantBackendId = backendId;
+            _followerCount = followerCount;
+            _loadingHeader = false;
+          });
+          _persistHeaderCache();
+        }
       }
-    } catch (e) {
-      debugPrint('Error loading merchant reviews: $e');
-    } finally {
-      if (mounted) {
+
+      // Fill gaps from users doc without blocking first paint.
+      if (userDoc.exists) {
+        final u = userDoc.data() ?? <String, dynamic>{};
+        final uProfile = (u['profilepicture'] ??
+                u['profilePicture'] ??
+                u['photoUrl'] ??
+                u['photoURL'] ??
+                '')
+            .toString()
+            .trim();
+        final uEmail = (u['email'] ?? '').toString().trim();
+        final uPhone = (u['phone'] ?? u['phoneNumber'] ?? '').toString().trim();
+        backendId ??= _parseBackendIdFromMap(u);
+        if (mounted) {
+          setState(() {
+            if ((_merchantProfileUrl?.trim().isEmpty ?? true) &&
+                uProfile.isNotEmpty) {
+              _merchantProfileUrl = uProfile;
+            }
+            if ((_merchantEmail?.trim().isEmpty ?? true) && uEmail.isNotEmpty) {
+              _merchantEmail = uEmail;
+            }
+            if ((_merchantPhone?.trim().isEmpty ?? true) && uPhone.isNotEmpty) {
+              _merchantPhone = uPhone;
+            }
+            if (backendId != null) _merchantBackendId = backendId;
+            _loadingHeader = false;
+          });
+          _persistHeaderCache();
+        }
+      } else if (mounted && !merchantDoc.exists) {
         setState(() => _loadingHeader = false);
       }
+
+      // Follow state + count in background (must not delay profile).
+      unawaited(_refreshFollowMeta(
+        mid: mid,
+        userId: user?.uid,
+        knownCount: storedFollowerCount is num ? storedFollowerCount.toInt() : null,
+      ));
+
+      // Reviews / rating from API (uses backend id from doc when possible).
+      unawaited(_loadMerchantReviewsQuiet(knownBackendId: backendId));
+    } catch (e) {
+      debugPrint('Error loading merchant header: $e');
+      if (mounted) setState(() => _loadingHeader = false);
+      unawaited(_loadMerchantReviewsQuiet());
+    }
+  }
+
+  Future<void> _refreshFollowMeta({
+    required String mid,
+    String? userId,
+    int? knownCount,
+  }) async {
+    try {
+      final followFuture = (userId == null || userId.isEmpty)
+          ? Future<bool>.value(_following)
+          : _docFast(
+              _firestore
+                  .collection('merchant_followers')
+                  .doc(mid)
+                  .collection('followers')
+                  .doc(userId),
+            ).then((s) => s.exists);
+
+      Future<int> countFuture() async {
+        if (knownCount != null) return knownCount;
+        try {
+          final agg = await _firestore
+              .collection('merchant_followers')
+              .doc(mid)
+              .collection('followers')
+              .count()
+              .get()
+              .timeout(const Duration(seconds: 4));
+          return agg.count ?? _followerCount;
+        } catch (_) {
+          return _followerCount;
+        }
+      }
+
+      final pair = await Future.wait([
+        followFuture.timeout(const Duration(seconds: 4),
+            onTimeout: () => _following),
+        countFuture(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _following = pair[0] as bool;
+        _followerCount = pair[1] as int;
+      });
+      _persistHeaderCache();
+    } catch (_) {}
+  }
+
+  Future<void> _loadMerchantReviewsQuiet({int? knownBackendId}) async {
+    final mid = widget.merchantId.trim();
+    final cached = _headerMemCache[mid];
+    if (cached != null &&
+        cached.recentReviews.isNotEmpty &&
+        (cached.rating != null || cached.reviewCount > 0)) {
+      // Already showing cache; refresh quietly below.
+    } else if (mounted) {
+      setState(() => _reviewsLoading = true);
+    }
+
+    try {
+      var backendId = knownBackendId ?? _merchantBackendId;
+      if (backendId != null && backendId > 0) {
+        final warm = MerchantReviewService.peekCache(backendId);
+        if (warm != null) {
+          if (mounted) {
+            setState(() {
+              _merchantBackendId = backendId;
+              _merchantRating = warm.summary.average;
+              _merchantReviewCount = warm.summary.count;
+              _cachedReviewSummary = warm.summary;
+              _cachedReviews = warm.reviews;
+              _recentReviews = warm.reviews.take(3).toList();
+              _reviewsLoading = false;
+            });
+            _persistHeaderCache();
+          }
+          unawaited(const MerchantReviewService()
+              .loadFast(backendId, forceRefresh: true)
+              .then((bundle) {
+            if (!mounted) return;
+            setState(() {
+              _merchantRating = bundle.summary.average;
+              _merchantReviewCount = bundle.summary.count;
+              _cachedReviewSummary = bundle.summary;
+              _cachedReviews = bundle.reviews;
+              _recentReviews = bundle.reviews.take(3).toList();
+            });
+            _persistHeaderCache();
+          }).catchError((_) {}));
+          return;
+        }
+      }
+
+      if (backendId == null || backendId <= 0) {
+        backendId = await MerchantReviewIdResolver.resolveMerchantId(
+          merchantRef: mid,
+          preResolvedBackendId: _merchantBackendId,
+        ).timeout(const Duration(seconds: 5));
+      }
+      final int resolvedBackendId = backendId;
+
+      final bundle = await const MerchantReviewService()
+          .loadFast(resolvedBackendId)
+          .timeout(const Duration(seconds: 8));
+
+      if (!mounted) return;
+      setState(() {
+        _merchantBackendId = resolvedBackendId;
+        if (bundle.summary.average > 0) {
+          _merchantRating = bundle.summary.average;
+        }
+        if (bundle.summary.count > 0) {
+          _merchantReviewCount = bundle.summary.count;
+        }
+        _cachedReviewSummary = bundle.summary;
+        _cachedReviews = bundle.reviews;
+        _recentReviews = bundle.reviews.take(3).toList();
+        _reviewsLoading = false;
+      });
+      _persistHeaderCache();
+    } catch (e) {
+      debugPrint('Error loading merchant reviews: $e');
+      if (mounted) setState(() => _reviewsLoading = false);
     }
   }
 
@@ -1711,6 +1995,20 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   }
 
   void _openMerchantReviews() {
+    final backendId = _merchantBackendId;
+    final cached =
+        backendId != null ? MerchantReviewService.peekCache(backendId) : null;
+    final reviews = cached?.reviews ??
+        (_cachedReviews.isNotEmpty ? _cachedReviews : _recentReviews);
+    final summary = cached?.summary ??
+        _cachedReviewSummary ??
+        MerchantReviewSummary(
+          average: _merchantRating ?? 0,
+          count: _merchantReviewCount > 0
+              ? _merchantReviewCount
+              : reviews.length,
+        );
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1718,15 +2016,19 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           merchantId: widget.merchantId,
           merchantName: widget.merchantName,
           logoUrl: _merchantProfileUrl,
-          rating: _merchantRating,
-          merchantBackendId: _merchantBackendId,
+          rating: _merchantRating ?? summary.average,
+          merchantBackendId: backendId,
+          initialSummary: summary,
+          initialReviews: reviews,
         ),
       ),
     );
   }
 
   Widget _buildRecentReviewsSection() {
-    if (_recentReviews.isEmpty) return const SizedBox.shrink();
+    if (!_reviewsLoading && _recentReviews.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -1759,59 +2061,85 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                 ),
               ],
             ),
-            ..._recentReviews.map((review) {
-              final comment = review.comment.trim();
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            if (_reviewsLoading && _recentReviews.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Row(
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            review.authorName.trim().isEmpty
-                                ? 'Customer'
-                                : review.authorName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: List.generate(5, (i) {
-                            return Icon(
-                              i < review.rating
-                                  ? Icons.star
-                                  : Icons.star_border,
-                              size: 14,
-                              color: Colors.amber,
-                            );
-                          }),
-                        ),
-                      ],
-                    ),
-                    if (comment.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        comment,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey.shade700,
-                          height: 1.35,
-                        ),
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _brandOrange,
                       ),
-                    ],
+                    ),
+                    SizedBox(width: 10),
+                    Text(
+                      'Loading reviews…',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
                   ],
                 ),
-              );
-            }),
+              )
+            else
+              ..._recentReviews.map((review) {
+                final comment = review.comment.trim();
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              review.authorName.trim().isEmpty
+                                  ? 'Customer'
+                                  : review.authorName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: List.generate(5, (i) {
+                              return Icon(
+                                i < review.rating
+                                    ? Icons.star
+                                    : Icons.star_border,
+                                size: 14,
+                                color: Colors.amber,
+                              );
+                            }),
+                          ),
+                        ],
+                      ),
+                      if (comment.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          comment,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.35,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              }),
           ],
         ),
       ),
@@ -1841,10 +2169,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: FutureBuilder<bool>(
-                future: _isAccommodationMerchantFuture,
-                builder: (context, snap) {
-                  final isAccommodation = snap.data == true;
+              child: Builder(
+                builder: (context) {
+                  final isAccommodation = _isAccommodationHost == true;
                   final baseName = widget.merchantName.trim().isEmpty
                       ? 'Merchant'
                       : widget.merchantName.trim();
@@ -1900,17 +2227,11 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           ),
           _buildRecentReviewsSection(),
           Expanded(
-            child: FutureBuilder<bool>(
-              future: _isAccommodationMerchantFuture,
-              builder: (context, modeSnap) {
-                if (modeSnap.connectionState != ConnectionState.done) {
-                  return const Center(
-                    child: CircularProgressIndicator(
-                      color: _brandOrange,
-                    ),
-                  );
-                }
-                final isAccommodationHost = modeSnap.data ?? false;
+            child: Builder(
+              builder: (context) {
+                // Don't block products on accommodation detect — show products
+                // unless we already know this is a Stay host.
+                final isAccommodationHost = _isAccommodationHost == true;
                 if (isAccommodationHost) {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1957,173 +2278,177 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                     ),
                     Expanded(
                       child: FutureBuilder<List<MarketplaceDetailModel>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Padding(
-              padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
-              child: AppSkeletonLatestArrivalsGrid(),
-            );
-          }
-          if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.error_outline_rounded,
-                        size: 48, color: Colors.grey.shade400),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Could not load products',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                        color: Colors.grey.shade800,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${snapshot.error}',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
+                        future: _future,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Padding(
+                              padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
+                              child: AppSkeletonLatestArrivalsGrid(),
+                            );
+                          }
+                          if (snapshot.hasError) {
+                            return Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.error_outline_rounded,
+                                        size: 48,
+                                        color: Colors.grey.shade400),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Could not load products',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 16,
+                                        color: Colors.grey.shade800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      '${snapshot.error}',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }
 
-              final allItems =
-                  snapshot.data ?? const <MarketplaceDetailModel>[];
-          final items = _searchQuery.isEmpty
-              ? allItems
-              : allItems
-                  .where((i) =>
-                      i.name.toLowerCase().contains(_searchQuery))
-                  .toList();
-          if (items.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      _searchQuery.isEmpty
-                          ? Icons.inventory_2_outlined
-                          : Icons.search_off_rounded,
-                      size: 56,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      _searchQuery.isEmpty
-                          ? 'No products yet'
-                          : 'No matching products',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 17,
-                        color: Colors.grey.shade800,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _searchQuery.isEmpty
-                          ? 'Check back later for new listings from this store.'
-                          : 'Try a different search term.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 14,
-                        height: 1.35,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
+                          final allItems = snapshot.data ??
+                              const <MarketplaceDetailModel>[];
+                          final items = _searchQuery.isEmpty
+                              ? allItems
+                              : allItems
+                                  .where((i) => i.name
+                                      .toLowerCase()
+                                      .contains(_searchQuery))
+                                  .toList();
+                          if (items.isEmpty) {
+                            return Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      _searchQuery.isEmpty
+                                          ? Icons.inventory_2_outlined
+                                          : Icons.search_off_rounded,
+                                      size: 56,
+                                      color: Colors.grey.shade400,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      _searchQuery.isEmpty
+                                          ? 'No products yet'
+                                          : 'No matching products',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 17,
+                                        color: Colors.grey.shade800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      _searchQuery.isEmpty
+                                          ? 'Check back later for new listings from this store.'
+                                          : 'Try a different search term.',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        height: 1.35,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }
 
-          final width = MediaQuery.of(context).size.width;
-          final cols = width >= 1200
-              ? 4
-              : width >= 800
-                  ? 3
-                  : 2;
-          final ratio = width >= 1200
-              ? 0.95
-              : width >= 800
-                  ? 0.85
-                  : 0.72;
+                          final width = MediaQuery.of(context).size.width;
+                          final cols = width >= 1200
+                              ? 4
+                              : width >= 800
+                                  ? 3
+                                  : 2;
+                          final ratio = width >= 1200
+                              ? 0.95
+                              : width >= 800
+                                  ? 0.85
+                                  : 0.72;
 
-              return GridView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: cols,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: ratio,
-            ),
-            itemCount: items.length,
-            itemBuilder: (context, index) {
-              final it = items[index];
-              return _MerchantProductCard(
-                item: it,
-                imageBuilder: (item) => _ProductImageCarousel(
-                  item: item,
-                  buildImageForSource: buildImageForSource,
-                ),
-                onAddToCart: () => _addToCart(it),
-                onBuyNow: () => _buyNow(it),
-                onOpen: () {
-                  // If the Firestore item has a valid backend/sql id, open the full details page.
-                  if (!it.hasValidSqlItemId) return;
+                          return GridView.builder(
+                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: cols,
+                              crossAxisSpacing: 10,
+                              mainAxisSpacing: 10,
+                              childAspectRatio: ratio,
+                            ),
+                            itemCount: items.length,
+                            itemBuilder: (context, index) {
+                              final it = items[index];
+                              return _MerchantProductCard(
+                                item: it,
+                                imageBuilder: (item) => _ProductImageCarousel(
+                                  item: item,
+                                  buildImageForSource: buildImageForSource,
+                                ),
+                                onAddToCart: () => _addToCart(it),
+                                onBuyNow: () => _buyNow(it),
+                                onOpen: () {
+                                  if (!it.hasValidSqlItemId) return;
 
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => DetailsPage(
-                        item: marketplaceModel.MarketplaceDetailModel(
-                          id: it.sqlItemId!,
-                          backendItemId: it.sqlItemId,
-                          name: it.name,
-                          image: it.image,
-                          price: it.price,
-                          description: it.description ?? '',
-                          location: it.location ?? '',
-                          comment: null,
-                          category: it.category,
-                          gallery: it.gallery,
-                          videos: it.videos,
-                          sellerBusinessName: null,
-                          sellerOpeningHours: null,
-                          sellerStatus: null,
-                          sellerBusinessDescription: null,
-                          sellerRating: null,
-                          sellerLogoUrl: null,
-                          serviceProviderId: null,
-                          sellerUserId: null,
-                          merchantId: widget.merchantId,
-                          merchantName: widget.merchantName,
-                          serviceType: 'marketplace',
-                          createdAt: it.createdAt,
-                        ),
-                        cartService: _cartService,
-                      ),
-                    ),
-                  );
-                },
-              );
-            },
-              );
-            },
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => DetailsPage(
+                                        item: marketplaceModel
+                                            .MarketplaceDetailModel(
+                                          id: it.sqlItemId!,
+                                          backendItemId: it.sqlItemId,
+                                          name: it.name,
+                                          image: it.image,
+                                          price: it.price,
+                                          description: it.description ?? '',
+                                          location: it.location ?? '',
+                                          comment: null,
+                                          category: it.category,
+                                          gallery: it.gallery,
+                                          videos: it.videos,
+                                          sellerBusinessName: null,
+                                          sellerOpeningHours: null,
+                                          sellerStatus: null,
+                                          sellerBusinessDescription: null,
+                                          sellerRating: null,
+                                          sellerLogoUrl: null,
+                                          serviceProviderId: null,
+                                          sellerUserId: null,
+                                          merchantId: widget.merchantId,
+                                          merchantName: widget.merchantName,
+                                          serviceType: 'marketplace',
+                                          createdAt: it.createdAt,
+                                        ),
+                                        cartService: _cartService,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          );
+                        },
                       ),
                     ),
                   ],
@@ -2517,7 +2842,7 @@ class _MerchantProfileCard extends StatelessWidget {
     final raw = profileUrl?.trim() ?? '';
     if (raw.isEmpty) return null;
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return NetworkImage(raw);
+      return CachedNetworkImageProvider(raw, maxWidth: 200, maxHeight: 200);
     }
     // Try base64 (same pattern as dashboard)
     try {

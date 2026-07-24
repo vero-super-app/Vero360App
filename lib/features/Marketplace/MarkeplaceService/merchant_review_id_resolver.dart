@@ -69,10 +69,18 @@ class MerchantReviewIdResolver {
 
   static Future<int?> _lookupBackendIdFromFirestore(String firebaseUid) async {
     try {
-      final doc = await FirebaseFirestore.instance
+      final ref = FirebaseFirestore.instance
           .collection('marketplace_merchants')
-          .doc(firebaseUid)
-          .get();
+          .doc(firebaseUid);
+      DocumentSnapshot<Map<String, dynamic>> doc;
+      try {
+        doc = await ref.get(const GetOptions(source: Source.cache));
+        if (!doc.exists) {
+          doc = await ref.get(const GetOptions(source: Source.serverAndCache));
+        }
+      } catch (_) {
+        doc = await ref.get(const GetOptions(source: Source.serverAndCache));
+      }
       if (!doc.exists) return null;
       final data = doc.data();
       if (data == null) return null;

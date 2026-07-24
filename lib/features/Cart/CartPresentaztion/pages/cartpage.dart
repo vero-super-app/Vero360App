@@ -17,6 +17,8 @@ import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 // ✅ ONE global formatter (commas)
 // If you want decimals, change decimalDigits: 2
@@ -56,27 +58,98 @@ class _CartPageState extends State<CartPage> {
         });
       }
     });
+
+    // Instant paint from in-memory cache (no I/O).
+    final cached = widget.cartService.cachedItems;
+    if (cached.isNotEmpty) {
+      _items
+        ..clear()
+        ..addAll(cached.where((e) => e.hasValidMerchant));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _precacheCartImages(_items);
+      });
+    }
+
     _cartFuture = _bootstrapCart();
   }
 
-  /// Paint local cart first, then refresh from the API in the background path.
+  void _precacheCartImages(List<CartModel> items) {
+    if (!mounted) return;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cachePx = (80 * dpr).round().clamp(80, 240);
+    for (final item in items) {
+      final url = item.image.trim();
+      final lower = url.toLowerCase();
+      if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+        continue;
+      }
+      unawaited(
+        precacheImage(
+          CachedNetworkImageProvider(
+            url,
+            maxWidth: cachePx,
+            maxHeight: cachePx,
+          ),
+          context,
+        ).catchError((_) {}),
+      );
+    }
+  }
+
+  /// Show local cart immediately; sync with API in the background.
   Future<List<CartModel>> _bootstrapCart() async {
-    final hasSession = _auth.currentUser != null || await _hasSession();
-    if (!hasSession) return <CartModel>[];
+    // Fast session check — avoid AuthHandler round-trip before first paint.
+    final quickLoggedIn = _auth.currentUser != null;
 
     try {
       final local = await widget.cartService.loadLocalCart();
       final valid = local.where((item) => item.hasValidMerchant).toList();
-      if (valid.isNotEmpty && mounted) {
+      if (mounted && valid.isNotEmpty) {
         setState(() {
           _items
             ..clear()
             ..addAll(valid);
         });
+        _precacheCartImages(valid);
+      } else if (mounted && valid.isEmpty && _items.isNotEmpty) {
+        // Keep memory items until network says otherwise.
+      } else if (mounted && valid.isEmpty && !quickLoggedIn) {
+        // May still have SP session — don't clear yet.
       }
     } catch (_) {}
 
-    return _fetch(keepExistingWhileLoading: _items.isNotEmpty);
+    // Unblock FutureBuilder now — don't wait on API.
+    final snapshot = List<CartModel>.from(_items);
+    unawaited(_refreshFromNetworkQuiet());
+    return snapshot;
+  }
+
+  /// Background API refresh after local cart is already on screen.
+  Future<void> _refreshFromNetworkQuiet() async {
+    final hasSession =
+        _auth.currentUser != null || await _hasSession();
+    if (!hasSession) {
+      if (mounted && _items.isEmpty) {
+        // Leave empty; toast only on explicit refresh.
+      }
+      return;
+    }
+
+    try {
+      final data = await widget.cartService.fetchCartItems();
+      final validated = data.where((item) => item.hasValidMerchant).toList();
+      if (!mounted) return;
+      setState(() {
+        _items
+          ..clear()
+          ..addAll(validated);
+        _loading = false;
+      });
+      _precacheCartImages(validated);
+    } catch (_) {
+      // Keep whatever local/memory cart is already showing.
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -144,6 +217,8 @@ class _CartPageState extends State<CartPage> {
           'merchantId': item.merchantId,
           'merchantName': item.merchantName,
           'serviceType': item.serviceType,
+          if (item.availableStock != null) 'availableStock': item.availableStock,
+          if (item.availableStock != null) 'stockQuantity': item.availableStock,
           'updatedAt': FieldValue.serverTimestamp(),
         });
       }
@@ -194,6 +269,12 @@ class _CartPageState extends State<CartPage> {
           merchantId: (data['merchantId'] ?? '').toString(),
           merchantName: (data['merchantName'] ?? '').toString(),
           serviceType: (data['serviceType'] ?? 'marketplace').toString(),
+          availableStock: data['availableStock'] == null &&
+                  data['stockQuantity'] == null
+              ? null
+              : (data['availableStock'] is num
+                  ? (data['availableStock'] as num).toInt()
+                  : int.tryParse('${data['availableStock'] ?? data['stockQuantity']}')),
         );
       }).toList();
     } catch (_) {
@@ -225,20 +306,6 @@ class _CartPageState extends State<CartPage> {
         'serviceType': item.serviceType,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-    } catch (_) {}
-  }
-
-  Future<void> _removeFromFirestore(CartModel item) async {
-    try {
-      final userId = await _getCurrentUserId();
-      if (userId == null || userId.isEmpty) return;
-
-      final doc = _firestore
-          .collection('backup_carts')
-          .doc(userId)
-          .collection('items')
-          .doc('${item.item}_${item.merchantId}');
-      await doc.delete();
     } catch (_) {}
   }
 
@@ -330,11 +397,18 @@ class _CartPageState extends State<CartPage> {
     if (idx == -1) return;
 
     final backup = _items[idx];
+    // Tombstone before UI remove so a parallel fetch cannot bring it back.
+    widget.cartService.noteLocalDelete(
+      item.item,
+      merchantId: item.merchantId,
+    );
     setState(() => _items.removeAt(idx));
 
     try {
-      await widget.cartService.removeFromCart(item.item);
-      await _removeFromFirestore(backup);
+      await widget.cartService.removeFromCart(
+        item.item,
+        merchantId: item.merchantId,
+      );
 
       ToastHelper.showCustomToast(
         context,
@@ -354,7 +428,26 @@ class _CartPageState extends State<CartPage> {
   }
 
   Future<void> _changeQty(CartModel item, int newQty) async {
-    newQty = max(1, min(99, newQty));
+    final maxQ = item.maxOrderQty;
+    if (maxQ <= 0) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item is out of stock',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (newQty > maxQ) {
+      ToastHelper.showCustomToast(
+        context,
+        'Only $maxQ available from the seller',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      newQty = maxQ;
+    }
+    newQty = max(1, min(maxQ, newQty));
     if (newQty == item.quantity) return;
 
     final idx = _items.indexWhere(
@@ -445,8 +538,12 @@ class _CartPageState extends State<CartPage> {
   }
 
   Future<void> _refresh() async {
-    setState(() => _cartFuture = _fetch());
+    setState(() {
+      _loading = true;
+      _cartFuture = _fetch(keepExistingWhileLoading: _items.isNotEmpty);
+    });
     await _cartFuture;
+    if (mounted) setState(() => _loading = false);
   }
 
   // Helper to calculate totals
@@ -672,16 +769,15 @@ class _CartItemTile extends StatelessWidget {
   final VoidCallback onDec;
   final VoidCallback onRemove;
 
-  void _debugLogImage() {
-    if (item.image.isEmpty) {
-      // ignore
-    }
-  }
+  static final Map<String, Uint8List> _base64Cache = <String, Uint8List>{};
 
   Uint8List? _decodeBase64Image(String v) {
     if (v.isEmpty) return null;
     final lower = v.toLowerCase();
     if (lower.startsWith('http://') || lower.startsWith('https://')) return null;
+
+    final cached = _base64Cache[v];
+    if (cached != null) return cached;
 
     try {
       var cleaned = v.trim().replaceAll(RegExp(r'\s+'), '');
@@ -693,6 +789,9 @@ class _CartItemTile extends StatelessWidget {
       if (mod != 0) cleaned = cleaned.padRight(cleaned.length + (4 - mod), '=');
       final bytes = base64Decode(cleaned);
       if (bytes.isEmpty) return null;
+      // Bound cache size for long sessions.
+      if (_base64Cache.length > 40) _base64Cache.clear();
+      _base64Cache[v] = bytes;
       return bytes;
     } catch (_) {
       return null;
@@ -706,33 +805,40 @@ class _CartItemTile extends StatelessWidget {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    _debugLogImage();
+  Widget _thumbImage(BuildContext context) {
+    if (item.image.isEmpty) return _placeholder();
 
-    Widget imageWidget;
-    if (item.image.isEmpty) {
-      imageWidget = _placeholder();
-    } else {
-      final lower = item.image.toLowerCase();
-      final isUrl = lower.startsWith('http://') || lower.startsWith('https://');
+    final lower = item.image.toLowerCase();
+    final isUrl = lower.startsWith('http://') || lower.startsWith('https://');
 
-      if (isUrl) {
-        imageWidget = Image.network(
-          item.image,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _placeholder(),
-        );
-      } else {
-        final bytes = _decodeBase64Image(item.image);
-        imageWidget = bytes != null
-            ? Image.memory(bytes,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _placeholder())
-            : _placeholder();
-      }
+    if (isUrl) {
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final cachePx = (80 * dpr).round().clamp(80, 240);
+      return ResilientCachedNetworkImage(
+        url: item.image,
+        fit: BoxFit.cover,
+        width: 80,
+        height: 80,
+        memCacheWidth: cachePx,
+        memCacheHeight: cachePx,
+      );
     }
 
+    final bytes = _decodeBase64Image(item.image);
+    if (bytes == null) return _placeholder();
+    return Image.memory(
+      bytes,
+      fit: BoxFit.cover,
+      width: 80,
+      height: 80,
+      cacheWidth: (80 * MediaQuery.devicePixelRatioOf(context)).round(),
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) => _placeholder(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
       padding: const EdgeInsets.all(10),
@@ -755,7 +861,7 @@ class _CartItemTile extends StatelessWidget {
             child: SizedBox(
               width: 80,
               height: 80,
-              child: imageWidget,
+              child: _thumbImage(context),
             ),
           ),
           const SizedBox(width: 12),

@@ -263,6 +263,8 @@ class MarketplaceDetailModel {
   final String? serviceProviderId;
   final String? sellerUserId;
   final int? merchantBackendId;
+  /// Available units from supplier. Null = legacy/unlimited (cap at 99).
+  final int? stockQuantity;
 
   MarketplaceDetailModel({
     required this.id, required this.name, required this.category,
@@ -274,12 +276,21 @@ class MarketplaceDetailModel {
     this.serviceProviderId, this.sellerUserId, this.merchantId,
     this.merchantName, this.serviceType = 'marketplace',
     this.merchantBackendId,
+    this.stockQuantity,
   });
 
   bool get hasValidSqlItemId => sqlItemId != null && sqlItemId! > 0;
   bool get hasValidMerchantInfo =>
       merchantId != null && merchantId!.isNotEmpty && merchantId != 'unknown' &&
       merchantName != null && merchantName!.isNotEmpty && merchantName != 'Unknown Merchant';
+
+  bool get isOutOfStock => stockQuantity != null && stockQuantity! <= 0;
+
+  /// Max units a buyer can order (Taobao-style stock cap).
+  int get maxOrderQty {
+    if (stockQuantity == null) return 99;
+    return stockQuantity!.clamp(0, 99999);
+  }
 
   factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
     final data = (doc.data() as Map<String, dynamic>?) ?? {};
@@ -331,6 +342,7 @@ class MarketplaceDetailModel {
       merchantId: data['merchantId']?.toString(), merchantName: data['merchantName']?.toString(),
       serviceType: data['serviceType']?.toString() ?? 'marketplace',
       merchantBackendId: parseInt(data['merchantBackendId'] ?? data['backendUserId']),
+      stockQuantity: parseInt(data['stockQuantity'] ?? data['quantity'] ?? data['stock']),
     );
   }
 }
@@ -978,23 +990,301 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     ToastHelper.showCustomToast(context, 'Product link copied', isSuccess: true, errorMessage: 'OK');
   }
 
+  /// Taobao-style qty picker capped by supplier stock.
+  Future<int?> _pickOrderQuantity(MarketplaceDetailModel item) async {
+    final maxQ = item.maxOrderQty;
+    if (maxQ <= 0) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item is out of stock',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return null;
+    }
+
+    final existing = widget.cartService.cachedItems.where(
+      (c) =>
+          c.name == item.name &&
+          c.merchantId == (item.merchantId ?? '') &&
+          (item.hasValidSqlItemId ? c.item == item.sqlItemId : true),
+    );
+    var alreadyInCart = 0;
+    for (final c in existing) {
+      alreadyInCart += c.quantity;
+    }
+    final remaining = (maxQ - alreadyInCart).clamp(0, maxQ);
+    if (remaining <= 0) {
+      ToastHelper.showCustomToast(
+        context,
+        'You already have the maximum available quantity ($maxQ) in your cart',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return null;
+    }
+
+    var qty = 1;
+    final result = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      item.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 17,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      item.stockQuantity == null
+                          ? 'Choose quantity'
+                          : 'Available: $maxQ  ·  Already in cart: $alreadyInCart',
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton.filledTonal(
+                          onPressed: qty <= 1
+                              ? null
+                              : () => setLocal(() => qty--),
+                          icon: const Icon(Icons.remove_rounded),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 22),
+                          child: Text(
+                            '$qty',
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        IconButton.filled(
+                          style: IconButton.styleFrom(
+                            backgroundColor: _kAmber,
+                          ),
+                          onPressed: qty >= remaining
+                              ? null
+                              : () => setLocal(() => qty++),
+                          icon: const Icon(Icons.add_rounded, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                    if (qty >= remaining && item.stockQuantity != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        'Maximum you can add now: $remaining',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.orange.shade800,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _kAmber,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: () => Navigator.pop(ctx, qty),
+                      child: Text(
+                        'Add $qty to cart',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    return result;
+  }
+
   Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
-    final isLoggedIn = await _requireLoginForCart();
-    if (!isLoggedIn) return;
-    if (!item.hasValidMerchantInfo) { ToastHelper.showCustomToast(context, 'This item cannot be added to cart: Missing merchant information.', isSuccess: false, errorMessage: 'Invalid merchant info'); return; }
+    if (!item.hasValidMerchantInfo) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item cannot be added to cart: Missing merchant information.',
+        isSuccess: false,
+        errorMessage: 'Invalid merchant info',
+      );
+      return;
+    }
+    if (item.isOutOfStock) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item is out of stock',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    final pickedQty = await _pickOrderQuantity(item);
+    if (pickedQty == null || pickedQty < 1) return;
     if (!mounted) return;
-    showDialog(context: context, barrierDismissible: false, builder: (_) => Dialog(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20), child: Row(mainAxisSize: MainAxisSize.min, children: [const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: _kAmber)), const SizedBox(width: 16), const Flexible(child: Text('Adding to cart...', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)))]))));
+
+    // Show cancelable dialog immediately (don't wait on login/token first).
+    var cancelled = false;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogCtx) {
+        return PopScope(
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) cancelled = true;
+          },
+          child: Dialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 8, 16),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: _kAmber,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  const Flexible(
+                    child: Text(
+                      'Adding to cart...',
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Cancel',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () {
+                      cancelled = true;
+                      Navigator.of(dialogCtx).pop();
+                    },
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    void dismissDialog() {
+      if (!mounted) return;
+      final nav = Navigator.of(context, rootNavigator: true);
+      if (nav.canPop()) nav.pop();
+    }
+
     try {
+      final isLoggedIn = await _requireLoginForCart();
+      if (!isLoggedIn || cancelled) {
+        if (!cancelled) dismissDialog();
+        return;
+      }
+
       final userId = await _getCurrentUserId() ?? 'unknown';
-      final int numericItemId = item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id);
-      final cartItem = CartModel(userId: userId, item: numericItemId, quantity: 1, image: item.image, name: item.name, price: item.price, description: item.description ?? '', merchantId: item.merchantId ?? 'unknown', merchantName: item.merchantName ?? 'Unknown Merchant', serviceType: item.serviceType ?? 'marketplace', comment: note);
+      if (cancelled) return;
+
+      final int numericItemId = item.hasValidSqlItemId
+          ? item.sqlItemId!
+          : _stablePositiveIdFromString(item.id);
+
+      // Merge with existing cart line, still capped by stock.
+      final existing = widget.cartService.cachedItems.where(
+        (c) =>
+            c.item == numericItemId &&
+            c.merchantId == (item.merchantId ?? 'unknown'),
+      );
+      var already = 0;
+      for (final c in existing) {
+        already += c.quantity;
+      }
+      final maxQ = item.maxOrderQty;
+      final finalQty = (already + pickedQty).clamp(1, maxQ);
+
+      final cartItem = CartModel(
+        userId: userId,
+        item: numericItemId,
+        quantity: finalQty,
+        image: item.image,
+        name: item.name,
+        price: item.price,
+        description: item.description ?? '',
+        merchantId: item.merchantId ?? 'unknown',
+        merchantName: item.merchantName ?? 'Unknown Merchant',
+        serviceType: item.serviceType ?? 'marketplace',
+        comment: note,
+        availableStock: item.stockQuantity,
+      );
+
+      // Local cart write returns immediately; Firestore/API sync in background.
       await widget.cartService.addToCart(cartItem);
       unawaited(_trackInteraction(item, weight: 3.0));
-      if (mounted) Navigator.of(context).pop();
-      ToastHelper.showCustomToast(context, '${item.name} added to cart', isSuccess: true, errorMessage: 'OK');
+
+      if (cancelled || !mounted) return;
+      dismissDialog();
+      ToastHelper.showCustomToast(
+        context,
+        finalQty > pickedQty
+            ? '${item.name} updated in cart (qty $finalQty / max $maxQ)'
+            : '${item.name} added to cart (qty $pickedQty)',
+        isSuccess: true,
+        errorMessage: 'OK',
+      );
     } catch (e) {
-      if (mounted) Navigator.of(context).pop();
-      ToastHelper.showCustomToast(context, 'Failed to add item: $e', isSuccess: false, errorMessage: 'Add to cart failed');
+      if (!cancelled && mounted) {
+        dismissDialog();
+        ToastHelper.showCustomToast(
+          context,
+          'Failed to add item: $e',
+          isSuccess: false,
+          errorMessage: 'Add to cart failed',
+        );
+      }
     }
   }
 
@@ -1189,7 +1479,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   Widget _buildMarketItem(MarketplaceDetailModel item) {
     final cat = item.category.trim();
     final merchant = (item.merchantName ?? '').trim();
-    final isSold = !item.isActive;
+    final isSold = !item.isActive || item.isOutOfStock;
     final catColor = _kCategoryColors[cat] ?? _kAmber;
     final catIcon = _kCategoryIcons[cat] ?? Icons.category_rounded;
     final VoidCallback? onTapCard = isSold ? null : () => _openDetailsPage(item);
@@ -1258,9 +1548,36 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                       width: 110, padding: const EdgeInsets.symmetric(vertical: 5),
                       decoration: const BoxDecoration(
                         gradient: LinearGradient(colors: [Color(0xFFD32F2F), Color(0xFFB71C1C)]),
-                        boxShadow: [BoxShadow(color: Color(0x44D32F2F), blurRadius: 8)],
+                        boxShadow: [BoxShadow(color: Color(0x66B71C1C), blurRadius: 8)],
                       ),
-                      child: const Center(child: Text('SOLD', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5))),
+                      alignment: Alignment.center,
+                      child: Text(
+                        item.isOutOfStock ? 'OUT OF STOCK' : 'SOLD',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 10, letterSpacing: 0.5),
+                      ),
+                    ),
+                  ),
+                ),
+              if (!isSold && item.stockQuantity != null)
+                Positioned(
+                  top: 9,
+                  right: 9,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      item.stockQuantity! <= 5
+                          ? 'Only ${item.stockQuantity} left'
+                          : '${item.stockQuantity} in stock',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 ),
@@ -1340,7 +1657,9 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                   )),
                   const SizedBox(width: 8),
                   Expanded(child: _CardButton(
-                    label: isSold ? 'Sold' : 'Buy',
+                    label: isSold
+                        ? (item.isOutOfStock ? 'No stock' : 'Sold')
+                        : 'Buy',
                     icon: isSold ? Icons.block_rounded : Icons.bolt_rounded,
                     onPressed: isSold ? null : () => _openDetailsPage(item),
                     filled: true,

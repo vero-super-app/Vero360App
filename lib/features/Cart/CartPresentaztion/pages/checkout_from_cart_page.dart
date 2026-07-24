@@ -1137,16 +1137,20 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     if (_resultHandled) return;
     _resultHandled = true;
     _pollTimer?.cancel();
-    if (widget.clearCartOnSuccess) {
-      unawaited(() async {
-        try {
-          final cart = CartServiceProvider.getInstance();
-          await cart.clearCart();
-        } catch (e) {
-          debugPrint('[InAppPaymentPage] Failed to clear cart: $e');
-        }
-      }());
-    }
+
+    final shouldClearCart = widget.clearCartOnSuccess;
+    final clearFuture = shouldClearCart
+        ? () async {
+            try {
+              final cart = CartServiceProvider.getInstance();
+              await cart.clearCart();
+            } catch (e) {
+              debugPrint('[InAppPaymentPage] Failed to clear cart: $e');
+            }
+          }()
+        : Future<void>.value();
+
+    // Non-cart paths still fire-and-forget; cart path awaits below.
 
     final food = widget.foodCheckout;
     if (food != null) {
@@ -1224,14 +1228,17 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     } else if (widget.popOnlyOnSuccess) {
       if (mounted) Navigator.of(context).pop();
     } else {
-      if (mounted) {
+      // Cart checkout: finish clearing before leaving so the cart isn't "stuck".
+      unawaited(() async {
+        await clearFuture;
+        if (!mounted) return;
         Navigator.of(context).pop(); // close webview
-        // Keep root (e.g. BottomNavbar) so back from Orders stays in app
+        if (!widget.rootContext.mounted) return;
         Navigator.of(widget.rootContext).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const OrdersPage()),
           (route) => route.isFirst,
         );
-      }
+      }());
     }
   }
 

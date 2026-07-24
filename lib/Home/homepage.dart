@@ -24,7 +24,7 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 
 import 'package:vero360_app/utils/ExchangeRate.dart';
-import 'package:vero360_app/features/AirportPickup/AirportPresenter/airportpickup.dart';
+import 'package:vero360_app/Quickservices/customerservice.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
 import 'package:vero360_app/Quickservices/jobs.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/verocourier.dart';
@@ -84,24 +84,27 @@ class Mini {
 
 const List<Mini> kQuickServices = [
   Mini('taxi',           'Vero Ride', Icons.local_taxi_rounded,          emoji: '🚗'),
-  Mini('airport_pickup', 'Airport',   Icons.flight_takeoff_rounded,      emoji: '✈️'),
   Mini('courier',        'Courier',   Icons.local_shipping_rounded,      emoji: '🚚'),
   Mini('vero_bike',      'Vero Bike', Icons.pedal_bike_rounded,          emoji: '🚲'),
   Mini('fx',             'Forex',     Icons.currency_exchange_rounded,   emoji: '💱'),
   Mini('food',           'Food',      Icons.fastfood_rounded,            emoji: '🍔'),
   Mini('jobs',           'Jobs',      Icons.business_center_rounded,     emoji: '💼'),
   Mini('accommodation',  'Stay',      Icons.hotel_rounded,               emoji: '🛏️'),
+  Mini('customer_service', 'Support', Icons.support_agent_rounded,       emoji: '💬'),
 ];
 
+/// Services shown in the home coach / quick guide (never includes removed ones).
+const List<Mini> kQuickGuideServices = kQuickServices;
+
 const Map<String, String> kQuickServiceGuideNotes = {
-  'taxi':          'Request a taxi ride in minutes.',
-  'airport_pickup':'Schedule airport pickup or drop-off.',
-  'courier':       'Send parcels and track deliveries.',
-  'vero_bike':     'Book fast, affordable bike rides.',
-  'fx':            'Check live exchange rates instantly.',
-  'food':          'Browse restaurants and order food.',
-  'jobs':          'Discover job opportunities near you.',
-  'accommodation': 'Find hotels and places to stay.',
+  'taxi':             'Request a taxi ride in minutes.',
+  'courier':          'Send parcels and track deliveries.',
+  'vero_bike':        'Book fast, affordable bike rides.',
+  'fx':               'Check live exchange rates instantly.',
+  'food':             'Browse restaurants and order food.',
+  'jobs':             'Discover job opportunities near you.',
+  'accommodation':    'Find hotels and places to stay.',
+  'customer_service': 'Chat with Vero Assist in English or Chichewa.',
 };
 
 class DigitalProduct {
@@ -222,7 +225,8 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     return _greetingResolved ? 'there' : '...';
   }
 
-  List<ServiceGuideStep> get _guideSteps => kQuickServices
+  List<ServiceGuideStep> get _guideSteps => kQuickGuideServices
+      .where((item) => item.keyId != 'airport_pickup')
       .map((item) => ServiceGuideStep(
             keyId:       item.keyId,
             title:       item.label,
@@ -341,7 +345,8 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
 
   Future<void> _maybeShowServicesHint() async {
     final prefs = await SharedPreferences.getInstance();
-    final seen  = prefs.getBool('home_services_hint_v1') ?? false;
+    // v2 = guide without Airport Pickup, with Support next to Stay.
+    final seen  = prefs.getBool('home_services_hint_v2') ?? false;
     if (seen || !mounted) return;
     await Future.delayed(const Duration(milliseconds: 900));
     if (!mounted) return;
@@ -350,7 +355,9 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
 
   Future<void> _finishServicesGuide() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('home_services_hint_v1', true);
+    await prefs.setBool('home_services_hint_v2', true);
+    // Clear legacy key so old Airport guide state cannot linger.
+    await prefs.remove('home_services_hint_v1');
     if (!mounted) return;
     setState(() {
       _showServicesHint = false;
@@ -565,8 +572,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       case 'courier':
         page = const VerocourierPage();
         break;
-      case 'airport_pickup':
-        page = const Airportpickuppage();
+      case 'customer_service':
+      case 'support':
+      case 'help':
+        page = const CustomerServicePage();
         break;
       case 'taxi':
       case 'car_hire':
@@ -1389,11 +1398,14 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
     'bike': 'vero_bike',
     'bicycle': 'vero_bike',
     'verobike': 'vero_bike',
-    'airport': 'airport_pickup',
-    'pickup': 'airport_pickup',
     'courier': 'courier',
     'parcel': 'courier',
     'delivery': 'courier',
+    'support': 'customer_service',
+    'help': 'customer_service',
+    'customer service': 'customer_service',
+    'bot': 'customer_service',
+    'assist': 'customer_service',
     'car hire': 'car_hire',
     'rent': 'car_hire',
     'rental': 'car_hire',
@@ -1436,8 +1448,8 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
     if (query.trim().isEmpty) {
       final popular = const [
         'Taxi',
+        'Support',
         'Bike',
-        'Airport pickup',
         'Food',
         'Hotel',
         'FX',
@@ -1472,7 +1484,7 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
-            'No matches. Try: taxi, bike, airport, hotel, forex, food, jobs...',
+            'No matches. Try: taxi, support, bike, hotel, forex, food, jobs...',
             textAlign: TextAlign.center,
             style: Theme.of(context)
                 .textTheme
@@ -2749,14 +2761,14 @@ class _GuideCard extends StatelessWidget {
   final Future<void> Function()  onNext;
 
   static const Map<String, IconData> _icons = {
-    'taxi':          Icons.local_taxi_rounded,
-    'airport_pickup':Icons.flight_takeoff_rounded,
-    'courier':       Icons.local_shipping_rounded,
-    'vero_bike':     Icons.pedal_bike_rounded,
-    'fx':            Icons.currency_exchange_rounded,
-    'food':          Icons.fastfood_rounded,
-    'jobs':          Icons.business_center_rounded,
-    'accommodation': Icons.hotel_rounded,
+    'taxi':             Icons.local_taxi_rounded,
+    'customer_service': Icons.support_agent_rounded,
+    'courier':          Icons.local_shipping_rounded,
+    'vero_bike':        Icons.pedal_bike_rounded,
+    'fx':               Icons.currency_exchange_rounded,
+    'food':             Icons.fastfood_rounded,
+    'jobs':             Icons.business_center_rounded,
+    'accommodation':    Icons.hotel_rounded,
   };
 
   Color _darken(Color c, double amt) {

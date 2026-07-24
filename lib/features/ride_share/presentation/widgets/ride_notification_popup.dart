@@ -1,12 +1,21 @@
+import 'dart:async';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/driver_ride_request_sheet.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
+/// Incoming ride request overlay — navy premium sheet with countdown timer.
 class RideNotificationPopup extends StatefulWidget {
   final DriverRideRequest rideRequest;
   final WidgetRef ref;
   final VoidCallback onDismiss;
   final VoidCallback onAccept;
+  final Duration timeout;
 
   const RideNotificationPopup({
     super.key,
@@ -14,6 +23,7 @@ class RideNotificationPopup extends StatefulWidget {
     required this.ref,
     required this.onDismiss,
     required this.onAccept,
+    this.timeout = const Duration(seconds: 15),
   });
 
   @override
@@ -21,46 +31,89 @@ class RideNotificationPopup extends StatefulWidget {
 }
 
 class _RideNotificationPopupState extends State<RideNotificationPopup>
-    with SingleTickerProviderStateMixin {
-  static const Color _primary = Color(0xFFFF8A00);
-
-  late AnimationController _controller;
-  late Animation<double> _scaleAnim;
+    with TickerProviderStateMixin {
+  late AnimationController _slideController;
+  late AnimationController _timerController;
+  late Animation<Offset> _slideAnim;
   late Animation<double> _fadeAnim;
+
+  double? _pickupKm;
+  int? _pickupMins;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 350),
+    _slideController = AnimationController(
+      duration: const Duration(milliseconds: 380),
       vsync: this,
     );
-    _scaleAnim = CurvedAnimation(parent: _controller, curve: Curves.easeOutBack);
-    _fadeAnim = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
-    _controller.forward();
+    _timerController = AnimationController(
+      duration: widget.timeout,
+      vsync: this,
+    );
+    _slideAnim = Tween<Offset>(
+      begin: const Offset(0, 0.35),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _slideController,
+      curve: Curves.easeOutCubic,
+    ));
+    _fadeAnim =
+        CurvedAnimation(parent: _slideController, curve: Curves.easeOut);
 
-    Future.delayed(const Duration(seconds: 12), () {
-      if (mounted) _dismiss();
+    _slideController.forward();
+    _timerController.forward();
+    _timerController.addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) {
+        _dismiss();
+      }
     });
+
+    unawaited(_resolvePickupEta());
   }
 
-  void _dismiss() {
-    _controller.reverse().then((_) {
-      if (mounted) widget.onDismiss();
-    });
+  Future<void> _resolvePickupEta() async {
+    try {
+      final pos = await LocationPermissionHelper.getCurrentPositionIfGranted(
+        timeLimit: const Duration(seconds: 3),
+      );
+      if (pos == null || !mounted) return;
+      final meters = Geolocator.distanceBetween(
+        pos.latitude,
+        pos.longitude,
+        widget.rideRequest.pickupLat,
+        widget.rideRequest.pickupLng,
+      );
+      final km = meters / 1000.0;
+      final mins = (km * 2.5).ceil().clamp(1, 60);
+      if (!mounted) return;
+      setState(() {
+        _pickupKm = km;
+        _pickupMins = mins;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _dismiss() async {
+    await _slideController.reverse();
+    if (mounted) widget.onDismiss();
+  }
+
+  Future<void> _accept() async {
+    _timerController.stop();
+    await _slideController.reverse();
+    if (mounted) widget.onAccept();
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _slideController.dispose();
+    _timerController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final cardWidth = size.width < 600 ? size.width - 48 : 400.0;
-
     return Positioned.fill(
       child: FadeTransition(
         opacity: _fadeAnim,
@@ -68,259 +121,43 @@ class _RideNotificationPopupState extends State<RideNotificationPopup>
           children: [
             GestureDetector(
               onTap: _dismiss,
-              child: Container(color: Colors.black26),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                child: Container(
+                  color:
+                      RideShareColors.primaryContainer.withValues(alpha: 0.4),
+                ),
+              ),
             ),
-            Center(
-              child: ScaleTransition(
-                scale: _scaleAnim,
-                child: Material(
-                  color: Colors.transparent,
-                  child: SizedBox(
-                    width: cardWidth,
-                    child: _buildCard(),
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: SlideTransition(
+                position: _slideAnim,
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 440),
+                        child: DriverRideRequestSheet(
+                          request: widget.rideRequest,
+                          timer: _timerController,
+                          pickupKm: _pickupKm,
+                          pickupMins: _pickupMins,
+                          passengerShort:
+                              shortPassengerName(widget.rideRequest.passengerName),
+                          onAccept: _accept,
+                          onDecline: _dismiss,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildCard() {
-    final req = widget.rideRequest;
-    final fareStr = req.estimatedFare > 0
-        ? 'MK ${req.estimatedFare.toStringAsFixed(0)}'
-        : '---';
-    final distStr = req.estimatedDistance > 0
-        ? '${req.estimatedDistance.toStringAsFixed(1)} km'
-        : '---';
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.2),
-            blurRadius: 30,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFFFF8A00), Color(0xFFFF6B00)],
-              ),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.25),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(Icons.local_taxi, color: Colors.white, size: 24),
-                ),
-                const SizedBox(width: 14),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'New Ride Request',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      SizedBox(height: 2),
-                      Text(
-                        'A passenger needs a ride',
-                        style: TextStyle(color: Colors.white70, fontSize: 13),
-                      ),
-                    ],
-                  ),
-                ),
-                GestureDetector(
-                  onTap: _dismiss,
-                  child: const Icon(Icons.close, color: Colors.white70, size: 22),
-                ),
-              ],
-            ),
-          ),
-
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-            child: Column(
-              children: [
-                // Pickup address
-                _buildAddressRow(
-                  color: _primary,
-                  icon: Icons.trip_origin,
-                  label: 'Pickup',
-                  address: req.pickupAddress,
-                ),
-                if (req.dropoffAddress.isNotEmpty &&
-                    req.dropoffAddress != 'Destination') ...[
-                  Padding(
-                    padding: const EdgeInsets.only(left: 11),
-                    child: Column(
-                      children: List.generate(
-                        3,
-                        (_) => Container(
-                          width: 2,
-                          height: 4,
-                          margin: const EdgeInsets.symmetric(vertical: 1),
-                          color: Colors.grey[300],
-                        ),
-                      ),
-                    ),
-                  ),
-                  _buildAddressRow(
-                    color: Colors.redAccent,
-                    icon: Icons.location_on,
-                    label: 'Dropoff',
-                    address: req.dropoffAddress,
-                  ),
-                ],
-                const SizedBox(height: 16),
-
-                // Fare & distance chips
-                Row(
-                  children: [
-                    Expanded(child: _buildChip(Icons.payments_outlined, 'Fare', fareStr)),
-                    const SizedBox(width: 10),
-                    Expanded(child: _buildChip(Icons.straighten, 'Distance', distStr)),
-                  ],
-                ),
-                const SizedBox(height: 20),
-
-                // Buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: SizedBox(
-                        height: 48,
-                        child: OutlinedButton(
-                          onPressed: _dismiss,
-                          style: OutlinedButton.styleFrom(
-                            side: BorderSide(color: Colors.grey[400]!),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: Text(
-                            'Decline',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: SizedBox(
-                        height: 48,
-                        child: ElevatedButton.icon(
-                          onPressed: widget.onAccept,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _primary,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            elevation: 0,
-                          ),
-                          icon: const Icon(Icons.check_circle_outline,
-                              color: Colors.white, size: 20),
-                          label: const Text(
-                            'Accept Ride',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAddressRow({
-    required Color color,
-    required IconData icon,
-    required String label,
-    required String address,
-  }) {
-    return Row(
-      children: [
-        Icon(icon, color: color, size: 22),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-              Text(
-                address,
-                style: const TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.w500),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildChip(IconData icon, String label, String value) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-      decoration: BoxDecoration(
-        color: _primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 18, color: _primary),
-          const SizedBox(width: 6),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: TextStyle(fontSize: 10, color: Colors.grey[500])),
-              Text(value,
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w700)),
-            ],
-          ),
-        ],
       ),
     );
   }

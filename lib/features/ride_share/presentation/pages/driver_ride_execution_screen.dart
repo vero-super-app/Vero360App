@@ -1,14 +1,15 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_in_ride_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_messaging_sheet.dart';
-import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
 class DriverRideExecutionScreen extends ConsumerStatefulWidget {
   final int rideId;
@@ -28,14 +29,12 @@ class DriverRideExecutionScreen extends ConsumerStatefulWidget {
 class _DriverRideExecutionScreenState
     extends ConsumerState<DriverRideExecutionScreen> {
   GoogleMapController? _mapController;
-  static const Color primaryColor = Color(0xFFFF8A00);
   bool _hasNavigatedAway = false;
+  String? _lastActionError;
 
   @override
   void initState() {
     super.initState();
-    // Defer reset + subscribe so we don't modify providers during build (Riverpod).
-    // Ride id guards on Completed/Cancelled still protect stale state on frame 1.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref
@@ -49,10 +48,6 @@ class _DriverRideExecutionScreenState
     ref.read(rideLifecycleProvider.notifier).detachScreen();
     _mapController?.dispose();
     super.dispose();
-  }
-
-  void _onMapCreated(GoogleMapController controller) {
-    _mapController = controller;
   }
 
   Place _placeFromRide({
@@ -72,685 +67,62 @@ class _DriverRideExecutionScreenState
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final lifecycleState = ref.watch(rideLifecycleProvider);
-
-    final Ride? ride = switch (lifecycleState) {
-      RideActive(:final ride) => ride,
-      RideCompleted(:final ride) => ride,
-      RideCancelled(:final ride) => ride,
-      _ => null,
-    };
-
-    if (lifecycleState is RideCompleted && !_hasNavigatedAway) {
-      final completedRide = lifecycleState.ride;
-      if (completedRide.id != widget.rideId) {
-        // Stale completion from another ride; wait for subscribeToRide to refresh.
-      } else {
-        _hasNavigatedAway = true;
-        final r = completedRide;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(
-                builder: (_) => _DriverRideCompletionScreen(
-                  ride: r,
-                  onDone: () => widget.onRideEnded?.call(),
-                ),
-              ),
-            );
-          }
-        });
-      }
+  String _bannerTitle(RideActive state) {
+    if (state.isAccepted) return 'Head to pickup';
+    if (state.isDriverArrived) return 'Waiting for passenger';
+    if (state.isInProgress) {
+      final dest = state.ride.dropoffAddress?.trim();
+      if (dest != null && dest.isNotEmpty) return dest;
+      return 'En route to dropoff';
     }
-
-    if (lifecycleState is RideCancelled && !_hasNavigatedAway) {
-      final cancelledRide = lifecycleState.ride;
-      if (cancelledRide.id != widget.rideId) {
-        // Stale cancel from another ride.
-      } else {
-        _hasNavigatedAway = true;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Ride cancelled: ${lifecycleState.reason}'),
-                backgroundColor: Colors.red,
-                duration: const Duration(seconds: 2),
-              ),
-            );
-            Future.delayed(const Duration(milliseconds: 500), () {
-              if (mounted && context.mounted) Navigator.of(context).pop();
-            });
-          }
-        });
-      }
-    }
-
-    if (lifecycleState is RideActive && lifecycleState.actionError != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(lifecycleState.actionError!),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      });
-    }
-
-    final String title = switch (lifecycleState) {
-      RideActive(:final ride) => _getStateTitle(ride.status),
-      RideCompleted() => 'Ride Completed',
-      RideCancelled() => 'Ride Cancelled',
-      _ => 'Ride Status',
-    };
-
-    final Place? pickupPlace = ride != null
-        ? _placeFromRide(
-            id: 'pickup',
-            name: 'Pickup',
-            address: ride.pickupAddress,
-            lat: ride.pickupLatitude,
-            lng: ride.pickupLongitude,
-          )
-        : null;
-
-    final Place? dropoffPlace = ride != null
-        ? _placeFromRide(
-            id: 'dropoff',
-            name: 'Dropoff',
-            address: ride.dropoffAddress,
-            lat: ride.dropoffLatitude,
-            lng: ride.dropoffLongitude,
-          )
-        : null;
-
-    return WillPopScope(
-      onWillPop: () async => false,
-      child: Scaffold(
-        appBar: AppBar(
-          leading: const SizedBox.shrink(),
-          centerTitle: true,
-          title:
-              Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-          backgroundColor: primaryColor,
-        ),
-        body: Stack(
-          children: [
-            MapViewWidget(
-              onMapCreated: _onMapCreated,
-              pickupPlace: pickupPlace,
-              dropoffPlace: dropoffPlace,
-              trackingMode: true,
-            ),
-            if (lifecycleState is RideActive)
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: _buildActionPanel(context, lifecycleState),
-              ),
-            if (lifecycleState is RideIdle || lifecycleState is RideRequesting)
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: _buildLoadingPanel(),
-              ),
-          ],
-        ),
-      ),
-    );
+    return 'Active ride';
   }
 
-  String _getStateTitle(String status) {
-    switch (status) {
-      case RideStatus.accepted:
-        return 'Head to Pickup';
-      case RideStatus.driverArrived:
-        return 'At Pickup Location';
-      case RideStatus.inProgress:
-        return 'En Route to Dropoff';
-      case RideStatus.completed:
-        return 'Ride Completed';
-      default:
-        return 'Ride Status';
-    }
+  String _bannerEyebrow(RideActive state) {
+    if (state.isAccepted) return 'Next step';
+    if (state.isDriverArrived) return 'At pickup';
+    if (state.isInProgress) return 'Destination';
+    return 'Status';
   }
 
-  Future<void> _openMessaging(
-      BuildContext context, RideActive state) async {
+  IconData _bannerIcon(RideActive state) {
+    if (state.isAccepted) return Icons.navigation;
+    if (state.isDriverArrived) return Icons.person_pin_circle;
+    return Icons.flag;
+  }
+
+  Future<void> _openMessaging(RideActive state) async {
     try {
       final myId = await AuthStorage.userIdFromToken();
       if (myId == null) throw Exception('User not authenticated');
-      if (!context.mounted) return;
+      if (!mounted) return;
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
-        builder: (context) => RideMessagingSheet(
+        builder: (_) => RideMessagingSheet(
           otherUserId: state.ride.passengerId,
-          otherUserName: 'Passenger',
+          otherUserName: state.ride.passengerName?.trim().isNotEmpty == true
+              ? state.ride.passengerName!
+              : 'Passenger',
           myUserId: myId,
         ),
       );
     } catch (e) {
-      if (!context.mounted) return;
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.toString()}')),
+        SnackBar(content: Text('Error: $e')),
       );
     }
   }
 
-  Widget _buildLoadingPanel() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              height: 4,
-              width: 40,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 24),
-            const SizedBox(
-              width: 32,
-              height: 32,
-              child: CircularProgressIndicator(
-                strokeWidth: 3,
-                valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Loading ride details...',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[700],
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionPanel(BuildContext context, RideActive state) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                height: 4,
-                width: 40,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 16),
-              _buildLifecycleStepper(state.ride.status),
-              const SizedBox(height: 16),
-              _buildAddressRows(state.ride),
-              const SizedBox(height: 12),
-              _buildRideDetails(state.ride),
-              const SizedBox(height: 16),
-              if (state.isAccepted)
-                _buildAcceptedStateActions(context, state)
-              else if (state.isDriverArrived)
-                _buildArrivedStateActions(context, state)
-              else if (state.isInProgress)
-                _buildInProgressStateActions(context, state),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLifecycleStepper(String currentStatus) {
-    final steps = [
-      _StepData('Accepted', Icons.check_circle_outline, RideStatus.accepted),
-      _StepData('Arrived', Icons.location_on, RideStatus.driverArrived),
-      _StepData('In Progress', Icons.directions_car, RideStatus.inProgress),
-      _StepData('Completed', Icons.flag, RideStatus.completed),
-    ];
-
-    int currentIndex = steps.indexWhere((s) => s.status == currentStatus);
-    if (currentIndex < 0) currentIndex = 0;
-
-    return Row(
-      children: List.generate(steps.length * 2 - 1, (i) {
-        if (i.isOdd) {
-          final leftStepIndex = i ~/ 2;
-          final isCompleted = leftStepIndex < currentIndex;
-          return Expanded(
-            child: Container(
-              height: 3,
-              color: isCompleted ? primaryColor : Colors.grey[300],
-            ),
-          );
-        }
-
-        final stepIndex = i ~/ 2;
-        final step = steps[stepIndex];
-        final isCompleted = stepIndex < currentIndex;
-        final isCurrent = stepIndex == currentIndex;
-
-        final Color circleColor;
-        final Color iconColor;
-        if (isCompleted) {
-          circleColor = primaryColor;
-          iconColor = Colors.white;
-        } else if (isCurrent) {
-          circleColor = primaryColor.withOpacity(0.15);
-          iconColor = primaryColor;
-        } else {
-          circleColor = Colors.grey[200]!;
-          iconColor = Colors.grey[400]!;
-        }
-
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: circleColor,
-                border: isCurrent
-                    ? Border.all(color: primaryColor, width: 2)
-                    : null,
-              ),
-              child: Icon(
-                isCompleted ? Icons.check : step.icon,
-                size: 16,
-                color: iconColor,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              step.label,
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
-                color: isCurrent
-                    ? primaryColor
-                    : isCompleted
-                        ? Colors.black87
-                        : Colors.grey[400],
-              ),
-            ),
-          ],
-        );
-      }),
-    );
-  }
-
-  Widget _buildAddressRows(Ride ride) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.green,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  ride.pickupAddress ?? 'Pickup Location',
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 4),
-            child: Container(
-              width: 2,
-              height: 20,
-              color: Colors.grey[300],
-            ),
-          ),
-          Row(
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.red,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  ride.dropoffAddress ?? 'Dropoff Location',
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRideDetails(Ride ride) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          Column(
-            children: [
-              Text('Distance',
-                  style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-              const SizedBox(height: 4),
-              Text('${ride.estimatedDistance.toStringAsFixed(1)} km',
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          Container(width: 1, height: 40, color: Colors.grey[300]),
-          Column(
-            children: [
-              Text('Fare',
-                  style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-              const SizedBox(height: 4),
-              Text(
-                  'MK${(ride.actualFare ?? ride.estimatedFare).toStringAsFixed(0)}',
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          if (ride.passengerNotes != null &&
-              ride.passengerNotes!.isNotEmpty) ...[
-            Container(width: 1, height: 40, color: Colors.grey[300]),
-            Flexible(
-              child: Column(
-                children: [
-                  Text('Notes',
-                      style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                  const SizedBox(height: 4),
-                  Text(ride.passengerNotes!,
-                      style: const TextStyle(fontSize: 12),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAcceptedStateActions(BuildContext context, RideActive state) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.blue[50],
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.blue[200]!),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.navigation, color: Colors.blue[700], size: 20),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Head to pickup location',
-                  style: TextStyle(color: Colors.blue[700]),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        _buildActionButton(
-          label: 'Mark as Arrived',
-          icon: Icons.check_circle,
-          isLoading: state.isLoading,
-          onPressed: () async {
-            await ref.read(rideLifecycleProvider.notifier).markArrived();
-          },
-        ),
-        const SizedBox(height: 10),
-        _buildMessageButton(context, state),
-        const SizedBox(height: 10),
-        _buildCancelButton(state),
-      ],
-    );
-  }
-
-  Widget _buildArrivedStateActions(BuildContext context, RideActive state) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.green[50],
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.green[200]!),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.check, color: Colors.green[700], size: 20),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Waiting for passenger to board',
-                  style: TextStyle(color: Colors.green[700]),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        _buildActionButton(
-          label: 'Start Ride',
-          icon: Icons.play_arrow,
-          isLoading: state.isLoading,
-          onPressed: () async {
-            await ref.read(rideLifecycleProvider.notifier).startRide();
-          },
-        ),
-        const SizedBox(height: 10),
-        _buildMessageButton(context, state),
-        const SizedBox(height: 10),
-        _buildCancelButton(state),
-      ],
-    );
-  }
-
-  Widget _buildInProgressStateActions(BuildContext context, RideActive state) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.orange[50],
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.orange[200]!),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.directions_car, color: Colors.orange[700], size: 20),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'En route to dropoff',
-                  style: TextStyle(color: Colors.orange[700]),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        _buildActionButton(
-          label: 'Complete Ride',
-          icon: Icons.flag,
-          isLoading: state.isLoading,
-          onPressed: () async {
-            await ref.read(rideLifecycleProvider.notifier).completeRide();
-          },
-        ),
-        const SizedBox(height: 10),
-        _buildMessageButton(context, state),
-      ],
-    );
-  }
-
-  Widget _buildMessageButton(BuildContext context, RideActive state) {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: primaryColor,
-          side: const BorderSide(color: Color(0xFFFF8A00)),
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        onPressed: () => _openMessaging(context, state),
-        icon: const Icon(Icons.message, size: 20),
-        label: const Text(
-          'Message Passenger',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionButton({
-    required String label,
-    required IconData icon,
-    required bool isLoading,
-    required VoidCallback onPressed,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: primaryColor,
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        onPressed: isLoading ? null : onPressed,
-        icon: isLoading
-            ? const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              )
-            : Icon(icon),
-        label: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCancelButton(RideActive state) {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.red,
-          side: const BorderSide(color: Colors.red),
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        onPressed: state.isLoading
-            ? null
-            : () => _handleCancelRide(context),
-        icon: const Icon(Icons.close, size: 20),
-        label: const Text(
-          'Cancel Ride',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _handleCancelRide(BuildContext context) async {
+  Future<void> _handleCancelRide() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Cancel Ride'),
         content: const Text(
-            'Are you sure you want to cancel this ride? The passenger will be notified.'),
+          'Are you sure you want to cancel this ride? The passenger will be notified.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -771,7 +143,7 @@ class _DriverRideExecutionScreenState
             .read(rideLifecycleProvider.notifier)
             .cancelRide('Driver cancelled');
       } catch (e) {
-        if (mounted && context.mounted) {
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('Failed to cancel: $e'),
@@ -781,6 +153,310 @@ class _DriverRideExecutionScreenState
         }
       }
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lifecycleState = ref.watch(rideLifecycleProvider);
+
+    final Ride? ride = switch (lifecycleState) {
+      RideActive(:final ride) => ride,
+      RideCompleted(:final ride) => ride,
+      RideCancelled(:final ride) => ride,
+      _ => null,
+    };
+
+    if (lifecycleState is RideCompleted && !_hasNavigatedAway) {
+      final completedRide = lifecycleState.ride;
+      if (completedRide.id == widget.rideId) {
+        _hasNavigatedAway = true;
+        final r = completedRide;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (_) => _DriverRideCompletionScreen(
+                  ride: r,
+                  onDone: () => widget.onRideEnded?.call(),
+                ),
+              ),
+            );
+          }
+        });
+      }
+    }
+
+    if (lifecycleState is RideCancelled && !_hasNavigatedAway) {
+      final cancelledRide = lifecycleState.ride;
+      if (cancelledRide.id == widget.rideId) {
+        _hasNavigatedAway = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Ride cancelled: ${lifecycleState.reason}'),
+                backgroundColor: Colors.red,
+              ),
+            );
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (mounted && context.mounted) Navigator.of(context).pop();
+            });
+          }
+        });
+      }
+    }
+
+    if (lifecycleState is RideActive &&
+        lifecycleState.actionError != null &&
+        lifecycleState.actionError != _lastActionError) {
+      _lastActionError = lifecycleState.actionError;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(lifecycleState.actionError!),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      });
+    }
+
+    final pickupPlace = ride != null
+        ? _placeFromRide(
+            id: 'pickup',
+            name: 'Pickup',
+            address: ride.pickupAddress,
+            lat: ride.pickupLatitude,
+            lng: ride.pickupLongitude,
+          )
+        : null;
+
+    final dropoffPlace = ride != null
+        ? _placeFromRide(
+            id: 'dropoff',
+            name: 'Dropoff',
+            address: ride.dropoffAddress,
+            lat: ride.dropoffLatitude,
+            lng: ride.dropoffLongitude,
+          )
+        : null;
+
+    return PopScope(
+      canPop: false,
+      child: RideInRideShell(
+        map: MapViewWidget(
+          onMapCreated: (c) => _mapController = c,
+          pickupPlace: pickupPlace,
+          dropoffPlace: dropoffPlace,
+          trackingMode: true,
+        ),
+        topOverlay: lifecycleState is RideActive
+            ? RideNavBanner(
+                eyebrow: _bannerEyebrow(lifecycleState),
+                title: _bannerTitle(lifecycleState),
+                icon: _bannerIcon(lifecycleState),
+                trailing: rideStatusBadge(lifecycleState.ride.status),
+              )
+            : null,
+        bottomSheet: switch (lifecycleState) {
+          RideActive() => _buildSheet(lifecycleState),
+          RideIdle() || RideRequesting() => const RideNavySheet(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 28),
+                child: Column(
+                  children: [
+                    CircularProgressIndicator(
+                      valueColor:
+                          AlwaysStoppedAnimation(RideShareColors.primary),
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      'Loading ride details…',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          _ => const SizedBox.shrink(),
+        },
+      ),
+    );
+  }
+
+  Widget _buildSheet(RideActive state) {
+    final ride = state.ride;
+    final fare =
+        'MK${(ride.actualFare ?? ride.estimatedFare).toStringAsFixed(0)}';
+    final distance = '${ride.estimatedDistance.toStringAsFixed(1)} km';
+    final passengerName = ride.passengerName?.trim().isNotEmpty == true
+        ? ride.passengerName!
+        : 'Passenger';
+
+    return RideNavySheet(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'DESTINATION',
+                      style: TextStyle(
+                        fontSize: 11,
+                        letterSpacing: 1,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white.withValues(alpha: 0.55),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      ride.dropoffAddress?.trim().isNotEmpty == true
+                          ? ride.dropoffAddress!
+                          : 'Dropoff location',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$distance • $fare',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.1),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    CircleAvatar(
+                      radius: 22,
+                      backgroundColor:
+                          RideShareColors.primary.withValues(alpha: 0.3),
+                      child: Text(
+                        passengerName[0].toUpperCase(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      width: 72,
+                      child: Text(
+                        passengerName,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          RideTripProgressBar(
+            progress: rideStatusProgress(ride.status),
+            leftLabel: 'Pickup',
+            rightLabel: 'Dropoff',
+          ),
+          if (ride.passengerNotes != null &&
+              ride.passengerNotes!.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                'Note: ${ride.passengerNotes}',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          if (state.isAccepted) ...[
+            RidePrimaryCta(
+              label: 'Mark as Arrived',
+              icon: Icons.check_circle,
+              isLoading: state.isLoading,
+              onPressed: () =>
+                  ref.read(rideLifecycleProvider.notifier).markArrived(),
+            ),
+            const SizedBox(height: 10),
+            RideSecondaryCta(
+              label: 'Cancel Ride',
+              icon: Icons.close,
+              onPressed: state.isLoading ? null : _handleCancelRide,
+            ),
+          ] else if (state.isDriverArrived) ...[
+            RidePrimaryCta(
+              label: 'Start Ride',
+              icon: Icons.play_arrow,
+              isLoading: state.isLoading,
+              onPressed: () =>
+                  ref.read(rideLifecycleProvider.notifier).startRide(),
+            ),
+            const SizedBox(height: 10),
+            RideSecondaryCta(
+              label: 'Cancel Ride',
+              icon: Icons.close,
+              onPressed: state.isLoading ? null : _handleCancelRide,
+            ),
+          ] else if (state.isInProgress) ...[
+            RideSwipeToComplete(
+              label: 'Swipe to Complete Ride',
+              enabled: !state.isLoading,
+              onCompleted: () {
+                ref.read(rideLifecycleProvider.notifier).completeRide();
+              },
+            ),
+          ],
+          const SizedBox(height: 8),
+          RideQuickActionsRow(
+            onMessage: () => _openMessaging(state),
+            onSafety: () => showRideSafetySheet(context),
+            onCall: null, // passenger phone not available on ride model
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -804,7 +480,6 @@ class _DriverRideCompletionScreenState
     with SingleTickerProviderStateMixin {
   late AnimationController _animController;
   late Animation<double> _scaleAnimation;
-  static const Color primaryColor = Color(0xFFFF8A00);
 
   @override
   void initState() {
@@ -832,6 +507,7 @@ class _DriverRideCompletionScreenState
     final distance = r.actualDistance ?? r.estimatedDistance;
 
     return Scaffold(
+      backgroundColor: RideShareColors.background,
       body: ScaleTransition(
         scale: _scaleAnimation,
         child: SingleChildScrollView(
@@ -840,7 +516,6 @@ class _DriverRideCompletionScreenState
             child: Column(
               children: [
                 const SizedBox(height: 60),
-
                 Container(
                   width: 100,
                   height: 100,
@@ -859,41 +534,37 @@ class _DriverRideCompletionScreenState
                   ),
                 ),
                 const SizedBox(height: 24),
-
                 const Text(
                   'Ride Complete!',
                   style: TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.bold,
-                    color: Colors.black87,
+                    color: RideShareColors.titleText,
                   ),
                 ),
                 const SizedBox(height: 8),
-
                 Text(
                   'Great job on this trip',
                   style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                 ),
                 const SizedBox(height: 40),
-
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: Colors.grey[50],
+                    color: Colors.white,
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey[200]!),
+                    border: Border.all(color: RideShareColors.outlineVariant),
                   ),
                   child: Column(
                     children: [
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
+                          const Text(
                             'Trip Summary',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
-                              color: Colors.grey[800],
                             ),
                           ),
                           if (r.startTime != null && r.endTime != null)
@@ -907,103 +578,46 @@ class _DriverRideCompletionScreenState
                         ],
                       ),
                       const SizedBox(height: 16),
-
-                      _summaryRow('Distance',
-                          '${distance.toStringAsFixed(1)} km'),
-                      const SizedBox(height: 12),
-
-                      _summaryRow('Pickup',
-                          r.pickupAddress ?? 'Unknown'),
-                      const SizedBox(height: 8),
-                      _summaryRow('Dropoff',
-                          r.dropoffAddress ?? 'Unknown'),
-
-                      const SizedBox(height: 12),
-                      Container(height: 1, color: Colors.grey[300]),
-                      const SizedBox(height: 16),
-
-                      Text(
-                        'Earnings',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-
-                      _summaryRow('Base Fare',
-                          'MK${(totalFare * 0.2).toStringAsFixed(0)}'),
-                      const SizedBox(height: 8),
                       _summaryRow(
-                          'Distance (${distance.toStringAsFixed(1)} km)',
-                          'MK${(totalFare * 0.8).toStringAsFixed(0)}'),
-
+                          'Distance', '${distance.toStringAsFixed(1)} km'),
                       const SizedBox(height: 12),
-                      Container(height: 1, color: Colors.grey[300]),
-                      const SizedBox(height: 12),
-
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Total Earned',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
-                            ),
-                          ),
-                          Text(
-                            'MK${totalFare.toStringAsFixed(0)}',
-                            style: const TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              color: primaryColor,
-                            ),
-                          ),
-                        ],
+                      _summaryRow('Pickup', r.pickupAddress ?? 'Unknown'),
+                      const SizedBox(height: 8),
+                      _summaryRow('Dropoff', r.dropoffAddress ?? 'Unknown'),
+                      const Divider(height: 28),
+                      _summaryRow(
+                        'Earnings',
+                        'MK${totalFare.toStringAsFixed(0)}',
+                        emphasize: true,
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 40),
-
+                const SizedBox(height: 32),
                 SizedBox(
                   width: double.infinity,
-                  height: 48,
+                  height: 54,
                   child: ElevatedButton(
-                    onPressed: () {
-                      try {
-                        widget.onDone();
-                      } catch (e, st) {
-                        if (kDebugMode) {
-                          debugPrint('[DriverCompletion] onDone error: $e $st');
-                        }
-                      }
-                      if (!context.mounted) return;
-                      final nav = Navigator.of(context, rootNavigator: true);
-                      if (nav.canPop()) {
-                        nav.popUntil((route) => route.isFirst);
-                      }
-                    },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
+                      backgroundColor: RideShareColors.primary,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(16),
                       ),
                     ),
+                    onPressed: () {
+                      widget.onDone();
+                      Navigator.of(context).popUntil((route) => route.isFirst);
+                    },
                     child: const Text(
                       'Done',
                       style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
                         color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 40),
               ],
             ),
           ),
@@ -1012,35 +626,33 @@ class _DriverRideCompletionScreenState
     );
   }
 
-  Widget _summaryRow(String label, String value) {
+  Widget _summaryRow(String label, String value, {bool emphasize = false}) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+        SizedBox(
+          width: 80,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
-        const SizedBox(width: 16),
-        Flexible(
+        Expanded(
           child: Text(
             value,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Colors.black87,
+            style: TextStyle(
+              fontWeight: emphasize ? FontWeight.w800 : FontWeight.w600,
+              color: emphasize
+                  ? RideShareColors.primary
+                  : RideShareColors.titleText,
+              fontSize: emphasize ? 18 : 14,
             ),
-            textAlign: TextAlign.right,
           ),
         ),
       ],
     );
   }
-}
-
-class _StepData {
-  final String label;
-  final IconData icon;
-  final String status;
-  const _StepData(this.label, this.icon, this.status);
 }

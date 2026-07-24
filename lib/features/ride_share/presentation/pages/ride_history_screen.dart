@@ -5,7 +5,9 @@ import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_detail_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_history_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
 enum RideHistoryMode { passenger, driver }
 
@@ -22,9 +24,6 @@ class RideHistoryScreen extends StatefulWidget {
 }
 
 class _RideHistoryScreenState extends State<RideHistoryScreen> {
-  static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandNavy = Color(0xFF16284C);
-
   final RideShareHttpService _http = RideShareHttpService();
   final TextEditingController _searchController = TextEditingController();
 
@@ -32,6 +31,7 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
   Future<DriverEarningsSummary>? _earningsFuture;
   String _statusFilter = 'ALL';
   String _searchQuery = '';
+  bool _showSearch = false;
 
   bool get _isDriver => widget.mode == RideHistoryMode.driver;
 
@@ -68,7 +68,7 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
     return _http.getPassengerRideHistory(status: _statusFilter);
   }
 
-  bool _matchesSearch(Ride ride, DateFormat dateFmt) {
+  bool _matchesSearch(Ride ride) {
     if (_searchQuery.isEmpty) return true;
     final q = _searchQuery;
     final fields = <String>[
@@ -80,649 +80,451 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
       ride.passengerName ?? '',
       ride.tripSummary?.counterpartyName ?? '',
       ride.status,
-      dateFmt.format(ride.endTime ?? ride.createdAt),
     ];
     return fields.any((f) => f.toLowerCase().contains(q));
+  }
+
+  void _openDetail(Ride ride) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RideHistoryDetailScreen(
+          ride: ride,
+          perspective: _isDriver
+              ? RideHistoryPerspective.driver
+              : RideHistoryPerspective.passenger,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final money = NumberFormat('#,##0', 'en');
-    final dateFmt = DateFormat('dd MMM yyyy, HH:mm');
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FB),
-      appBar: AppBar(
-        title: Text(_isDriver ? 'Trip History & Earnings' : 'My VeroRide Trips'),
-        backgroundColor: _brandOrange,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
-      body: FutureBuilder<RideHistoryPage>(
-        future: _historyFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return RideHistoryScreenSkeleton(showDriverEarnings: _isDriver);
-          }
+      backgroundColor: RideShareColors.background,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: FutureBuilder<RideHistoryPage>(
+                future: _historyFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return RideHistoryScreenSkeleton(
+                      showDriverEarnings: _isDriver,
+                    );
+                  }
 
-          if (snapshot.hasError) {
-            final msg = snapshot.error.toString();
-            final needAuth = msg.contains('401') ||
-                msg.contains('Unauthorized') ||
-                msg.contains('No auth');
-            return _errorState(
-              needAuth
-                  ? 'Sign in to see your trip history'
-                  : 'Could not load trip history',
-              needAuth
-                  ? 'Your completed rides appear here after each trip.'
-                  : msg.replaceFirst('Exception: ', ''),
-              showSignIn: needAuth,
-            );
-          }
+                  if (snapshot.hasError) {
+                    final msg = snapshot.error.toString();
+                    final needAuth = msg.contains('401') ||
+                        msg.contains('Unauthorized') ||
+                        msg.contains('No auth');
+                    return _errorState(
+                      needAuth
+                          ? 'Sign in to see your trip history'
+                          : 'Could not load trip history',
+                      needAuth
+                          ? 'Your completed rides appear here after each trip.'
+                          : msg.replaceFirst('Exception: ', ''),
+                      showSignIn: needAuth,
+                    );
+                  }
 
-          final page = snapshot.data!;
-          final filtered =
-              page.rides.where((r) => _matchesSearch(r, dateFmt)).toList();
+                  final page = snapshot.data!;
+                  final filtered =
+                      page.rides.where(_matchesSearch).toList();
 
-          return RefreshIndicator(
-            color: _brandOrange,
-            onRefresh: () async {
-              _reload();
-              await _historyFuture;
-            },
-            child: ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              itemCount: filtered.length + 1,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                if (index == 0) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (_isDriver)
-                        FutureBuilder<DriverEarningsSummary>(
-                          future: _earningsFuture,
-                          builder: (context, earningsSnap) {
-                            if (earningsSnap.connectionState ==
-                                ConnectionState.waiting) {
-                              return const DriverEarningsCardSkeleton();
-                            }
-                            final earnings = earningsSnap.data;
-                            if (earnings == null) {
-                              return const SizedBox.shrink();
-                            }
-                            return _earningsSummaryCard(earnings, money);
-                          },
+                  // Unpaid completed first for passengers
+                  if (!_isDriver) {
+                    filtered.sort((a, b) {
+                      final ap = ridePaymentPending(a) ? 0 : 1;
+                      final bp = ridePaymentPending(b) ? 0 : 1;
+                      if (ap != bp) return ap.compareTo(bp);
+                      final at = a.endTime ?? a.createdAt;
+                      final bt = b.endTime ?? b.createdAt;
+                      return bt.compareTo(at);
+                    });
+                  }
+
+                  return RefreshIndicator(
+                    color: RideShareColors.primary,
+                    onRefresh: () async {
+                      _reload();
+                      await _historyFuture;
+                    },
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+                      children: [
+                        if (_isDriver) ...[
+                          FutureBuilder<DriverEarningsSummary>(
+                            future: _earningsFuture,
+                            builder: (context, earningsSnap) {
+                              if (earningsSnap.connectionState ==
+                                  ConnectionState.waiting) {
+                                return const DriverEarningsCardSkeleton();
+                              }
+                              final earnings = earningsSnap.data;
+                              if (earnings == null) {
+                                return const SizedBox.shrink();
+                              }
+                              final today = earnings.today;
+                              final yesterdayHint = earnings.thisWeek.trips > 0
+                                  ? '${earnings.thisWeek.trips} trips this week'
+                                  : 'Keep driving to grow earnings';
+                              return RideHistoryEarningsHero(
+                                title: 'Performance Insight',
+                                amountLabel: formatRideMoney(
+                                  today.earnings,
+                                  money,
+                                ),
+                                tripsLabel: '${today.trips}',
+                                trendLabel: yesterdayHint,
+                                onCashOut: () {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Cash out will be available soon.',
+                                      ),
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 18),
+                        ],
+                        Row(
+                          children: [
+                            Text(
+                              _isDriver ? 'Recent Activity' : 'Past Trips',
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                                color: RideShareColors.titleText,
+                              ),
+                            ),
+                            const Spacer(),
+                            TextButton.icon(
+                              onPressed: () =>
+                                  setState(() => _showSearch = !_showSearch),
+                              icon: Icon(
+                                _showSearch
+                                    ? Icons.close
+                                    : Icons.filter_list,
+                                size: 18,
+                                color: RideShareColors.primary,
+                              ),
+                              label: Text(
+                                _showSearch ? 'Close' : 'Filter',
+                                style: const TextStyle(
+                                  color: RideShareColors.primary,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      if (_isDriver) const SizedBox(height: 12),
-                      _summaryCard(page, money),
-                      const SizedBox(height: 12),
-                      _filterSection(dateFmt),
-                      if (filtered.isEmpty && page.rides.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            'No trips match this search.',
-                            style: TextStyle(
-                              color: Colors.grey.shade700,
-                              fontWeight: FontWeight.w600,
+                        if (_showSearch) ...[
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _searchController,
+                            decoration: InputDecoration(
+                              hintText: 'Search trips, places, people…',
+                              filled: true,
+                              fillColor: Colors.white,
+                              prefixIcon: const Icon(Icons.search),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: const BorderSide(
+                                  color: RideShareColors.outlineVariant,
+                                ),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: const BorderSide(
+                                  color: RideShareColors.outlineVariant,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      if (page.rides.isEmpty)
-                        _emptyInline(),
-                    ],
-                  );
-                }
-
-                final ride = filtered[index - 1];
-                return _rideCard(ride, dateFmt, money);
-              },
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _earningsSummaryCard(
-    DriverEarningsSummary earnings,
-    NumberFormat money,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            _brandNavy,
-            _brandNavy.withValues(alpha: 0.92),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Your Earnings',
-            style: TextStyle(
-              color: Colors.white70,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'MK ${money.format(earnings.thisMonth.earnings)}',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const Text(
-            'This month',
-            style: TextStyle(color: Colors.white70),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              _earningsChip(
-                'Today',
-                earnings.today,
-                money,
-              ),
-              const SizedBox(width: 8),
-              _earningsChip(
-                'Week',
-                earnings.thisWeek,
-                money,
-              ),
-              const SizedBox(width: 8),
-              _earningsChip(
-                'All time',
-                earnings.allTime,
-                money,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _earningsChip(String label, EarningsPeriod period, NumberFormat money) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(color: Colors.white70, fontSize: 11),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'MK ${money.format(period.earnings)}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-              ),
-            ),
-            Text(
-              '${period.trips} trips',
-              style: const TextStyle(color: Colors.white60, fontSize: 11),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _summaryCard(RideHistoryPage page, NumberFormat money) {
-    final summary = page.summary;
-    final primaryValue = _isDriver
-        ? summary.totalEarnings ?? 0
-        : summary.totalSpent ?? 0;
-    final primaryLabel =
-        _isDriver ? 'Total earnings' : 'Total spent';
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E6EF)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _summaryStat(
-              primaryLabel,
-              'MK ${money.format(primaryValue)}',
-              Icons.payments_outlined,
-            ),
-          ),
-          Container(width: 1, height: 44, color: const Color(0xFFE2E6EF)),
-          Expanded(
-            child: _summaryStat(
-              'Completed',
-              '${summary.completedCount}',
-              Icons.check_circle_outline,
-            ),
-          ),
-          Container(width: 1, height: 44, color: const Color(0xFFE2E6EF)),
-          Expanded(
-            child: _summaryStat(
-              'Cancelled',
-              '${summary.cancelledCount}',
-              Icons.cancel_outlined,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _summaryStat(String label, String value, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Column(
-        children: [
-          Icon(icon, size: 18, color: _brandOrange),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontWeight: FontWeight.w800,
-              color: _brandNavy,
-              fontSize: 14,
-            ),
-          ),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _filterSection(DateFormat dateFmt) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E6EF)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Search trips',
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-              color: _brandNavy,
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _searchController,
-            decoration: InputDecoration(
-              hintText: 'Trip #, address, driver or passenger',
-              prefixIcon: const Icon(Icons.search_rounded),
-              isDense: true,
-              filled: true,
-              fillColor: const Color(0xFFF7F8FB),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            children: [
-              _statusChipFilter('ALL', 'All'),
-              _statusChipFilter('COMPLETED', 'Completed'),
-              _statusChipFilter('CANCELLED', 'Cancelled'),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _statusChipFilter(String value, String label) {
-    final selected = _statusFilter == value;
-    return FilterChip(
-      label: Text(label),
-      selected: selected,
-      onSelected: (_) {
-        setState(() {
-          _statusFilter = value;
-          _reload();
-        });
-      },
-      selectedColor: _brandOrange.withValues(alpha: 0.18),
-      checkmarkColor: _brandOrange,
-      labelStyle: TextStyle(
-        color: selected ? _brandOrange : _brandNavy,
-        fontWeight: FontWeight.w700,
-      ),
-      side: BorderSide(
-        color: selected ? _brandOrange : const Color(0xFFE2E6EF),
-      ),
-    );
-  }
-
-  Widget _rideCard(Ride ride, DateFormat dateFmt, NumberFormat money) {
-    final summary = ride.tripSummary;
-    final when = ride.endTime ?? ride.createdAt;
-    final amount = _isDriver
-        ? (summary?.driverEarnings ?? ride.driverEarnings ?? ride.resolvedFare)
-        : (summary?.fare ?? ride.resolvedFare);
-
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => RideHistoryDetailScreen(
-                ride: ride,
-                perspective: _isDriver
-                    ? RideHistoryPerspective.driver
-                    : RideHistoryPerspective.passenger,
-              ),
-            ),
-          );
-        },
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0xFFE2E6EF)),
-          ),
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: _brandOrange.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.local_taxi_rounded,
-                      color: _brandOrange,
-                      size: 22,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          ride.routeLabel,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: _brandNavy,
-                            fontSize: 15,
+                          const SizedBox(height: 10),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                for (final status in const [
+                                  'ALL',
+                                  'COMPLETED',
+                                  'CANCELLED',
+                                ])
+                                  RideHistoryFilterChip(
+                                    label: status == 'ALL'
+                                        ? 'All'
+                                        : status[0] +
+                                            status.substring(1).toLowerCase(),
+                                    selected: _statusFilter == status,
+                                    onTap: () {
+                                      setState(() => _statusFilter = status);
+                                      _reload();
+                                    },
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          dateFmt.format(when),
-                          style: TextStyle(
-                            color: Colors.grey.shade700,
-                            fontSize: 12,
-                          ),
-                        ),
-                        if ((summary?.counterpartyName ??
-                                (_isDriver
-                                    ? ride.passengerName
-                                    : ride.driver?.fullName)) !=
-                            null)
+                        ],
+                        const SizedBox(height: 8),
+                        _miniSummary(page, money),
+                        const SizedBox(height: 14),
+                        if (page.rides.isEmpty)
+                          _emptyState()
+                        else if (filtered.isEmpty)
                           Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              _isDriver
-                                  ? 'Passenger: ${summary?.counterpartyName ?? ride.passengerName}'
-                                  : 'Driver: ${summary?.counterpartyName ?? ride.driver?.fullName}',
-                              style: TextStyle(
-                                color: Colors.grey.shade600,
-                                fontSize: 12,
+                            padding: const EdgeInsets.symmetric(vertical: 40),
+                            child: Center(
+                              child: Text(
+                                'No trips match this search.',
+                                style: TextStyle(
+                                  color: Colors.grey.shade700,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          ...filtered.map(
+                            (ride) => Padding(
+                              padding: const EdgeInsets.only(bottom: 14),
+                              child: RideHistoryTripCard(
+                                ride: ride,
+                                isDriver: _isDriver,
+                                money: money,
+                                onTap: () => _openDetail(ride),
+                                onPrimaryAction: () => _openDetail(ride),
                               ),
                             ),
                           ),
                       ],
                     ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'MK ${money.format(amount)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          color: _brandOrange,
-                          fontSize: 15,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      _rideStatusBadge(ride.status),
-                      if (ride.isCompleted) ...[
-                        const SizedBox(height: 4),
-                        _paymentStatusBadge(
-                          summary?.paymentStatus ?? ride.paymentStatus,
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
+                  );
+                },
               ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Icon(Icons.straighten, size: 14, color: Colors.grey.shade600),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${(summary?.distance ?? ride.resolvedDistance).toStringAsFixed(1)} km',
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Icon(Icons.schedule, size: 14, color: Colors.grey.shade600),
-                  const SizedBox(width: 4),
-                  Text(
-                    (summary?.durationMinutes ?? 0) > 0
-                        ? '${summary!.durationMinutes} mins'
-                        : '—',
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                      fontSize: 12,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    'View details',
-                    style: TextStyle(
-                      color: _brandOrange,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
-                  ),
-                  const Icon(
-                    Icons.chevron_right,
-                    size: 18,
-                    color: _brandOrange,
-                  ),
-                ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 8, 16, 12),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          bottom: BorderSide(color: RideShareColors.outlineVariant),
+        ),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
+            color: RideShareColors.titleText,
+            style: IconButton.styleFrom(
+              backgroundColor: RideShareColors.surfaceContainerLow,
+              shape: const CircleBorder(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _isDriver ? 'Earnings & History' : 'Activity',
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: RideShareColors.titleText,
               ),
-            ],
+            ),
+          ),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: RideShareColors.primarySoft,
+              border: Border.all(color: RideShareColors.outlineVariant),
+            ),
+            child: Icon(
+              _isDriver ? Icons.local_taxi : Icons.person,
+              color: RideShareColors.primary,
+              size: 20,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniSummary(RideHistoryPage page, NumberFormat money) {
+    final summary = page.summary;
+    final primary = _isDriver
+        ? summary.totalEarnings ?? 0
+        : summary.totalSpent ?? 0;
+    return Row(
+      children: [
+        Expanded(
+          child: _statTile(
+            _isDriver ? 'Total earned' : 'Total spent',
+            formatRideMoney(primary, money),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _paymentStatusBadge(String? status) {
-    final normalized = (status ?? 'pending').toLowerCase();
-    final isPaid = normalized == 'paid';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: isPaid
-            ? const Color(0xFFE3F2FD)
-            : const Color(0xFFFFF8E1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        isPaid ? 'Paid' : 'Pending',
-        style: TextStyle(
-          color: isPaid ? const Color(0xFF1565C0) : const Color(0xFFF57F17),
-          fontWeight: FontWeight.w700,
-          fontSize: 10,
+        const SizedBox(width: 10),
+        Expanded(
+          child: _statTile('Completed', '${summary.completedCount}'),
         ),
-      ),
-    );
-  }
-
-  Widget _rideStatusBadge(String status) {
-    Color bg;
-    Color fg;
-    String label;
-    switch (status) {
-      case RideStatus.completed:
-        bg = const Color(0xFFE8F5E9);
-        fg = const Color(0xFF2E7D32);
-        label = 'Done';
-        break;
-      case RideStatus.cancelled:
-        bg = const Color(0xFFFFEBEE);
-        fg = const Color(0xFFC62828);
-        label = 'Cancelled';
-        break;
-      default:
-        bg = const Color(0xFFFFF3E0);
-        fg = _brandOrange;
-        label = status.replaceAll('_', ' ');
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: fg,
-          fontWeight: FontWeight.w700,
-          fontSize: 11,
+        const SizedBox(width: 10),
+        Expanded(
+          child: _statTile('Cancelled', '${summary.cancelledCount}'),
         ),
+      ],
+    );
+  }
+
+  Widget _statTile(String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: RideShareColors.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              color: RideShareColors.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              color: RideShareColors.titleText,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
       ),
     );
   }
 
-  Widget _emptyInline() {
+  Widget _emptyState() {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 24),
+      padding: const EdgeInsets.symmetric(vertical: 48),
       child: Column(
         children: [
-          Icon(Icons.local_taxi_outlined, size: 56, color: Colors.grey.shade400),
-          const SizedBox(height: 12),
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: RideShareColors.primarySoft,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Icon(
+              Icons.history,
+              color: RideShareColors.primary,
+              size: 36,
+            ),
+          ),
+          const SizedBox(height: 16),
           const Text(
             'No trips yet',
             style: TextStyle(
-              fontWeight: FontWeight.w900,
               fontSize: 18,
-              color: _brandNavy,
+              fontWeight: FontWeight.w800,
+              color: RideShareColors.titleText,
             ),
           ),
           const SizedBox(height: 6),
           Text(
             _isDriver
-                ? 'Completed trips and earnings will appear here.'
-                : 'Your VeroRide trips will appear here after each ride.',
+                ? 'Completed trips and earnings will show up here.'
+                : 'Your past Vero Rides will appear here.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey.shade700, height: 1.4),
+            style: const TextStyle(color: RideShareColors.onSurfaceVariant),
           ),
         ],
       ),
     );
   }
 
-  Widget _errorState(String title, String body, {bool showSignIn = false}) {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(24),
-      children: [
-        Icon(Icons.error_outline_rounded, size: 48, color: Colors.grey.shade500),
-        const SizedBox(height: 12),
-        Text(
-          title,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 17,
-            color: _brandNavy,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          body,
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.grey.shade700, height: 1.35),
-        ),
-        if (showSignIn) ...[
-          const SizedBox(height: 20),
-          FilledButton(
-            onPressed: () {
-              Navigator.of(context).push<void>(
-                MaterialPageRoute<void>(
-                  builder: (_) => const LoginScreen(),
-                ),
-              );
-            },
-            style: FilledButton.styleFrom(
-              backgroundColor: _brandOrange,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
+  Widget _errorState(
+    String title,
+    String subtitle, {
+    bool showSignIn = false,
+  }) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 48, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-            child: const Text('Sign in'),
-          ),
-        ],
-      ],
+            const SizedBox(height: 8),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 20),
+            if (showSignIn)
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: RideShareColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  );
+                },
+                child: const Text('Sign in'),
+              )
+            else
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: RideShareColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: _reload,
+                child: const Text('Try again'),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -7,7 +7,9 @@ import 'package:vero360_app/features/ride_share/presentation/providers/ride_noti
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_notification_popup.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/driver_request_accept_dialog.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_ride_execution_screen.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
+import 'package:vero360_app/GernalServices/driver_messaging_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 class RideRequestOverlay extends ConsumerStatefulWidget {
@@ -126,21 +128,126 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
               rideRequest: _activeRequest!,
               ref: ref,
               onDismiss: () {
-                final requestId = _activeRequest?.id;
+                final request = _activeRequest;
                 if (mounted) setState(() => _activeRequest = null);
-                if (requestId != null) {
-                  _forgetShownRequest(requestId);
+                if (request != null) {
+                  _forgetShownRequest(request.id);
+                  unawaited(_declineRequestQuietly(request.id));
                 }
               },
               onAccept: () {
                 final request = _activeRequest;
                 if (mounted) setState(() => _activeRequest = null);
-                if (request != null) _openAcceptDialog(request);
+                if (request != null) {
+                  unawaited(_acceptRequestDirectly(request));
+                }
               },
             ),
         ],
       ),
     );
+  }
+
+  Future<void> _declineRequestQuietly(String rideId) async {
+    try {
+      await DriverRequestService.rejectRideRequest(rideId);
+      ref.read(rideNotificationServiceProvider).removeNotification(rideId);
+    } catch (e) {
+      debugPrint('[RideRequestOverlay] Decline failed: $e');
+    }
+  }
+
+  Future<void> _acceptRequestDirectly(DriverRideRequest request) async {
+    final navigatorContext = _findNavigatorContext();
+    if (navigatorContext == null) {
+      _openAcceptDialog(request);
+      return;
+    }
+
+    try {
+      final driver = await ref.read(myDriverProfileProvider.future);
+      int? taxiId = request.candidateTaxiId;
+      if (taxiId == null) {
+        final taxis = driver['taxis'];
+        if (taxis is List && taxis.isNotEmpty) {
+          final first = taxis.first;
+          if (first is Map) {
+            taxiId = (first['id'] as num?)?.toInt();
+          }
+        }
+      }
+
+      final driverId = (driver['id'] ?? '').toString();
+      final driverName =
+          (driver['user']?['name'] ?? driver['name'] ?? 'Driver').toString();
+      final driverPhone =
+          (driver['user']?['phone'] ?? driver['phone'] ?? '').toString();
+      final driverAvatar = (driver['user']?['profilepicture'] ??
+              driver['profilepicture'])
+          ?.toString();
+
+      await DriverRequestService.acceptRideRequest(
+        rideId: request.id,
+        driverId: driverId,
+        driverName: driverName,
+        driverPhone: driverPhone,
+        driverAvatar: driverAvatar,
+        taxiId: taxiId,
+      );
+
+      try {
+        await DriverMessagingService.ensureRideThread(
+          rideId: request.id,
+          passengerId: request.passengerId,
+          driverId: driverId,
+          passengerName: request.passengerName,
+          driverName: driverName,
+          passengerAvatar: null,
+          driverAvatar: driverAvatar,
+        );
+        await DriverMessagingService.sendSystemMessage(
+          rideId: request.id,
+          message: '$driverName accepted your ride request',
+        );
+      } catch (e) {
+        debugPrint('[RideRequestOverlay] Messaging setup warning: $e');
+      }
+
+      ref.read(rideNotificationServiceProvider).removeNotification(request.id);
+      _forgetShownRequest(request.id);
+
+      if (!navigatorContext.mounted) return;
+      Navigator.of(navigatorContext).push(
+        MaterialPageRoute(
+          builder: (_) => DriverRideExecutionScreen(
+            rideId: int.tryParse(request.id) ?? 0,
+          ),
+        ),
+      );
+      ScaffoldMessenger.of(navigatorContext).showSnackBar(
+        SnackBar(
+          content: const Text('Ride accepted! Navigate to pickup.'),
+          backgroundColor: Colors.green.shade600,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+    } catch (e) {
+      debugPrint('[RideRequestOverlay] Accept failed: $e');
+      _forgetShownRequest(request.id);
+      if (navigatorContext.mounted) {
+        ScaffoldMessenger.of(navigatorContext).showSnackBar(
+          SnackBar(
+            content: Text('Failed to accept ride: $e'),
+            backgroundColor: Colors.red.shade600,
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+      }
+      // Fall back to confirm dialog so the driver can retry.
+      _openAcceptDialog(request);
+    }
   }
 
   Future<void> _handleNewWebSocketRequest(IncomingRideRequest request) async {

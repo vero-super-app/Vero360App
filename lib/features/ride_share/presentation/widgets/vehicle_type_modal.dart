@@ -249,16 +249,26 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
 
       case RideError(:final message):
         if (kDebugMode) debugPrint('[VehicleTypeModal] Error: $message');
+        final cleaned = message
+            .replaceFirst(RegExp(r'^Exception:\s*'), '')
+            .trim();
+        final isUnpaid = cleaned.toLowerCase().contains('complete payment') ||
+            cleaned.toLowerCase().contains('previous trip');
         ToastHelper.showCustomToast(
           context,
-          'Failed to request ride',
+          isUnpaid ? 'Payment required' : 'Failed to request ride',
           isSuccess: false,
-          errorMessage: message,
+          errorMessage: isUnpaid
+              ? 'Please complete payment for your previous trip before booking a new ride.'
+              : cleaned,
         );
         setState(() {
           _isSearching = false;
-          _errorMessage = message;
+          _errorMessage = isUnpaid
+              ? 'Please complete payment for your previous trip before booking a new ride.'
+              : cleaned;
         });
+        ref.read(rideLifecycleProvider.notifier).reset();
 
       default:
         setState(() => _isSearching = false);

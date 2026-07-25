@@ -3657,6 +3657,46 @@ class _MarketplaceMerchantDashboardState
                       ),
                     ),
                   ),
+                  const SizedBox(height: 6),
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: _editShopHours,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.schedule_rounded,
+                              size: 14,
+                              color: Colors.white70,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                (_openTime == null || _closeTime == null)
+                                    ? 'Set shop hours'
+                                    : '${_formatShopTime(_openTime!)}–${_formatShopTime(_closeTime!)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.9),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            const Icon(
+                              Icons.edit_outlined,
+                              size: 13,
+                              color: Colors.white54,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
@@ -3690,27 +3730,23 @@ class _MarketplaceMerchantDashboardState
                           ],
                         ),
                       ),
-                      InkWell(
-                        onTap: _editShopHours,
-                        borderRadius: BorderRadius.circular(999),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _isShopOpenNow
+                              ? const Color(0xFFE7F6EC)
+                              : const Color(0xFFFFEDEE),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          _isShopOpenNow ? 'OPEN' : 'CLOSED',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12,
                             color: _isShopOpenNow
-                                ? const Color(0xFFE7F6EC)
-                                : const Color(0xFFFFEDEE),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            _isShopOpenNow ? 'OPEN' : 'CLOSED',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 12,
-                              color: _isShopOpenNow
-                                  ? Colors.green.shade700
-                                  : Colors.red.shade700,
-                            ),
+                                ? Colors.green.shade700
+                                : Colors.red.shade700,
                           ),
                         ),
                       ),
@@ -3805,18 +3841,6 @@ class _MarketplaceMerchantDashboardState
             mainAxisSpacing: 12,
           ),
           children: [
-            _QuickActionTile(
-              title: 'About shop',
-              icon: Icons.notes_rounded,
-              color: _brandNavy,
-              onTap: _editBusinessDescription,
-            ),
-            _QuickActionTile(
-              title: 'Shop hours',
-              icon: Icons.schedule_rounded,
-              color: Colors.teal,
-              onTap: _editShopHours,
-            ),
             _QuickActionTile(
               title: 'Add Item',
               icon: Icons.add_circle_outline,
@@ -5568,6 +5592,26 @@ class _ShopHoursSheetState extends State<_ShopHoursSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final narrow = MediaQuery.sizeOf(context).width < 360;
+    final openBtn = OutlinedButton.icon(
+      onPressed: _pickOpen,
+      icon: const Icon(Icons.wb_sunny_outlined, size: 18),
+      label: Text(
+        'Open ${_fmt(_open)}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+    final closeBtn = OutlinedButton.icon(
+      onPressed: _pickClose,
+      icon: const Icon(Icons.nights_stay_outlined, size: 18),
+      label: Text(
+        'Close ${_fmt(_close)}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+
     return Padding(
       padding: EdgeInsets.only(
         left: 20,
@@ -5575,72 +5619,67 @@ class _ShopHoursSheetState extends State<_ShopHoursSheet> {
         top: 16,
         bottom: 16 + bottomInset,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(99),
-              ),
-            ),
-          ),
-          const SizedBox(height: 14),
-          const Text(
-            'Shop hours',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Customers see OPEN or CLOSED on your shop based on these times.',
-            style: TextStyle(
-              color: Colors.grey.shade700,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _pickOpen,
-                  icon: const Icon(Icons.wb_sunny_outlined),
-                  label: Text('Open ${_fmt(_open)}'),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(99),
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _pickClose,
-                  icon: const Icon(Icons.nights_stay_outlined),
-                  label: Text('Close ${_fmt(_close)}'),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Shop hours',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Customers see OPEN or CLOSED on your shop based on these times.',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (narrow) ...[
+              openBtn,
+              const SizedBox(height: 10),
+              closeBtn,
+            ] else
+              Row(
+                children: [
+                  Expanded(child: openBtn),
+                  const SizedBox(width: 10),
+                  Expanded(child: closeBtn),
+                ],
+              ),
+            const SizedBox(height: 16),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: widget.brandColor,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: widget.brandColor,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
+              onPressed: () =>
+                  Navigator.pop(context, (open: _open, close: _close)),
+              child: const Text(
+                'Save hours',
+                style: TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
-            onPressed: () =>
-                Navigator.pop(context, (open: _open, close: _close)),
-            child: const Text(
-              'Save hours',
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }

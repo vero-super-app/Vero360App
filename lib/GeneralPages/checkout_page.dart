@@ -262,6 +262,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
               const SizedBox(height: 8),
               Text(
                 _deliveryLabel(type),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontWeight: FontWeight.w900,
                   fontSize: 13,
@@ -291,14 +293,18 @@ class _CheckoutPageState extends State<CheckoutPage> {
     const options = DeliveryType.values;
     return LayoutBuilder(
       builder: (context, constraints) {
-        const gap = 10.0;
-        final w = (constraints.maxWidth - gap * 2) / 3;
+        final maxW = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width - 64;
+        const gap = 8.0;
+        final cols = maxW < 340 ? 2 : 3;
+        final tileW = ((maxW - gap * (cols - 1)) / cols).clamp(96.0, 200.0);
         return Wrap(
           spacing: gap,
           runSpacing: gap,
           children: [
             for (final d in options)
-              SizedBox(width: w, child: _courierTile(d)),
+              SizedBox(width: tileW, child: _courierTile(d)),
           ],
         );
       },
@@ -902,6 +908,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 const SizedBox(height: 2),
                 Text(
                   _formatMoney(_total),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,

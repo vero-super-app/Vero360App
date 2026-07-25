@@ -42,6 +42,8 @@ import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/Home/story_section.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 /* ═══════════════════════════════════════════════════
    DESIGN TOKENS
@@ -176,7 +178,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   };
 
   bool _animateIn         = false;
-  bool _showLatestArrivals= false;
   bool _showServicesHint  = false;
   int  _guideIndex        = 0;
 
@@ -263,11 +264,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       }
     });
     _maybeShowServicesHint();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await Future.delayed(const Duration(milliseconds: 350));
-      if (mounted) setState(() => _showLatestArrivals = true);
-    });
   }
 
   @override
@@ -489,15 +485,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                 ),
 
                 /* ── Latest arrivals ─────────────────────── */
-                SliverToBoxAdapter(
+                const SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 32),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
-                      child: _showLatestArrivals
-                          ? const LatestArrivalsSection()
-                          : const SizedBox.shrink(),
-                    ),
+                    padding: EdgeInsets.fromLTRB(16, 24, 16, 32),
+                    child: LatestArrivalsSection(),
                   ),
                 ),
               ],
@@ -2099,10 +2090,42 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   late Future<List<LatestArrivalModels>> _future;
   final Map<String, Future<String?>> _imgCache = {};
 
+  /// Keeps the last successful list so reopen paints instantly.
+  static List<LatestArrivalModels>? _memItems;
+
   @override
   void initState() {
     super.initState();
-    _future = _service.fetchLatestArrivals();
+    if (_memItems != null && _memItems!.isNotEmpty) {
+      _future = Future.value(_memItems);
+      unawaited(_service.fetchLatestArrivals().then((fresh) {
+        _memItems = fresh;
+        if (!mounted) return;
+        setState(() => _future = Future.value(fresh));
+        _precacheHttpImages(fresh);
+      }).catchError((_) {}));
+    } else {
+      _future = _service.fetchLatestArrivals().then((items) {
+        _memItems = items;
+        _precacheHttpImages(items);
+        return items;
+      });
+    }
+  }
+
+  void _precacheHttpImages(List<LatestArrivalModels> items) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      for (final it in items.take(8)) {
+        final u = it.imageUrl.trim();
+        if (u.startsWith('http://') || u.startsWith('https://')) {
+          unawaited(
+            precacheImage(CachedNetworkImageProvider(u), context)
+                .catchError((_) {}),
+          );
+        }
+      }
+    });
   }
 
   String _fmtKwacha(int n) => n.toString().replaceAllMapped(
@@ -2110,11 +2133,11 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
 
   int _fnv1a32(String input) {
     const int fnvOffset = 0x811C9DC5;
-    const int fnvPrime  = 0x01000193;
+    const int fnvPrime = 0x01000193;
     int hash = fnvOffset;
     for (final cu in input.codeUnits) {
       hash ^= cu;
-      hash  = (hash * fnvPrime) & 0xFFFFFFFF;
+      hash = (hash * fnvPrime) & 0xFFFFFFFF;
     }
     return hash & 0x7FFFFFFF;
   }
@@ -2123,13 +2146,30 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     if (v.isEmpty) return null;
     try {
       var cleaned = v.trim().replaceAll(RegExp(r'\s+'), '');
-      final ci    = cleaned.indexOf(',');
-      if (cleaned.startsWith('data:image') && ci != -1) cleaned = cleaned.substring(ci + 1);
+      final ci = cleaned.indexOf(',');
+      if (cleaned.startsWith('data:image') && ci != -1) {
+        cleaned = cleaned.substring(ci + 1);
+      }
       final mod = cleaned.length % 4;
-      if (mod != 0) cleaned = cleaned.padRight(cleaned.length + (4 - mod), '=');
+      if (mod != 0) {
+        cleaned = cleaned.padRight(cleaned.length + (4 - mod), '=');
+      }
       final bytes = base64Decode(cleaned);
       return bytes.isEmpty ? null : bytes;
-    } catch (_) { return null; }
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Instant paint when API already sent a usable URL (most common).
+  String? _immediateImageUrl(LatestArrivalModels it) {
+    final s = it.imageUrl.trim();
+    if (s.startsWith('http://') ||
+        s.startsWith('https://') ||
+        s.startsWith('data:image/')) {
+      return s;
+    }
+    return null;
   }
 
   Future<String?> _resolveImageString(String raw) async {
@@ -2138,56 +2178,60 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     if (s.startsWith('http://') || s.startsWith('https://')) return s;
     if (s.startsWith('data:image/')) return s;
     if (s.startsWith('gs://')) {
-      try { return await FirebaseStorage.instance.refFromURL(s).getDownloadURL(); } catch (_) {}
+      try {
+        return await FirebaseStorage.instance.refFromURL(s).getDownloadURL();
+      } catch (_) {}
     }
     if (s.contains('/') && !s.contains(' ')) {
-      try { return await FirebaseStorage.instance.ref(s).getDownloadURL(); } catch (_) {}
+      try {
+        return await FirebaseStorage.instance.ref(s).getDownloadURL();
+      } catch (_) {}
     }
     if (s.contains('.') && !s.contains(' ')) {
-      for (final path in ['latest/$s', 'latest_arrivals/$s', 'uploads/$s', 'products/$s']) {
-        try { return await FirebaseStorage.instance.ref(path).getDownloadURL(); } catch (_) {}
+      for (final path in [
+        'latest/$s',
+        'latest_arrivals/$s',
+        'uploads/$s',
+        'products/$s',
+      ]) {
+        try {
+          return await FirebaseStorage.instance.ref(path).getDownloadURL();
+        } catch (_) {}
       }
     }
     return null;
   }
 
   Future<String?> _resolveImage(LatestArrivalModels it) async {
+    final immediate = _immediateImageUrl(it);
+    if (immediate != null) return immediate;
+
     final direct = await _resolveImageString(it.imageUrl);
     if (direct != null) return direct;
 
-    Future<String?> fromDoc(String col, String docId) async {
-      try {
-        final doc = await FirebaseFirestore.instance.collection(col).doc(docId).get();
-        if (!doc.exists) return null;
-        final d = doc.data() ?? {};
-        final candidate = (d['imageUrl'] ?? d['image'] ?? d['thumbnail'] ??
-            d['storagePath'] ?? d['gsUrl'] ?? d['path'] ?? '').toString().trim();
-        return await _resolveImageString(candidate);
-      } catch (_) { return null; }
-    }
-
-    Future<String?> fromNameQuery(String col) async {
-      try {
-        final q = await FirebaseFirestore.instance
-            .collection(col).where('name', isEqualTo: it.name.trim()).limit(1).get();
-        if (q.docs.isEmpty) return null;
-        final d = q.docs.first.data();
-        final candidate = (d['imageUrl'] ?? d['image'] ?? d['thumbnail'] ??
-            d['storagePath'] ?? d['gsUrl'] ?? d['path'] ?? '').toString().trim();
-        return await _resolveImageString(candidate);
-      } catch (_) { return null; }
-    }
-
+    // Slow Firestore fallback only when imageUrl is a storage path / empty.
     final id = it.id.trim();
-    if (id.isNotEmpty) {
-      final a = await fromDoc('latestarrivals', id);
-      if (a != null) return a;
-      final b = await fromDoc('latest_arrivals', id);
-      if (b != null) return b;
+    if (id.isEmpty) return null;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('latestarrivals')
+          .doc(id)
+          .get(const GetOptions(source: Source.serverAndCache));
+      if (!doc.exists) return null;
+      final d = doc.data() ?? {};
+      final candidate = (d['imageUrl'] ??
+              d['image'] ??
+              d['thumbnail'] ??
+              d['storagePath'] ??
+              d['gsUrl'] ??
+              d['path'] ??
+              '')
+          .toString()
+          .trim();
+      return await _resolveImageString(candidate);
+    } catch (_) {
+      return null;
     }
-    final c = await fromNameQuery('latestarrivals');
-    if (c != null) return c;
-    return await fromNameQuery('latest_arrivals');
   }
 
   Future<String?> _imgFuture(LatestArrivalModels it) {
@@ -2195,49 +2239,80 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     return _imgCache.putIfAbsent(key, () => _resolveImage(it));
   }
 
-  CartModel _makeCartModel(LatestArrivalModels it, String img, {required int qty}) {
-    final parsed    = int.tryParse(it.id.trim());
-    final itemId    = parsed ?? _fnv1a32('latest:${it.id}:${it.name}');
-    final userKey   = FirebaseAuth.instance.currentUser?.uid ?? '';
-    return CartModel(
-      userId: userKey, item: itemId, quantity: qty,
-      name: it.name, image: img, price: it.price.toDouble(),
-      description: '', comment: null,
-      merchantId: 'marketplace', merchantName: 'Marketplace', serviceType: 'marketplace',
+  void _openImageViewer(String url, {Uint8List? bytes}) {
+    final u = url.trim();
+    if (u.isEmpty && bytes == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _LatestArrivalImageViewer(
+          imageUrl: u,
+          memoryBytes: bytes,
+        ),
+      ),
     );
   }
 
-  Future<void> _addToCart(LatestArrivalModels it, {required int qty, required BuildContext sheetCtx}) async {
+  CartModel _makeCartModel(LatestArrivalModels it, String img,
+      {required int qty}) {
+    final parsed = int.tryParse(it.id.trim());
+    final itemId = parsed ?? _fnv1a32('latest:${it.id}:${it.name}');
+    final userKey = FirebaseAuth.instance.currentUser?.uid ?? '';
+    return CartModel(
+      userId: userKey,
+      item: itemId,
+      quantity: qty,
+      name: it.name,
+      image: img,
+      price: it.price.toDouble(),
+      description: '',
+      comment: null,
+      merchantId: 'marketplace',
+      merchantName: 'Marketplace',
+      serviceType: 'marketplace',
+    );
+  }
+
+  Future<void> _addToCart(LatestArrivalModels it,
+      {required int qty, required BuildContext sheetCtx}) async {
     if (qty <= 0) return;
     if (FirebaseAuth.instance.currentUser == null) {
-      ToastHelper.showCustomToast(sheetCtx, 'Please log in to add items.', isSuccess: false, errorMessage: '');
+      ToastHelper.showCustomToast(sheetCtx, 'Please log in to add items.',
+          isSuccess: false, errorMessage: '');
       return;
     }
     try {
       final img = (await _resolveImage(it)) ?? it.imageUrl;
       await _cart.addToCart(_makeCartModel(it, img, qty: qty));
       if (!mounted) return;
-      ToastHelper.showCustomToast(sheetCtx, '${it.name} added to cart', isSuccess: true, errorMessage: '');
+      ToastHelper.showCustomToast(sheetCtx, '${it.name} added to cart',
+          isSuccess: true, errorMessage: '');
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showCustomToast(sheetCtx, 'Failed to add to cart — please log in', isSuccess: false, errorMessage: e.toString());
+      ToastHelper.showCustomToast(
+          sheetCtx, 'Failed to add to cart — please log in',
+          isSuccess: false, errorMessage: e.toString());
     }
   }
 
-  Future<void> _buyNow(LatestArrivalModels it, {required int qty, required BuildContext sheetCtx}) async {
+  Future<void> _buyNow(LatestArrivalModels it,
+      {required int qty, required BuildContext sheetCtx}) async {
     if (qty <= 0) return;
     if (FirebaseAuth.instance.currentUser == null) {
-      ToastHelper.showCustomToast(sheetCtx, 'Please log in to buy.', isSuccess: false, errorMessage: '');
+      ToastHelper.showCustomToast(sheetCtx, 'Please log in to buy.',
+          isSuccess: false, errorMessage: '');
       return;
     }
-    final img      = (await _resolveImage(it)) ?? it.imageUrl;
+    final img = (await _resolveImage(it)) ?? it.imageUrl;
     final cartItem = _makeCartModel(it, img, qty: qty);
-    try { await _cart.addToCart(cartItem); } catch (_) {}
+    try {
+      await _cart.addToCart(cartItem);
+    } catch (_) {}
     if (!mounted) return;
     if (Navigator.of(sheetCtx).canPop()) Navigator.of(sheetCtx).pop();
     if (!mounted) return;
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => CheckoutFromCartPage(items: [cartItem])),
+      MaterialPageRoute(
+          builder: (_) => CheckoutFromCartPage(items: [cartItem])),
     );
   }
 
@@ -2246,14 +2321,18 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (sheetCtx) => _LatestDetailsSheet(
-        item:            it,
-        imageFuture:     _imgFuture(it),
-        fmtPrice:        (n) => 'MWK ${_fmtKwacha(n)}',
+        item: it,
+        imageFuture: _imgFuture(it),
+        immediateImageUrl: _immediateImageUrl(it),
+        fmtPrice: (n) => 'MWK ${_fmtKwacha(n)}',
         tryDecodeBase64: _tryDecodeBase64,
-        onAddToCart:     (qty) async => _addToCart(it, qty: qty, sheetCtx: sheetCtx),
-        onBuyNow:        (qty) async => _buyNow(it,    qty: qty, sheetCtx: sheetCtx),
+        onAddToCart: (qty) async =>
+            _addToCart(it, qty: qty, sheetCtx: sheetCtx),
+        onBuyNow: (qty) async => _buyNow(it, qty: qty, sheetCtx: sheetCtx),
+        onViewImage: (url, bytes) => _openImageViewer(url, bytes: bytes),
       ),
     );
   }
@@ -2263,55 +2342,61 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionHeader(title: "Today's Arrivals", subtitle: 'Fresh items just in'),
+        _SectionHeader(
+            title: "Today's Arrivals", subtitle: 'Fresh items just in'),
         const SizedBox(height: 12),
         FutureBuilder<List<LatestArrivalModels>>(
           future: _future,
           builder: (context, snap) {
-            if (snap.connectionState == ConnectionState.waiting) {
+            if (snap.connectionState == ConnectionState.waiting &&
+                (_memItems == null || _memItems!.isEmpty)) {
               return const AppSkeletonLatestArrivalsGrid();
             }
-            if (snap.hasError) {
+            if (snap.hasError && (snap.data == null || snap.data!.isEmpty)) {
               return Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Text('Could not load arrivals.\n${snap.error}',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.red),
-                  ),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.red)),
                 ),
               );
             }
-            final items = snap.data ?? const <LatestArrivalModels>[];
+            final items = snap.data ?? _memItems ?? const <LatestArrivalModels>[];
             if (items.isEmpty) {
               return const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: Text('No arrivals today.', style: TextStyle(color: Colors.red))),
+                child: Center(
+                    child: Text('No arrivals today.',
+                        style: TextStyle(color: Colors.red))),
               );
             }
             final width = MediaQuery.of(context).size.width;
-            final cols  = width >= 1200 ? 4 : width >= 800 ? 3 : 2;
+            final cols = width >= 1200 ? 4 : width >= 800 ? 3 : 2;
             final ratio = width >= 1200 ? 0.95 : width >= 800 ? 0.85 : 0.72;
 
             return GridView.builder(
               shrinkWrap: true,
-              physics:    const NeverScrollableScrollPhysics(),
-              padding:    EdgeInsets.zero,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: EdgeInsets.zero,
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount:   cols,
+                crossAxisCount: cols,
                 crossAxisSpacing: 10,
-                mainAxisSpacing:  10,
+                mainAxisSpacing: 10,
                 childAspectRatio: ratio,
               ),
-              itemCount:   items.length,
+              itemCount: items.length,
               itemBuilder: (_, i) {
                 final it = items[i];
                 return _ProductCard(
-                  item:            it,
-                  priceText:       'MWK ${_fmtKwacha(it.price)}',
-                  imageFuture:     _imgFuture(it),
+                  item: it,
+                  priceText: 'MWK ${_fmtKwacha(it.price)}',
+                  imageFuture: _imgFuture(it),
+                  immediateImageUrl: _immediateImageUrl(it),
                   tryDecodeBase64: _tryDecodeBase64,
-                  onTap:           () => _openDetails(it),
+                  onTap: () => _openDetails(it),
+                  onViewImage: (url, bytes) =>
+                      _openImageViewer(url, bytes: bytes),
                 );
               },
             );
@@ -2323,49 +2408,120 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
 }
 
 class _ProductCard extends StatelessWidget {
-  final LatestArrivalModels         item;
-  final String                      priceText;
-  final Future<String?>             imageFuture;
+  final LatestArrivalModels item;
+  final String priceText;
+  final Future<String?> imageFuture;
+  final String? immediateImageUrl;
   final Uint8List? Function(String) tryDecodeBase64;
-  final VoidCallback                onTap;
+  final VoidCallback onTap;
+  final void Function(String url, Uint8List? bytes) onViewImage;
 
   const _ProductCard({
-    required this.item, required this.priceText,
-    required this.imageFuture, required this.tryDecodeBase64, required this.onTap,
+    required this.item,
+    required this.priceText,
+    required this.imageFuture,
+    required this.immediateImageUrl,
+    required this.tryDecodeBase64,
+    required this.onTap,
+    required this.onViewImage,
   });
+
+  Widget _imageWidget(String v, {required int memW}) {
+    if (v.startsWith('data:image/')) {
+      final bytes = tryDecodeBase64(v);
+      if (bytes == null) return const _ImgPlaceholder();
+      return GestureDetector(
+        onTap: () => onViewImage(v, bytes),
+        child: Image.memory(bytes, fit: BoxFit.cover),
+      );
+    }
+    if (v.startsWith('http://') || v.startsWith('https://')) {
+      return GestureDetector(
+        onTap: () => onViewImage(v, null),
+        child: ResilientCachedNetworkImage(
+          url: v,
+          fit: BoxFit.cover,
+          memCacheWidth: memW,
+        ),
+      );
+    }
+    return const _ImgPlaceholder();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final memW = (MediaQuery.sizeOf(context).width / 2 * MediaQuery.devicePixelRatioOf(context))
+        .round()
+        .clamp(200, 600);
+
     return InkWell(
-      onTap:        onTap,
+      onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Card(
-        shape:        RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         clipBehavior: Clip.antiAlias,
-        elevation:    0.6,
+        elevation: 0.6,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
-              child: FutureBuilder<String?>(
-                future: imageFuture,
-                builder: (_, snap) {
-                  final v = (snap.data ?? item.imageUrl).trim();
-                  if (v.isEmpty) return const _ImgPlaceholder();
-                  if (v.startsWith('data:image/')) {
-                    final bytes = tryDecodeBase64(v);
-                    return bytes == null ? const _ImgPlaceholder() : Image.memory(bytes, fit: BoxFit.cover);
-                  }
-                  if (v.startsWith('http://') || v.startsWith('https://')) {
-                    return Image.network(v, fit: BoxFit.cover,
-                      loadingBuilder: (_, child, prog) =>
-                          prog == null ? child : const Center(child: SizedBox(width: 20, height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2))),
-                      errorBuilder: (_, __, ___) => const _ImgPlaceholder(),
-                    );
-                  }
-                  return const _ImgPlaceholder();
-                },
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (immediateImageUrl != null &&
+                      immediateImageUrl!.trim().isNotEmpty)
+                    _imageWidget(immediateImageUrl!.trim(), memW: memW)
+                  else
+                    FutureBuilder<String?>(
+                      future: imageFuture,
+                      builder: (_, snap) {
+                        final v = (snap.data ?? item.imageUrl).trim();
+                        if (v.isEmpty) {
+                          return snap.connectionState ==
+                                  ConnectionState.waiting
+                              ? const ColoredBox(
+                                  color: Color(0xFFF3F4F7),
+                                  child: Center(
+                                    child: SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    ),
+                                  ),
+                                )
+                              : const _ImgPlaceholder();
+                        }
+                        return _imageWidget(v, memW: memW);
+                      },
+                    ),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Material(
+                      color: Colors.black54,
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: () {
+                          final v =
+                              (immediateImageUrl ?? item.imageUrl).trim();
+                          if (v.isEmpty) return;
+                          if (v.startsWith('data:image/')) {
+                            onViewImage(v, tryDecodeBase64(v));
+                          } else {
+                            onViewImage(v, null);
+                          }
+                        },
+                        child: const Padding(
+                          padding: EdgeInsets.all(6),
+                          child: Icon(Icons.fullscreen_rounded,
+                              size: 16, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             Padding(
@@ -2373,13 +2529,18 @@ class _ProductCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-                  ),
+                  Text(item.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 3),
-                  Text(priceText, maxLines: 1,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.green),
-                  ),
+                  Text(priceText,
+                      maxLines: 1,
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.green)),
                 ],
               ),
             ),
@@ -2391,16 +2552,24 @@ class _ProductCard extends StatelessWidget {
 }
 
 class _LatestDetailsSheet extends StatefulWidget {
-  final LatestArrivalModels         item;
-  final Future<String?>             imageFuture;
-  final String Function(int)        fmtPrice;
+  final LatestArrivalModels item;
+  final Future<String?> imageFuture;
+  final String? immediateImageUrl;
+  final String Function(int) fmtPrice;
   final Uint8List? Function(String) tryDecodeBase64;
-  final Future<void> Function(int)  onAddToCart;
-  final Future<void> Function(int)  onBuyNow;
+  final Future<void> Function(int) onAddToCart;
+  final Future<void> Function(int) onBuyNow;
+  final void Function(String url, Uint8List? bytes) onViewImage;
 
   const _LatestDetailsSheet({
-    required this.item, required this.imageFuture, required this.fmtPrice,
-    required this.tryDecodeBase64, required this.onAddToCart, required this.onBuyNow,
+    required this.item,
+    required this.imageFuture,
+    required this.immediateImageUrl,
+    required this.fmtPrice,
+    required this.tryDecodeBase64,
+    required this.onAddToCart,
+    required this.onBuyNow,
+    required this.onViewImage,
   });
 
   @override
@@ -2409,6 +2578,57 @@ class _LatestDetailsSheet extends StatefulWidget {
 
 class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
   int qty = 1;
+
+  Widget _heroImage(String v) {
+    Widget img;
+    Uint8List? bytes;
+    if (v.isEmpty) {
+      img = const _ImgPlaceholder();
+    } else if (v.startsWith('data:image/')) {
+      bytes = widget.tryDecodeBase64(v);
+      img = bytes == null
+          ? const _ImgPlaceholder()
+          : Image.memory(bytes, fit: BoxFit.cover);
+    } else if (v.startsWith('http://') || v.startsWith('https://')) {
+      img = ResilientCachedNetworkImage(url: v, fit: BoxFit.cover);
+    } else {
+      img = const _ImgPlaceholder();
+    }
+    return GestureDetector(
+      onTap: () {
+        if (v.isEmpty) return;
+        widget.onViewImage(v, bytes);
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: SizedBox(
+          height: 220,
+          width: double.infinity,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              img,
+              const Positioned(
+                right: 10,
+                bottom: 10,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(Icons.zoom_in_rounded,
+                        color: Colors.white, size: 18),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2420,8 +2640,10 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
         children: [
           const SizedBox(height: 10),
           Container(
-            width: 40, height: 4,
-            decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(99)),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+                color: Colors.black12, borderRadius: BorderRadius.circular(99)),
           ),
           const SizedBox(height: 12),
           Padding(
@@ -2429,42 +2651,44 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                FutureBuilder<String?>(
-                  future: widget.imageFuture,
-                  builder: (_, snap) {
-                    final v = (snap.data ?? it.imageUrl).trim();
-                    Widget img;
-                    if (v.isEmpty) { img = const _ImgPlaceholder(); }
-                    else if (v.startsWith('data:image/')) {
-                      final bytes = widget.tryDecodeBase64(v);
-                      img = bytes == null ? const _ImgPlaceholder() : Image.memory(bytes, fit: BoxFit.cover);
-                    } else if (v.startsWith('http://') || v.startsWith('https://')) {
-                      img = Image.network(v, fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const _ImgPlaceholder());
-                    } else { img = const _ImgPlaceholder(); }
-                    return ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: SizedBox(height: 220, width: double.infinity, child: img),
-                    );
-                  },
-                ),
+                if (widget.immediateImageUrl != null &&
+                    widget.immediateImageUrl!.trim().isNotEmpty)
+                  _heroImage(widget.immediateImageUrl!.trim())
+                else
+                  FutureBuilder<String?>(
+                    future: widget.imageFuture,
+                    builder: (_, snap) {
+                      final v = (snap.data ?? it.imageUrl).trim();
+                      return _heroImage(v);
+                    },
+                  ),
                 const SizedBox(height: 12),
-                Text(it.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                Text(it.name,
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w900)),
                 const SizedBox(height: 6),
                 Text(widget.fmtPrice(it.price),
-                  style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w900, fontSize: 16)),
+                    style: const TextStyle(
+                        color: Colors.green,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16)),
                 const SizedBox(height: 14),
                 Row(
                   children: [
-                    const Text('Quantity', style: TextStyle(fontWeight: FontWeight.w800)),
+                    const Text('Quantity',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
                     const Spacer(),
                     IconButton(
-                      onPressed: qty <= 1 ? null : () => setState(() => qty--),
+                      onPressed:
+                          qty <= 1 ? null : () => setState(() => qty--),
                       icon: const Icon(Icons.remove_circle_outline),
                     ),
-                    Text('$qty', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                    Text('$qty',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w900, fontSize: 16)),
                     IconButton(
-                      onPressed: qty >= 99 ? null : () => setState(() => qty++),
+                      onPressed:
+                          qty >= 99 ? null : () => setState(() => qty++),
                       icon: const Icon(Icons.add_circle_outline),
                     ),
                   ],
@@ -2475,14 +2699,16 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () => widget.onAddToCart(qty),
-                        icon:  const Icon(Icons.shopping_cart_outlined),
+                        icon: const Icon(Icons.shopping_cart_outlined),
                         label: const Text('Add to Cart',
                             style: TextStyle(fontWeight: FontWeight.w900)),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppColors.brandOrange,
-                          side:  const BorderSide(color: AppColors.brandOrange),
+                          side: const BorderSide(
+                              color: AppColors.brandOrange),
                           padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
                         ),
                       ),
                     ),
@@ -2495,9 +2721,11 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                           foregroundColor: Colors.white,
                           elevation: 0,
                           padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
                         ),
-                        child: const Text('Buy Now', style: TextStyle(fontWeight: FontWeight.w900)),
+                        child: const Text('Buy Now',
+                            style: TextStyle(fontWeight: FontWeight.w900)),
                       ),
                     ),
                   ],
@@ -2506,6 +2734,56 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _LatestArrivalImageViewer extends StatelessWidget {
+  const _LatestArrivalImageViewer({
+    required this.imageUrl,
+    this.memoryBytes,
+  });
+
+  final String imageUrl;
+  final Uint8List? memoryBytes;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = imageUrl.trim();
+    Widget child;
+    if (memoryBytes != null) {
+      child = Image.memory(memoryBytes!, fit: BoxFit.contain);
+    } else if (url.startsWith('http://') || url.startsWith('https://')) {
+      child = ResilientCachedNetworkImage(url: url, fit: BoxFit.contain);
+    } else if (url.startsWith('data:image/')) {
+      child = const ColoredBox(color: Colors.black);
+    } else {
+      child = const Icon(Icons.broken_image_outlined,
+          color: Colors.white54, size: 64);
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text(
+          'Photo',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 1,
+          maxScale: 4,
+          child: SizedBox(
+            width: double.infinity,
+            height: double.infinity,
+            child: child,
+          ),
+        ),
       ),
     );
   }

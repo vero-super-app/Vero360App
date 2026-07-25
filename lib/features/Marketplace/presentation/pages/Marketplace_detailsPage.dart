@@ -563,6 +563,8 @@ class _DetailsPageState extends State<DetailsPage> {
                     children: [
                       Text(
                         merchantDisplayName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 17,
@@ -571,10 +573,12 @@ class _DetailsPageState extends State<DetailsPage> {
                         ),
                       ),
                       const SizedBox(height: 6),
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           _ratingStars(rating, showScore: reviewCount > 0),
-                          const SizedBox(width: 8),
                           Text(
                             reviewCount > 0
                                 ? '$reviewCount review${reviewCount == 1 ? '' : 's'}'
@@ -590,6 +594,7 @@ class _DetailsPageState extends State<DetailsPage> {
                     ],
                   ),
                 ),
+                const SizedBox(width: 8),
                 _shopStatusChip(openingHours),
               ],
             ),
@@ -816,19 +821,26 @@ class _DetailsPageState extends State<DetailsPage> {
       children: [
         Icon(icon, size: 16, color: const Color(0xFF9CA3AF)),
         const SizedBox(width: 8),
-        SizedBox(
-          width: 100,
+        Flexible(
+          flex: 2,
           child: Text(
             label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontSize: 12,
               color: Color(0xFF6B7280),
             ),
           ),
         ),
+        const SizedBox(width: 8),
         Expanded(
+          flex: 3,
           child: Text(
             (value ?? '').trim().isEmpty ? '—' : value!.trim(),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.right,
             style: TextStyle(
               fontSize: 13,
               fontWeight: valueBold ? FontWeight.w900 : FontWeight.w600,
@@ -1215,20 +1227,24 @@ class _DetailsPageState extends State<DetailsPage> {
           Row(
             children: [
               if (category.isNotEmpty)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: _brandSoft.withValues(alpha: 0.65),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    category.toUpperCase(),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: _brandOrange,
-                      letterSpacing: 0.6,
+                Flexible(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: _brandSoft.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      category.toUpperCase(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: _brandOrange,
+                        letterSpacing: 0.6,
+                      ),
                     ),
                   ),
                 ),
@@ -1255,8 +1271,10 @@ class _DetailsPageState extends State<DetailsPage> {
           const SizedBox(height: 10),
           Text(
             item.name,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 24,
+              fontSize: 22,
               fontWeight: FontWeight.w800,
               color: _ink,
               height: 1.2,

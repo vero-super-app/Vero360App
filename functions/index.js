@@ -49,25 +49,29 @@ exports.resetPasswordAfterOtp = onCall(async (request) => {
 });
 
 /**
- * Morning + evening keep-alive digest for all users subscribed to
- * FCM topic `vero360_engagement` (app opts in via Settings).
+ * Frequent keep-alive digest for users subscribed to FCM topic
+ * `vero360_engagement` (app opts in via Settings → Deals & new listings).
  *
- * Schedule: 09:00 and 17:00 Africa/Blantyre (Malawi).
- * Deploy: firebase deploy --only functions:sendEngagementDigest
+ * Schedule: every 3 hours during the day (08,11,14,17,20) Africa/Blantyre.
+ * Also fires on new marketplace listings (see onMarketplaceItemCreated) and
+ * on docs written to engagement_broadcasts (promos / arrivals / campaigns).
+ *
+ * Deploy: firebase deploy --only functions:sendEngagementDigest,functions:onEngagementBroadcast,functions:onMarketplaceItemCreated
  */
 exports.sendEngagementDigest = onSchedule(
   {
-    schedule: '0 9,17 * * *',
+    schedule: '0 8,11,14,17,20 * * *',
     timeZone: 'Africa/Blantyre',
     retryCount: 1,
   },
   async () => {
     const since = admin.firestore.Timestamp.fromDate(
-      new Date(Date.now() - 12 * 60 * 60 * 1000),
+      new Date(Date.now() - 4 * 60 * 60 * 1000),
     );
 
     let marketCount = 0;
     let sampleName = '';
+    let sampleId = '';
     try {
       const snap = await admin
         .firestore()
@@ -78,6 +82,7 @@ exports.sendEngagementDigest = onSchedule(
         .get();
       marketCount = snap.size;
       if (!snap.empty) {
+        sampleId = snap.docs[0].id;
         const d = snap.docs[0].data() || {};
         sampleName = String(d.name || d.title || d.productName || '').trim();
       }
@@ -99,16 +104,19 @@ exports.sendEngagementDigest = onSchedule(
           }. Open the app to browse.`
         : `${marketCount} new listing${
             marketCount === 1 ? '' : 's'
-          } today. Open Vero360 to check them out.`;
+          } recently. Open Vero360 to check them out.`;
+
+    const dataPayload = {
+      type: 'marketplace_digest',
+      title,
+      body,
+    };
+    if (sampleId) dataPayload.marketplaceItemId = sampleId;
 
     await admin.messaging().send({
       topic: ENGAGEMENT_TOPIC,
       notification: { title, body },
-      data: {
-        type: 'marketplace_digest',
-        title,
-        body,
-      },
+      data: dataPayload,
       android: {
         priority: 'normal',
         notification: {
@@ -129,7 +137,70 @@ exports.sendEngagementDigest = onSchedule(
 );
 
 /**
- * Manual / admin broadcast for a big promo or campaign.
+ * Push when a marketplace item is created — keeps the app “alive”
+ * as new products go live (with a short cooldown).
+ */
+exports.onMarketplaceItemCreated = onDocumentCreated(
+  'marketplace_items/{id}',
+  async (event) => {
+    const data = event.data?.data() || {};
+    const name = String(
+      data.name || data.title || data.productName || '',
+    ).trim();
+
+    const cooldownRef = admin
+      .firestore()
+      .collection('engagement_meta')
+      .doc('cooldowns');
+    const meta = await cooldownRef.get();
+    const lastMs = Number((meta.data() || {}).marketplace || 0);
+    const COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
+    const nowMs = Date.now();
+    if (lastMs > 0 && nowMs - lastMs < COOLDOWN_MS) {
+      console.log('Marketplace engagement push skipped (cooldown)');
+      return;
+    }
+    await cooldownRef.set({ marketplace: nowMs }, { merge: true });
+
+    const title = 'New on Marketplace';
+    const body =
+      name.length > 0
+        ? `Just listed: ${name}. Open Vero360 to browse.`
+        : 'New listings just went live. Open Vero360 to browse.';
+
+    const itemId = String(event.params.id || '').trim();
+    const dataPayload = {
+      type: 'marketplace_digest',
+      title,
+      body,
+    };
+    if (itemId) dataPayload.marketplaceItemId = itemId;
+
+    await admin.messaging().send({
+      topic: ENGAGEMENT_TOPIC,
+      notification: { title, body },
+      data: dataPayload,
+      android: {
+        priority: 'normal',
+        notification: {
+          channelId: 'high_importance_channel',
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: 'default',
+          },
+        },
+      },
+    });
+
+    console.log(`Marketplace engagement push sent: ${name || event.params.id}`);
+  },
+);
+
+/**
+ * Manual / admin / app broadcast for a promo, arrival, or campaign.
  * Write a doc to Firestore `engagement_broadcasts` with:
  *   { title, body, type?: 'promo_digest'|'arrivals_digest'|'marketplace_digest'|'engagement',
  *     badgeRoute?: 'quick_promotions'|'quick_post_arrival' }
@@ -152,6 +223,13 @@ exports.onEngagementBroadcast = onDocumentCreated(
       body,
     };
     if (badgeRoute) payload.badgeRoute = badgeRoute;
+    // Deep-link ids (all FCM data values must be strings).
+    for (const key of ['promoId', 'arrivalId', 'marketplaceItemId', 'itemId', 'id']) {
+      const v = data[key];
+      if (v !== undefined && v !== null && String(v).trim()) {
+        payload[key] = String(v).trim();
+      }
+    }
 
     await admin.messaging().send({
       topic: ENGAGEMENT_TOPIC,

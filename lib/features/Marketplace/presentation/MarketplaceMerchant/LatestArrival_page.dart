@@ -14,7 +14,15 @@ import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 // ===== Latest Arrivals (API + Firestore image + Cart + Bottomsheet) =====
 class LatestArrivalsSection extends StatefulWidget {
-  const LatestArrivalsSection({super.key});
+  const LatestArrivalsSection({
+    super.key,
+    this.initialArrivalId,
+    this.autoOpenInitial = false,
+  });
+
+  /// When set (e.g. from a notification tap), highlight / open this arrival.
+  final String? initialArrivalId;
+  final bool autoOpenInitial;
 
   @override
   State<LatestArrivalsSection> createState() => _LatestArrivalsSectionState();
@@ -25,6 +33,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   late Future<List<LatestArrivalModels>> _future;
 
   final Map<String, Future<String?>> _imageFutureCache = {};
+  bool _openedInitial = false;
 
   static const Color _brandOrange = Color(0xFFFF8A00);
 
@@ -32,6 +41,25 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
   void initState() {
     super.initState();
     _future = _service.fetchLatestArrivals();
+  }
+
+  void _maybeOpenInitial(List<LatestArrivalModels> items) {
+    if (_openedInitial || !widget.autoOpenInitial) return;
+    final target = (widget.initialArrivalId ?? '').trim();
+    if (target.isEmpty || items.isEmpty) return;
+    _openedInitial = true;
+    LatestArrivalModels? match;
+    for (final it in items) {
+      if (it.id == target) {
+        match = it;
+        break;
+      }
+    }
+    match ??= items.first;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showDetails(context, match!);
+    });
   }
 
   String _fmtKwacha(int n) {
@@ -282,6 +310,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                 );
               }
 
+              _maybeOpenInitial(items);
+
               final width = MediaQuery.of(context).size.width;
               final cols = width >= 1200
                   ? 4
@@ -486,7 +516,6 @@ class _LatestDetailsSheet extends StatefulWidget {
 }
 
 class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
-  int _qty = 1;
   bool _adding = false;
 
   @override
@@ -586,24 +615,6 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
 
           Row(
             children: [
-              const Text("Quantity", style: TextStyle(fontWeight: FontWeight.w700)),
-              const Spacer(),
-              IconButton(
-                onPressed: _qty <= 1 ? null : () => setState(() => _qty -= 1),
-                icon: const Icon(Icons.remove_circle_outline),
-              ),
-              Text("$_qty", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-              IconButton(
-                onPressed: () => setState(() => _qty += 1),
-                icon: const Icon(Icons.add_circle_outline),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 10),
-
-          Row(
-            children: [
               Expanded(
                 child: OutlinedButton(
                   onPressed: () => Navigator.pop(context),
@@ -622,7 +633,7 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                       : () async {
                           setState(() => _adding = true);
                           try {
-                            await widget.onAdd(_qty);
+                            await widget.onAdd(1);
                             if (!mounted) return;
                             Navigator.pop(context);
                           } finally {

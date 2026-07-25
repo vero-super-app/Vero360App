@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
@@ -49,6 +50,105 @@ class MerchantSellerInfo {
 
 class MerchantSellerLoader {
   MerchantSellerLoader._();
+
+  static const String _kHoursPrefsPrefix = 'merchant_opening_hours_v1_';
+
+  /// Instant OPEN/CLOSED: merchantId → openingHours (e.g. `08:00–17:00`).
+  static final Map<String, String> _openingHoursByMerchantId = {};
+
+  static String? peekOpeningHours(String? merchantId) {
+    final id = (merchantId ?? '').trim();
+    if (id.isEmpty) return null;
+    final h = _openingHoursByMerchantId[id];
+    return (h == null || h.isEmpty) ? null : h;
+  }
+
+  static void cacheOpeningHours(String? merchantId, String? hours) {
+    final id = (merchantId ?? '').trim();
+    final h = (hours ?? '').trim();
+    if (id.isEmpty || h.isEmpty) return;
+    _openingHoursByMerchantId[id] = h;
+    // Disk cache so next cold open is instant.
+    SharedPreferences.getInstance().then((p) {
+      p.setString('$_kHoursPrefsPrefix$id', h);
+    }).catchError((_) {});
+  }
+
+  static Future<String?> peekOpeningHoursPersisted(String? merchantId) async {
+    final id = (merchantId ?? '').trim();
+    if (id.isEmpty) return null;
+    final mem = peekOpeningHours(id);
+    if (mem != null) return mem;
+    try {
+      final p = await SharedPreferences.getInstance();
+      final h = (p.getString('$_kHoursPrefsPrefix$id') ?? '').trim();
+      if (h.isEmpty) return null;
+      _openingHoursByMerchantId[id] = h;
+      return h;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Cache-first Firestore read for shop hours only (fast status chip).
+  /// Tries [merchantId] and any extra candidate ids (sellerUserId, etc.).
+  static Future<String?> prefetchOpeningHours(
+    String? merchantId, {
+    List<String?> extraIds = const [],
+  }) async {
+    final candidates = <String>{
+      if ((merchantId ?? '').trim().isNotEmpty) merchantId!.trim(),
+      for (final e in extraIds)
+        if ((e ?? '').trim().isNotEmpty) e!.trim(),
+    };
+
+    for (final id in candidates) {
+      final mem = peekOpeningHours(id);
+      if (mem != null) return mem;
+    }
+
+    for (final id in candidates) {
+      final disk = await peekOpeningHoursPersisted(id);
+      if (disk != null) return disk;
+    }
+
+    for (final id in candidates) {
+      if (!_looksLikeFirebaseUid(id)) continue;
+      final h = await _fetchOpeningHoursDoc(id);
+      if (h != null) return h;
+    }
+    return null;
+  }
+
+  static Future<String?> _fetchOpeningHoursDoc(String id) async {
+    Future<String?> fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) async {
+      if (!doc.exists) return null;
+      final h = _trimmed(doc.data()?['openingHours']);
+      if (h != null) {
+        cacheOpeningHours(id, h);
+      }
+      return h;
+    }
+
+    try {
+      final cacheDoc = await FirebaseFirestore.instance
+          .collection('marketplace_merchants')
+          .doc(id)
+          .get(const GetOptions(source: Source.cache));
+      final fromCache = await fromDoc(cacheDoc);
+      if (fromCache != null) return fromCache;
+    } catch (_) {}
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('marketplace_merchants')
+          .doc(id)
+          .get(const GetOptions(source: Source.serverAndCache));
+      return await fromDoc(doc);
+    } catch (_) {
+      return peekOpeningHours(id);
+    }
+  }
 
   static bool _looksLikeFirebaseUid(String value) {
     return RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(value);
@@ -234,6 +334,9 @@ class MerchantSellerLoader {
     );
     info.status ??= _trimmed(m['status'] ?? m['verificationStatus']);
     info.openingHours ??= _trimmed(m['openingHours']);
+    if (info.openingHours != null) {
+      cacheOpeningHours(docId, info.openingHours);
+    }
 
     info.serviceProviderId ??= _trimmed(
       m['serviceProviderId'] ??
@@ -400,6 +503,13 @@ class MerchantSellerLoader {
       merchantRef: merchantRef,
       sellerUserId: sellerUid,
     );
+    // Prefer any previously cached hours immediately.
+    info.openingHours ??= peekOpeningHours(merchantRef) ??
+        peekOpeningHours(sellerUid);
+    if ((sellerOpeningHours ?? '').trim().isNotEmpty) {
+      cacheOpeningHours(merchantRef, sellerOpeningHours);
+      cacheOpeningHours(sellerUid, sellerOpeningHours);
+    }
 
     // Promo API: numeric merchantId → find Firebase UID via marketplace items.
     if (backendUserIdHint != null && backendUserIdHint > 0) {
@@ -486,6 +596,12 @@ class MerchantSellerLoader {
       serviceProviderId: info.serviceProviderId ?? serviceProviderId,
       sellerUserId: info.sellerUserId ?? sellerUid,
     );
+
+    if ((info.openingHours ?? '').trim().isNotEmpty) {
+      cacheOpeningHours(info.merchantRef, info.openingHours);
+      cacheOpeningHours(info.sellerUserId, info.openingHours);
+      cacheOpeningHours(merchantId, info.openingHours);
+    }
 
     return info;
   }

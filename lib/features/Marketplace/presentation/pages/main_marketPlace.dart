@@ -990,156 +990,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     ToastHelper.showCustomToast(context, 'Product link copied', isSuccess: true, errorMessage: 'OK');
   }
 
-  /// Taobao-style qty picker capped by supplier stock.
-  Future<int?> _pickOrderQuantity(MarketplaceDetailModel item) async {
-    final maxQ = item.maxOrderQty;
-    if (maxQ <= 0) {
-      ToastHelper.showCustomToast(
-        context,
-        'This item is out of stock',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return null;
-    }
-
-    final existing = widget.cartService.cachedItems.where(
-      (c) =>
-          c.name == item.name &&
-          c.merchantId == (item.merchantId ?? '') &&
-          (item.hasValidSqlItemId ? c.item == item.sqlItemId : true),
-    );
-    var alreadyInCart = 0;
-    for (final c in existing) {
-      alreadyInCart += c.quantity;
-    }
-    final remaining = (maxQ - alreadyInCart).clamp(0, maxQ);
-    if (remaining <= 0) {
-      ToastHelper.showCustomToast(
-        context,
-        'You already have the maximum available quantity ($maxQ) in your cart',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return null;
-    }
-
-    var qty = 1;
-    final result = await showModalBottomSheet<int>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setLocal) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade300,
-                          borderRadius: BorderRadius.circular(99),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      item.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 17,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      item.stockQuantity == null
-                          ? 'Choose quantity'
-                          : 'Available: $maxQ  ·  Already in cart: $alreadyInCart',
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        IconButton.filledTonal(
-                          onPressed: qty <= 1
-                              ? null
-                              : () => setLocal(() => qty--),
-                          icon: const Icon(Icons.remove_rounded),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 22),
-                          child: Text(
-                            '$qty',
-                            style: const TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                        IconButton.filled(
-                          style: IconButton.styleFrom(
-                            backgroundColor: _kAmber,
-                          ),
-                          onPressed: qty >= remaining
-                              ? null
-                              : () => setLocal(() => qty++),
-                          icon: const Icon(Icons.add_rounded, color: Colors.white),
-                        ),
-                      ],
-                    ),
-                    if (qty >= remaining && item.stockQuantity != null) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        'Maximum you can add now: $remaining',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.orange.shade800,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 18),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _kAmber,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      onPressed: () => Navigator.pop(ctx, qty),
-                      child: Text(
-                        'Add $qty to cart',
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-    return result;
-  }
-
   Future<void> _addToCart(MarketplaceDetailModel item, {String? note}) async {
     if (!item.hasValidMerchantInfo) {
       ToastHelper.showCustomToast(
@@ -1159,10 +1009,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       );
       return;
     }
-
-    final pickedQty = await _pickOrderQuantity(item);
-    if (pickedQty == null || pickedQty < 1) return;
-    if (!mounted) return;
 
     // Show cancelable dialog immediately (don't wait on login/token first).
     var cancelled = false;
@@ -1233,7 +1079,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           ? item.sqlItemId!
           : _stablePositiveIdFromString(item.id);
 
-      // Merge with existing cart line, still capped by stock.
+      // Add 1 unit (or bump existing line by 1), capped by stock when known.
       final existing = widget.cartService.cachedItems.where(
         (c) =>
             c.item == numericItemId &&
@@ -1244,7 +1090,17 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         already += c.quantity;
       }
       final maxQ = item.maxOrderQty;
-      final finalQty = (already + pickedQty).clamp(1, maxQ);
+      if (already >= maxQ) {
+        dismissDialog();
+        ToastHelper.showCustomToast(
+          context,
+          'You already have the maximum available quantity ($maxQ) in your cart',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+      final finalQty = (already + 1).clamp(1, maxQ);
 
       final cartItem = CartModel(
         userId: userId,
@@ -1269,9 +1125,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       dismissDialog();
       ToastHelper.showCustomToast(
         context,
-        finalQty > pickedQty
-            ? '${item.name} updated in cart (qty $finalQty / max $maxQ)'
-            : '${item.name} added to cart (qty $pickedQty)',
+        '${item.name} added to cart',
         isSuccess: true,
         errorMessage: 'OK',
       );

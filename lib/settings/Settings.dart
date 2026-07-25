@@ -996,8 +996,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   subtitle: Text(
                     _t(
-                      'Promotions, today’s arrivals, and marketplace (1–2×/day)',
-                      'Zotsatsa, zofika lero, ndi msika (1–2/tsiku)',
+                      'Promotions, today’s arrivals, and marketplace (often when something new is posted)',
+                      'Zotsatsa, zofika lero, ndi msika (nthawi zambiri zikakhala zatsopano)',
                     ),
                   ),
                 ),

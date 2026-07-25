@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show File;
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -31,6 +33,8 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
+import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/settings/Settings.dart';
@@ -233,8 +237,14 @@ class _MarketplaceMerchantDashboardState
   String _merchantEmail = 'No Email';
   String _merchantPhone = 'No Phone';
   String _merchantProfileUrl = '';
+  /// Short public blurb shown on shop + product details (max 120 chars).
+  String _businessDescription = '';
+  /// Local disk path from [ProfilePhotoCache] for instant avatar display.
+  String? _localPhotoPath;
 
-  bool _meOffline = false;
+  TimeOfDay? _openTime;
+  TimeOfDay? _closeTime;
+
   bool _loadingMe = false;
   bool _profileUploading = false;
 
@@ -246,6 +256,9 @@ class _MarketplaceMerchantDashboardState
   // First-time merchant guide (show once after login, then persist as done)
   static const String _kMerchantGuidePrefKey = 'marketplace_merchant_guide_v1_done';
   static const String _kMerchantGuideShowOnNextOpenKey = 'marketplace_merchant_guide_show_on_next_open';
+  static const String _kBusinessDescPrefKey = 'merchant_business_description';
+  static const String _kShopHoursPrefKey = 'merchant_shop_opening_hours';
+  static const int _kBusinessDescMaxLen = 120;
   bool _showMerchantGuide = false;
   int _merchantGuideStep = 0;
   bool _merchantGuideCheckScheduled = false;
@@ -941,6 +954,9 @@ class _MarketplaceMerchantDashboardState
         if (photo.isNotEmpty) _merchantProfileUrl = photo;
       });
     }
+    if (photo.isNotEmpty) {
+      unawaited(_warmProfilePhotoCache(photo));
+    }
   }
 
   /// Pull phone and profile picture from Firestore users/{uid} when Auth/prefs are empty.
@@ -956,22 +972,43 @@ class _MarketplaceMerchantDashboardState
       final picVal = (data['profilePicture'] ?? data['profilepicture'] ?? '')
           .toString()
           .trim();
-      if (phoneVal.isEmpty && picVal.isEmpty) return;
+      final descVal = (data['businessDescription'] ?? data['description'] ?? '')
+          .toString()
+          .trim();
+      final hoursVal = (data['openingHours'] ?? '').toString().trim();
+      if (phoneVal.isEmpty && picVal.isEmpty && descVal.isEmpty && hoursVal.isEmpty) {
+        return;
+      }
       final prefs = await SharedPreferences.getInstance();
       if (phoneVal.isNotEmpty) {
         await prefs.setString('phone', phoneVal);
         await prefs.setString('merchant_profile_phone', phoneVal);
       }
       if (picVal.isNotEmpty) await prefs.setString('profilepicture', picVal);
+      if (descVal.isNotEmpty) {
+        await prefs.setString(_kBusinessDescPrefKey, descVal);
+      }
+      if (hoursVal.isNotEmpty) {
+        await prefs.setString(_kShopHoursPrefKey, hoursVal);
+      }
       if (!mounted) return;
       setState(() {
         if (phoneVal.isNotEmpty && _merchantPhone == 'No Phone') {
           _merchantPhone = phoneVal;
         }
-        if (picVal.isNotEmpty && _merchantProfileUrl.trim().isEmpty) {
+        if (picVal.isNotEmpty) {
           _merchantProfileUrl = picVal;
         }
+        if (descVal.isNotEmpty) {
+          _businessDescription = descVal;
+        }
+        if (hoursVal.isNotEmpty) {
+          _applyOpeningHoursString(hoursVal);
+        }
       });
+      if (picVal.isNotEmpty) {
+        unawaited(_warmProfilePhotoCache(picVal));
+      }
     } catch (_) {}
   }
 
@@ -1072,6 +1109,22 @@ class _MarketplaceMerchantDashboardState
       if (data != null) {
         resolved =
             (data['businessName'] ?? data['name'] ?? '').toString().trim();
+        final desc = (data['businessDescription'] ?? data['description'] ?? '')
+            .toString()
+            .trim();
+        final hours = (data['openingHours'] ?? '').toString().trim();
+        if (desc.isNotEmpty && mounted) {
+          setState(() => _businessDescription = desc);
+          unawaited(SharedPreferences.getInstance().then((p) {
+            p.setString(_kBusinessDescPrefKey, desc);
+          }));
+        }
+        if (hours.isNotEmpty && mounted) {
+          setState(() => _applyOpeningHoursString(hours));
+          unawaited(SharedPreferences.getInstance().then((p) {
+            p.setString(_kShopHoursPrefKey, hours);
+          }));
+        }
       }
     } catch (_) {}
 
@@ -1205,12 +1258,195 @@ class _MarketplaceMerchantDashboardState
     final phone = _sanitizePhone(
       prefs.getString('merchant_profile_phone') ?? prefs.getString('phone') ?? '',
     );
+    final pic =
+        prefs.getString('profilepicture') ?? _merchantProfileUrl;
+    final desc = (prefs.getString(_kBusinessDescPrefKey) ?? '').trim();
+    final hours = (prefs.getString(_kShopHoursPrefKey) ?? '').trim();
+    final localPath = await ProfilePhotoCache.peekLocalPath();
+    if (!mounted) return;
     setState(() {
       _merchantEmail = prefs.getString('email') ?? _merchantEmail;
       if (phone.isNotEmpty) _merchantPhone = phone;
-      _merchantProfileUrl =
-          prefs.getString('profilepicture') ?? _merchantProfileUrl;
+      _merchantProfileUrl = pic;
+      if (desc.isNotEmpty) _businessDescription = desc;
+      if (hours.isNotEmpty) _applyOpeningHoursString(hours);
+      _localPhotoPath = localPath;
     });
+    // Warm/refresh disk cache in background so next open is instant.
+    if (_merchantProfileUrl.trim().isNotEmpty) {
+      unawaited(_warmProfilePhotoCache(_merchantProfileUrl));
+    }
+  }
+
+  Future<void> _warmProfilePhotoCache([String? url]) async {
+    final remote = (url ?? _merchantProfileUrl).trim();
+    if (remote.isEmpty) return;
+    final file = await ProfilePhotoCache.ensureCached(remote);
+    if (!mounted || file == null) return;
+    if (_localPhotoPath == file.path) return;
+    setState(() => _localPhotoPath = file.path);
+  }
+
+  Future<void> _editBusinessDescription() async {
+    final saved = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _BusinessDescriptionSheet(
+        initialText: _businessDescription,
+        maxLength: _kBusinessDescMaxLen,
+        brandColor: _brandOrange,
+      ),
+    );
+    if (saved == null || !mounted) return;
+    await _saveBusinessDescription(saved);
+  }
+
+  Future<void> _saveBusinessDescription(String raw) async {
+    final desc = raw.trim();
+    if (desc.length > _kBusinessDescMaxLen) {
+      _toastErr('Keep it under $_kBusinessDescMaxLen characters.');
+      return;
+    }
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) {
+      _toastErr('Please sign in again.');
+      return;
+    }
+
+    try {
+      final payload = <String, dynamic>{
+        'businessDescription': desc,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      await Future.wait([
+        _firestore
+            .collection('marketplace_merchants')
+            .doc(uid)
+            .set(payload, SetOptions(merge: true)),
+        _firestore
+            .collection('users')
+            .doc(uid)
+            .set(payload, SetOptions(merge: true)),
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kBusinessDescPrefKey, desc);
+      if (!mounted) return;
+      setState(() => _businessDescription = desc);
+      _toastOk(desc.isEmpty ? 'Description cleared' : 'Description saved');
+    } catch (e) {
+      debugPrint('Save business description: $e');
+      if (!mounted) return;
+      _toastErr('Could not save description. Try again.');
+    }
+  }
+
+  String _formatShopTime(TimeOfDay t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  TimeOfDay? _parseShopTime(String raw) {
+    final t = raw.trim().split(':');
+    if (t.length != 2) return null;
+    final h = int.tryParse(t[0]);
+    final m = int.tryParse(t[1]);
+    if (h == null || m == null) return null;
+    if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+    return TimeOfDay(hour: h, minute: m);
+  }
+
+  void _applyOpeningHoursString(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) {
+      _openTime = null;
+      _closeTime = null;
+      return;
+    }
+    final parts = s.replaceAll('–', '-').replaceAll('—', '-').split('-');
+    if (parts.length != 2) return;
+    final open = _parseShopTime(parts[0]);
+    final close = _parseShopTime(parts[1]);
+    if (open == null || close == null) return;
+    _openTime = open;
+    _closeTime = close;
+  }
+
+  bool get _isShopOpenNow {
+    final open = _openTime;
+    final close = _closeTime;
+    if (open == null || close == null) return false;
+    final now = TimeOfDay.now();
+    final nowM = now.hour * 60 + now.minute;
+    final openM = open.hour * 60 + open.minute;
+    final closeM = close.hour * 60 + close.minute;
+    if (openM == closeM) return false;
+    if (openM < closeM) {
+      return nowM >= openM && nowM < closeM;
+    }
+    return nowM >= openM || nowM < closeM;
+  }
+
+  Future<void> _editShopHours() async {
+    final result = await showModalBottomSheet<({TimeOfDay open, TimeOfDay close})>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _ShopHoursSheet(
+        initialOpen: _openTime ?? const TimeOfDay(hour: 8, minute: 0),
+        initialClose: _closeTime ?? const TimeOfDay(hour: 17, minute: 0),
+        brandColor: _brandOrange,
+      ),
+    );
+    if (result == null || !mounted) return;
+    await _saveShopHours(result.open, result.close);
+  }
+
+  Future<void> _saveShopHours(TimeOfDay open, TimeOfDay close) async {
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) {
+      _toastErr('Please sign in again.');
+      return;
+    }
+    final hours = '${_formatShopTime(open)}–${_formatShopTime(close)}';
+    try {
+      final payload = <String, dynamic>{
+        'openingHours': hours,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      await Future.wait([
+        _firestore
+            .collection('marketplace_merchants')
+            .doc(uid)
+            .set(payload, SetOptions(merge: true)),
+        _firestore
+            .collection('users')
+            .doc(uid)
+            .set(payload, SetOptions(merge: true)),
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kShopHoursPrefKey, hours);
+      MerchantSellerLoader.cacheOpeningHours(uid, hours);
+      if (!mounted) return;
+      setState(() {
+        _openTime = open;
+        _closeTime = close;
+      });
+      _toastOk('Shop hours saved');
+    } catch (e) {
+      debugPrint('Save shop hours: $e');
+      if (!mounted) return;
+      _toastErr('Could not save hours. Try again.');
+    }
   }
 
   // ✅ /users/me for email/phone/pic/rating
@@ -1219,7 +1455,6 @@ class _MarketplaceMerchantDashboardState
 
     setState(() {
       _loadingMe = true;
-      _meOffline = false;
     });
 
     try {
@@ -1277,19 +1512,21 @@ class _MarketplaceMerchantDashboardState
 
         if (!mounted) return;
         final authPhoto = (_auth.currentUser?.photoURL ?? '').trim();
+        final nextPic = authPhoto.isNotEmpty
+            ? authPhoto
+            : (picVal.isNotEmpty ? picVal : _merchantProfileUrl);
         setState(() {
           if (emailVal.isNotEmpty) _merchantEmail = emailVal;
           if (phoneVal.isNotEmpty) _merchantPhone = phoneVal;
           // Prefer Firebase Auth photo; else use API profile picture
-          _merchantProfileUrl =
-              authPhoto.isNotEmpty ? authPhoto : picVal;
+          if (nextPic.trim().isNotEmpty) _merchantProfileUrl = nextPic;
         });
-      } else {
-        setState(() => _meOffline = true);
+        if (nextPic.trim().isNotEmpty) {
+          unawaited(_warmProfilePhotoCache(nextPic));
+        }
       }
     } catch (e) {
       if (kDebugMode) debugPrint('Error fetching /users/me');
-      if (mounted) setState(() => _meOffline = true);
     } finally {
       if (mounted) setState(() => _loadingMe = false);
     }
@@ -1613,13 +1850,25 @@ class _MarketplaceMerchantDashboardState
     await _loadMerchantData();
     await _loadItems(showLoading: false);
     await _loadOrderStats();
+    if (_merchantProfileUrl.trim().isNotEmpty) {
+      unawaited(_warmProfilePhotoCache(_merchantProfileUrl));
+    }
   }
 
   // ----------------- Profile image helpers -----------------
   ImageProvider? _profileImageProvider() {
+    final local = _localPhotoPath;
+    if (!kIsWeb && local != null && local.isNotEmpty) {
+      try {
+        final f = File(local);
+        if (f.existsSync()) return FileImage(f);
+      } catch (_) {}
+    }
     final s = _merchantProfileUrl.trim();
     if (s.isEmpty) return null;
-    if (s.startsWith('http')) return NetworkImage(s);
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      return CachedNetworkImageProvider(s);
+    }
     try {
       final bytes = base64Decode(s);
       return MemoryImage(bytes);
@@ -1878,6 +2127,7 @@ class _MarketplaceMerchantDashboardState
     try {
       setState(() => _profileUploading = true);
       String url;
+      final pickedBytes = await file.readAsBytes();
 
       // Prefer backend upload (works when Firebase Storage returns 404 / App Check).
       try {
@@ -1906,8 +2156,17 @@ class _MarketplaceMerchantDashboardState
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('profilepicture', url);
 
+      // Persist bytes locally so the avatar shows instantly next time.
+      final local = await ProfilePhotoCache.saveBytes(
+        pickedBytes,
+        remoteUrl: url,
+      );
+
       if (!mounted) return;
-      setState(() => _merchantProfileUrl = url);
+      setState(() {
+        _merchantProfileUrl = url;
+        _localPhotoPath = local?.path ?? _localPhotoPath;
+      });
 
       _toastOk('Profile picture updated');
     } on FirebaseException catch (e) {
@@ -1926,7 +2185,15 @@ class _MarketplaceMerchantDashboardState
             }, SetOptions(merge: true));
             final prefs = await SharedPreferences.getInstance();
             await prefs.setString('profilepicture', url);
-            setState(() => _merchantProfileUrl = url);
+            final bytes = await file.readAsBytes();
+            final local = await ProfilePhotoCache.saveBytes(
+              bytes,
+              remoteUrl: url,
+            );
+            setState(() {
+              _merchantProfileUrl = url;
+              _localPhotoPath = local?.path ?? _localPhotoPath;
+            });
             _toastOk('Profile picture updated');
             return;
           }
@@ -2029,9 +2296,13 @@ class _MarketplaceMerchantDashboardState
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('profilepicture', '');
+      await ProfilePhotoCache.clear();
 
       if (!mounted) return;
-      setState(() => _merchantProfileUrl = '');
+      setState(() {
+        _merchantProfileUrl = '';
+        _localPhotoPath = null;
+      });
 
       _toastOk('Profile picture removed');
     } catch (e) {
@@ -2864,9 +3135,7 @@ class _MarketplaceMerchantDashboardState
                 merchantImageUrl:
                     _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
                 size: 36,
-                imageProvider: _merchantProfileUrl.isNotEmpty
-                    ? NetworkImage(_merchantProfileUrl)
-                    : null,
+                imageProvider: _profileImageProvider(),
                 placeholderIcon: Icons.person,
                 onNoStoriesTap: () {
                   final uid = _auth.currentUser?.uid;
@@ -3343,6 +3612,51 @@ class _MarketplaceMerchantDashboardState
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
+                  const SizedBox(height: 8),
+                  Material(
+                    color: Colors.white.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      onTap: _editBusinessDescription,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(
+                              Icons.notes_rounded,
+                              size: 16,
+                              color: Colors.white70,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _businessDescription.trim().isEmpty
+                                    ? 'Add a short business description'
+                                    : _businessDescription.trim(),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.92),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12.5,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(
+                              Icons.edit_outlined,
+                              size: 14,
+                              color: Colors.white70,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
@@ -3376,19 +3690,30 @@ class _MarketplaceMerchantDashboardState
                           ],
                         ),
                       ),
-                      if (_meOffline)
-                        Container(
+                      InkWell(
+                        onTap: _editShopHours,
+                        borderRadius: BorderRadius.circular(999),
+                        child: Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
-                              color: const Color(0xFFFFEDEE),
-                              borderRadius: BorderRadius.circular(999)),
-                          child: const Text('',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 12,
-                                  color: Colors.red)),
+                            color: _isShopOpenNow
+                                ? const Color(0xFFE7F6EC)
+                                : const Color(0xFFFFEDEE),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            _isShopOpenNow ? 'OPEN' : 'CLOSED',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12,
+                              color: _isShopOpenNow
+                                  ? Colors.green.shade700
+                                  : Colors.red.shade700,
+                            ),
+                          ),
                         ),
+                      ),
                       if (_loadingMe)
                         const SizedBox(
                           width: 18,
@@ -3480,6 +3805,18 @@ class _MarketplaceMerchantDashboardState
             mainAxisSpacing: 12,
           ),
           children: [
+            _QuickActionTile(
+              title: 'About shop',
+              icon: Icons.notes_rounded,
+              color: _brandNavy,
+              onTap: _editBusinessDescription,
+            ),
+            _QuickActionTile(
+              title: 'Shop hours',
+              icon: Icons.schedule_rounded,
+              color: Colors.teal,
+              onTap: _editShopHours,
+            ),
             _QuickActionTile(
               title: 'Add Item',
               icon: Icons.add_circle_outline,
@@ -5061,6 +5398,249 @@ class _ImageAny extends StatelessWidget {
       color: const Color(0xFFF3F4F7),
       child: const Center(
         child: Icon(Icons.image_not_supported_rounded, color: Colors.black26),
+      ),
+    );
+  }
+}
+
+/// Owns [TextEditingController] for the business-description editor sheet.
+class _BusinessDescriptionSheet extends StatefulWidget {
+  const _BusinessDescriptionSheet({
+    required this.initialText,
+    required this.maxLength,
+    required this.brandColor,
+  });
+
+  final String initialText;
+  final int maxLength;
+  final Color brandColor;
+
+  @override
+  State<_BusinessDescriptionSheet> createState() =>
+      _BusinessDescriptionSheetState();
+}
+
+class _BusinessDescriptionSheetState extends State<_BusinessDescriptionSheet> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: 16 + bottomInset,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Business description',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Short blurb customers see on your shop and product pages '
+              '(max ${widget.maxLength} characters).',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _controller,
+              maxLength: widget.maxLength,
+              maxLines: 3,
+              minLines: 2,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) =>
+                  Navigator.pop(context, _controller.text.trim()),
+              decoration: InputDecoration(
+                hintText: 'e.g. Fresh produce & household goods in Lilongwe',
+                filled: true,
+                fillColor: const Color(0xFFF4F6FA),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+                counterStyle: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: widget.brandColor,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              onPressed: () =>
+                  Navigator.pop(context, _controller.text.trim()),
+              child: const Text(
+                'Save',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ShopHoursSheet extends StatefulWidget {
+  const _ShopHoursSheet({
+    required this.initialOpen,
+    required this.initialClose,
+    required this.brandColor,
+  });
+
+  final TimeOfDay initialOpen;
+  final TimeOfDay initialClose;
+  final Color brandColor;
+
+  @override
+  State<_ShopHoursSheet> createState() => _ShopHoursSheetState();
+}
+
+class _ShopHoursSheetState extends State<_ShopHoursSheet> {
+  late TimeOfDay _open;
+  late TimeOfDay _close;
+
+  @override
+  void initState() {
+    super.initState();
+    _open = widget.initialOpen;
+    _close = widget.initialClose;
+  }
+
+  String _fmt(TimeOfDay t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  Future<void> _pickOpen() async {
+    final t = await showTimePicker(context: context, initialTime: _open);
+    if (t != null) setState(() => _open = t);
+  }
+
+  Future<void> _pickClose() async {
+    final t = await showTimePicker(context: context, initialTime: _close);
+    if (t != null) setState(() => _close = t);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: 16 + bottomInset,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'Shop hours',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Customers see OPEN or CLOSED on your shop based on these times.',
+            style: TextStyle(
+              color: Colors.grey.shade700,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _pickOpen,
+                  icon: const Icon(Icons.wb_sunny_outlined),
+                  label: Text('Open ${_fmt(_open)}'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _pickClose,
+                  icon: const Icon(Icons.nights_stay_outlined),
+                  label: Text('Close ${_fmt(_close)}'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: widget.brandColor,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            onPressed: () =>
+                Navigator.pop(context, (open: _open, close: _close)),
+            child: const Text(
+              'Save hours',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
       ),
     );
   }

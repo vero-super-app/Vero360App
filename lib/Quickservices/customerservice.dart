@@ -628,12 +628,12 @@ class _VeroSupportBot {
     _Faq(
       keys: [
         'food', 'restaurant', 'order food', 'hungry', 'menu', 'deliver food', 'eat',
-        'chakudya', 'restoranti', 'yitanitsa chakudya', 'ndala', 'menyu',
+        'chakudya', 'restaurant', 'yitanitsani chakudya', 'njala', 'menyu',
       ],
       answerEn:
           'To order food:\n1. Open Home → Food\n2. Pick a restaurant and items\n3. Checkout and pay\n\nYou’ll get order updates in My Orders and Notifications. Anything else?',
       answerNy:
-          'Kuyitanitsa chakudya:\n1. Tsegulani Home → Food\n2. Sankhani restoranti ndi zinthu\n3. Malipiro (Checkout)\n\nMudzalandira zidziwitso mu My Orders ndi Notifications. Chinanso?',
+          'Kuyitanitsa chakudya:\n1. Tsegulani Home → Food\n2. Sankhani restoranti ndi zinthu\n3. Malipiro (Checkout)\n\nMudzalandira zidziwitso mu My Orders ndi Notifications. paliso China?',
     ),
     _Faq(
       keys: [
@@ -713,7 +713,7 @@ class _VeroSupportBot {
       answerEn:
           'Forex: Home → Forex for live exchange rates. Rates are informational — confirm with your bank or bureau before large trades.',
       answerNy:
-          'Forex: Home → Forex kuti muone mitengo yamasinthidwe. Mitengoyi ndi chidziwitso — tsimikizirani ndi banki yanu musanagule kwambiri.',
+          'Forex: Home → Forex kuti muone mitengo yamasinthidwe. Mitengoyi ndi chidziwitso chabe, ife sitisitha ndalama.',
     ),
     _Faq(
       keys: [
@@ -731,9 +731,9 @@ class _VeroSupportBot {
         'malsamayenda', 'kuchotsera', 'mwayi',
       ],
       answerEn:
-          'Promotions and Today’s arrivals appear on Home. Tap a promo card for details. New deals may also show in notifications if you enable Deals & new listings in Settings.',
+          'Promotions and Today’s arrivals appear on Home. Tap a promo card for details. When something new is posted, Vero360 can notify you if Deals & new listings is on in Settings.',
       answerNy:
-          'Ma promo ndi zofika lero zikuonekera pa Home. Dinaninani promo kuti muone zambiri. Mwayi watsopano ungawonekere mu notifications ngati mwatsitsa Deals mu Settings.',
+          'Ma promo ndi zofika lero zikuonekera pa Home. Dinaninani promo kuti muone zambiri. Zikakhala zatsopano, Vero360 ingakutumizireni notification ngati Deals ili yotseguka mu Settings.',
     ),
     _Faq(
       keys: [

@@ -19,6 +19,7 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_rev
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
@@ -49,6 +50,8 @@ class _MerchantShopHeaderCache {
   final String? email;
   final String? phone;
   final String? status;
+  final String? openingHours;
+  final String? businessDescription;
   final double? rating;
   final int reviewCount;
   final int followerCount;
@@ -60,6 +63,8 @@ class _MerchantShopHeaderCache {
     required this.email,
     required this.phone,
     required this.status,
+    required this.openingHours,
+    required this.businessDescription,
     required this.rating,
     required this.reviewCount,
     required this.followerCount,
@@ -100,7 +105,11 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   List<MerchantReview> _cachedReviews = const [];
   MerchantReviewSummary? _cachedReviewSummary;
   String? _merchantStatus;
+  String? _merchantOpeningHours;
   String? _merchantProfileUrl;
+  /// Resolved https URL when profile is gs:// or a storage path.
+  String? _resolvedProfileHttpUrl;
+  String? _merchantBusinessDescription;
   String? _merchantEmail;
   String? _merchantPhone;
   bool _loadingHeader = true;
@@ -164,7 +173,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   bool _isRelativePath(String s) =>
       s.isNotEmpty && !s.contains('://') && !_looksLikeBase64(s);
 
-  Widget _profileImageFromAnySource(String raw) {
+  Widget _profileImageFromAnySource(String raw, {BoxFit fit = BoxFit.contain}) {
     final s = raw.trim();
     if (s.isEmpty) {
       return Container(
@@ -179,70 +188,158 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         final bytes = base64Decode(base64Part);
         return Image.memory(
           bytes,
-          fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined, size: 56),
+          fit: fit,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) =>
+              const Icon(Icons.broken_image_outlined, size: 56),
         );
       } catch (_) {}
     }
     if (_isHttp(s)) {
-      return Image.network(
-        s,
-        fit: BoxFit.contain,
-        loadingBuilder: (_, child, progress) =>
-            progress == null ? child : const Center(child: CircularProgressIndicator()),
-        errorBuilder: (_, __, ___) =>
-            const Icon(Icons.broken_image_outlined, size: 56),
+      // Disk + memory cache — same URL as the avatar ring, so open is instant.
+      return CachedNetworkImage(
+        imageUrl: s,
+        fit: fit,
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        placeholder: (_, __) => const Center(
+          child: SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white70),
+          ),
+        ),
+        errorWidget: (_, __, ___) =>
+            const Icon(Icons.broken_image_outlined, size: 56, color: Colors.white70),
+      );
+    }
+    // Resolve gs:// / relative once; prefer cached http if already resolved.
+    final cached = _resolvedProfileHttpUrl;
+    if (cached != null && cached.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: cached,
+        fit: fit,
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        placeholder: (_, __) => const Center(
+          child: SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white70),
+          ),
+        ),
+        errorWidget: (_, __, ___) =>
+            const Icon(Icons.broken_image_outlined, size: 56, color: Colors.white70),
       );
     }
     return FutureBuilder<String?>(
       future: _toDownloadUrl(s),
       builder: (context, snap) {
         final u = snap.data;
-        if (u == null || u.isEmpty) {
-          return const Icon(Icons.broken_image_outlined, size: 56);
+        if (snap.connectionState != ConnectionState.done) {
+          return const Center(
+            child: SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white70),
+            ),
+          );
         }
-        return Image.network(
-          u,
-          fit: BoxFit.contain,
-          loadingBuilder: (_, child, progress) =>
-              progress == null ? child : const Center(child: CircularProgressIndicator()),
-          errorBuilder: (_, __, ___) =>
-              const Icon(Icons.broken_image_outlined, size: 56),
+        if (u == null || u.isEmpty) {
+          return const Icon(Icons.broken_image_outlined, size: 56, color: Colors.white70);
+        }
+        _resolvedProfileHttpUrl = u;
+        return CachedNetworkImage(
+          imageUrl: u,
+          fit: fit,
+          fadeInDuration: Duration.zero,
+          fadeOutDuration: Duration.zero,
+          errorWidget: (_, __, ___) =>
+              const Icon(Icons.broken_image_outlined, size: 56, color: Colors.white70),
         );
       },
     );
   }
 
+  /// Warm full-size photo into image cache so tap-to-view is instant.
+  void _precacheMerchantProfilePhoto() {
+    if (!mounted) return;
+    final raw = (_merchantProfileUrl ?? '').trim();
+    if (raw.isEmpty) return;
+
+    Future<void> warm(String url) async {
+      if (!_isHttp(url) || !mounted) return;
+      try {
+        await precacheImage(CachedNetworkImageProvider(url), context);
+      } catch (_) {}
+    }
+
+    if (_isHttp(raw)) {
+      unawaited(warm(raw));
+      return;
+    }
+    unawaited(() async {
+      final u = await _toDownloadUrl(raw);
+      if (u == null || u.isEmpty || !mounted) return;
+      _resolvedProfileHttpUrl = u;
+      await warm(u);
+    }());
+  }
+
   void _showMerchantProfileViewer() {
     final raw = (_merchantProfileUrl ?? '').trim();
     if (raw.isEmpty) return;
-    showDialog(
+
+    // Open dialog immediately — image comes from cache when available.
+    showGeneralDialog(
       context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close',
       barrierColor: Colors.black87,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(20),
-        child: Stack(
-          alignment: Alignment.topRight,
-          children: [
-            InteractiveViewer(
-              minScale: 0.6,
-              maxScale: 4.0,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: _profileImageFromAnySource(raw),
+      transitionDuration: const Duration(milliseconds: 120),
+      pageBuilder: (ctx, anim, secondary) {
+        return SafeArea(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => Navigator.of(ctx).pop(),
+                  behavior: HitTestBehavior.opaque,
+                  child: const ColoredBox(color: Colors.transparent),
                 ),
               ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.close, color: Colors.white, size: 28),
-              onPressed: () => Navigator.of(ctx).pop(),
-            ),
-          ],
-        ),
-      ),
+              Center(
+                child: InteractiveViewer(
+                  minScale: 0.6,
+                  maxScale: 4.0,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: MediaQuery.sizeOf(ctx).width - 24,
+                      maxHeight: MediaQuery.sizeOf(ctx).height * 0.85,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: _profileImageFromAnySource(raw, fit: BoxFit.contain),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 26),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -420,6 +517,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       _merchantEmail = memHeader.email;
       _merchantPhone = memHeader.phone;
       _merchantStatus = memHeader.status;
+      _merchantOpeningHours = memHeader.openingHours;
+      _merchantBusinessDescription = memHeader.businessDescription;
       _merchantRating = memHeader.rating;
       _merchantReviewCount = memHeader.reviewCount;
       _followerCount = memHeader.followerCount;
@@ -437,14 +536,33 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           _merchantReviewCount = warm.summary.count;
         }
       }
+      // Warm full-size photo into image cache so tap-to-view is instant.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _precacheMerchantProfilePhoto();
+      });
+    } else {
+      // Instant OPEN/CLOSED from shared hours cache while header loads.
+      final hours = MerchantSellerLoader.peekOpeningHours(id);
+      if (hours != null && hours.isNotEmpty) {
+        _merchantOpeningHours = hours;
+        _loadingHeader = false;
+      }
     }
 
     _staysFuture = _loadMerchantStays();
     unawaited(_resolveAccommodationMode());
+    unawaited(_prefetchOpeningHoursFast(id));
     unawaited(_loadMerchantHeader());
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
     });
+  }
+
+  Future<void> _prefetchOpeningHoursFast(String merchantId) async {
+    final hours = await MerchantSellerLoader.prefetchOpeningHours(merchantId);
+    if (!mounted || hours == null || hours.isEmpty) return;
+    if (_merchantOpeningHours == hours) return;
+    setState(() => _merchantOpeningHours = hours);
   }
 
   void _persistHeaderCache() {
@@ -453,6 +571,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       email: _merchantEmail,
       phone: _merchantPhone,
       status: _merchantStatus,
+      openingHours: _merchantOpeningHours,
+      businessDescription: _merchantBusinessDescription,
       rating: _merchantRating,
       reviewCount: _merchantReviewCount,
       followerCount: _followerCount,
@@ -1596,6 +1716,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       String? email;
       String? phone;
       String? status;
+      String? openingHours;
       int? backendId = _merchantBackendId;
       int followerCount = _followerCount;
       num? storedFollowerCount;
@@ -1606,6 +1727,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             .toString()
             .trim();
         if (status.isEmpty) status = null;
+        openingHours = (data['openingHours'] ?? '').toString().trim();
+        if (openingHours.isEmpty) openingHours = null;
         profileUrl = (data['profilePicture'] ?? data['profilepicture'] ?? '')
             .toString()
             .trim();
@@ -1614,6 +1737,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         if (email.isEmpty) email = null;
         phone = (data['phone'] ?? data['phoneNumber'] ?? '').toString().trim();
         if (phone.isEmpty) phone = null;
+        final bizDesc = (data['businessDescription'] ?? data['description'] ?? data['about'] ?? '')
+            .toString()
+            .trim();
         backendId = _parseBackendIdFromMap(data) ?? backendId;
         storedFollowerCount = data['followerCount'] ?? data['followersCount'];
         if (storedFollowerCount is num) {
@@ -1624,14 +1750,20 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           setState(() {
             _applyRatingFieldsFromMap(data);
             if (status != null) _merchantStatus = status;
+            if (openingHours != null) {
+              _merchantOpeningHours = openingHours;
+              MerchantSellerLoader.cacheOpeningHours(mid, openingHours);
+            }
             if (profileUrl != null) _merchantProfileUrl = profileUrl;
             if (email != null) _merchantEmail = email;
             if (phone != null) _merchantPhone = phone;
+            if (bizDesc.isNotEmpty) _merchantBusinessDescription = bizDesc;
             if (backendId != null) _merchantBackendId = backendId;
             _followerCount = followerCount;
             _loadingHeader = false;
           });
           _persistHeaderCache();
+          _precacheMerchantProfilePhoto();
         }
       }
 
@@ -1647,6 +1779,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             .trim();
         final uEmail = (u['email'] ?? '').toString().trim();
         final uPhone = (u['phone'] ?? u['phoneNumber'] ?? '').toString().trim();
+        final uDesc = (u['businessDescription'] ?? u['description'] ?? u['bio'] ?? '')
+            .toString()
+            .trim();
+        final uHours = (u['openingHours'] ?? '').toString().trim();
         backendId ??= _parseBackendIdFromMap(u);
         if (mounted) {
           setState(() {
@@ -1660,10 +1796,20 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             if ((_merchantPhone?.trim().isEmpty ?? true) && uPhone.isNotEmpty) {
               _merchantPhone = uPhone;
             }
+            if ((_merchantBusinessDescription?.trim().isEmpty ?? true) &&
+                uDesc.isNotEmpty) {
+              _merchantBusinessDescription = uDesc;
+            }
+            if ((_merchantOpeningHours?.trim().isEmpty ?? true) &&
+                uHours.isNotEmpty) {
+              _merchantOpeningHours = uHours;
+              MerchantSellerLoader.cacheOpeningHours(mid, uHours);
+            }
             if (backendId != null) _merchantBackendId = backendId;
             _loadingHeader = false;
           });
           _persistHeaderCache();
+          _precacheMerchantProfilePhoto();
         }
       } else if (mounted && !merchantDoc.exists) {
         setState(() => _loadingHeader = false);
@@ -2210,12 +2356,11 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           _MerchantProfileCard(
             merchantId: widget.merchantId,
             name: widget.merchantName,
-            email: _merchantEmail,
-            phone: _merchantPhone,
             rating: _merchantRating,
             reviewCount: _merchantReviewCount,
-            status: _merchantStatus,
+            openingHours: _merchantOpeningHours,
             profileUrl: _merchantProfileUrl,
+            businessDescription: _merchantBusinessDescription,
             loading: _loadingHeader,
             following: _following,
             followerCount: _followerCount,
@@ -2804,12 +2949,11 @@ class _MerchantProfileCard extends StatelessWidget {
 
   final String merchantId;
   final String name;
-  final String? email;
-  final String? phone;
   final double? rating;
   final int reviewCount;
-  final String? status;
+  final String? openingHours;
   final String? profileUrl;
+  final String? businessDescription;
   final bool loading;
   final bool following;
   final VoidCallback onToggleFollow;
@@ -2822,12 +2966,11 @@ class _MerchantProfileCard extends StatelessWidget {
   const _MerchantProfileCard({
     required this.merchantId,
     required this.name,
-    required this.email,
-    required this.phone,
     required this.rating,
     required this.reviewCount,
-    required this.status,
+    required this.openingHours,
     required this.profileUrl,
+    required this.businessDescription,
     required this.loading,
     required this.following,
     required this.onToggleFollow,
@@ -2842,7 +2985,8 @@ class _MerchantProfileCard extends StatelessWidget {
     final raw = profileUrl?.trim() ?? '';
     if (raw.isEmpty) return null;
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return CachedNetworkImageProvider(raw, maxWidth: 200, maxHeight: 200);
+      // Same URL as the full viewer → shared disk/memory cache (instant open).
+      return CachedNetworkImageProvider(raw);
     }
     // Try base64 (same pattern as dashboard)
     try {
@@ -2854,29 +2998,43 @@ class _MerchantProfileCard extends StatelessWidget {
     }
   }
 
-  Color _statusColor(String s) {
-    switch (s.toLowerCase()) {
-      case 'verified':
-      case 'approved':
-        return Colors.green;
-      case 'pending':
-      case 'under_review':
-        return Colors.orange;
-      case 'suspended':
-      case 'rejected':
-        return Colors.red;
-      default:
-        return Colors.grey;
+  TimeOfDay? _parseTime(String raw) {
+    final t = raw.trim().split(':');
+    if (t.length != 2) return null;
+    final h = int.tryParse(t[0]);
+    final m = int.tryParse(t[1]);
+    if (h == null || m == null) return null;
+    if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+    return TimeOfDay(hour: h, minute: m);
+  }
+
+  bool _isShopOpenNow() {
+    final s = (openingHours ?? '').trim();
+    if (s.isEmpty) return false;
+    final parts = s.replaceAll('–', '-').replaceAll('—', '-').split('-');
+    if (parts.length != 2) return false;
+    final open = _parseTime(parts[0]);
+    final close = _parseTime(parts[1]);
+    if (open == null || close == null) return false;
+    final now = TimeOfDay.now();
+    final nowM = now.hour * 60 + now.minute;
+    final openM = open.hour * 60 + open.minute;
+    final closeM = close.hour * 60 + close.minute;
+    if (openM == closeM) return false;
+    if (openM < closeM) {
+      return nowM >= openM && nowM < closeM;
     }
+    return nowM >= openM || nowM < closeM;
   }
 
   @override
   Widget build(BuildContext context) {
-    final effectiveStatus = status?.isNotEmpty == true ? status! : 'pending';
+    final shopOpen = _isShopOpenNow();
+    final statusColor =
+        shopOpen ? Colors.green.shade700 : Colors.red.shade700;
+    final statusLabel = shopOpen ? 'OPEN' : 'CLOSED';
     final img = _profileImageProvider();
-    final hasPhoto = img != null;
-    final emailStr = email?.trim().isNotEmpty == true ? email! : null;
-    final phoneStr = phone?.trim().isNotEmpty == true ? phone! : null;
+    final hasPhoto = (profileUrl?.trim().isNotEmpty ?? false);
     final followersLabel = followerCount <= 0
         ? 'No followers yet'
         : followerCount == 1
@@ -2905,14 +3063,20 @@ class _MerchantProfileCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              StoryProfileRing(
-                merchantId: merchantId,
-                merchantName: name,
-                merchantImageUrl: profileUrl,
-                size: 74,
-                imageProvider: img,
-                placeholderIcon: Icons.storefront_rounded,
-                onNoStoriesTap: hasPhoto ? onViewProfile : null,
+              Tooltip(
+                message: hasPhoto
+                    ? 'Tap to view photo · Long-press for stories'
+                    : 'Profile photo',
+                child: StoryProfileRing(
+                  merchantId: merchantId,
+                  merchantName: name,
+                  merchantImageUrl: profileUrl,
+                  size: 74,
+                  imageProvider: img,
+                  placeholderIcon: Icons.storefront_rounded,
+                  onNoStoriesTap: hasPhoto ? onViewProfile : null,
+                  onAvatarTap: hasPhoto ? onViewProfile : null,
+                ),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -2930,28 +3094,20 @@ class _MerchantProfileCard extends StatelessWidget {
                         letterSpacing: -0.3,
                       ),
                     ),
-                    if (emailStr != null) ...[
-                      const SizedBox(height: 4),
+                    if ((businessDescription ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
                       Text(
-                        emailStr,
-                        maxLines: 1,
+                        businessDescription!.trim(),
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 14,
+                          fontSize: 13.5,
+                          height: 1.35,
+                          fontWeight: FontWeight.w600,
                           color: Colors.grey.shade700,
                         ),
                       ),
                     ],
-                    const SizedBox(height: 2),
-                    Text(
-                      phoneStr ?? 'No phone number',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -2998,30 +3154,17 @@ class _MerchantProfileCard extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: _statusColor(effectiveStatus)
-                                .withValues(alpha: 0.15),
+                            color: statusColor.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(999),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                effectiveStatus.toLowerCase() == 'verified'
-                                    ? Icons.verified_rounded
-                                    : Icons.shield_outlined,
-                                size: 14,
-                                color: _statusColor(effectiveStatus),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                effectiveStatus,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: _statusColor(effectiveStatus),
-                                ),
-                              ),
-                            ],
+                          child: Text(
+                            statusLabel,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w900,
+                              color: statusColor,
+                              letterSpacing: 0.2,
+                            ),
                           ),
                         ),
                         Row(

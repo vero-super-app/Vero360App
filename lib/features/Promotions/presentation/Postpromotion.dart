@@ -1,4 +1,5 @@
 // lib/Pages/promotions_crud_page.dart
+import 'dart:async';
 import 'dart:io' show File;
 import 'dart:typed_data';
 
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import '../../../utils/toasthelper.dart';
 
@@ -217,7 +219,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
         return;
       }
 
-      await svc.createPromo(PromoModel(
+      final created = await svc.createPromo(PromoModel(
         id: 0,
         merchantId: 0,
         serviceProviderId: null,
@@ -230,6 +232,16 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
         endsAt: _endDate,
         createdAt: DateTime.now(),
       ));
+
+      final postedTitle = created.title.trim().isNotEmpty
+          ? created.title.trim()
+          : _title.text.trim();
+      unawaited(
+        EngagementNotificationService.instance.notifyNewPromotion(
+          postedTitle,
+          promoId: created.id > 0 ? created.id : null,
+        ),
+      );
 
       ToastHelper.showCustomToast(
         context,

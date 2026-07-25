@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -13,9 +14,10 @@ import 'package:vero360_app/features/Promotions/promotion_service.dart';
 
 /// Keeps Vero360 “alive” with light engagement alerts (promos, arrivals, marketplace).
 ///
-/// - Max **2** local digests per calendar day, at least **10 hours** apart.
-/// - Subscribes users to FCM topic [fcmTopic] so server/Cloud Functions can push
-///   the same style of reminders when the app is closed.
+/// - Local digests: up to **8**/day, at least **90 minutes** apart (when app opens).
+/// - Event pushes: when a promo / arrival / marketplace item is posted (FCM topic),
+///   with short cooldowns so bursts don’t spam.
+/// - Subscribes users to FCM topic [fcmTopic] so pushes arrive when the app is closed.
 class EngagementNotificationService {
   EngagementNotificationService._();
 
@@ -31,8 +33,14 @@ class EngagementNotificationService {
   static const String _prefLastArrivalId = 'engagement_last_seen_arrival_id';
   static const String _prefLastMarketMs = 'engagement_last_seen_market_ms';
 
-  static const Duration _minGap = Duration(hours: 10);
-  static const int _maxPerDay = 2;
+  /// How often a local “digest” may fire while using the app.
+  static const Duration _minGap = Duration(minutes: 90);
+  static const int _maxPerDay = 8;
+
+  /// Shared cooldowns for topic broadcasts (promo / arrivals / marketplace).
+  static const Duration _promoBroadcastCooldown = Duration(minutes: 20);
+  static const Duration _arrivalBroadcastCooldown = Duration(minutes: 20);
+  static const Duration _marketBroadcastCooldown = Duration(minutes: 15);
 
   bool _running = false;
 
@@ -77,8 +85,16 @@ class EngagementNotificationService {
       await NotificationService.instance.showManualNotification(
         title: snapshot.title,
         body: snapshot.body,
-        payload:
-            '{"type":"${snapshot.type}","badgeRoute":"${snapshot.badgeRoute}"}',
+        payload: jsonEncode({
+          'type': snapshot.type,
+          'badgeRoute': snapshot.badgeRoute,
+          if (snapshot.newestPromoId != null && snapshot.newestPromoId! > 0)
+            'promoId': '${snapshot.newestPromoId}',
+          if ((snapshot.newestArrivalId ?? '').isNotEmpty)
+            'arrivalId': snapshot.newestArrivalId,
+          if ((snapshot.newestMarketDocId ?? '').isNotEmpty)
+            'marketplaceItemId': snapshot.newestMarketDocId,
+        }),
       );
 
       await _markDigestSent(prefs, snapshot);
@@ -90,6 +106,133 @@ class EngagementNotificationService {
     } finally {
       _running = false;
     }
+  }
+
+  /// Notify everyone on [fcmTopic] that something new was posted.
+  /// Cloud Function [onEngagementBroadcast] delivers the FCM push.
+  /// Cooldowns prevent spam when many items are posted in a short window.
+  Future<void> queueAudienceBroadcast({
+    required String title,
+    required String body,
+    required String type,
+    String badgeRoute = '',
+    required String cooldownKey,
+    Duration? cooldown,
+    Map<String, String>? extraData,
+  }) async {
+    try {
+      final gap = cooldown ??
+          (cooldownKey == 'marketplace'
+              ? _marketBroadcastCooldown
+              : cooldownKey == 'arrivals'
+                  ? _arrivalBroadcastCooldown
+                  : _promoBroadcastCooldown);
+
+      final metaRef = FirebaseFirestore.instance
+          .collection('engagement_meta')
+          .doc('cooldowns');
+      final meta = await metaRef.get();
+      final lastMs = (meta.data()?[cooldownKey] as num?)?.toInt() ?? 0;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      if (lastMs > 0 && nowMs - lastMs < gap.inMilliseconds) {
+        if (kDebugMode) {
+          debugPrint(
+            'Engagement broadcast skipped ($cooldownKey cooldown)',
+          );
+        }
+        return;
+      }
+
+      await metaRef.set({cooldownKey: nowMs}, SetOptions(merge: true));
+
+      final doc = <String, dynamic>{
+        'title': title.trim().isEmpty ? 'Vero360' : title.trim(),
+        'body': body.trim().isEmpty
+            ? 'Something new is waiting for you on Vero360.'
+            : body.trim(),
+        'type': type,
+        if (badgeRoute.trim().isNotEmpty) 'badgeRoute': badgeRoute.trim(),
+        'source': cooldownKey,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+      if (extraData != null) {
+        for (final e in extraData.entries) {
+          final k = e.key.trim();
+          final v = e.value.trim();
+          if (k.isEmpty || v.isEmpty) continue;
+          doc[k] = v;
+        }
+      }
+
+      await FirebaseFirestore.instance.collection('engagement_broadcasts').add(doc);
+
+      if (kDebugMode) {
+        debugPrint('Engagement broadcast queued: $title');
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('Engagement broadcast failed: $e');
+    }
+  }
+
+  /// Call after a merchant posts a promotion.
+  Future<void> notifyNewPromotion(
+    String promoTitle, {
+    int? promoId,
+  }) async {
+    final name = promoTitle.trim();
+    await queueAudienceBroadcast(
+      title: 'New promotion on Vero360',
+      body: name.isEmpty
+          ? 'Check out fresh deals and promotions today.'
+          : 'Check out “$name” and more promotions today.',
+      type: 'promo_digest',
+      badgeRoute: NotificationStore.kBadgePromotions,
+      cooldownKey: 'promo',
+      extraData: {
+        if (promoId != null && promoId > 0) 'promoId': '$promoId',
+      },
+    );
+  }
+
+  /// Call after a merchant posts a today’s arrival.
+  Future<void> notifyNewArrival(
+    String itemName, {
+    String? arrivalId,
+  }) async {
+    final name = itemName.trim();
+    await queueAudienceBroadcast(
+      title: "Today's arrivals",
+      body: name.isEmpty
+          ? 'Fresh items just landed on Vero360. See what’s new.'
+          : 'Fresh on Vero360: $name. See what’s new.',
+      type: 'arrivals_digest',
+      badgeRoute: NotificationStore.kBadgePostArrival,
+      cooldownKey: 'arrivals',
+      extraData: {
+        if ((arrivalId ?? '').trim().isNotEmpty) 'arrivalId': arrivalId!.trim(),
+      },
+    );
+  }
+
+  /// Call after a marketplace listing is created (optional — CF also fires).
+  Future<void> notifyNewMarketplaceItem(
+    String itemName, {
+    String? marketplaceItemId,
+  }) async {
+    final name = itemName.trim();
+    await queueAudienceBroadcast(
+      title: 'New on Marketplace',
+      body: name.isEmpty
+          ? 'New listings just went live. Open Vero360 to browse.'
+          : 'Just listed: $name. Open Vero360 to browse.',
+      type: 'marketplace_digest',
+      badgeRoute: '',
+      cooldownKey: 'marketplace',
+      extraData: {
+        if ((marketplaceItemId ?? '').trim().isNotEmpty)
+          'marketplaceItemId': marketplaceItemId!.trim(),
+      },
+    );
   }
 
   Future<bool> _canSendDigest(SharedPreferences prefs) async {
@@ -124,6 +267,7 @@ class EngagementNotificationService {
     int marketCount = 0;
     int newestMarketMs = lastMarketMs;
     String? marketTitle;
+    String? newestMarketDocId;
 
     try {
       final promos = await PromoService().fetchActivePromos();
@@ -163,6 +307,7 @@ class EngagementNotificationService {
       marketCount = snap.docs.length;
       if (snap.docs.isNotEmpty) {
         final first = snap.docs.first;
+        newestMarketDocId = first.id;
         final data = first.data();
         marketTitle = (data['name'] ?? data['title'] ?? data['productName'] ?? '')
             .toString()
@@ -195,8 +340,10 @@ class EngagementNotificationService {
               (data['name'] ?? data['title'] ?? data['productName'] ?? '')
                   .toString()
                   .trim();
+          newestMarketDocId ??= doc.id;
           if (dt.millisecondsSinceEpoch > newestMarketMs) {
             newestMarketMs = dt.millisecondsSinceEpoch;
+            newestMarketDocId = doc.id;
           }
         }
       } catch (e2) {
@@ -220,6 +367,7 @@ class EngagementNotificationService {
         newestPromoId: newestPromoId,
         newestArrivalId: newestArrivalId,
         newestMarketMs: hasMarket ? newestMarketMs : null,
+        newestMarketDocId: hasMarket ? newestMarketDocId : null,
       );
     }
     if (hasArrival) {
@@ -231,6 +379,7 @@ class EngagementNotificationService {
         newestPromoId: newestPromoId,
         newestArrivalId: newestArrivalId,
         newestMarketMs: hasMarket ? newestMarketMs : null,
+        newestMarketDocId: hasMarket ? newestMarketDocId : null,
       );
     }
     final label = (marketTitle != null && marketTitle.isNotEmpty)
@@ -245,6 +394,7 @@ class EngagementNotificationService {
       newestPromoId: newestPromoId,
       newestArrivalId: newestArrivalId,
       newestMarketMs: newestMarketMs,
+      newestMarketDocId: newestMarketDocId,
     );
   }
 
@@ -286,6 +436,7 @@ class _DigestSnapshot {
   final int? newestPromoId;
   final String? newestArrivalId;
   final int? newestMarketMs;
+  final String? newestMarketDocId;
 
   const _DigestSnapshot({
     required this.title,
@@ -295,5 +446,6 @@ class _DigestSnapshot {
     this.newestPromoId,
     this.newestArrivalId,
     this.newestMarketMs,
+    this.newestMarketDocId,
   });
 }

@@ -1,7 +1,11 @@
 
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/postlatestArrivalservices.dart';
 
@@ -137,13 +141,21 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
       final priceVal = double.tryParse(_price.text.trim()) ?? 0;
 
       // ✅ Create latest arrival (NOW hits /vero/latestarrivals)
-      await svc.create(
+      final postedName = _name.text.trim();
+      final created = await svc.create(
         LatestArrivalModel(
           id: 0,
           image: imageUrl,
-          name: _name.text.trim(),
+          name: postedName,
           price: priceVal,
           createdAt: DateTime.now(),
+        ),
+      );
+
+      unawaited(
+        EngagementNotificationService.instance.notifyNewArrival(
+          postedName,
+          arrivalId: created.id > 0 ? '${created.id}' : null,
         ),
       );
 

@@ -37,7 +37,7 @@ class _CustomerServicePageState extends State<CustomerServicePage> {
 
   List<String> get _quickPrompts => _lang == 'ny'
       ? const [
-          'Ndingatheka bwanji kuyitanitsa chakudya?',
+          'Ndingathe bwanji kuyitanitsa chakudya?',
           'Tsata order yanga',
           'Kulipila & wallet',
           'Kukhala merchant',

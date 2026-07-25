@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
@@ -24,11 +25,19 @@ class VerocourierPage extends StatefulWidget {
 
 class _VerocourierPageState extends State<VerocourierPage> {
   static const _onboardingDoneKey = 'courier_onboarding_done';
+  static const _draftSenderNameKey = 'courier_draft_sender_name';
+  static const _draftSenderPhoneKey = 'courier_draft_sender_phone';
+  static const _draftSenderAddressKey = 'courier_draft_sender_address';
+  static const _draftRecipientNameKey = 'courier_draft_recipient_name';
+  static const _draftRecipientPhoneKey = 'courier_draft_recipient_phone';
+  static const _draftRecipientAddressKey = 'courier_draft_recipient_address';
+  static const _draftCompleteKey = 'courier_draft_complete';
   static const _veroOrange = Color(0xFFFF8A00);
   static const _skyBlue = Color(0xFF2D9CDB);
   static const _mintGreen = Color(0xFF27AE60);
   static const _violet = Color(0xFF9B51E0);
   static const _rose = Color(0xFFEB5757);
+  static const _pageBg = Color(0xFFF7F8FA);
 
   final _formKey = GlobalKey<FormState>();
   final _pickupCtrl = TextEditingController();
@@ -63,10 +72,20 @@ class _VerocourierPageState extends State<VerocourierPage> {
   bool _loadingList = false;
   bool _tracking = false;
   bool _sendingDetailsComplete = false;
+  /// 0 = sender card, 1 = recipient card
+  int _sendingStep = 0;
   bool _checkingAuth = true;
   bool _isLoggedIn = false;
   bool _bootstrapped = false;
   StreamSubscription<User?>? _authSub;
+
+  /// Never treat Firebase UIDs / junk as a phone number.
+  static String _sanitizePhone(String? raw) {
+    final cleaned = (raw ?? '').trim();
+    if (cleaned.isEmpty) return '';
+    final display = safeMerchantPhone(cleaned);
+    return display == 'No phone number' ? '' : cleaned;
+  }
 
   @override
   void initState() {
@@ -110,6 +129,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
     await _checkOnboarding();
     await _loadSenderInfo();
     await _detectAndValidateCity();
+    await _loadDeliveries();
   }
 
   void _registerSendingDetailsListeners() {
@@ -133,10 +153,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
 
   bool _hasValidSendingDetails() {
     return _senderNameCtrl.text.trim().isNotEmpty &&
-        _senderPhoneCtrl.text.trim().isNotEmpty &&
+        _sanitizePhone(_senderPhoneCtrl.text).isNotEmpty &&
         _senderAddressCtrl.text.trim().isNotEmpty &&
         _recipientNameCtrl.text.trim().isNotEmpty &&
-        _recipientPhoneCtrl.text.trim().isNotEmpty &&
+        _sanitizePhone(_recipientPhoneCtrl.text).isNotEmpty &&
         _recipientAddressCtrl.text.trim().isNotEmpty;
   }
 
@@ -178,10 +198,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
         setState(() => _loadingParcelForm = false);
       });
     }
-    if (index == 2 && _deliveries.isEmpty) {
-      await _loadDeliveries();
-    }
-    if (index == 3 && _deliveries.isEmpty) {
+    if (index == 2 || index == 3) {
       await _loadDeliveries();
     }
   }
@@ -207,20 +224,86 @@ class _VerocourierPageState extends State<VerocourierPage> {
     }
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
+
+    final authPhone = _sanitizePhone(
+      FirebaseAuth.instance.currentUser?.phoneNumber,
+    );
+    final profilePhone = _sanitizePhone(prefs.getString('phone'));
+    final draftPhone = _sanitizePhone(prefs.getString(_draftSenderPhoneKey));
+
+    final draftName = (prefs.getString(_draftSenderNameKey) ?? '').trim();
+    final draftAddress = (prefs.getString(_draftSenderAddressKey) ?? '').trim();
+    final profileName = (prefs.getString('fullName') ??
+            prefs.getString('name') ??
+            'Vero User')
+        .trim();
+    final profileCity = (prefs.getString('city') ?? 'Lilongwe').trim();
+    final email = (prefs.getString('email') ??
+            FirebaseAuth.instance.currentUser?.email ??
+            '')
+        .trim();
+
+    final recipientName =
+        (prefs.getString(_draftRecipientNameKey) ?? '').trim();
+    final recipientPhone =
+        _sanitizePhone(prefs.getString(_draftRecipientPhoneKey));
+    final recipientAddress =
+        (prefs.getString(_draftRecipientAddressKey) ?? '').trim();
+    final draftComplete = prefs.getBool(_draftCompleteKey) ?? false;
+
+    final resolvedPhone =
+        draftPhone.isNotEmpty
+            ? draftPhone
+            : (profilePhone.isNotEmpty
+                ? profilePhone
+                : authPhone);
+    final resolvedName = draftName.isNotEmpty ? draftName : profileName;
+    final resolvedAddress =
+        draftAddress.isNotEmpty ? draftAddress : profileCity;
+
     setState(() {
-      _senderName =
-          (prefs.getString('fullName') ??
-                  prefs.getString('name') ??
-                  'Vero User')
-              .trim();
-      _senderPhone = (prefs.getString('phone') ?? '').trim();
-      _senderEmail = (prefs.getString('email') ?? '').trim();
-      _senderCity = (prefs.getString('city') ?? 'Lilongwe').trim();
-      _senderNameCtrl.text = _senderName;
-      _senderPhoneCtrl.text = _senderPhone;
-      _senderAddressCtrl.text = _senderCity;
+      _senderName = resolvedName;
+      _senderPhone = resolvedPhone;
+      _senderEmail = email;
+      _senderCity = profileCity;
+      _senderNameCtrl.text = resolvedName;
+      _senderPhoneCtrl.text = resolvedPhone;
+      _senderAddressCtrl.text = resolvedAddress;
+      _recipientNameCtrl.text = recipientName;
+      _recipientPhoneCtrl.text = recipientPhone;
+      _recipientAddressCtrl.text = recipientAddress;
+      _sendingDetailsComplete =
+          draftComplete && _hasValidSendingDetails();
+      _sendingStep = _sendingDetailsComplete ? 1 : 0;
       _loadingSendingDetails = false;
     });
+  }
+
+  Future<void> _persistSendingDraft({required bool complete}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final phone = _sanitizePhone(_senderPhoneCtrl.text);
+    await prefs.setString(_draftSenderNameKey, _senderNameCtrl.text.trim());
+    await prefs.setString(_draftSenderPhoneKey, phone);
+    await prefs.setString(
+      _draftSenderAddressKey,
+      _senderAddressCtrl.text.trim(),
+    );
+    await prefs.setString(
+      _draftRecipientNameKey,
+      _recipientNameCtrl.text.trim(),
+    );
+    await prefs.setString(
+      _draftRecipientPhoneKey,
+      _sanitizePhone(_recipientPhoneCtrl.text),
+    );
+    await prefs.setString(
+      _draftRecipientAddressKey,
+      _recipientAddressCtrl.text.trim(),
+    );
+    await prefs.setBool(_draftCompleteKey, complete);
+    if (phone.isNotEmpty) {
+      await prefs.setString('phone', phone);
+    }
   }
 
   Future<void> _detectAndValidateCity() async {
@@ -281,7 +364,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
         _detectedCity = rawCity;
         if (rawCity.isNotEmpty && rawCity != 'Unknown') {
           _senderCity = rawCity;
-          _senderAddressCtrl.text = rawCity;
+          // Don't wipe a saved street address with city-only geolocation.
+          if (_senderAddressCtrl.text.trim().isEmpty) {
+            _senderAddressCtrl.text = rawCity;
+          }
         }
       });
     } catch (_) {
@@ -315,14 +401,9 @@ class _VerocourierPageState extends State<VerocourierPage> {
   Future<void> _loadDeliveries() async {
     setState(() => _loadingList = true);
     try {
-      final phone = _senderPhoneCtrl.text.trim().isNotEmpty
-          ? _senderPhoneCtrl.text.trim()
-          : _senderPhone;
-      final email = _senderEmail.trim();
-      final data = await _courierService.getMyDeliveriesForSender(
-        senderPhone: phone,
-        senderEmail: email.isEmpty ? null : email,
-      );
+      // Backend already scopes to the signed-in user. Avoid dropping rows when
+      // local phone was a Firebase UID or otherwise mismatched.
+      final data = await _courierService.getMyDeliveries();
       if (!mounted) return;
       setState(() => _deliveries = data);
     } on ApiException catch (e) {
@@ -334,10 +415,11 @@ class _VerocourierPageState extends State<VerocourierPage> {
     }
   }
 
-  String get _activeSenderPhone =>
-      _senderPhoneCtrl.text.trim().isNotEmpty
-          ? _senderPhoneCtrl.text.trim()
-          : _senderPhone;
+  String get _activeSenderPhone {
+    final fromField = _sanitizePhone(_senderPhoneCtrl.text);
+    if (fromField.isNotEmpty) return fromField;
+    return _sanitizePhone(_senderPhone);
+  }
 
   Future<void> _trackDelivery() async {
     final id = int.tryParse(_trackCtrl.text.trim());
@@ -345,16 +427,11 @@ class _VerocourierPageState extends State<VerocourierPage> {
       _toast('Enter a valid delivery number.', isError: true);
       return;
     }
-    final phone = _activeSenderPhone;
-    if (phone.isEmpty) {
-      _toast('Add your phone number in Sending Details first.', isError: true);
-      return;
-    }
     setState(() => _tracking = true);
     try {
       final data = await _courierService.getMyDeliveryById(
         id,
-        senderPhone: phone,
+        senderPhone: _activeSenderPhone,
         senderEmail: _senderEmail.isEmpty ? null : _senderEmail,
       );
       if (!mounted) return;
@@ -379,12 +456,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
     if (_trackedDeliveryId == null) return;
     _progressPollingTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
       if (!mounted || _trackedDeliveryId == null) return;
-      final phone = _activeSenderPhone;
-      if (phone.isEmpty) return;
       try {
         final latest = await _courierService.getMyDeliveryById(
           _trackedDeliveryId!,
-          senderPhone: phone,
+          senderPhone: _activeSenderPhone,
           senderEmail: _senderEmail.isEmpty ? null : _senderEmail,
         );
         if (!mounted) return;
@@ -423,19 +498,26 @@ class _VerocourierPageState extends State<VerocourierPage> {
         'Complete sending details first, then tap Next.',
         isError: true,
       );
-      setState(() => _selectedService = 0);
+      setState(() {
+        _selectedService = 0;
+        _sendingStep = 0;
+      });
       return;
     }
     if (!_formKey.currentState!.validate()) return;
-    if (_senderPhone.isEmpty || _senderCity.isEmpty) {
-      _toast(
-        'Missing sender profile details. Please update your account (name, phone, city).',
-        isError: true,
-      );
+
+    final phone = _sanitizePhone(_senderPhoneCtrl.text);
+    if (phone.isEmpty) {
+      _toast('Enter a valid sender phone number (not an account ID).', isError: true);
+      setState(() {
+        _selectedService = 0;
+        _sendingStep = 0;
+      });
       return;
     }
+
     _senderName = _senderNameCtrl.text.trim();
-    _senderPhone = _senderPhoneCtrl.text.trim();
+    _senderPhone = phone;
     _senderCity = _senderAddressCtrl.text.trim().isEmpty
         ? _senderCity
         : _senderAddressCtrl.text.trim();
@@ -447,17 +529,24 @@ class _VerocourierPageState extends State<VerocourierPage> {
         'Sender: ${_senderNameCtrl.text.trim()}',
       if (_recipientNameCtrl.text.trim().isNotEmpty)
         'Recipient: ${_recipientNameCtrl.text.trim()}',
-      if (_recipientPhoneCtrl.text.trim().isNotEmpty)
-        'Recipient Phone: ${_recipientPhoneCtrl.text.trim()}',
+      if (_sanitizePhone(_recipientPhoneCtrl.text).isNotEmpty)
+        'Recipient Phone: ${_sanitizePhone(_recipientPhoneCtrl.text)}',
       if (_recipientAddressCtrl.text.trim().isNotEmpty)
         'Recipient Address: ${_recipientAddressCtrl.text.trim()}',
     ].where((e) => e.isNotEmpty).join(' | ');
 
+    final email = _senderEmail.trim().isNotEmpty
+        ? _senderEmail.trim()
+        : (FirebaseAuth.instance.currentUser?.email?.trim().isNotEmpty == true
+            ? FirebaseAuth.instance.currentUser!.email!.trim()
+            : 'no-email@vero.local');
+
     try {
+      await _persistSendingDraft(complete: true);
       final created = await _courierService.createDelivery(
         CreateCourierDeliveryDto(
           courierPhone: _senderPhone,
-          courierEmail: 'no-email@vero.local',
+          courierEmail: email,
           courierCity: _senderCity,
           pickupLocation: _pickupCtrl.text.trim(),
           dropoffLocation: _dropoffCtrl.text.trim(),
@@ -474,9 +563,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
       _selectedGoodsType = null;
       _descriptionCtrl.clear();
       _additionalCtrl.clear();
-      _recipientNameCtrl.clear();
-      _recipientPhoneCtrl.clear();
-      _recipientAddressCtrl.clear();
+      // Keep sender + recipient for the next booking; they stay in prefs.
       _trackCtrl.text = created.courierId.toString();
       await _onServiceTabChanged(2);
       await _trackDelivery();
@@ -490,6 +577,37 @@ class _VerocourierPageState extends State<VerocourierPage> {
     }
   }
 
+  Future<void> _advanceSendingStep() async {
+    if (!_citySupported) {
+      _toast(
+        'Sorry, Vero Courier is not available in your city. We are expanding soon.',
+        isError: true,
+      );
+      return;
+    }
+
+    if (_sendingStep == 0) {
+      final missing = <String>[];
+      if (_senderNameCtrl.text.trim().isEmpty) missing.add('Sender full name');
+      final phone = _sanitizePhone(_senderPhoneCtrl.text);
+      if (phone.isEmpty) {
+        missing.add('Valid sender phone number');
+      } else {
+        _senderPhoneCtrl.text = phone;
+      }
+      if (_senderAddressCtrl.text.trim().isEmpty) missing.add('Sender address');
+      if (missing.isNotEmpty) {
+        _toast('Complete sender details: ${missing.join(', ')}', isError: true);
+        return;
+      }
+      setState(() => _sendingStep = 1);
+      await _persistSendingDraft(complete: false);
+      return;
+    }
+
+    await _saveSendingDetails();
+  }
+
   Future<void> _saveSendingDetails() async {
     if (!_citySupported) {
       _toast(
@@ -500,10 +618,20 @@ class _VerocourierPageState extends State<VerocourierPage> {
     }
     final missing = <String>[];
     if (_senderNameCtrl.text.trim().isEmpty) missing.add('Sender full name');
-    if (_senderPhoneCtrl.text.trim().isEmpty) missing.add('Sender phone number');
+    final phone = _sanitizePhone(_senderPhoneCtrl.text);
+    if (phone.isEmpty) {
+      missing.add('Valid sender phone number');
+    } else {
+      _senderPhoneCtrl.text = phone;
+    }
     if (_senderAddressCtrl.text.trim().isEmpty) missing.add('Sender address');
     if (_recipientNameCtrl.text.trim().isEmpty) missing.add('Recipient full name');
-    if (_recipientPhoneCtrl.text.trim().isEmpty) missing.add('Recipient phone number');
+    final recipientPhone = _sanitizePhone(_recipientPhoneCtrl.text);
+    if (recipientPhone.isEmpty) {
+      missing.add('Valid recipient phone number');
+    } else {
+      _recipientPhoneCtrl.text = recipientPhone;
+    }
     if (_recipientAddressCtrl.text.trim().isEmpty) missing.add('Recipient address');
     if (missing.isNotEmpty) {
       _toast('Complete all fields first: ${missing.join(', ')}', isError: true);
@@ -512,13 +640,14 @@ class _VerocourierPageState extends State<VerocourierPage> {
 
     setState(() {
       _senderName = _senderNameCtrl.text.trim();
-      _senderPhone = _senderPhoneCtrl.text.trim();
+      _senderPhone = phone;
       _senderCity = _senderAddressCtrl.text.trim().isEmpty
           ? _senderCity
           : _senderAddressCtrl.text.trim();
       _sendingDetailsComplete = true;
+      _sendingStep = 1;
     });
-   // _toast('Sending details saved for this session.');
+    await _persistSendingDraft(complete: true);
     await _onServiceTabChanged(1);
   }
 
@@ -562,6 +691,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
     }
 
     return Scaffold(
+      backgroundColor: _pageBg,
       body: RefreshIndicator(
         onRefresh: _isLoggedIn ? _loadDeliveries : () async {},
         child: ListView(
@@ -584,16 +714,22 @@ class _VerocourierPageState extends State<VerocourierPage> {
   Widget _buildHeader(BuildContext context) {
     return ClipRRect(
       borderRadius: const BorderRadius.vertical(
-        bottom: Radius.circular(24),
+        bottom: Radius.circular(28),
       ),
-      child: ColoredBox(
-        color: _veroOrange,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFFFF9A1F), Color(0xFFFF7A00)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
         child: Padding(
           padding: EdgeInsets.fromLTRB(
             16,
             MediaQuery.of(context).padding.top + 14,
             16,
-            18,
+            20,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -619,16 +755,15 @@ class _VerocourierPageState extends State<VerocourierPage> {
                     height: 52,
                     width: 52,
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFFFFD18A), Colors.white],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
+                      color: Colors.white.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.35),
+                      ),
                     ),
                     child: const Icon(
                       PhosphorIconsBold.truck,
-                      color: _veroOrange,
+                      color: Colors.white,
                       size: 28,
                     ),
                   ),
@@ -646,21 +781,21 @@ class _VerocourierPageState extends State<VerocourierPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               const Text(
-                'Send parcel with us within your city',
+                'City courier, made simple',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 18,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: FontWeight.w600,
                   height: 1.3,
                 ),
               ),
-              const SizedBox(height: 10),
-              const Text(
-                'Fast pickup, secure handling, real-time progress updates.',
+              const SizedBox(height: 8),
+              Text(
+                'Book pickup, hand off securely, follow progress live.',
                 style: TextStyle(
-                  color: Colors.white70,
+                  color: Colors.white.withValues(alpha: 0.82),
                   fontSize: 13,
                 ),
               ),
@@ -813,87 +948,200 @@ class _VerocourierPageState extends State<VerocourierPage> {
   }
 
   Widget _senderCard() {
+    return _modernDetailCard(
+      key: const ValueKey('senderCard'),
+      accent: _skyBlue,
+      icon: PhosphorIconsBold.userCircle,
+      title: 'From you',
+      subtitle: 'Who is sending the parcel?',
+      child: Column(
+        children: [
+          _field(
+            _senderNameCtrl,
+            'Full Name',
+            hint: 'Enter your full name',
+          ),
+          _field(
+            _senderPhoneCtrl,
+            'Phone Number',
+            hint: 'e.g. 0999 123 456',
+            keyboardType: TextInputType.phone,
+          ),
+          _field(
+            _senderAddressCtrl,
+            'Pickup address',
+            hint: 'Street, area, landmark',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _recipientCard() {
+    return _modernDetailCard(
+      key: const ValueKey('recipientCard'),
+      accent: _mintGreen,
+      icon: PhosphorIconsBold.mapPin,
+      title: 'To recipient',
+      subtitle: 'Where should we deliver?',
+      child: Column(
+        children: [
+          _field(_recipientNameCtrl, 'Full Name', hint: 'Recipient name'),
+          _field(
+            _recipientPhoneCtrl,
+            'Phone Number',
+            hint: 'Recipient phone',
+            keyboardType: TextInputType.phone,
+          ),
+          _field(
+            _recipientAddressCtrl,
+            'Delivery address',
+            hint: 'Street, area, landmark',
+            maxLines: 2,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _modernDetailCard({
+    required Key key,
+    required Color accent,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
     return Card(
+      key: key,
       elevation: 0,
+      color: Colors.white,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: const BorderSide(color: Color(0xFFEAEAEA)),
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide(color: accent.withValues(alpha: 0.18)),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              children: const [
-                Icon(PhosphorIconsBold.userCircle, color: _skyBlue, size: 18),
-                SizedBox(width: 8),
-                Text(
-                  "Sender details",
-                  style: TextStyle(fontWeight: FontWeight.w700),
+              children: [
+                Container(
+                  height: 42,
+                  width: 42,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: accent, size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: Color(0xFF6B7280),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            _field(
-              _senderNameCtrl,
-              'Full Name',
-              hint: 'Enter your full name',
-            ),
-            _field(
-              _senderPhoneCtrl,
-              'Phone Number',
-              hint: 'Enter phone number',
-            ),
-            _field(
-              _senderAddressCtrl,
-              'Address',
-              hint: 'Enter address',
-            ),
+            const SizedBox(height: 14),
+            child,
           ],
         ),
       ),
     );
   }
 
-  Widget _recipientCard() {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: Color(0xFFEAEAEA)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(PhosphorIconsBold.identificationBadge, color: _mintGreen, size: 18),
-                SizedBox(width: 8),
-                Text(
-                  "Recipient details",
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            _field(_recipientNameCtrl, 'Full Name', hint: 'Recipient name'),
-            _field(
-              _recipientPhoneCtrl,
-              'Phone Number',
-              hint: 'Recipient phone',
-            ),
-            _field(
-              _recipientAddressCtrl,
-              'Address',
-              hint: 'Recipient address',
-              maxLines: 2,
-            ),
-          ],
+  Widget _sendingStepIndicator() {
+    return Row(
+      children: [
+        _stepDot(active: _sendingStep == 0, done: _sendingStep > 0, label: 'Sender'),
+        Expanded(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 280),
+            height: 2,
+            margin: const EdgeInsets.symmetric(horizontal: 8),
+            color: _sendingStep > 0
+                ? _mintGreen.withValues(alpha: 0.55)
+                : const Color(0xFFE5E7EB),
+          ),
         ),
-      ),
+        _stepDot(active: _sendingStep == 1, done: _sendingDetailsComplete, label: 'Recipient'),
+      ],
+    );
+  }
+
+  Widget _stepDot({
+    required bool active,
+    required bool done,
+    required String label,
+  }) {
+    final color = done
+        ? _mintGreen
+        : (active ? _veroOrange : const Color(0xFF9CA3AF));
+    return Column(
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 280),
+          height: 28,
+          width: 28,
+          decoration: BoxDecoration(
+            color: active || done ? color : Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: color, width: 2),
+          ),
+          child: Icon(
+            done ? Icons.check_rounded : Icons.circle,
+            size: done ? 16 : 8,
+            color: active || done ? Colors.white : color,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _animatedSendingCard() {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 420),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) {
+        final offset = Tween<Offset>(
+          begin: Offset(_sendingStep == 0 ? -0.08 : 0.08, 0.04),
+          end: Offset.zero,
+        ).animate(animation);
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(position: offset, child: child),
+        );
+      },
+      child: _sendingStep == 0 ? _senderCard() : _recipientCard(),
     );
   }
 
@@ -905,67 +1153,71 @@ class _VerocourierPageState extends State<VerocourierPage> {
         }
         return [
           _sectionTitle('Sending Details'),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
+          const Text(
+            'One card at a time — sender first, then recipient.',
+            style: TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+          ),
+          const SizedBox(height: 14),
+          _sendingStepIndicator(),
+          const SizedBox(height: 16),
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 380),
             switchInCurve: Curves.easeOutCubic,
             switchOutCurve: Curves.easeInCubic,
             child: _loadingSendingDetails
                 ? const _DetailsLoadingCard()
-                : Column(
-                    key: const ValueKey('sendingDetailsForms'),
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0, end: 1),
-                        duration: const Duration(milliseconds: 420),
-                        builder: (context, value, child) => Opacity(
-                          opacity: value,
-                          child: Transform.translate(
-                            offset: Offset(0, (1 - value) * 10),
-                            child: child,
-                          ),
-                        ),
-                        child: _senderCard(),
-                      ),
-                      const SizedBox(height: 12),
-                      _sectionTitle("Recipient's Information"),
-                      const SizedBox(height: 8),
-                      TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0, end: 1),
-                        duration: const Duration(milliseconds: 520),
-                        builder: (context, value, child) => Opacity(
-                          opacity: value,
-                          child: Transform.translate(
-                            offset: Offset(0, (1 - value) * 14),
-                            child: child,
-                          ),
-                        ),
-                        child: _recipientCard(),
-                      ),
-                    ],
-                  ),
+                : _animatedSendingCard(),
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: _veroOrange,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              if (_sendingStep > 0) ...[
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF374151),
+                      side: const BorderSide(color: Color(0xFFE5E7EB)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    onPressed: () => setState(() => _sendingStep = 0),
+                    child: const Text(
+                      'Back',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                flex: _sendingStep > 0 ? 2 : 1,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _veroOrange,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  onPressed: _advanceSendingStep,
+                  icon: Icon(
+                    _sendingStep == 0
+                        ? PhosphorIconsBold.arrowRight
+                        : PhosphorIconsBold.checkCircle,
+                    size: 20,
+                  ),
+                  label: Text(
+                    _sendingStep == 0 ? 'Continue' : 'Next: parcel details',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
                 ),
               ),
-              onPressed: _saveSendingDetails,
-              icon: const Icon(PhosphorIconsBold.checkCircle, size: 20),
-              label: const Text(
-                'Next',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
+            ],
           ),
         ];
       case 1:
@@ -1302,12 +1554,14 @@ class _VerocourierPageState extends State<VerocourierPage> {
     String? hint,
     bool required = true,
     int maxLines = 1,
+    TextInputType? keyboardType,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: TextFormField(
         controller: controller,
         maxLines: maxLines,
+        keyboardType: keyboardType,
         validator: required
             ? (v) => (v == null || v.trim().isEmpty) ? 'Required' : null
             : null,
@@ -1315,13 +1569,13 @@ class _VerocourierPageState extends State<VerocourierPage> {
           labelText: label,
           hintText: hint,
           filled: true,
-          fillColor: const Color(0xFFFFFBF4),
+          fillColor: const Color(0xFFF9FAFB),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: _veroOrange.withValues(alpha: 0.24)),
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(14),
             borderSide: const BorderSide(color: _veroOrange, width: 1.4),
           ),
         ),

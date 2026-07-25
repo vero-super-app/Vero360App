@@ -13,6 +13,8 @@ class ResilientCachedNetworkImage extends StatefulWidget {
     this.height,
     this.memCacheWidth,
     this.memCacheHeight,
+    this.showSpinner = true,
+    this.placeholderColor,
   });
 
   final String url;
@@ -21,6 +23,8 @@ class ResilientCachedNetworkImage extends StatefulWidget {
   final double? height;
   final int? memCacheWidth;
   final int? memCacheHeight;
+  final bool showSpinner;
+  final Color? placeholderColor;
 
   @override
   State<ResilientCachedNetworkImage> createState() =>
@@ -58,6 +62,22 @@ class _ResilientCachedNetworkImageState
   @override
   Widget build(BuildContext context) {
     final u = _currentUrl;
+    final placeholderBg =
+        widget.placeholderColor ?? Colors.grey.shade100;
+    Widget placeholder() => Container(
+          width: widget.width,
+          height: widget.height,
+          color: placeholderBg,
+          alignment: Alignment.center,
+          child: widget.showSpinner
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : null,
+        );
+
     return CachedNetworkImage(
       imageUrl: u,
       fit: widget.fit,
@@ -67,33 +87,13 @@ class _ResilientCachedNetworkImageState
       memCacheHeight: widget.memCacheHeight,
       fadeInDuration: Duration.zero,
       fadeOutDuration: Duration.zero,
-      placeholder: (context, _) => Container(
-        width: widget.width,
-        height: widget.height,
-        color: Colors.grey.shade100,
-        alignment: Alignment.center,
-        child: const SizedBox(
-          width: 24,
-          height: 24,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      ),
+      placeholder: (context, _) => placeholder(),
       errorWidget: (context, _, __) {
         if (!_tryAlternate && _flipScheme(u) != u) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() => _tryAlternate = true);
           });
-          return Container(
-            width: widget.width,
-            height: widget.height,
-            color: Colors.grey.shade100,
-            alignment: Alignment.center,
-            child: const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          );
+          return placeholder();
         }
         return Container(
           width: widget.width,

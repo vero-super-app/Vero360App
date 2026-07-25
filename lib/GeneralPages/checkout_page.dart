@@ -2,7 +2,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -19,6 +21,7 @@ import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 enum DeliveryType { speed, cts, ankolo, smart, pickup }
 
@@ -55,6 +58,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _loggedIn = false;
   String? _pickupLocation; // merchant/shop address for pickup
 
+  /// Resolved http(s) URL for the product thumb (avoids Firebase lookup on rebuild).
+  String? _itemImageHttpUrl;
+  Uint8List? _itemImageBytes;
+  bool _itemImageReady = false;
+
   // Money formatter (MWK)
   late final NumberFormat _mwkFmt =
       NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
@@ -77,11 +85,188 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   void initState() {
     super.initState();
-    // Defer so auth and context are ready (avoids "address not loaded until re-navigate")
+    _prepareItemImage();
+    // Sync memory hit so the first frame already has an address.
+    final mem = AddressService.peekDefaultAddress();
+    if (mem != null) {
+      _defaultAddr = mem;
+      _loadingAddr = false;
+      _loggedIn = true;
+    } else {
+      _hydrateAddressFromCache();
+    }
+    // Defer network refresh so first frame can show cached address + image.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadAuthAndAddressWithRetry();
+      _precacheItemImage();
     });
+  }
+
+  /// Instant paint from memory/disk — never blocks on the API.
+  Future<void> _hydrateAddressFromCache() async {
+    final mem = AddressService.peekDefaultAddress();
+    if (mem != null) {
+      if (!mounted) return;
+      setState(() {
+        _defaultAddr = mem;
+        _loadingAddr = false;
+        _loggedIn = true;
+      });
+      return;
+    }
+    final disk = await _addrSvc.getCachedDefaultAddress();
+    if (!mounted || disk == null) return;
+    setState(() {
+      _defaultAddr = disk;
+      _loadingAddr = false;
+      _loggedIn = true;
+    });
+  }
+
+  /// Initial load: paint cache first, then soft-refresh from API.
+  Future<void> _loadAuthAndAddressWithRetry() async {
+    await _initAuthAndAddress();
+    if (!mounted) return;
+    // Short retry only when auth was clearly not ready and we still have nothing.
+    if (!_loggedIn && _defaultAddr == null && !_loadingAddr) {
+      await Future.delayed(const Duration(milliseconds: 250));
+      if (!mounted) return;
+      await _initAuthAndAddress();
+    }
+  }
+
+  Future<void> _initAuthAndAddress({bool forceRefresh = false}) async {
+    // When pickup is selected we will show merchant address instead of user address.
+    _pickupLocation = widget.item.location.trim().isEmpty
+        ? widget.item.sellerBusinessName
+        : widget.item.location.trim();
+
+    final hadCached = _defaultAddr != null;
+    // Soft refresh: keep showing the last address; only spinner if we have none.
+    setState(() {
+      if (!hadCached || forceRefresh) {
+        _loadingAddr = !hadCached;
+      }
+      if (!hadCached) {
+        _loggedIn = false;
+      }
+    });
+
+    final token = await _readAuthToken();
+    if (!mounted) return;
+
+    if (token == null) {
+      setState(() {
+        _loggedIn = false;
+        _loadingAddr = false;
+        if (forceRefresh) _defaultAddr = null;
+      });
+      return;
+    }
+
+    try {
+      // Prefer memory/disk instantly when not forcing a refresh.
+      if (!forceRefresh && !hadCached) {
+        final cached = await _addrSvc.getCachedDefaultAddress();
+        if (mounted && cached != null) {
+          setState(() {
+            _loggedIn = true;
+            _defaultAddr = cached;
+            _loadingAddr = false;
+          });
+        }
+      }
+
+      final list = await _addrSvc.getMyAddresses(forceRefresh: forceRefresh);
+
+      Address? def;
+      for (final a in list) {
+        if (a.isDefault) {
+          def = a;
+          break;
+        }
+      }
+      def ??= list.isNotEmpty ? list.first : null;
+
+      if (!mounted) return;
+      setState(() {
+        _loggedIn = true;
+        _defaultAddr = def;
+        _loadingAddr = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loggedIn = true;
+        _loadingAddr = false;
+        // Keep any previously shown cached address on network failure.
+      });
+    }
+  }
+
+  Future<void> _prepareItemImage() async {
+    final raw = widget.item.image.trim();
+    if (raw.isEmpty) {
+      if (mounted) setState(() => _itemImageReady = true);
+      return;
+    }
+
+    final lower = raw.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      if (!mounted) return;
+      setState(() {
+        _itemImageHttpUrl = raw;
+        _itemImageReady = true;
+      });
+      return;
+    }
+
+    try {
+      final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+      if (base64Part.length > 150) {
+        final bytes = base64Decode(base64Part);
+        if (!mounted) return;
+        setState(() {
+          _itemImageBytes = bytes;
+          _itemImageReady = true;
+        });
+        return;
+      }
+    } catch (_) {}
+
+    try {
+      final ref = lower.startsWith('gs://')
+          ? FirebaseStorage.instance.refFromURL(raw)
+          : FirebaseStorage.instance.ref(raw);
+      final url = await ref.getDownloadURL();
+      if (!mounted) return;
+      setState(() {
+        _itemImageHttpUrl = url;
+        _itemImageReady = true;
+      });
+      _precacheItemImage();
+    } catch (_) {
+      if (mounted) setState(() => _itemImageReady = true);
+    }
+  }
+
+  void _precacheItemImage() {
+    if (!mounted) return;
+    final url = (_itemImageHttpUrl ?? '').trim();
+    if (url.isEmpty) return;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cachePx = (88 * dpr).round().clamp(88, 256);
+    unawaited(
+      precacheImage(
+        CachedNetworkImageProvider(
+          url,
+          maxWidth: cachePx,
+          maxHeight: cachePx,
+        ),
+        context,
+      ).catchError((_) {}),
+    );
   }
 
   @override
@@ -314,68 +499,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
   // ── Auth + Default address bootstrap (single source: Firebase then SP) ───
   Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
 
-  /// Initial load: run after first frame, then retry once if auth wasn't ready.
-  Future<void> _loadAuthAndAddressWithRetry() async {
-    await _initAuthAndAddress();
-    if (!mounted) return;
-    // If we still have no address and not logged in, auth may have been initializing — retry once.
-    if (!_loggedIn && _defaultAddr == null && !_loadingAddr) {
-      await Future.delayed(const Duration(milliseconds: 1200));
-      if (!mounted) return;
-      await _initAuthAndAddress();
-    }
-  }
-
-  Future<void> _initAuthAndAddress({bool forceRefresh = false}) async {
-    // When pickup is selected we will show merchant address instead of user address.
-    _pickupLocation = widget.item.location.trim().isEmpty
-        ? widget.item.sellerBusinessName
-        : widget.item.location.trim();
-
-    setState(() {
-      _loadingAddr = true;
-      _defaultAddr = null;
-      _loggedIn = false;
-    });
-
-    final token = await _readAuthToken();
-    if (!mounted) return;
-
-    if (token == null) {
-      setState(() {
-        _loggedIn = false;
-        _loadingAddr = false;
-      });
-      return;
-    }
-
-    try {
-      final list = await _addrSvc.getMyAddresses(forceRefresh: forceRefresh);
-
-      Address? def;
-      for (final a in list) {
-        if (a.isDefault) {
-          def = a;
-          break;
-        }
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _loggedIn = true;
-        _defaultAddr = def;
-        _loadingAddr = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _loggedIn = true;
-        _defaultAddr = null;
-        _loadingAddr = false;
-      });
-    }
-  }
-
   Future<bool> _ensureDefaultAddressIfNeeded() async {
     // For shop pickup we do not require a customer delivery address.
     if (_deliveryType == DeliveryType.pickup) return true;
@@ -587,98 +710,66 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
-  // ── Image like Marketplace (http / base64 / firebase storage) ───────────
+  // ── Fast thumb: disk cache + sized decode (same pattern as cart) ─────────
+  Widget _itemImagePlaceholder(double size) {
+    return Container(
+      width: size,
+      height: size,
+      color: const Color(0xFFF1F1F1),
+      alignment: Alignment.center,
+      child: const SizedBox(
+        width: 22,
+        height: 22,
+        child: CircularProgressIndicator(strokeWidth: 2, color: _brandOrange),
+      ),
+    );
+  }
+
+  Widget _itemImageMissing(double size) {
+    return Container(
+      width: size,
+      height: size,
+      color: Colors.grey.shade300,
+      child: const Icon(Icons.image_not_supported),
+    );
+  }
+
   Widget _itemImage(String raw, {double size = 96}) {
-    final s = raw.trim();
-    if (s.isEmpty) {
-      return Container(
-        width: size,
-        height: size,
-        color: Colors.grey.shade300,
-        child: const Icon(Icons.image_not_supported),
-      );
+    if (!_itemImageReady &&
+        _itemImageHttpUrl == null &&
+        _itemImageBytes == null) {
+      return _itemImagePlaceholder(size);
     }
 
-    // HTTP URL
-    if (s.startsWith('http://') || s.startsWith('https://')) {
-      return Image.network(
-        s,
+    final url = (_itemImageHttpUrl ?? '').trim();
+    if (url.isNotEmpty) {
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final cachePx = (size * dpr).round().clamp(64, 256);
+      return ResilientCachedNetworkImage(
+        url: url,
         width: size,
         height: size,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(
-          width: size,
-          height: size,
-          color: Colors.grey.shade300,
-          child: const Icon(Icons.image_not_supported),
-        ),
+        memCacheWidth: cachePx,
+        memCacheHeight: cachePx,
       );
     }
 
-    // Firebase Storage gs://
-    if (s.startsWith('gs://')) {
-      return FutureBuilder<String>(
-        future: FirebaseStorage.instance.refFromURL(s).getDownloadURL(),
-        builder: (context, snap) {
-          if (!snap.hasData) {
-            return Container(
-              width: size,
-              height: size,
-              color: Colors.grey.shade200,
-              child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            );
-          }
-          return Image.network(
-            snap.data!,
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              width: size,
-              height: size,
-              color: Colors.grey.shade300,
-              child: const Icon(Icons.image_not_supported),
-            ),
-          );
-        },
+    final bytes = _itemImageBytes;
+    if (bytes != null) {
+      final cacheW = (size * MediaQuery.devicePixelRatioOf(context)).round();
+      return Image.memory(
+        bytes,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        cacheWidth: cacheW,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => _itemImageMissing(size),
       );
     }
 
-    // Try Base64
-    try {
-      final base64Part = s.contains(',') ? s.split(',').last : s;
-      if (base64Part.length > 150) {
-        final bytes = base64Decode(base64Part);
-        return Image.memory(bytes, width: size, height: size, fit: BoxFit.cover);
-      }
-    } catch (_) {}
-
-    // Try Firebase Storage path
-    return FutureBuilder<String>(
-      future: FirebaseStorage.instance.ref(s).getDownloadURL(),
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade300,
-            child: const Icon(Icons.image_not_supported),
-          );
-        }
-        return Image.network(
-          snap.data!,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade300,
-            child: const Icon(Icons.image_not_supported),
-          ),
-        );
-      },
-    );
+    return _itemImageMissing(size);
   }
 
   @override

@@ -78,18 +78,52 @@ class FoodModel {
                 .toList()
             : const <String>[];
 
+    String pickImage() {
+      for (final key in [
+        'FoodImage',
+        'image',
+        'imageUrl',
+        'photo',
+        'picture',
+        'coverImage',
+        'coverUrl',
+      ]) {
+        final s = str(json[key]).trim();
+        if (s.isNotEmpty) return s;
+      }
+      final gal = arr(json['gallery']);
+      if (gal.isNotEmpty) return gal.first;
+      final urls = arr(json['galleryUrls']);
+      if (urls.isNotEmpty) return urls.first;
+      final images = arr(json['images']);
+      if (images.isNotEmpty) return images.first;
+      return '';
+    }
+
+    final gallery = [
+      ...arr(json['gallery']),
+      ...arr(json['galleryUrls']),
+      ...arr(json['images']),
+    ];
+
     return FoodModel(
       id: id(json['id']),
-      FoodName: str(json['FoodName']),
-      FoodImage: str(json['FoodImage']),
-      RestrauntName: str(json['RestrauntName']),
+      FoodName: str(json['FoodName']).isNotEmpty
+          ? str(json['FoodName'])
+          : str(json['name']),
+      FoodImage: pickImage(),
+      RestrauntName: str(json['RestrauntName']).isNotEmpty
+          ? str(json['RestrauntName'])
+          : str(json['merchantName']).isNotEmpty
+              ? str(json['merchantName'])
+              : str(json['businessName']),
       price: safeDouble(json['price']),
       description: json['description']?.toString(),
       category: json['category']?.toString(),
       latitude: optDouble(json['latitude'] ?? json['lat']),
       longitude: optDouble(json['longitude'] ?? json['lng']),
       listingLocation: _optStr(json['listingLocation']),
-      gallery: arr(json['gallery']),
+      gallery: gallery,
       videos: arr(json['videos']),
       merchantId: _optStr(json['merchantId']),
       firestoreListingId: _optStr(json['firestoreListingId']),

@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -23,6 +25,7 @@ import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class CheckoutFromCartPage extends StatefulWidget {
@@ -46,6 +49,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   Address? _defaultAddr;
   bool _loadingAddr = true;
   bool _loggedIn = false;
+
+  /// raw image string → resolved http URL (or empty if failed / not network)
+  final Map<String, String> _resolvedHttpUrls = {};
+  final Map<String, Uint8List> _decodedBytes = {};
 
   late final NumberFormat _mwkFmt =
       NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
@@ -269,16 +276,112 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   @override
   void initState() {
     super.initState();
+    _prepareCartImages();
+    final mem = AddressService.peekDefaultAddress();
+    if (mem != null) {
+      _defaultAddr = mem;
+      _loadingAddr = false;
+      _loggedIn = true;
+    } else {
+      _hydrateAddressFromCache();
+    }
     _initAuthAndAddress();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _precacheCartImages();
+    });
+  }
+
+  /// Instant paint from memory/disk — never blocks on the API.
+  Future<void> _hydrateAddressFromCache() async {
+    final mem = AddressService.peekDefaultAddress();
+    if (mem != null) {
+      if (!mounted) return;
+      setState(() {
+        _defaultAddr = mem;
+        _loadingAddr = false;
+        _loggedIn = true;
+      });
+      return;
+    }
+    final disk = await _addrSvc.getCachedDefaultAddress();
+    if (!mounted || disk == null) return;
+    setState(() {
+      _defaultAddr = disk;
+      _loadingAddr = false;
+      _loggedIn = true;
+    });
+  }
+
+  void _prepareCartImages() {
+    for (final item in widget.items) {
+      final raw = item.image.trim();
+      if (raw.isEmpty) continue;
+      final lower = raw.toLowerCase();
+      if (lower.startsWith('http://') || lower.startsWith('https://')) {
+        _resolvedHttpUrls[raw] = raw;
+        continue;
+      }
+      try {
+        final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+        if (base64Part.length > 150) {
+          _decodedBytes[raw] = base64Decode(base64Part);
+          continue;
+        }
+      } catch (_) {}
+      unawaited(_resolveStorageUrl(raw));
+    }
+  }
+
+  Future<void> _resolveStorageUrl(String raw) async {
+    try {
+      final lower = raw.toLowerCase();
+      final ref = lower.startsWith('gs://')
+          ? FirebaseStorage.instance.refFromURL(raw)
+          : FirebaseStorage.instance.ref(raw);
+      final url = await ref.getDownloadURL();
+      if (!mounted) return;
+      setState(() => _resolvedHttpUrls[raw] = url);
+      _precacheUrl(url);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _resolvedHttpUrls[raw] = '');
+    }
+  }
+
+  void _precacheCartImages() {
+    for (final url in _resolvedHttpUrls.values) {
+      if (url.isNotEmpty) _precacheUrl(url);
+    }
+  }
+
+  void _precacheUrl(String url) {
+    if (!mounted || url.isEmpty) return;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cachePx = (64 * dpr).round().clamp(64, 192);
+    unawaited(
+      precacheImage(
+        CachedNetworkImageProvider(
+          url,
+          maxWidth: cachePx,
+          maxHeight: cachePx,
+        ),
+        context,
+      ).catchError((_) {}),
+    );
   }
 
   Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
 
-  Future<void> _initAuthAndAddress() async {
+  Future<void> _initAuthAndAddress({bool forceRefresh = false}) async {
+    final hadCached = _defaultAddr != null;
     setState(() {
-      _loadingAddr = true;
-      _defaultAddr = null;
-      _loggedIn = false;
+      if (!hadCached || forceRefresh) {
+        _loadingAddr = !hadCached;
+      }
+      if (!hadCached) {
+        _loggedIn = false;
+      }
     });
     final token = await _readAuthToken();
     if (!mounted) return;
@@ -286,11 +389,23 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       setState(() {
         _loggedIn = false;
         _loadingAddr = false;
+        if (forceRefresh) _defaultAddr = null;
       });
       return;
     }
     try {
-      final list = await _addrSvc.getMyAddresses();
+      if (!forceRefresh && !hadCached) {
+        final cached = await _addrSvc.getCachedDefaultAddress();
+        if (mounted && cached != null) {
+          setState(() {
+            _loggedIn = true;
+            _defaultAddr = cached;
+            _loadingAddr = false;
+          });
+        }
+      }
+
+      final list = await _addrSvc.getMyAddresses(forceRefresh: forceRefresh);
       Address? def;
       for (final a in list) {
         if (a.isDefault) {
@@ -298,6 +413,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
           break;
         }
       }
+      def ??= list.isNotEmpty ? list.first : null;
+      if (!mounted) return;
       setState(() {
         _loggedIn = true;
         _defaultAddr = def;
@@ -307,7 +424,6 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       if (!mounted) return;
       setState(() {
         _loggedIn = true;
-        _defaultAddr = null;
         _loadingAddr = false;
       });
     }
@@ -344,7 +460,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     return false;
   }
 
-  // ✅ Same image logic as CheckoutPage (http / base64 / gs:// / firebase storage path)
+  // ✅ Fast thumbs: disk cache + sized decode (same idea as cart / single checkout)
   Widget _itemImage(String raw, {double size = 64}) {
     final s = raw.trim();
     if (s.isEmpty) {
@@ -356,13 +472,30 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       );
     }
 
-    // HTTP URL
-    if (s.startsWith('http://') || s.startsWith('https://')) {
-      return Image.network(
-        s,
+    final url = _resolvedHttpUrls[s];
+    if (url != null && url.isNotEmpty) {
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final cachePx = (size * dpr).round().clamp(64, 192);
+      return ResilientCachedNetworkImage(
+        url: url,
         width: size,
         height: size,
         fit: BoxFit.cover,
+        memCacheWidth: cachePx,
+        memCacheHeight: cachePx,
+      );
+    }
+
+    final bytes = _decodedBytes[s];
+    if (bytes != null) {
+      final cacheW = (size * MediaQuery.devicePixelRatioOf(context)).round();
+      return Image.memory(
+        bytes,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        cacheWidth: cacheW,
+        gaplessPlayback: true,
         errorBuilder: (_, __, ___) => Container(
           width: size,
           height: size,
@@ -372,69 +505,26 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       );
     }
 
-    // Firebase Storage gs://
-    if (s.startsWith('gs://')) {
-      return FutureBuilder<String>(
-        future: FirebaseStorage.instance.refFromURL(s).getDownloadURL(),
-        builder: (context, snap) {
-          if (!snap.hasData) {
-            return Container(
-              width: size,
-              height: size,
-              color: Colors.grey.shade100,
-              child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            );
-          }
-          return Image.network(
-            snap.data!,
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              width: size,
-              height: size,
-              color: Colors.grey.shade200,
-              child: const Icon(Icons.image_not_supported, color: Colors.grey),
-            ),
-          );
-        },
+    // Still resolving Firebase path, or failed.
+    if (url == null && !_decodedBytes.containsKey(s)) {
+      return Container(
+        width: size,
+        height: size,
+        color: const Color(0xFFF1F1F1),
+        alignment: Alignment.center,
+        child: const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2, color: _brandOrange),
+        ),
       );
     }
 
-    // Try Base64
-    try {
-      final base64Part = s.contains(',') ? s.split(',').last : s;
-      if (base64Part.length > 150) {
-        final bytes = base64Decode(base64Part);
-        return Image.memory(bytes, width: size, height: size, fit: BoxFit.cover);
-      }
-    } catch (_) {}
-
-    // Try Firebase Storage path
-    return FutureBuilder<String>(
-      future: FirebaseStorage.instance.ref(s).getDownloadURL(),
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade200,
-            child: const Icon(Icons.image_not_supported, color: Colors.grey),
-          );
-        }
-        return Image.network(
-          snap.data!,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade200,
-            child: const Icon(Icons.image_not_supported, color: Colors.grey),
-          ),
-        );
-      },
+    return Container(
+      width: size,
+      height: size,
+      color: Colors.grey.shade200,
+      child: const Icon(Icons.image_not_supported, color: Colors.grey),
     );
   }
 
@@ -718,13 +808,13 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   address: _defaultAddr,
                   pickupSelected: _deliveryType == DeliveryType.pickup,
                   pickupLocation: 'Pickup at merchant(s)',
-                  onManage: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const AddressPage()),
-                    );
-                    await _initAuthAndAddress();
-                  },
+                    onManage: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const AddressPage()),
+                      );
+                      await _initAuthAndAddress(forceRefresh: true);
+                    },
                 ),
                 const SizedBox(height: 12),
                 _section(

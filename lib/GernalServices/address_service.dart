@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -15,14 +16,97 @@ class AuthRequiredException implements Exception {
 }
 
 class AddressService {
-  // ---------- Simple in-memory cache for address list ----------
-  List<Address>? _cachedAddresses;
-  DateTime? _addressesFetchedAt;
+  // ---------- Shared cache (survives across AddressService instances / pages) ----------
+  static List<Address>? _cachedAddresses;
+  static DateTime? _addressesFetchedAt;
   static const Duration _addressesCacheTtl = Duration(minutes: 5);
+  static const String _diskCacheKey = 'vero_addresses_me_cache_v1';
+  static bool _diskHydrated = false;
 
   void _clearAddressesCache() {
     _cachedAddresses = null;
     _addressesFetchedAt = null;
+    unawaited(_clearDiskCache());
+  }
+
+  /// Sync peek of in-memory default address (instant first paint on checkout).
+  static Address? peekDefaultAddress() {
+    final list = _cachedAddresses;
+    if (list == null || list.isEmpty) return null;
+    return _pickDefault(list);
+  }
+
+  /// Sync peek of full in-memory list.
+  static List<Address>? peekCachedAddresses() {
+    final list = _cachedAddresses;
+    if (list == null) return null;
+    return List<Address>.from(list);
+  }
+
+  static Address? _pickDefault(List<Address> list) {
+    for (final a in list) {
+      if (a.isDefault) return a;
+    }
+    return list.isNotEmpty ? list.first : null;
+  }
+
+  Future<void> _persistDiskCache(List<Address> list) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final payload = jsonEncode({
+        'fetchedAt': DateTime.now().toIso8601String(),
+        'addresses': list.map((a) => a.toJson()).toList(),
+      });
+      await prefs.setString(_diskCacheKey, payload);
+    } catch (_) {}
+  }
+
+  Future<void> _clearDiskCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_diskCacheKey);
+      _diskHydrated = false;
+    } catch (_) {}
+  }
+
+  /// Load addresses from disk into memory (no network). Safe to call often.
+  Future<List<Address>> hydrateFromDisk() async {
+    if (_cachedAddresses != null && _cachedAddresses!.isNotEmpty) {
+      return List<Address>.from(_cachedAddresses!);
+    }
+    if (_diskHydrated && _cachedAddresses != null) {
+      return List<Address>.from(_cachedAddresses!);
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_diskCacheKey);
+      _diskHydrated = true;
+      if (raw == null || raw.isEmpty) return const [];
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const [];
+      final listRaw = decoded['addresses'];
+      if (listRaw is! List) return const [];
+      final parsed = listRaw
+          .whereType<Map>()
+          .map((m) => Address.fromJson(Map<String, dynamic>.from(m)))
+          .toList();
+      _cachedAddresses = parsed;
+      final fetchedAtRaw = decoded['fetchedAt']?.toString();
+      _addressesFetchedAt =
+          fetchedAtRaw != null ? DateTime.tryParse(fetchedAtRaw) : null;
+      return List<Address>.from(parsed);
+    } catch (_) {
+      _diskHydrated = true;
+      return const [];
+    }
+  }
+
+  /// Fast default for checkout: memory → disk → null (never waits on API).
+  Future<Address?> getCachedDefaultAddress() async {
+    final mem = peekDefaultAddress();
+    if (mem != null) return mem;
+    final disk = await hydrateFromDisk();
+    return _pickDefault(disk);
   }
 
   // ---------- Core helpers (Firebase auth for NestJS FirebaseAuthGuard) ----------
@@ -145,14 +229,26 @@ class AddressService {
     bool forceRefresh = false,
     bool allowCache = true,
   }) async {
-    // Return cached value when allowed and still fresh
+    // Return shared memory cache when allowed and still fresh
     if (!forceRefresh &&
         allowCache &&
         _cachedAddresses != null &&
         _addressesFetchedAt != null) {
       final age = DateTime.now().difference(_addressesFetchedAt!);
       if (age <= _addressesCacheTtl) {
-        return _cachedAddresses!;
+        return List<Address>.from(_cachedAddresses!);
+      }
+    }
+
+    // Stale/empty memory: try disk before network so callers can paint faster
+    // when they call hydrateFromDisk separately; still fetch network below.
+    if (!forceRefresh && allowCache && _cachedAddresses == null) {
+      final disk = await hydrateFromDisk();
+      if (disk.isNotEmpty &&
+          _addressesFetchedAt != null &&
+          DateTime.now().difference(_addressesFetchedAt!) <=
+              _addressesCacheTtl) {
+        return disk;
       }
     }
 
@@ -174,9 +270,10 @@ class AddressService {
         .map<Address>((m) => Address.fromJson(m))
         .toList();
 
-    // Cache a defensive copy
+    // Shared memory + disk cache
     _cachedAddresses = List<Address>.from(parsed);
     _addressesFetchedAt = DateTime.now();
+    unawaited(_persistDiskCache(parsed));
 
     return parsed;
   }

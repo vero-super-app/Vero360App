@@ -20,40 +20,27 @@ class FoodService {
     double radiusKm = 30,
   }) async {
     try {
-      final params = <String, String>{'category': 'food'};
-      if (latitude != null && longitude != null) {
-        params['lat'] = latitude.toString();
-        params['lng'] = longitude.toString();
-        params['radiusKm'] = radiusKm.toString();
-      }
+      // Kick API + both Firestore sources in parallel so images can paint sooner.
+      final apiFuture = _fetchMarketplaceApi(
+        latitude: latitude,
+        longitude: longitude,
+        radiusKm: radiusKm,
+      );
+      final fsFuture = _fetchFirestoreFoodListings();
+      final menuFuture = _fetchFirestoreFoodMenuItems();
 
-      final uri = ApiConfig.endpoint('/marketplace').replace(
-        queryParameters: params,
+      final results = await Future.wait([
+        apiFuture,
+        fsFuture,
+        menuFuture,
+      ]);
+
+      final merged = _mergeFoodLists(
+        _mergeFoodLists(results[0], results[1]),
+        results[2],
       );
 
-      final res = await http.get(uri).timeout(const Duration(seconds: 12));
-
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        throw const ApiException(message: 'Could not load food items.');
-      }
-
-      final decoded = jsonDecode(res.body);
-      final List list = decoded is Map && decoded['data'] is List
-          ? decoded['data']
-          : decoded is List
-              ? decoded
-              : const [];
-
-      final fromApi = list.map<FoodModel>((row) {
-        return FoodModel.fromJson(_adaptMarketplaceToFoodJson(
-          Map<String, dynamic>.from(row as Map),
-        ));
-      }).toList();
-
-      final fromFs = await _fetchFirestoreFoodListings();
-      final merged = _mergeFoodLists(fromApi, fromFs);
-
-      return _applyRadiusFilter(
+      return prioritizeNearUser(
         merged,
         latitude: latitude,
         longitude: longitude,
@@ -64,6 +51,42 @@ class FoodService {
         message: 'Unable to load food items. Please try again.',
       );
     }
+  }
+
+  Future<List<FoodModel>> _fetchMarketplaceApi({
+    double? latitude,
+    double? longitude,
+    double radiusKm = 30,
+  }) async {
+    final params = <String, String>{'category': 'food'};
+    if (latitude != null && longitude != null) {
+      params['lat'] = latitude.toString();
+      params['lng'] = longitude.toString();
+      params['radiusKm'] = radiusKm.toString();
+    }
+
+    final uri = ApiConfig.endpoint('/marketplace').replace(
+      queryParameters: params,
+    );
+
+    final res = await http.get(uri).timeout(const Duration(seconds: 10));
+
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw const ApiException(message: 'Could not load food items.');
+    }
+
+    final decoded = jsonDecode(res.body);
+    final List list = decoded is Map && decoded['data'] is List
+        ? decoded['data']
+        : decoded is List
+            ? decoded
+            : const [];
+
+    return list.map<FoodModel>((row) {
+      return FoodModel.fromJson(_adaptMarketplaceToFoodJson(
+        Map<String, dynamic>.from(row as Map),
+      ));
+    }).toList();
   }
 
   /// Extra food rows from Firestore (legacy / fallback postings).
@@ -84,8 +107,8 @@ class FoodService {
         final price = (data['price'] is num)
             ? (data['price'] as num).toDouble()
             : double.tryParse('${data['price']}') ?? 0.0;
-        final img = '${data['image'] ?? ''}';
-        final seller = '${data['merchantName'] ?? 'Local kitchen'}';
+        final img = _pickImageUrl(data);
+        final seller = '${data['merchantName'] ?? data['businessName'] ?? 'Local kitchen'}';
         double? la;
         double? lo;
         final rawLa = data['latitude'];
@@ -99,6 +122,7 @@ class FoodService {
         final listingLoc = _listingLocationFromRaw(
           Map<String, dynamic>.from(data),
         );
+        final gallery = _pickGallery(data);
         out.add(FoodModel(
           id: doc.id.hashCode.abs() % 2000000000,
           FoodName: name,
@@ -110,6 +134,7 @@ class FoodService {
           latitude: la,
           longitude: lo,
           listingLocation: listingLoc,
+          gallery: gallery,
           merchantId: (mid != null && mid.isNotEmpty) ? mid : null,
           firestoreListingId: doc.id,
         ));
@@ -118,6 +143,79 @@ class FoodService {
     } catch (_) {
       return [];
     }
+  }
+
+  /// Merchant kitchen menu (posted via food dashboard → `food_menu_items`).
+  Future<List<FoodModel>> _fetchFirestoreFoodMenuItems() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('food_menu_items')
+          .limit(100)
+          .get();
+
+      final out = <FoodModel>[];
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        if (data['isAvailable'] == false) continue;
+        final name = '${data['name'] ?? ''}'.trim();
+        if (name.isEmpty) continue;
+        final price = (data['price'] is num)
+            ? (data['price'] as num).toDouble()
+            : double.tryParse('${data['price']}') ?? 0.0;
+        final img = _pickImageUrl(data);
+        final seller =
+            '${data['businessName'] ?? data['merchantName'] ?? 'Local kitchen'}';
+        final mid = data['merchantId']?.toString().trim();
+        out.add(FoodModel(
+          id: doc.id.hashCode.abs() % 2000000000,
+          FoodName: name,
+          FoodImage: img,
+          RestrauntName: seller,
+          price: price,
+          description: data['description']?.toString(),
+          category: 'food',
+          gallery: img.isEmpty ? const [] : [img],
+          merchantId: (mid != null && mid.isNotEmpty) ? mid : null,
+          firestoreListingId: doc.id,
+        ));
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static String _pickImageUrl(Map<String, dynamic> data) {
+    for (final key in [
+      'image',
+      'imageUrl',
+      'FoodImage',
+      'photo',
+      'picture',
+      'coverImage',
+      'coverUrl',
+    ]) {
+      final s = '${data[key] ?? ''}'.trim();
+      if (s.isNotEmpty) return s;
+    }
+    final gallery = _pickGallery(data);
+    return gallery.isNotEmpty ? gallery.first : '';
+  }
+
+  static List<String> _pickGallery(Map<String, dynamic> data) {
+    final out = <String>[];
+    void addList(dynamic raw) {
+      if (raw is! List) return;
+      for (final e in raw) {
+        final s = '$e'.trim();
+        if (s.isNotEmpty && !out.contains(s)) out.add(s);
+      }
+    }
+
+    addList(data['gallery']);
+    addList(data['galleryUrls']);
+    addList(data['images']);
+    return out;
   }
 
   List<FoodModel> _mergeFoodLists(List<FoodModel> a, List<FoodModel> b) {
@@ -132,22 +230,27 @@ class FoodService {
     return out;
   }
 
-  List<FoodModel> _applyRadiusFilter(
+  /// Nearest dishes first. In-radius kitchens stay ahead of far ones.
+  static List<FoodModel> prioritizeNearUser(
     List<FoodModel> items, {
     double? latitude,
     double? longitude,
     double radiusKm = 30,
   }) {
-    if (latitude == null || longitude == null) return items;
-    final withCoords = items
-        .where((f) => f.latitude != null && f.longitude != null)
-        .toList();
-    if (withCoords.isEmpty) return items;
+    if (latitude == null || longitude == null || items.isEmpty) {
+      return List<FoodModel>.from(items);
+    }
 
     final r = radiusKm.clamp(1.0, 200.0);
     final inRadius = <FoodModel>[];
+    final noCoords = <FoodModel>[];
     final outRadius = <FoodModel>[];
-    for (final f in withCoords) {
+
+    for (final f in items) {
+      if (f.latitude == null || f.longitude == null) {
+        noCoords.add(f);
+        continue;
+      }
       final d = distanceKm(latitude, longitude, f.latitude!, f.longitude!);
       if (d != null && d <= r) {
         inRadius.add(f);
@@ -155,18 +258,45 @@ class FoodService {
         outRadius.add(f);
       }
     }
-    final noCoords = items
-        .where((f) => f.latitude == null || f.longitude == null)
-        .toList();
 
-    if (inRadius.isEmpty) return items;
+    int byDistance(FoodModel a, FoodModel b) {
+      final da = distanceKm(latitude, longitude, a.latitude!, a.longitude!) ??
+          double.infinity;
+      final db = distanceKm(latitude, longitude, b.latitude!, b.longitude!) ??
+          double.infinity;
+      return da.compareTo(db);
+    }
 
-    inRadius.sort((a, b) {
+    inRadius.sort(byDistance);
+    outRadius.sort(byDistance);
+
+    // Local food first; far kitchens only after nearby + unknown-coords.
+    if (inRadius.isNotEmpty) {
+      return [...inRadius, ...noCoords, ...outRadius];
+    }
+    return [...outRadius, ...noCoords];
+  }
+
+  /// Items within [radiusKm] of the user (empty if none / no location).
+  static List<FoodModel> filterWithinRadius(
+    List<FoodModel> items, {
+    required double latitude,
+    required double longitude,
+    double radiusKm = 25,
+  }) {
+    final r = radiusKm.clamp(1.0, 200.0);
+    final out = <FoodModel>[];
+    for (final f in items) {
+      if (f.latitude == null || f.longitude == null) continue;
+      final d = distanceKm(latitude, longitude, f.latitude!, f.longitude!);
+      if (d != null && d <= r) out.add(f);
+    }
+    out.sort((a, b) {
       final da = distanceKm(latitude, longitude, a.latitude!, a.longitude!)!;
       final db = distanceKm(latitude, longitude, b.latitude!, b.longitude!)!;
       return da.compareTo(db);
     });
-    return [...inRadius, ...noCoords, ...outRadius];
+    return out;
   }
 
   /// Haversine distance in km (Earth radius 6371 km).
@@ -351,16 +481,48 @@ class FoodService {
 
     final listingLoc = _listingLocationFromRaw(raw);
 
+    final gallery = <String>[];
+    void addGallery(dynamic rawGal) {
+      if (rawGal is! List) return;
+      for (final e in rawGal) {
+        final s = e.toString().trim();
+        if (s.isNotEmpty && !gallery.contains(s)) gallery.add(s);
+      }
+    }
+
+    addGallery(raw['gallery']);
+    addGallery(raw['galleryUrls']);
+    addGallery(raw['images']);
+
+    String cover = '';
+    for (final key in [
+      'image',
+      'imageUrl',
+      'FoodImage',
+      'photo',
+      'picture',
+      'coverImage',
+      'coverUrl',
+    ]) {
+      final v = s(raw[key]).trim();
+      if (v.isNotEmpty) {
+        cover = v;
+        break;
+      }
+    }
+    if (cover.isEmpty && gallery.isNotEmpty) cover = gallery.first;
+
     return {
       'id': int.tryParse(raw['id']?.toString() ?? '') ?? 0,
       'FoodName': s(raw['name']),
-      'FoodImage': s(raw['image']),
+      'FoodImage': cover,
       'RestrauntName': sellerName,
       'price': double.tryParse(raw['price']?.toString() ?? '0') ?? 0.0,
       'description': raw['description']?.toString(),
       'category': raw['category']?.toString(),
       'latitude': lat,
       'longitude': lng,
+      if (gallery.isNotEmpty) 'gallery': gallery,
       if (listingLoc != null) 'listingLocation': listingLoc,
       if (merchantKey != null) 'merchantId': merchantKey,
     };

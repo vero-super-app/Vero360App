@@ -557,114 +557,113 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
   // ---------------- create ----------------
   Future<void> _create() async {
-    // Hard guard — setState is async; without this, double-taps start two posts.
+    // Sync lock BEFORE any await/setState so double-taps cannot start two posts.
     if (_submitting) return;
+    _submitting = true;
+    if (mounted) setState(() {});
 
-    if (!_form.currentState!.validate()) return;
-    if (_cover == null) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please pick a cover photo',
-        isSuccess: false,
-        errorMessage: 'Photo required',
-      );
-      return;
-    }
-
-    if (_postsFoodWithoutShop) {
-      if (_myShop == null || _myShop!['id'] == null) {
+    try {
+      if (!_form.currentState!.validate()) return;
+      if (_cover == null) {
         ToastHelper.showCustomToast(
           context,
-          'Please sign in to post food.',
+          'Please pick a cover photo',
+          isSuccess: false,
+          errorMessage: 'Photo required',
+        );
+        return;
+      }
+
+      if (_postsFoodWithoutShop) {
+        if (_myShop == null || _myShop!['id'] == null) {
+          ToastHelper.showCustomToast(
+            context,
+            'Please sign in to post food.',
+            isSuccess: false,
+            errorMessage: 'Not signed in',
+          );
+          return;
+        }
+        if (_listingLat == null || _listingLng == null) {
+          ToastHelper.showCustomToast(
+            context,
+            'Food listings need your current GPS location. Tap the pin icon on the location field.',
+            isSuccess: false,
+            errorMessage: 'Location required',
+          );
+          return;
+        }
+      } else {
+        if (!_hasShop) {
+          ToastHelper.showCustomToast(
+            context,
+            'You need to open a shop before posting on Marketplace.',
+            isSuccess: false,
+            errorMessage: 'No shop',
+          );
+          return;
+        }
+        if (_myShop == null ||
+            _myShop!['id'] == null ||
+            _myShop!['businessName'] == null) {
+          ToastHelper.showCustomToast(
+            context,
+            'Unable to identify merchant information. Please check your shop profile.',
+            isSuccess: false,
+            errorMessage: 'Missing merchant info',
+          );
+          return;
+        }
+      }
+
+      if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
+        ToastHelper.showCustomToast(
+          context,
+          'Please fill all required fields',
+          isSuccess: false,
+          errorMessage: 'Validation',
+        );
+        return;
+      }
+
+      final blockReason = MarketplaceModeration.clientBlockReason(
+        title: _name.text,
+        description: _desc.text,
+      );
+      if (blockReason != null) {
+        ToastHelper.showCustomToast(
+          context,
+          blockReason,
+          isSuccess: false,
+          errorMessage: 'Not allowed',
+        );
+        return;
+      }
+
+      final stock = int.tryParse(_stock.text.trim());
+      if (_stock.text.trim().isEmpty || stock == null || stock < 1) {
+        ToastHelper.showCustomToast(
+          context,
+          'Enter how many items you have in stock (at least 1)',
+          isSuccess: false,
+          errorMessage: 'Validation',
+        );
+        return;
+      }
+      _stockQty = stock;
+
+      final firebaseUser = FirebaseAuth.instance.currentUser;
+      if (firebaseUser == null) {
+        ToastHelper.showCustomToast(
+          context,
+          'You must be signed in with Firebase to post. Use the same login '
+          '(email/Google) you use for the app, then try again.',
           isSuccess: false,
           errorMessage: 'Not signed in',
         );
         return;
       }
-      if (_listingLat == null || _listingLng == null) {
-        ToastHelper.showCustomToast(
-          context,
-          'Food listings need your current GPS location. Tap the pin icon on the location field.',
-          isSuccess: false,
-          errorMessage: 'Location required',
-        );
-        return;
-      }
-    } else {
-      if (!_hasShop) {
-        ToastHelper.showCustomToast(
-          context,
-          'You need to open a shop before posting on Marketplace.',
-          isSuccess: false,
-          errorMessage: 'No shop',
-        );
-        return;
-      }
-      if (_myShop == null ||
-          _myShop!['id'] == null ||
-          _myShop!['businessName'] == null) {
-        ToastHelper.showCustomToast(
-          context,
-          'Unable to identify merchant information. Please check your shop profile.',
-          isSuccess: false,
-          errorMessage: 'Missing merchant info',
-        );
-        return;
-      }
-    }
 
-    if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please fill all required fields',
-        isSuccess: false,
-        errorMessage: 'Validation',
-      );
-      return;
-    }
-
-    final blockReason = MarketplaceModeration.clientBlockReason(
-      title: _name.text,
-      description: _desc.text,
-    );
-    if (blockReason != null) {
-      ToastHelper.showCustomToast(
-        context,
-        blockReason,
-        isSuccess: false,
-        errorMessage: 'Not allowed',
-      );
-      return;
-    }
-
-    final stock = int.tryParse(_stock.text.trim());
-    if (_stock.text.trim().isEmpty || stock == null || stock < 1) {
-      ToastHelper.showCustomToast(
-        context,
-        'Enter how many items you have in stock (at least 1)',
-        isSuccess: false,
-        errorMessage: 'Validation',
-      );
-      return;
-    }
-    _stockQty = stock;
-
-    final firebaseUser = FirebaseAuth.instance.currentUser;
-    if (firebaseUser == null) {
-      ToastHelper.showCustomToast(
-        context,
-        'You must be signed in with Firebase to post. Use the same login '
-        '(email/Google) you use for the app, then try again.',
-        isSuccess: false,
-        errorMessage: 'Not signed in',
-      );
-      return;
-    }
-
-    // Lock UI before any await so a second tap cannot start another write.
-    setState(() => _submitting = true);
-
-    try {
       // Don't block the post on token refresh — run in background.
       unawaited(AuthHandler.refreshFirebaseTokenIfSignedIn());
 
@@ -1354,7 +1353,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
       child: Form(
             key: _form,
-            child: Column(
+            child: AbsorbPointer(
+              absorbing: _submitting,
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // Merchant info banner
@@ -1738,6 +1739,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   ),
                 ),
               ],
+            ),
             ),
           ),
       ),

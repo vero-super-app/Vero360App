@@ -2531,38 +2531,41 @@ class _MarketplaceMerchantDashboardState
 
   // ----------------- CREATE item -----------------
   Future<void> _create() async {
-    if (_cover == null) {
-      _toastErr('Please pick a cover photo');
-      return;
-    }
-    if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
-      _toastErr('Please fill all required fields');
-      return;
-    }
-
-    final stockRaw = _stock.text.trim();
-    final stock = int.tryParse(stockRaw);
-    if (stockRaw.isEmpty || stock == null || stock < 1) {
-      _toastErr('Enter how many items you have in stock (at least 1)');
-      return;
-    }
-    _stockQty = stock;
-
-    final blockReason = MarketplaceModeration.clientBlockReason(
-      title: _name.text,
-      description: _desc.text,
-    );
-    if (blockReason != null) {
-      _toastErr(blockReason);
-      return;
-    }
-
-    final user = _auth.currentUser;
-    await AuthHandler.refreshFirebaseTokenIfSignedIn();
-
-    setState(() => _submitting = true);
+    // Sync lock BEFORE any await so one tap cannot post twice on slow networks.
+    if (_submitting) return;
+    _submitting = true;
+    if (mounted) setState(() {});
 
     try {
+      if (_cover == null) {
+        _toastErr('Please pick a cover photo');
+        return;
+      }
+      if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
+        _toastErr('Please fill all required fields');
+        return;
+      }
+
+      final stockRaw = _stock.text.trim();
+      final stock = int.tryParse(stockRaw);
+      if (stockRaw.isEmpty || stock == null || stock < 1) {
+        _toastErr('Enter how many items you have in stock (at least 1)');
+        return;
+      }
+      _stockQty = stock;
+
+      final blockReason = MarketplaceModeration.clientBlockReason(
+        title: _name.text,
+        description: _desc.text,
+      );
+      if (blockReason != null) {
+        _toastErr(blockReason);
+        return;
+      }
+
+      final user = _auth.currentUser;
+      unawaited(AuthHandler.refreshFirebaseTokenIfSignedIn());
+
       final firebaseUid = user?.uid ?? _uid;
       if (firebaseUid.trim().isEmpty) {
         _toastErr('Missing user id — sign in and try again.');
@@ -4545,7 +4548,9 @@ class _MarketplaceMerchantDashboardState
         ),
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Column(
+          child: AbsorbPointer(
+            absorbing: _submitting,
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('Add New Item',
@@ -4815,13 +4820,14 @@ class _MarketplaceMerchantDashboardState
                           child: CircularProgressIndicator(
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.upload_rounded),
-                  label: const Text(
-                    'Post on Marketplace',
-                    style: TextStyle(fontWeight: FontWeight.w900),
+                  label: Text(
+                    _submitting ? 'Posting…' : 'Post on Marketplace',
+                    style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                 ),
               ),
             ],
+            ),
           ),
         ),
       ),

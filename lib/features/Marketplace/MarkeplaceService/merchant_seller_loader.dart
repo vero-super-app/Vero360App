@@ -52,15 +52,24 @@ class MerchantSellerLoader {
   MerchantSellerLoader._();
 
   static const String _kHoursPrefsPrefix = 'merchant_opening_hours_v1_';
+  static const String _kDaysPrefsPrefix = 'merchant_opening_days_v1_';
 
   /// Instant OPEN/CLOSED: merchantId → openingHours (e.g. `08:00–17:00`).
   static final Map<String, String> _openingHoursByMerchantId = {};
+  /// merchantId → weekday ints (1=Mon … 7=Sun). Empty/missing = every day.
+  static final Map<String, List<int>> _openingDaysByMerchantId = {};
 
   static String? peekOpeningHours(String? merchantId) {
     final id = (merchantId ?? '').trim();
     if (id.isEmpty) return null;
     final h = _openingHoursByMerchantId[id];
     return (h == null || h.isEmpty) ? null : h;
+  }
+
+  static List<int>? peekOpeningDays(String? merchantId) {
+    final id = (merchantId ?? '').trim();
+    if (id.isEmpty) return null;
+    return _openingDaysByMerchantId[id];
   }
 
   static void cacheOpeningHours(String? merchantId, String? hours) {
@@ -72,6 +81,80 @@ class MerchantSellerLoader {
     SharedPreferences.getInstance().then((p) {
       p.setString('$_kHoursPrefsPrefix$id', h);
     }).catchError((_) {});
+  }
+
+  static void cacheOpeningDays(String? merchantId, List<int>? days) {
+    final id = (merchantId ?? '').trim();
+    if (id.isEmpty || days == null) return;
+    final cleaned = days.where((d) => d >= 1 && d <= 7).toSet().toList()
+      ..sort();
+    if (cleaned.isEmpty) return;
+    _openingDaysByMerchantId[id] = cleaned;
+    SharedPreferences.getInstance().then((p) {
+      p.setString('$_kDaysPrefsPrefix$id', cleaned.join(','));
+    }).catchError((_) {});
+  }
+
+  static Future<List<int>?> peekOpeningDaysPersisted(String? merchantId) async {
+    final id = (merchantId ?? '').trim();
+    if (id.isEmpty) return null;
+    final mem = peekOpeningDays(id);
+    if (mem != null && mem.isNotEmpty) return mem;
+    try {
+      final p = await SharedPreferences.getInstance();
+      final raw = (p.getString('$_kDaysPrefsPrefix$id') ?? '').trim();
+      if (raw.isEmpty) return null;
+      final days = <int>[];
+      for (final part in raw.split(',')) {
+        final n = int.tryParse(part.trim());
+        if (n != null && n >= 1 && n <= 7) days.add(n);
+      }
+      if (days.isEmpty) return null;
+      days.sort();
+      _openingDaysByMerchantId[id] = days;
+      return days;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Fresh hours + days from Firestore (cache-first, then server).
+  /// Use on product details so OPEN/CLOSED updates immediately after merchant saves.
+  static Future<({String? hours, List<int> days})> prefetchShopSchedule(
+    String? merchantId, {
+    List<String?> extraIds = const [],
+  }) async {
+    final candidates = <String>{
+      if ((merchantId ?? '').trim().isNotEmpty) merchantId!.trim(),
+      for (final e in extraIds)
+        if ((e ?? '').trim().isNotEmpty) e!.trim(),
+    };
+
+    String? hours;
+    List<int> days = const [];
+
+    for (final id in candidates) {
+      hours ??= peekOpeningHours(id);
+      days = peekOpeningDays(id) ?? days;
+    }
+
+    for (final id in candidates) {
+      hours ??= await peekOpeningHoursPersisted(id);
+      if (days.isEmpty) {
+        days = await peekOpeningDaysPersisted(id) ?? days;
+      }
+    }
+
+    for (final id in candidates) {
+      if (!_looksLikeFirebaseUid(id)) continue;
+      final h = await _fetchOpeningHoursDoc(id, preferServer: true);
+      if (h != null && h.isNotEmpty) hours = h;
+      final d = peekOpeningDays(id);
+      if (d != null && d.isNotEmpty) days = d;
+      if (hours != null && hours.isNotEmpty) break;
+    }
+
+    return (hours: hours, days: days);
   }
 
   static Future<String?> peekOpeningHoursPersisted(String? merchantId) async {
@@ -120,24 +203,39 @@ class MerchantSellerLoader {
     return null;
   }
 
-  static Future<String?> _fetchOpeningHoursDoc(String id) async {
+  static Future<String?> _fetchOpeningHoursDoc(
+    String id, {
+    bool preferServer = false,
+  }) async {
     Future<String?> fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) async {
       if (!doc.exists) return null;
-      final h = _trimmed(doc.data()?['openingHours']);
+      final data = doc.data();
+      final h = _trimmed(data?['openingHours']);
       if (h != null) {
         cacheOpeningHours(id, h);
+      }
+      final daysRaw = data?['openingDays'];
+      if (daysRaw is List) {
+        final days = <int>[];
+        for (final e in daysRaw) {
+          final n = e is int ? e : int.tryParse('$e');
+          if (n != null && n >= 1 && n <= 7) days.add(n);
+        }
+        if (days.isNotEmpty) cacheOpeningDays(id, days);
       }
       return h;
     }
 
-    try {
-      final cacheDoc = await FirebaseFirestore.instance
-          .collection('marketplace_merchants')
-          .doc(id)
-          .get(const GetOptions(source: Source.cache));
-      final fromCache = await fromDoc(cacheDoc);
-      if (fromCache != null) return fromCache;
-    } catch (_) {}
+    if (!preferServer) {
+      try {
+        final cacheDoc = await FirebaseFirestore.instance
+            .collection('marketplace_merchants')
+            .doc(id)
+            .get(const GetOptions(source: Source.cache));
+        final fromCache = await fromDoc(cacheDoc);
+        if (fromCache != null) return fromCache;
+      } catch (_) {}
+    }
 
     try {
       final doc = await FirebaseFirestore.instance

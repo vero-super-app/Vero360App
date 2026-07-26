@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/Home/merchant_story_model.dart';
@@ -14,12 +16,23 @@ class StorySection extends StatefulWidget {
 class _StorySectionState extends State<StorySection> {
   static const _ringSize = 64.0;
   final StoryService _service = StoryService();
+  late final Stream<List<MerchantStoryGroup>> _stream;
+  List<MerchantStoryGroup>? _lastGroups;
+
+  @override
+  void initState() {
+    super.initState();
+    final viewerId = FirebaseAuth.instance.currentUser?.uid;
+    // One stream for this State — avoid resubscribe flashes on parent rebuilds.
+    _stream = _service.getActiveStoriesStream(viewerId: viewerId);
+    _lastGroups = StoryService.lastActiveGroups;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final viewerId = FirebaseAuth.instance.currentUser?.uid;
     return StreamBuilder<List<MerchantStoryGroup>>(
-      stream: _service.getActiveStoriesStream(viewerId: viewerId),
+      stream: _stream,
+      initialData: _lastGroups,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Padding(
@@ -32,7 +45,13 @@ class _StorySectionState extends State<StorySection> {
             ),
           );
         }
-        if (!snapshot.hasData) {
+
+        final groups = snapshot.data ?? _lastGroups;
+        if (groups != null && groups.isNotEmpty) {
+          _lastGroups = groups;
+        }
+
+        if (groups == null) {
           return SizedBox(
             height: _ringSize + 44,
             child: ListView.builder(
@@ -67,7 +86,7 @@ class _StorySectionState extends State<StorySection> {
             ),
           );
         }
-        final groups = snapshot.data!;
+
         if (groups.isEmpty) {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
@@ -79,6 +98,7 @@ class _StorySectionState extends State<StorySection> {
             ),
           );
         }
+
         return SizedBox(
           height: _ringSize + 44,
           child: ListView.builder(

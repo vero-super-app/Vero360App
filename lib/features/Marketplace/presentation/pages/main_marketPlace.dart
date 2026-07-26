@@ -562,11 +562,23 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null || uid.isEmpty) return {};
     try {
-      final qs = await _firestore.collectionGroup('followers').where(FieldPath.documentId, isEqualTo: uid).limit(300).get();
+      // User-scoped list — no collection-group index required.
+      final qs = await _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('followed_merchants')
+          .limit(300)
+          .get();
       final out = <String>{};
-      for (final doc in qs.docs) { final merchantRef = doc.reference.parent.parent; if (merchantRef == null) continue; final id = merchantRef.id.trim(); if (id.isNotEmpty) out.add(id); }
+      for (final doc in qs.docs) {
+        final id = doc.id.trim();
+        if (id.isNotEmpty) out.add(id);
+      }
       return out;
-    } catch (e) { if (kDebugMode) debugPrint('followed merchants: $e'); return {}; }
+    } catch (e) {
+      if (kDebugMode) debugPrint('followed merchants: $e');
+      return {};
+    }
   }
 
   Future<Set<String>> _getFollowedMerchantIdsCached() async {

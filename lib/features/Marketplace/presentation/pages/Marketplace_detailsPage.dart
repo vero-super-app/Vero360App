@@ -154,6 +154,8 @@ class _DetailsPageState extends State<DetailsPage> {
 
   /// Instant shop-hours for OPEN/CLOSED (independent of full seller load).
   String? _openingHours;
+  List<int> _openingDays = const [];
+  Timer? _shopStatusTicker;
 
   @override
   void initState() {
@@ -174,6 +176,9 @@ class _DetailsPageState extends State<DetailsPage> {
     });
     _prefetchSellerChat();
     _fToast.init(context);
+    _shopStatusTicker = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
 
     final it = widget.item;
     final images = it.gallery.where((u) => u.toString().trim().isNotEmpty).toList();
@@ -212,6 +217,7 @@ class _DetailsPageState extends State<DetailsPage> {
 
   @override
   void dispose() {
+    _shopStatusTicker?.cancel();
     _autoTimer?.cancel();
     _pc.dispose();
     _commentController.dispose();
@@ -244,6 +250,11 @@ class _DetailsPageState extends State<DetailsPage> {
       MerchantSellerLoader.cacheOpeningHours(mid, seed);
       MerchantSellerLoader.cacheOpeningHours(sid, seed);
     }
+    final days = MerchantSellerLoader.peekOpeningDays(mid) ??
+        MerchantSellerLoader.peekOpeningDays(sid);
+    if (days != null && days.isNotEmpty) {
+      _openingDays = days;
+    }
     unawaited(_prefetchOpeningHoursOnly());
   }
 
@@ -253,20 +264,55 @@ class _DetailsPageState extends State<DetailsPage> {
     final sid = (i.sellerUserId ?? '').trim();
 
     // Disk first (very fast).
-    final disk = await MerchantSellerLoader.peekOpeningHoursPersisted(mid) ??
+    final diskHours = await MerchantSellerLoader.peekOpeningHoursPersisted(mid) ??
         await MerchantSellerLoader.peekOpeningHoursPersisted(sid);
+    final diskDays = await MerchantSellerLoader.peekOpeningDaysPersisted(mid) ??
+        await MerchantSellerLoader.peekOpeningDaysPersisted(sid);
     if (!mounted) return;
-    if (disk != null && disk.isNotEmpty && _openingHours != disk) {
-      setState(() => _openingHours = disk);
+    var dirty = false;
+    if (diskHours != null &&
+        diskHours.isNotEmpty &&
+        _openingHours != diskHours) {
+      _openingHours = diskHours;
+      dirty = true;
     }
+    if (diskDays != null &&
+        diskDays.isNotEmpty &&
+        !_sameDays(_openingDays, diskDays)) {
+      _openingDays = diskDays;
+      dirty = true;
+    }
+    if (dirty) setState(() {});
 
-    final hours = await MerchantSellerLoader.prefetchOpeningHours(
+    // Always refresh from server so OPEN/CLOSED matches latest merchant edit.
+    final schedule = await MerchantSellerLoader.prefetchShopSchedule(
       mid.isNotEmpty ? mid : sid,
       extraIds: [sid, mid, i.serviceProviderId],
     );
-    if (!mounted || hours == null || hours.isEmpty) return;
-    if (_openingHours == hours) return;
-    setState(() => _openingHours = hours);
+    if (!mounted) return;
+    final hours = (schedule.hours ?? '').trim();
+    final days = schedule.days;
+    dirty = false;
+    if (hours.isNotEmpty && _openingHours != hours) {
+      _openingHours = hours;
+      dirty = true;
+    }
+    if (days.isNotEmpty && !_sameDays(_openingDays, days)) {
+      _openingDays = days;
+      dirty = true;
+    }
+    // Force rebuild even when equal so chip re-evaluates open-now.
+    if (dirty || hours.isNotEmpty || days.isNotEmpty) {
+      setState(() {});
+    }
+  }
+
+  bool _sameDays(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   String? get _resolvedOpeningHours {
@@ -278,6 +324,13 @@ class _DetailsPageState extends State<DetailsPage> {
     if (fromItem.isNotEmpty) return fromItem;
     return MerchantSellerLoader.peekOpeningHours(widget.item.merchantId) ??
         MerchantSellerLoader.peekOpeningHours(widget.item.sellerUserId);
+  }
+
+  List<int> get _resolvedOpeningDays {
+    if (_openingDays.isNotEmpty) return _openingDays;
+    return MerchantSellerLoader.peekOpeningDays(widget.item.merchantId) ??
+        MerchantSellerLoader.peekOpeningDays(widget.item.sellerUserId) ??
+        const [];
   }
 
   Future<_SellerInfo> _loadSeller() async {
@@ -393,9 +446,16 @@ class _DetailsPageState extends State<DetailsPage> {
     return TimeOfDay(hour: h, minute: m);
   }
 
-  bool _isShopOpenFromHours(String? openingHours) {
+  bool _isShopOpenFromHours(
+    String? openingHours, [
+    List<int> openingDays = const [],
+  ]) {
     final s = (openingHours ?? '').trim();
     if (s.isEmpty) return false;
+    if (openingDays.isNotEmpty &&
+        !openingDays.contains(DateTime.now().weekday)) {
+      return false;
+    }
     final parts = s.replaceAll('–', '-').replaceAll('—', '-').split('-');
     if (parts.length != 2) return false;
     final open = _parseShopTime(parts[0]);
@@ -412,8 +472,11 @@ class _DetailsPageState extends State<DetailsPage> {
     return nowM >= openM || nowM < closeM;
   }
 
-  Widget _shopStatusChip(String? openingHours) {
-    final open = _isShopOpenFromHours(openingHours);
+  Widget _shopStatusChip(String? openingHours, [List<int>? openingDays]) {
+    final open = _isShopOpenFromHours(
+      openingHours,
+      openingDays ?? _resolvedOpeningDays,
+    );
     final fg = open ? Colors.green.shade700 : Colors.red.shade700;
     final bg = open ? Colors.green.shade50 : Colors.red.shade50;
     return Chip(
@@ -519,6 +582,7 @@ class _DetailsPageState extends State<DetailsPage> {
     required bool hasMerchant,
     String? businessName,
     String? openingHours,
+    List<int> openingDays = const [],
     double? rating,
     int reviewCount = 0,
     List<MerchantReview> recentReviews = const [],
@@ -529,7 +593,8 @@ class _DetailsPageState extends State<DetailsPage> {
     const ink = Color(0xFF101010);
     const muted = Color(0xFF6B7280);
     const border = Color(0xFFECEEF2);
-    final shopOpen = _isShopOpenFromHours(openingHours);
+    final days = openingDays.isNotEmpty ? openingDays : _resolvedOpeningDays;
+    final shopOpen = _isShopOpenFromHours(openingHours, days);
     final statusLabel = shopOpen ? 'OPEN' : 'CLOSED';
     final statusColor =
         shopOpen ? Colors.green.shade700 : Colors.red.shade700;
@@ -595,7 +660,7 @@ class _DetailsPageState extends State<DetailsPage> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                _shopStatusChip(openingHours),
+                _shopStatusChip(openingHours, days),
               ],
             ),
             const SizedBox(height: 14),
@@ -1198,11 +1263,13 @@ class _DetailsPageState extends State<DetailsPage> {
     required MarketplaceDetailModel item,
     required String merchantDisplayName,
     String? openingHours,
+    List<int> openingDays = const [],
   }) {
     final price =
         'MWK ${NumberFormat('#,###', 'en').format(item.price.truncate())}';
     final category = (item.category ?? '').trim();
-    final shopOpen = _isShopOpenFromHours(openingHours);
+    final days = openingDays.isNotEmpty ? openingDays : _resolvedOpeningDays;
+    final shopOpen = _isShopOpenFromHours(openingHours, days);
     final statusFg = shopOpen ? Colors.green.shade700 : Colors.red.shade700;
     final statusBg = shopOpen ? Colors.green.shade50 : Colors.red.shade50;
 
@@ -1579,6 +1646,7 @@ class _DetailsPageState extends State<DetailsPage> {
     final s = _seller;
     final businessName = s?.businessName ?? item.sellerBusinessName;
     final openingHours = _resolvedOpeningHours;
+    final openingDays = _resolvedOpeningDays;
     final rating = s?.rating ?? item.sellerRating;
     final reviewCount = s?.reviewCount ?? 0;
     final recentReviews = s?.recentReviews ?? const <MerchantReview>[];
@@ -1609,6 +1677,7 @@ class _DetailsPageState extends State<DetailsPage> {
             item: item,
             merchantDisplayName: merchantDisplayName,
             openingHours: openingHours,
+            openingDays: openingDays,
           ),
           const SizedBox(height: 12),
           _buildChatButton(item),
@@ -1621,6 +1690,7 @@ class _DetailsPageState extends State<DetailsPage> {
             hasMerchant: hasMerchant,
             businessName: businessName,
             openingHours: openingHours,
+            openingDays: openingDays,
             rating: rating,
             reviewCount: reviewCount,
             recentReviews: recentReviews,

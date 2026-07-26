@@ -244,6 +244,8 @@ class _MarketplaceMerchantDashboardState
 
   TimeOfDay? _openTime;
   TimeOfDay? _closeTime;
+  /// Dart [DateTime.weekday] values: 1 = Mon … 7 = Sun. Empty = every day.
+  Set<int> _openDays = {};
 
   bool _loadingMe = false;
   bool _profileUploading = false;
@@ -258,6 +260,7 @@ class _MarketplaceMerchantDashboardState
   static const String _kMerchantGuideShowOnNextOpenKey = 'marketplace_merchant_guide_show_on_next_open';
   static const String _kBusinessDescPrefKey = 'merchant_business_description';
   static const String _kShopHoursPrefKey = 'merchant_shop_opening_hours';
+  static const String _kShopDaysPrefKey = 'merchant_shop_opening_days';
   static const int _kBusinessDescMaxLen = 120;
   bool _showMerchantGuide = false;
   int _merchantGuideStep = 0;
@@ -976,7 +979,12 @@ class _MarketplaceMerchantDashboardState
           .toString()
           .trim();
       final hoursVal = (data['openingHours'] ?? '').toString().trim();
-      if (phoneVal.isEmpty && picVal.isEmpty && descVal.isEmpty && hoursVal.isEmpty) {
+      final daysVal = data['openingDays'];
+      if (phoneVal.isEmpty &&
+          picVal.isEmpty &&
+          descVal.isEmpty &&
+          hoursVal.isEmpty &&
+          daysVal == null) {
         return;
       }
       final prefs = await SharedPreferences.getInstance();
@@ -991,6 +999,19 @@ class _MarketplaceMerchantDashboardState
       if (hoursVal.isNotEmpty) {
         await prefs.setString(_kShopHoursPrefKey, hoursVal);
       }
+      if (daysVal != null) {
+        final tmp = <int>{};
+        if (daysVal is List) {
+          for (final e in daysVal) {
+            final n = e is int ? e : int.tryParse('$e');
+            if (n != null && n >= 1 && n <= 7) tmp.add(n);
+          }
+        }
+        if (tmp.isNotEmpty) {
+          await prefs.setString(
+              _kShopDaysPrefKey, (tmp.toList()..sort()).join(','));
+        }
+      }
       if (!mounted) return;
       setState(() {
         if (phoneVal.isNotEmpty && _merchantPhone == 'No Phone') {
@@ -1004,6 +1025,9 @@ class _MarketplaceMerchantDashboardState
         }
         if (hoursVal.isNotEmpty) {
           _applyOpeningHoursString(hoursVal);
+        }
+        if (daysVal != null) {
+          _applyOpeningDays(daysVal);
         }
       });
       if (picVal.isNotEmpty) {
@@ -1113,16 +1137,31 @@ class _MarketplaceMerchantDashboardState
             .toString()
             .trim();
         final hours = (data['openingHours'] ?? '').toString().trim();
+        final days = data['openingDays'];
         if (desc.isNotEmpty && mounted) {
           setState(() => _businessDescription = desc);
           unawaited(SharedPreferences.getInstance().then((p) {
             p.setString(_kBusinessDescPrefKey, desc);
           }));
         }
-        if (hours.isNotEmpty && mounted) {
-          setState(() => _applyOpeningHoursString(hours));
+        if ((hours.isNotEmpty || days != null) && mounted) {
+          setState(() {
+            if (hours.isNotEmpty) _applyOpeningHoursString(hours);
+            if (days != null) _applyOpeningDays(days);
+          });
           unawaited(SharedPreferences.getInstance().then((p) {
-            p.setString(_kShopHoursPrefKey, hours);
+            if (hours.isNotEmpty) p.setString(_kShopHoursPrefKey, hours);
+            if (days is List) {
+              final tmp = <int>[];
+              for (final e in days) {
+                final n = e is int ? e : int.tryParse('$e');
+                if (n != null && n >= 1 && n <= 7) tmp.add(n);
+              }
+              if (tmp.isNotEmpty) {
+                tmp.sort();
+                p.setString(_kShopDaysPrefKey, tmp.join(','));
+              }
+            }
           }));
         }
       }
@@ -1262,6 +1301,7 @@ class _MarketplaceMerchantDashboardState
         prefs.getString('profilepicture') ?? _merchantProfileUrl;
     final desc = (prefs.getString(_kBusinessDescPrefKey) ?? '').trim();
     final hours = (prefs.getString(_kShopHoursPrefKey) ?? '').trim();
+    final daysRaw = (prefs.getString(_kShopDaysPrefKey) ?? '').trim();
     final localPath = await ProfilePhotoCache.peekLocalPath();
     if (!mounted) return;
     setState(() {
@@ -1270,6 +1310,7 @@ class _MarketplaceMerchantDashboardState
       _merchantProfileUrl = pic;
       if (desc.isNotEmpty) _businessDescription = desc;
       if (hours.isNotEmpty) _applyOpeningHoursString(hours);
+      if (daysRaw.isNotEmpty) _applyOpeningDays(daysRaw);
       _localPhotoPath = localPath;
     });
     // Warm/refresh disk cache in background so next open is instant.
@@ -1377,10 +1418,61 @@ class _MarketplaceMerchantDashboardState
     _closeTime = close;
   }
 
+  void _applyOpeningDays(dynamic raw) {
+    final next = <int>{};
+    if (raw is List) {
+      for (final e in raw) {
+        final n = e is int ? e : int.tryParse('$e');
+        if (n != null && n >= 1 && n <= 7) next.add(n);
+      }
+    } else if (raw is String && raw.trim().isNotEmpty) {
+      for (final part in raw.split(RegExp(r'[,;\s]+'))) {
+        final n = int.tryParse(part.trim());
+        if (n != null && n >= 1 && n <= 7) next.add(n);
+      }
+    }
+    _openDays = next;
+  }
+
+  static const _kDayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  String _formatOpenDaysLabel(Set<int> days) {
+    if (days.isEmpty || days.length == 7) return 'Every day';
+    final sorted = days.toList()..sort();
+    // Contiguous ranges → Mon–Fri style
+    final ranges = <String>[];
+    int start = sorted.first;
+    int prev = sorted.first;
+    for (var i = 1; i < sorted.length; i++) {
+      final d = sorted[i];
+      if (d == prev + 1) {
+        prev = d;
+        continue;
+      }
+      ranges.add(start == prev
+          ? _kDayLabels[start - 1]
+          : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
+      start = prev = d;
+    }
+    ranges.add(start == prev
+        ? _kDayLabels[start - 1]
+        : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
+    return ranges.join(', ');
+  }
+
+  String get _shopHoursSummary {
+    if (_openTime == null || _closeTime == null) return 'Set shop hours';
+    final times =
+        '${_formatShopTime(_openTime!)}–${_formatShopTime(_closeTime!)}';
+    return '${_formatOpenDaysLabel(_openDays)} · $times';
+  }
+
   bool get _isShopOpenNow {
     final open = _openTime;
     final close = _closeTime;
     if (open == null || close == null) return false;
+    final today = DateTime.now().weekday; // 1=Mon … 7=Sun
+    if (_openDays.isNotEmpty && !_openDays.contains(today)) return false;
     final now = TimeOfDay.now();
     final nowM = now.hour * 60 + now.minute;
     final openM = open.hour * 60 + open.minute;
@@ -1393,7 +1485,8 @@ class _MarketplaceMerchantDashboardState
   }
 
   Future<void> _editShopHours() async {
-    final result = await showModalBottomSheet<({TimeOfDay open, TimeOfDay close})>(
+    final result = await showModalBottomSheet<
+        ({TimeOfDay open, TimeOfDay close, Set<int> days})>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -1404,23 +1497,34 @@ class _MarketplaceMerchantDashboardState
       builder: (ctx) => _ShopHoursSheet(
         initialOpen: _openTime ?? const TimeOfDay(hour: 8, minute: 0),
         initialClose: _closeTime ?? const TimeOfDay(hour: 17, minute: 0),
+        initialDays: _openDays.isEmpty
+            ? {1, 2, 3, 4, 5, 6, 7}
+            : Set<int>.from(_openDays),
         brandColor: _brandOrange,
       ),
     );
     if (result == null || !mounted) return;
-    await _saveShopHours(result.open, result.close);
+    await _saveShopHours(result.open, result.close, result.days);
   }
 
-  Future<void> _saveShopHours(TimeOfDay open, TimeOfDay close) async {
+  Future<void> _saveShopHours(
+    TimeOfDay open,
+    TimeOfDay close,
+    Set<int> days,
+  ) async {
     final uid = (_auth.currentUser?.uid ?? _uid).trim();
     if (uid.isEmpty) {
       _toastErr('Please sign in again.');
       return;
     }
     final hours = '${_formatShopTime(open)}–${_formatShopTime(close)}';
+    final dayList = (days.isEmpty || days.length == 7)
+        ? <int>[1, 2, 3, 4, 5, 6, 7]
+        : (days.toList()..sort());
     try {
       final payload = <String, dynamic>{
         'openingHours': hours,
+        'openingDays': dayList,
         'updatedAt': FieldValue.serverTimestamp(),
       };
       await Future.wait([
@@ -1435,11 +1539,14 @@ class _MarketplaceMerchantDashboardState
       ]);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kShopHoursPrefKey, hours);
+      await prefs.setString(_kShopDaysPrefKey, dayList.join(','));
       MerchantSellerLoader.cacheOpeningHours(uid, hours);
+      MerchantSellerLoader.cacheOpeningDays(uid, dayList);
       if (!mounted) return;
       setState(() {
         _openTime = open;
         _closeTime = close;
+        _openDays = dayList.toSet();
       });
       _toastOk('Shop hours saved');
     } catch (e) {
@@ -1549,6 +1656,7 @@ class _MarketplaceMerchantDashboardState
         if (!dashboardData.containsKey('error')) {
           final merchant = dashboardData['merchant'];
 
+          if (!mounted) return;
           setState(() {
             // Recent sales come from real orders in _loadOrderStats(), not dashboard API
 
@@ -3675,9 +3783,7 @@ class _MarketplaceMerchantDashboardState
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
-                                (_openTime == null || _closeTime == null)
-                                    ? 'Set shop hours'
-                                    : '${_formatShopTime(_openTime!)}–${_formatShopTime(_closeTime!)}',
+                                _shopHoursSummary,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -5551,11 +5657,13 @@ class _ShopHoursSheet extends StatefulWidget {
   const _ShopHoursSheet({
     required this.initialOpen,
     required this.initialClose,
+    required this.initialDays,
     required this.brandColor,
   });
 
   final TimeOfDay initialOpen;
   final TimeOfDay initialClose;
+  final Set<int> initialDays;
   final Color brandColor;
 
   @override
@@ -5563,14 +5671,21 @@ class _ShopHoursSheet extends StatefulWidget {
 }
 
 class _ShopHoursSheetState extends State<_ShopHoursSheet> {
+  static const _labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
   late TimeOfDay _open;
   late TimeOfDay _close;
+  late Set<int> _days;
 
   @override
   void initState() {
     super.initState();
     _open = widget.initialOpen;
     _close = widget.initialClose;
+    _days = Set<int>.from(widget.initialDays);
+    if (_days.isEmpty) {
+      _days = {1, 2, 3, 4, 5, 6, 7};
+    }
   }
 
   String _fmt(TimeOfDay t) {
@@ -5587,6 +5702,16 @@ class _ShopHoursSheetState extends State<_ShopHoursSheet> {
   Future<void> _pickClose() async {
     final t = await showTimePicker(context: context, initialTime: _close);
     if (t != null) setState(() => _close = t);
+  }
+
+  void _toggleDay(int day) {
+    setState(() {
+      if (_days.contains(day)) {
+        if (_days.length > 1) _days.remove(day);
+      } else {
+        _days.add(day);
+      }
+    });
   }
 
   @override
@@ -5641,7 +5766,7 @@ class _ShopHoursSheetState extends State<_ShopHoursSheet> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Customers see OPEN or CLOSED on your shop based on these times.',
+              'Customers see OPEN or CLOSED based on these days and times.',
               style: TextStyle(
                 color: Colors.grey.shade700,
                 fontWeight: FontWeight.w600,
@@ -5649,6 +5774,57 @@ class _ShopHoursSheetState extends State<_ShopHoursSheet> {
               ),
             ),
             const SizedBox(height: 16),
+            const Text(
+              'Open days',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 1; i <= 7; i++)
+                  FilterChip(
+                    label: Text(
+                      _labels[i - 1],
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                        color: _days.contains(i)
+                            ? Colors.white
+                            : Colors.grey.shade800,
+                      ),
+                    ),
+                    selected: _days.contains(i),
+                    onSelected: (_) => _toggleDay(i),
+                    selectedColor: widget.brandColor,
+                    checkmarkColor: Colors.white,
+                    backgroundColor: const Color(0xFFF4F6FA),
+                    side: BorderSide(
+                      color: _days.contains(i)
+                          ? widget.brandColor
+                          : Colors.grey.shade300,
+                    ),
+                    showCheckmark: false,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => setState(() => _days = {1, 2, 3, 4, 5, 6, 7}),
+                child: Text(
+                  'Every day',
+                  style: TextStyle(
+                    color: widget.brandColor,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
             if (narrow) ...[
               openBtn,
               const SizedBox(height: 10),
@@ -5670,8 +5846,10 @@ class _ShopHoursSheetState extends State<_ShopHoursSheet> {
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              onPressed: () =>
-                  Navigator.pop(context, (open: _open, close: _close)),
+              onPressed: () => Navigator.pop(
+                context,
+                (open: _open, close: _close, days: Set<int>.from(_days)),
+              ),
               child: const Text(
                 'Save hours',
                 style: TextStyle(fontWeight: FontWeight.w800),

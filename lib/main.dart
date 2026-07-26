@@ -402,8 +402,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late final AppLinks _appLinks;
   StreamSubscription<Uri>? _sub;
 
-  // Which shell we’re currently showing
-  String _currentShell = 'customer';
+  /// Empty until first cached-role redirect. Prevents remounting the same shell
+  /// mid-session (which blinked Home / disposed merchant dashboards).
+  String _currentShell = '';
 
   bool _showBiometricLock = false;
   /// True after a successful unlock until the user truly backgrounds the app
@@ -537,15 +538,19 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final onboardingDone = prefs.getBool('onboarding_completed_v1') ?? false;
     if (!onboardingDone) return;
-    final role = (prefs.getString('user_role') ?? '').toLowerCase();
+    final role = (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
+        .toLowerCase();
     final email = prefs.getString('email') ?? '';
 
+    // First launch: _currentShell is '' so we push once. Later calls skip when
+    // already on the right shell (avoids Home blink / tab reset).
     if (role == 'merchant') {
-      await _pushMerchant(email);
+      if (_currentShell != 'merchant') await _pushMerchant(email);
     } else if (role == 'driver') {
-      _pushDriver(email);
-    } else if (role == 'customer') {
-      _pushCustomer(email);
+      if (_currentShell != 'driver') _pushDriver(email);
+    } else {
+      // customer, empty, or unknown — main customer shell
+      if (_currentShell != 'customer') _pushCustomer(email);
     }
   }
 
@@ -659,10 +664,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             return content;
           },
 
-          // ✅ Onboarding is independent and runs before main shell
+          // Splash until cached-role redirect replaces this route. Do NOT mount
+          // Bottomnavbar here — merchants would flash customer Home first.
           home: OnboardingGate(
             onCompleted: () => _onOnboardingGateCompletedHook?.call(),
-            child: const Bottomnavbar(email: ''),
+            child: const VeroLaunchSplash(
+              title: 'Opening…',
+              message: 'Loading your home…',
+              showSpinner: true,
+            ),
           ),
 
           // ✅ restrict named routes too
@@ -680,7 +690,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 return MaterialPageRoute(
                   builder: (_) => OnboardingGate(
                     onCompleted: () => _onOnboardingGateCompletedHook?.call(),
-                    child: const Bottomnavbar(email: ''),
+                    child: const VeroLaunchSplash(
+                      title: 'Opening…',
+                      message: 'Loading your home…',
+                      showSpinner: true,
+                    ),
                   ),
                 );
 

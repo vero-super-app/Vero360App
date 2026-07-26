@@ -51,6 +51,7 @@ class _MerchantShopHeaderCache {
   final String? phone;
   final String? status;
   final String? openingHours;
+  final List<int> openingDays;
   final String? businessDescription;
   final double? rating;
   final int reviewCount;
@@ -64,6 +65,7 @@ class _MerchantShopHeaderCache {
     required this.phone,
     required this.status,
     required this.openingHours,
+    this.openingDays = const [],
     required this.businessDescription,
     required this.rating,
     required this.reviewCount,
@@ -106,6 +108,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   MerchantReviewSummary? _cachedReviewSummary;
   String? _merchantStatus;
   String? _merchantOpeningHours;
+  List<int> _merchantOpeningDays = const [];
   String? _merchantProfileUrl;
   /// Resolved https URL when profile is gs:// or a storage path.
   String? _resolvedProfileHttpUrl;
@@ -518,6 +521,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       _merchantPhone = memHeader.phone;
       _merchantStatus = memHeader.status;
       _merchantOpeningHours = memHeader.openingHours;
+      _merchantOpeningDays = memHeader.openingDays;
       _merchantBusinessDescription = memHeader.businessDescription;
       _merchantRating = memHeader.rating;
       _merchantReviewCount = memHeader.reviewCount;
@@ -547,6 +551,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         _merchantOpeningHours = hours;
         _loadingHeader = false;
       }
+      final days = MerchantSellerLoader.peekOpeningDays(id);
+      if (days != null && days.isNotEmpty) {
+        _merchantOpeningDays = days;
+      }
     }
 
     _staysFuture = _loadMerchantStays();
@@ -572,6 +580,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       phone: _merchantPhone,
       status: _merchantStatus,
       openingHours: _merchantOpeningHours,
+      openingDays: List<int>.from(_merchantOpeningDays),
       businessDescription: _merchantBusinessDescription,
       rating: _merchantRating,
       reviewCount: _merchantReviewCount,
@@ -579,6 +588,17 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       backendId: _merchantBackendId,
       recentReviews: List<MerchantReview>.from(_recentReviews),
     );
+  }
+
+  List<int> _parseOpeningDays(dynamic raw) {
+    final out = <int>{};
+    if (raw is List) {
+      for (final e in raw) {
+        final n = e is int ? e : int.tryParse('$e');
+        if (n != null && n >= 1 && n <= 7) out.add(n);
+      }
+    }
+    return out.toList()..sort();
   }
 
   int? _parseBackendIdFromMap(Map<String, dynamic> data) {
@@ -1057,11 +1077,26 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     try {
       if (_following) {
         await followerRef.delete();
+        await _firestore
+            .collection('users')
+            .doc(user.uid)
+            .collection('followed_merchants')
+            .doc(merchantId)
+            .delete();
         setState(() => _following = false);
       } else {
         await followerRef.set({
           'uid': user.uid,
           'email': user.email,
+          'followedAt': FieldValue.serverTimestamp(),
+        });
+        await _firestore
+            .collection('users')
+            .doc(user.uid)
+            .collection('followed_merchants')
+            .doc(merchantId)
+            .set({
+          'merchantId': merchantId,
           'followedAt': FieldValue.serverTimestamp(),
         });
         setState(() => _following = true);
@@ -1729,6 +1764,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         if (status.isEmpty) status = null;
         openingHours = (data['openingHours'] ?? '').toString().trim();
         if (openingHours.isEmpty) openingHours = null;
+        final openingDays = _parseOpeningDays(data['openingDays']);
         profileUrl = (data['profilePicture'] ?? data['profilepicture'] ?? '')
             .toString()
             .trim();
@@ -1753,6 +1789,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             if (openingHours != null) {
               _merchantOpeningHours = openingHours;
               MerchantSellerLoader.cacheOpeningHours(mid, openingHours);
+            }
+            if (openingDays.isNotEmpty) {
+              _merchantOpeningDays = openingDays;
+              MerchantSellerLoader.cacheOpeningDays(mid, openingDays);
             }
             if (profileUrl != null) _merchantProfileUrl = profileUrl;
             if (email != null) _merchantEmail = email;
@@ -1783,6 +1823,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             .toString()
             .trim();
         final uHours = (u['openingHours'] ?? '').toString().trim();
+        final uDays = _parseOpeningDays(u['openingDays']);
         backendId ??= _parseBackendIdFromMap(u);
         if (mounted) {
           setState(() {
@@ -1804,6 +1845,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                 uHours.isNotEmpty) {
               _merchantOpeningHours = uHours;
               MerchantSellerLoader.cacheOpeningHours(mid, uHours);
+            }
+            if (_merchantOpeningDays.isEmpty && uDays.isNotEmpty) {
+              _merchantOpeningDays = uDays;
+              MerchantSellerLoader.cacheOpeningDays(mid, uDays);
             }
             if (backendId != null) _merchantBackendId = backendId;
             _loadingHeader = false;
@@ -2359,6 +2404,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             rating: _merchantRating,
             reviewCount: _merchantReviewCount,
             openingHours: _merchantOpeningHours,
+            openingDays: _merchantOpeningDays,
             profileUrl: _merchantProfileUrl,
             businessDescription: _merchantBusinessDescription,
             loading: _loadingHeader,
@@ -2952,6 +2998,7 @@ class _MerchantProfileCard extends StatelessWidget {
   final double? rating;
   final int reviewCount;
   final String? openingHours;
+  final List<int> openingDays;
   final String? profileUrl;
   final String? businessDescription;
   final bool loading;
@@ -2969,6 +3016,7 @@ class _MerchantProfileCard extends StatelessWidget {
     required this.rating,
     required this.reviewCount,
     required this.openingHours,
+    this.openingDays = const [],
     required this.profileUrl,
     required this.businessDescription,
     required this.loading,
@@ -3011,6 +3059,10 @@ class _MerchantProfileCard extends StatelessWidget {
   bool _isShopOpenNow() {
     final s = (openingHours ?? '').trim();
     if (s.isEmpty) return false;
+    if (openingDays.isNotEmpty &&
+        !openingDays.contains(DateTime.now().weekday)) {
+      return false;
+    }
     final parts = s.replaceAll('–', '-').replaceAll('—', '-').split('-');
     if (parts.length != 2) return false;
     final open = _parseTime(parts[0]);

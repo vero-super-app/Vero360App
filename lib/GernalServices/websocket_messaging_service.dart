@@ -35,6 +35,12 @@ class WebSocketMessagingService {
   // Callback for handling reconnection sync
   OnReconnectCallback? _onReconnectCallback;
 
+  void _emitStatus(String status) {
+    if (!_connectionStatusController.isClosed) {
+      _connectionStatusController.add(status);
+    }
+  }
+
   WebSocketMessagingService({
     required String wsUrl,
     required String token,
@@ -99,7 +105,7 @@ class WebSocketMessagingService {
       await completer.future;
       _isConnected = true;
       _reconnectAttempts = 0;
-      _connectionStatusController.add('connected');
+      _emitStatus('connected');
     } catch (e) {
       _handleConnectionError(e);
       rethrow;
@@ -117,7 +123,7 @@ class WebSocketMessagingService {
       print('[WebSocket] Connected to messaging server');
       _isConnected = true;
       _reconnectAttempts = 0;
-      _connectionStatusController.add('connected');
+      _emitStatus('connected');
 
       // Trigger sync on reconnect
       if (_onReconnectCallback != null) {
@@ -132,7 +138,7 @@ class WebSocketMessagingService {
     _socket.on('message:received', (data) {
       try {
         final message = Message.fromJson(data as Map<String, dynamic>);
-        _messageController.add(message);
+        if (!_messageController.isClosed) _messageController.add(message);
       } catch (e) {
         print('[WebSocket] Error parsing message');
       }
@@ -142,7 +148,7 @@ class WebSocketMessagingService {
       try {
         final typing = TypingIndicator.fromJson(data as Map<String, dynamic>);
         _handleTypingIndicator(typing);
-        _typingController.add(typing);
+        if (!_typingController.isClosed) _typingController.add(typing);
       } catch (e) {
         print('[WebSocket] Error parsing typing indicator');
       }
@@ -152,7 +158,7 @@ class WebSocketMessagingService {
       try {
         final status = UserStatus.fromJson(data as Map<String, dynamic>);
         _onlineUsers[status.userId] = status.isOnline;
-        _userStatusController.add(status);
+        if (!_userStatusController.isClosed) _userStatusController.add(status);
       } catch (e) {
         print('[WebSocket] Error parsing user status');
       }
@@ -161,7 +167,9 @@ class WebSocketMessagingService {
     _socket.on('message:read-receipt', (data) {
       try {
         final receipt = MessageReadReceipt.fromJson(data as Map<String, dynamic>);
-        _readReceiptController.add(receipt);
+        if (!_readReceiptController.isClosed) {
+          _readReceiptController.add(receipt);
+        }
       } catch (e) {
         print('[WebSocket] Error parsing read receipt');
       }
@@ -170,14 +178,14 @@ class WebSocketMessagingService {
     _socket.on('disconnect', (_) {
       print('[WebSocket] Disconnected from messaging server');
       _isConnected = false;
-      _connectionStatusController.add('disconnected');
+      _emitStatus('disconnected');
       _attemptReconnect();
     });
 
     _socket.on('error', (error) {
       print('[WebSocket] Error');
       _isConnected = false;
-      _connectionStatusController.add('error');
+      _emitStatus('error');
     });
   }
 
@@ -198,7 +206,7 @@ class WebSocketMessagingService {
   Future<void> _attemptReconnect() async {
     if (_reconnectAttempts >= _maxReconnectAttempts) {
       print('[WebSocket] Max reconnection attempts reached');
-      _connectionStatusController.add('failed');
+      _emitStatus('failed');
       return;
     }
 
@@ -207,14 +215,18 @@ class WebSocketMessagingService {
     print('[WebSocket] Attempting reconnect in ${delay.inSeconds}s (attempt $_reconnectAttempts)');
 
     await Future.delayed(delay);
-    await connect();
+    try {
+      await connect();
+    } catch (_) {
+      // connect() already reports via _handleConnectionError; avoid unhandled throws
+    }
   }
 
   /// Handle connection errors
   void _handleConnectionError(Object error) {
     print('[WebSocket] Connection error');
     _isConnected = false;
-    _connectionStatusController.add('error');
+    _emitStatus('error');
     _attemptReconnect();
   }
 
@@ -365,7 +377,7 @@ class WebSocketMessagingService {
     }
 
     _isConnected = false;
-    _connectionStatusController.add('disconnected');
+    _emitStatus('disconnected');
   }
 
   /// Dispose all streams

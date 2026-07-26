@@ -415,7 +415,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                 const SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.fromLTRB(0, 14, 0, 0),
-                    child: StorySection(),
+                    child: const StorySection(),
                   ),
                 ),
 

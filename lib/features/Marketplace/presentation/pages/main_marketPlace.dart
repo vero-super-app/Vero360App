@@ -42,12 +42,15 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
+import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'
+    show veroFloatingNavClearance;
 
 // ─────────────────────────────────────────────
 // DESIGN TOKENS — Warm Luxury Editorial
@@ -332,7 +335,8 @@ class MarketplaceDetailModel {
     return MarketplaceDetailModel(
       id: doc.id, name: (data['name'] ?? '').toString(), category: cat, price: price,
       image: rawImage, imageBytes: bytes, description: data['description']?.toString(),
-      location: data['location']?.toString(), isActive: data['isActive'] is bool ? data['isActive'] as bool : true,
+      location: data['location']?.toString(),
+      isActive: MarketplaceModeration.isPubliclyVisible(data),
       createdAt: created, sqlItemId: sqlId, gallery: gallery,
       sellerBusinessName: data['sellerBusinessName']?.toString(), sellerOpeningHours: data['sellerOpeningHours']?.toString(),
       sellerStatus: data['sellerStatus']?.toString(), sellerBusinessDescription: data['sellerBusinessDescription']?.toString(),
@@ -941,7 +945,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
   core.MarketplaceDetailModel _toCoreDetailModel(MarketplaceDetailModel item) {
     final id = item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id);
-    return core.MarketplaceDetailModel(id: id, name: item.name, category: item.category, price: item.price, image: item.image, description: item.description ?? '', location: item.location ?? '', comment: null, gallery: item.gallery, videos: const [], sellerBusinessName: item.sellerBusinessName, sellerOpeningHours: item.sellerOpeningHours, sellerStatus: item.sellerStatus, sellerBusinessDescription: item.sellerBusinessDescription, sellerRating: item.sellerRating, sellerLogoUrl: item.sellerLogoUrl, serviceProviderId: item.serviceProviderId, sellerUserId: item.sellerUserId, merchantId: item.merchantId, merchantName: item.merchantName, merchantBackendId: item.merchantBackendId, firestoreDocId: item.id, serviceType: item.serviceType ?? 'marketplace', createdAt: item.createdAt);
+    return core.MarketplaceDetailModel(id: id, name: item.name, category: item.category, price: item.price, image: item.image, description: item.description ?? '', location: item.location ?? '', comment: null, gallery: item.gallery, videos: const [], sellerBusinessName: item.sellerBusinessName, sellerOpeningHours: item.sellerOpeningHours, sellerStatus: item.sellerStatus, sellerBusinessDescription: item.sellerBusinessDescription, sellerRating: item.sellerRating, sellerLogoUrl: item.sellerLogoUrl, serviceProviderId: item.serviceProviderId, sellerUserId: item.sellerUserId, merchantId: item.merchantId, merchantName: item.merchantName, merchantBackendId: item.merchantBackendId, firestoreDocId: item.id, serviceType: item.serviceType ?? 'marketplace', createdAt: item.createdAt, stockQuantity: item.stockQuantity);
   }
 
   void _openDetailsPage(MarketplaceDetailModel item) {
@@ -950,7 +954,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   }
 
   MarketplaceDetailModel _fromCoreMarketplace(core.MarketplaceDetailModel c) {
-    return MarketplaceDetailModel(id: c.id.toString(), sqlItemId: c.id, name: c.name, category: (c.category ?? '').toLowerCase(), price: c.price, image: c.image, imageBytes: null, description: c.description.isEmpty ? null : c.description, location: c.location.isEmpty ? null : c.location, isActive: true, createdAt: null, gallery: c.gallery, sellerBusinessName: c.sellerBusinessName, sellerOpeningHours: c.sellerOpeningHours, sellerStatus: c.sellerStatus, sellerBusinessDescription: c.sellerBusinessDescription, sellerRating: c.sellerRating, sellerLogoUrl: c.sellerLogoUrl, serviceProviderId: c.serviceProviderId, sellerUserId: c.sellerUserId, merchantId: c.merchantId, merchantName: c.merchantName, serviceType: c.serviceType ?? 'marketplace');
+    return MarketplaceDetailModel(id: c.id.toString(), sqlItemId: c.id, name: c.name, category: (c.category ?? '').toLowerCase(), price: c.price, image: c.image, imageBytes: null, description: c.description.isEmpty ? null : c.description, location: c.location.isEmpty ? null : c.location, isActive: true, createdAt: null, gallery: c.gallery, sellerBusinessName: c.sellerBusinessName, sellerOpeningHours: c.sellerOpeningHours, sellerStatus: c.sellerStatus, sellerBusinessDescription: c.sellerBusinessDescription, sellerRating: c.sellerRating, sellerLogoUrl: c.sellerLogoUrl, serviceProviderId: c.serviceProviderId, sellerUserId: c.sellerUserId, merchantId: c.merchantId, merchantName: c.merchantName, serviceType: c.serviceType ?? 'marketplace', stockQuantity: c.stockQuantity);
   }
 
   Future<List<MarketplaceDetailModel>> _searchByPhoto(dynamic imageSource) async {
@@ -1229,7 +1233,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
   Future<void> _goToCheckoutFromBottomSheet(MarketplaceDetailModel item) async {
     if (!mounted) return;
-    final core.MarketplaceDetailModel checkoutItem = core.MarketplaceDetailModel(id: item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id), name: item.name, category: item.category, price: item.price, image: item.image, description: item.description ?? '', location: item.location ?? '', gallery: item.gallery, sellerBusinessName: item.sellerBusinessName, sellerOpeningHours: item.sellerOpeningHours, sellerStatus: item.sellerStatus, sellerBusinessDescription: item.sellerBusinessDescription, sellerRating: item.sellerRating, sellerLogoUrl: item.sellerLogoUrl, serviceProviderId: item.serviceProviderId, sellerUserId: item.sellerUserId, merchantId: item.merchantId, merchantName: item.merchantName, serviceType: item.serviceType);
+    final core.MarketplaceDetailModel checkoutItem = core.MarketplaceDetailModel(id: item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id), name: item.name, category: item.category, price: item.price, image: item.image, description: item.description ?? '', location: item.location ?? '', gallery: item.gallery, sellerBusinessName: item.sellerBusinessName, sellerOpeningHours: item.sellerOpeningHours, sellerStatus: item.sellerStatus, sellerBusinessDescription: item.sellerBusinessDescription, sellerRating: item.sellerRating, sellerLogoUrl: item.sellerLogoUrl, serviceProviderId: item.serviceProviderId, sellerUserId: item.sellerUserId, merchantId: item.merchantId, merchantName: item.merchantName, serviceType: item.serviceType, stockQuantity: item.stockQuantity);
     Navigator.push(context, MaterialPageRoute(builder: (_) => CheckoutPage(item: checkoutItem)));
   }
 
@@ -1869,7 +1873,12 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                         return AppSkeletonShimmer(
                           child: CustomScrollView(physics: const AlwaysScrollableScrollPhysics(), slivers: [
                             SliverPadding(
-                              padding: EdgeInsets.fromLTRB(layout.gridPadH, 14, layout.gridPadH, 14),
+                              padding: EdgeInsets.fromLTRB(
+                                layout.gridPadH,
+                                14,
+                                layout.gridPadH,
+                                veroFloatingNavClearance(context),
+                              ),
                               sliver: SliverGrid(
                                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: layout.crossAxisCount, crossAxisSpacing: layout.gridSpacing, mainAxisSpacing: layout.gridSpacing, childAspectRatio: layout.childAspectRatio),
                                 delegate: SliverChildBuilderDelegate((_, __) => const _SkeletonCard(), childCount: layout.crossAxisCount * 5),
@@ -1907,7 +1916,12 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                           if (_aiSummary.isNotEmpty)
                             SliverToBoxAdapter(child: _AiSummaryBanner(summary: _aiSummary)),
                           SliverPadding(
-                            padding: EdgeInsets.fromLTRB(layout.gridPadH, 6, layout.gridPadH, 14),
+                            padding: EdgeInsets.fromLTRB(
+                              layout.gridPadH,
+                              6,
+                              layout.gridPadH,
+                              veroFloatingNavClearance(context),
+                            ),
                             sliver: SliverGrid(
                               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: layout.crossAxisCount, crossAxisSpacing: layout.gridSpacing, mainAxisSpacing: layout.gridSpacing, childAspectRatio: layout.childAspectRatio),
                               delegate: SliverChildBuilderDelegate(

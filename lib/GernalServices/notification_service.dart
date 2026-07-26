@@ -221,16 +221,20 @@ class NotificationService {
     _partyAlertSub = null;
     if (user == null) return;
 
+    // Single-field query avoids requiring a composite index; filter consumed locally.
     _partyAlertSub = FirebaseFirestore.instance
         .collection(OrderPartyNotificationService.collectionName)
         .where('toUid', isEqualTo: user.uid)
-        .where('consumed', isEqualTo: false)
         .snapshots()
         .listen((snap) async {
       for (final change in snap.docChanges) {
-        if (change.type != DocumentChangeType.added) continue;
+        if (change.type != DocumentChangeType.added &&
+            change.type != DocumentChangeType.modified) {
+          continue;
+        }
         final d = change.doc.data();
         if (d == null) continue;
+        if (d['consumed'] == true) continue;
         final title = (d['title'] ?? 'Vero360').toString();
         final body = (d['body'] ?? '').toString();
         String? payloadStr;
@@ -255,6 +259,10 @@ class NotificationService {
             debugPrint('[NotificationService] party alert consume failed: $e');
           }
         }
+      }
+    }, onError: (e) {
+      if (kDebugMode) {
+        debugPrint('[NotificationService] party alert listener error: $e');
       }
     });
   }
@@ -324,6 +332,19 @@ class NotificationService {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
+
+      // Persist token for Cloud Functions (marketplace moderation push, etc.).
+      try {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'fcmToken': fcmToken,
+          'fcmTokens': FieldValue.arrayUnion([fcmToken]),
+          'fcmUpdatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('FCM token Firestore save failed: $e');
+        }
+      }
 
       final idToken = await user.getIdToken();
       if (idToken == null || idToken.isEmpty) return;

@@ -51,6 +51,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
   int _qty = 1;
   bool _submitting = false;
 
+  int get _maxQty => widget.item.maxOrderQty;
+  bool get _outOfStock => widget.item.isOutOfStock || _maxQty <= 0;
+
   // Address
   final _addrSvc = AddressService();
   Address? _defaultAddr;
@@ -555,6 +558,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   // ── Pay routing (Paychangu handles card/mobile on their page) ─────────────
   Future<void> _onPayPressed() async {
+    if (_outOfStock) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item is out of stock',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (_qty > _maxQty) {
+      setState(() => _qty = _maxQty.clamp(1, 99999));
+      ToastHelper.showCustomToast(
+        context,
+        'Only $_maxQty available',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
     if (!await _requireLogin()) return;
     if (!await _ensureDefaultAddressIfNeeded()) return;
     await _startPayChanguPayment();
@@ -644,6 +666,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     merchantId: mid,
                     merchantName: mname,
                     serviceType: _isPromotion ? 'promotion' : 'marketplace',
+                    availableStock: widget.item.stockQuantity,
                   ),
                 ]
               : null;
@@ -777,7 +800,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final item = widget.item;
     final addressOk =
         _deliveryType == DeliveryType.pickup || _defaultAddr != null;
-    final canPay = !_submitting && addressOk;
+    final canPay = !_submitting && addressOk && !_outOfStock;
 
     return Theme(
       data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),
@@ -877,27 +900,58 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  _qtyBtn(Icons.remove_rounded, () {
-                                    if (_qty > 1) setState(() => _qty--);
-                                  }),
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 14),
-                                    child: Text(
-                                      '$_qty',
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w900,
-                                        color: _brandNavy,
+                              if (_outOfStock)
+                                const Text(
+                                  'Out of stock',
+                                  style: TextStyle(
+                                    color: Colors.red,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                )
+                              else ...[
+                                Row(
+                                  children: [
+                                    _qtyBtn(Icons.remove_rounded, () {
+                                      if (_qty > 1) setState(() => _qty--);
+                                    }),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 14),
+                                      child: Text(
+                                        '$_qty',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900,
+                                          color: _brandNavy,
+                                        ),
                                       ),
                                     ),
+                                    _qtyBtn(Icons.add_rounded, () {
+                                      if (_qty >= _maxQty) {
+                                        ToastHelper.showCustomToast(
+                                          context,
+                                          'Only $_maxQty available',
+                                          isSuccess: false,
+                                          errorMessage: '',
+                                        );
+                                        return;
+                                      }
+                                      setState(() => _qty++);
+                                    }),
+                                  ],
+                                ),
+                                if (widget.item.stockQuantity != null) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    '$_maxQty available',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.grey.shade700,
+                                    ),
                                   ),
-                                  _qtyBtn(Icons.add_rounded,
-                                      () => setState(() => _qty++)),
                                 ],
-                              ),
+                              ],
                             ],
                           ),
                         ),

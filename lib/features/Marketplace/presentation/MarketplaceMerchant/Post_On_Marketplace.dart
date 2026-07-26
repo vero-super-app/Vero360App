@@ -22,6 +22,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovid
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
 
 import '../../../../utils/toasthelper.dart';
 import 'marketplace_edit_page.dart';
@@ -529,28 +530,29 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
   String _firestoreWriteErrorMessage(Object e) {
     if (e is FirebaseException) {
-      final detail = '${e.message ?? ''}'.toLowerCase();
-      if (detail.contains('does not exist') ||
-          detail.contains('datastore/setup')) {
-        return 'Firestore is not set up for this Firebase project. '
-            'Open Firebase Console → Firestore → Create database, then try again.';
-      }
       switch (e.code) {
         case 'permission-denied':
-          return 'Firestore blocked this save (security rules). In Firebase Console '
-              'open Firestore → Rules for your database and allow signed-in users to '
-              'write marketplace_items. See firebase/firestore.rules in the project.';
+          return 'You don’t have permission to post this listing. Please sign in again and try once more.';
+        case 'unauthenticated':
+          return 'Please sign in to post on Marketplace.';
         case 'unavailable':
-          return 'Firestore is unavailable. Create the Firestore database in '
-              'Firebase Console or check your internet connection.';
+        case 'deadline-exceeded':
+          return 'We’re having trouble connecting. Check your internet and try again.';
+        case 'resource-exhausted':
+          return 'Too many requests right now. Please wait a moment and try again.';
         default:
-          return 'Firestore error (${e.code}). ${e.message ?? 'Please try again.'}';
+          return 'Couldn’t post your listing. Please try again.';
       }
     }
     if (e is StateError) {
-      return e.message;
+      final msg = e.message.trim();
+      if (msg.isNotEmpty &&
+          !msg.toLowerCase().contains('firestore') &&
+          !msg.toLowerCase().contains('firebase')) {
+        return msg;
+      }
     }
-    return 'Failed to post item. Please try again.';
+    return 'Couldn’t post your listing. Please try again.';
   }
 
   // ---------------- create ----------------
@@ -621,11 +623,25 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       return;
     }
 
-    final stock = int.tryParse(_stock.text.trim()) ?? _stockQty;
-    if (stock < 1) {
+    final blockReason = MarketplaceModeration.clientBlockReason(
+      title: _name.text,
+      description: _desc.text,
+    );
+    if (blockReason != null) {
       ToastHelper.showCustomToast(
         context,
-        'Stock quantity must be at least 1',
+        blockReason,
+        isSuccess: false,
+        errorMessage: 'Not allowed',
+      );
+      return;
+    }
+
+    final stock = int.tryParse(_stock.text.trim());
+    if (_stock.text.trim().isEmpty || stock == null || stock < 1) {
+      ToastHelper.showCustomToast(
+        context,
+        'Enter how many items you have in stock (at least 1)',
         isSuccess: false,
         errorMessage: 'Validation',
       );
@@ -744,7 +760,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         if (_videos.isNotEmpty) videosSkipped = true;
       }
 
-      // Post immediately — do NOT wait for visual hashes (big speed win).
+      // Post as pending — Cloud Function auto-moderates before going live.
       final data = <String, dynamic>{
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? 0,
@@ -756,20 +772,22 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         'description':
             _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         'location': _location.text.trim(),
-        'isActive': _isActive,
+        'isActive': false,
+        'reviewStatus': 'pending',
         'category': _category ?? 'other',
         'stockQuantity': _stockQty,
         'quantity': _stockQty,
         'createdAt': FieldValue.serverTimestamp(),
         'sellerUserId': effectiveSellerId,
         'merchantId': firebaseUid.isNotEmpty ? firebaseUid : merchantId,
+        if (firebaseUid.isNotEmpty) 'firebaseUid': firebaseUid,
         'merchantName': merchantName,
         'serviceType': serviceType,
         if (_listingLat != null) 'latitude': _listingLat,
         if (_listingLng != null) 'longitude': _listingLng,
       };
 
-      debugPrint('Writing marketplace_items to Firestore…');
+      debugPrint('Writing marketplace_items to Firestore (pending review)…');
       final docRef = await _db.collection('marketplace_items').add(data);
       debugPrint('Firestore write OK: ${docRef.id}');
 
@@ -799,16 +817,16 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
       if (!mounted) return;
       var successMsg =
-          'Item Posted Successfully!\nFunds will go to your merchant wallet.';
+          'Submitted for review. We’ll notify you when it’s live on Vero Marketplace.';
       if (videosSkipped) {
         successMsg +=
-            '\nVideos were not saved (requires backend upload). Post photos first or retry when online.';
+            '\nVideos were not saved. Post photos first or retry when online.';
       }
       ToastHelper.showCustomToast(
         context,
         successMsg,
         isSuccess: true,
-        errorMessage: 'Created',
+        errorMessage: 'Submitted',
       );
 
       _resetAfterCreate();
@@ -1075,23 +1093,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
       child: Row(
         children: [
           const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Available stock',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'Buyers cannot order more than this',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF6B7280),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+            child: Text(
+              'Quantity in stock',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
             ),
           ),
           IconButton.filledTonal(
@@ -1667,11 +1671,24 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 ),
                 const SizedBox(height: 8),
 
-                SwitchListTile(
-                  value: _isActive,
-                  onChanged: (v) => setState(() => _isActive = v),
-                  title: const Text('Active'),
-                  contentPadding: EdgeInsets.zero,
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF4E5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFFD59A)),
+                  ),
+                  child: const Text(
+                    'New listings are reviewed automatically before going live. '
+                    'You’ll get a notification when yours is approved.',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      height: 1.35,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 8),
 

@@ -496,6 +496,14 @@ List<VeroNavItemData> veroMainNavItems({required bool isMerchant}) => [
       ),
     ];
 
+/// Bottom inset so scrollable content clears the floating [VeroMainNavigationBar]
+/// when the shell uses `extendBody: true` (bar overlays the body).
+double veroFloatingNavClearance(BuildContext context, {double extra = 16}) {
+  final safeBottom = MediaQuery.paddingOf(context).bottom;
+  // Safe area + nav pad (10) + bar height (70) + breathing room.
+  return safeBottom + 10 + 70 + extra;
+}
+
 /// Opens the main app shell ([Bottomnavbar]) on a given tab (0–4).
 void openVeroMainShell(BuildContext context, {required String email, int tabIndex = 0}) {
   Navigator.of(context).pushAndRemoveUntil(

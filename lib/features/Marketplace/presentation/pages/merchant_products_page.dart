@@ -990,6 +990,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       merchantId: widget.merchantId,
       merchantName: widget.merchantName,
       serviceType: 'marketplace',
+      availableStock: item.stockQuantity,
     );
   }
 
@@ -998,6 +999,15 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       ToastHelper.showCustomToast(
         context,
         'Please log in to add items to cart.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (item.isOutOfStock) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item is out of stock',
         isSuccess: false,
         errorMessage: '',
       );
@@ -1030,6 +1040,15 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       ToastHelper.showCustomToast(
         context,
         'Please log in to buy.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (item.isOutOfStock) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item is out of stock',
         isSuccess: false,
         errorMessage: '',
       );
@@ -2630,6 +2649,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                                           merchantName: widget.merchantName,
                                           serviceType: 'marketplace',
                                           createdAt: it.createdAt,
+                                          stockQuantity: it.stockQuantity,
                                         ),
                                         cartService: _cartService,
                                       ),

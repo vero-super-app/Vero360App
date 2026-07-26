@@ -405,6 +405,15 @@ class _DetailsPageState extends State<DetailsPage> {
   }
 
   Future<void> _goToCheckout(MarketplaceDetailModel item) async {
+    if (item.isOutOfStock) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item is out of stock',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
     final prefs = await SharedPreferences.getInstance();
     final _ = prefs.getInt('userId'); // kept as-is
     // ignore: use_build_context_synchronously

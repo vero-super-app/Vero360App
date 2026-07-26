@@ -109,6 +109,8 @@ class MarketplaceDetailModel {
   final DateTime? createdAt;
   final double? latitude;
   final double? longitude;
+  /// Available units the seller has. Null = legacy / uncapped (buyer limited to 99).
+  final int? stockQuantity;
 
   MarketplaceDetailModel({
     required this.id,
@@ -136,8 +138,17 @@ class MarketplaceDetailModel {
     this.serviceType,
     this.createdAt,
     this.latitude,
-    this.longitude, int? backendItemId,
+    this.longitude,
+    this.stockQuantity,
+    int? backendItemId,
   });
+
+  bool get isOutOfStock => stockQuantity != null && stockQuantity! <= 0;
+
+  int get maxOrderQty {
+    if (stockQuantity == null) return 99;
+    return stockQuantity!.clamp(0, 99999);
+  }
 
   factory MarketplaceDetailModel.fromJson(Map<String, dynamic> j) {
     List<String> arr(dynamic v) {
@@ -224,6 +235,11 @@ class MarketplaceDetailModel {
       createdAt: j['createdAt'] != null ? DateTime.tryParse(j['createdAt'].toString()) : null,
       latitude: optDouble(j['latitude'] ?? j['lat']),
       longitude: optDouble(j['longitude'] ?? j['lng']),
+      stockQuantity: () {
+        final raw = j['stockQuantity'] ?? j['quantity'] ?? j['stock'];
+        if (raw is num) return raw.toInt();
+        return int.tryParse('${raw ?? ''}');
+      }(),
     );
   }
 

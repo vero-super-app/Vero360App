@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../MarkeplaceService/marketplace_moderation.dart';
+
 /// --------------------
 /// Local marketplace model (Firestore)
 /// --------------------
@@ -139,7 +141,7 @@ class MarketplaceDetailModel {
       description:
           data['description']?.toString(),
       location: data['location']?.toString(),
-      isActive: data['isActive'] is bool ? data['isActive'] as bool : true,
+      isActive: MarketplaceModeration.isPubliclyVisible(data),
       createdAt: created,
       sqlItemId: sqlId,
       gallery: gallery,

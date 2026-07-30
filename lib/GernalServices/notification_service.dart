@@ -18,9 +18,19 @@ import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/chat_notification_service.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
+import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
+import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
+import 'package:vero360_app/features/Promotions/promotion_service.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
+    as market;
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/LatestArrival_page.dart';
+import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 
 /// Central service for handling Firebase Cloud Messaging (FCM) + local notifications
 class NotificationService {
@@ -170,17 +180,37 @@ class NotificationService {
         await NotificationStore.instance.ensureLoaded();
         _syncOrderPartyAlertListener(user);
         _syncChatAlertListener(user);
+        await EngagementNotificationService.instance.syncTopicSubscription();
+        // Soft keep-alive digest when there is fresh content (frequent, rate-limited).
+        unawaited(
+          Future<void>.delayed(const Duration(seconds: 8), () {
+            unawaited(
+              EngagementNotificationService.instance.maybeSendDailyDigest(),
+            );
+          }),
+        );
       } else {
         // Ensure notifications from previous account do not remain visible.
         await NotificationStore.instance.clearAll();
         _syncOrderPartyAlertListener(null);
         _syncChatAlertListener(null);
+        await EngagementNotificationService.instance.syncTopicSubscription();
       }
     });
 
     await NotificationStore.instance.ensureLoaded();
     _syncOrderPartyAlertListener(FirebaseAuth.instance.currentUser);
     _syncChatAlertListener(FirebaseAuth.instance.currentUser);
+    await EngagementNotificationService.instance.syncTopicSubscription();
+    if (FirebaseAuth.instance.currentUser != null) {
+      unawaited(
+        Future<void>.delayed(const Duration(seconds: 12), () {
+          unawaited(
+            EngagementNotificationService.instance.maybeSendDailyDigest(),
+          );
+        }),
+      );
+    }
   }
 
   /// Listens for [OrderPartyNotificationService] docs so buyers/merchants get
@@ -191,16 +221,20 @@ class NotificationService {
     _partyAlertSub = null;
     if (user == null) return;
 
+    // Single-field query avoids requiring a composite index; filter consumed locally.
     _partyAlertSub = FirebaseFirestore.instance
         .collection(OrderPartyNotificationService.collectionName)
         .where('toUid', isEqualTo: user.uid)
-        .where('consumed', isEqualTo: false)
         .snapshots()
         .listen((snap) async {
       for (final change in snap.docChanges) {
-        if (change.type != DocumentChangeType.added) continue;
+        if (change.type != DocumentChangeType.added &&
+            change.type != DocumentChangeType.modified) {
+          continue;
+        }
         final d = change.doc.data();
         if (d == null) continue;
+        if (d['consumed'] == true) continue;
         final title = (d['title'] ?? 'Vero360').toString();
         final body = (d['body'] ?? '').toString();
         String? payloadStr;
@@ -225,6 +259,10 @@ class NotificationService {
             debugPrint('[NotificationService] party alert consume failed: $e');
           }
         }
+      }
+    }, onError: (e) {
+      if (kDebugMode) {
+        debugPrint('[NotificationService] party alert listener error: $e');
       }
     });
   }
@@ -294,6 +332,19 @@ class NotificationService {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
+
+      // Persist token for Cloud Functions (marketplace moderation push, etc.).
+      try {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'fcmToken': fcmToken,
+          'fcmTokens': FieldValue.arrayUnion([fcmToken]),
+          'fcmUpdatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('FCM token Firestore save failed: $e');
+        }
+      }
 
       final idToken = await user.getIdToken();
       if (idToken == null || idToken.isEmpty) return;
@@ -558,7 +609,9 @@ class NotificationService {
     if (navigator == null) return;
 
     final type = (data['type'] as String?)?.toLowerCase();
- 
+    final badgeRoute = (data['badgeRoute'] as String?)?.toLowerCase() ??
+        (data[NotificationStore.kPayloadBadgeRoute] as String?)?.toLowerCase();
+
     switch (type ?? '') {
       case 'new_ride':
       case 'ride_update':
@@ -596,11 +649,193 @@ class NotificationService {
         ));
         break;
 
+      case 'promo_digest':
+      case 'promotion':
+      case 'promotions':
+        if (kDebugMode) debugPrint("→ Open promotions");
+        unawaited(_openPromotionTarget(navigator, data));
+        break;
+
+      case 'arrivals_digest':
+      case 'latest_arrivals':
+      case 'todays_arrivals':
+        if (kDebugMode) debugPrint("→ Open today's arrivals");
+        unawaited(_openArrivalTarget(navigator, data));
+        break;
+
+      case 'marketplace_digest':
+      case 'marketplace':
+      case 'new_product':
+        if (kDebugMode) debugPrint("→ Open marketplace");
+        unawaited(_openMarketplaceTarget(navigator, data));
+        break;
+
+      case 'engagement':
+        // Generic keep-alive — route by badge / ids if present.
+        if ((data['promoId']?.toString() ?? '').trim().isNotEmpty ||
+            badgeRoute == NotificationStore.kBadgePromotions) {
+          unawaited(_openPromotionTarget(navigator, data));
+        } else if ((data['arrivalId']?.toString() ?? '').trim().isNotEmpty ||
+            badgeRoute == NotificationStore.kBadgePostArrival) {
+          unawaited(_openArrivalTarget(navigator, data));
+        } else {
+          unawaited(_openMarketplaceTarget(navigator, data));
+        }
+        break;
+
       default:
-        navigator.push(MaterialPageRoute(
-          builder: (_) => const NotificationsPage(),
-        ));
+        if ((data['promoId']?.toString() ?? '').trim().isNotEmpty ||
+            badgeRoute == NotificationStore.kBadgePromotions) {
+          unawaited(_openPromotionTarget(navigator, data));
+        } else if ((data['arrivalId']?.toString() ?? '').trim().isNotEmpty ||
+            badgeRoute == NotificationStore.kBadgePostArrival) {
+          unawaited(_openArrivalTarget(navigator, data));
+        } else if ((data['marketplaceItemId']?.toString() ?? '')
+            .trim()
+            .isNotEmpty) {
+          unawaited(_openMarketplaceTarget(navigator, data));
+        } else {
+          navigator.push(MaterialPageRoute(
+            builder: (_) => const NotificationsPage(),
+          ));
+        }
     }
+  }
+
+  Future<void> _openPromotionTarget(
+    NavigatorState navigator,
+    Map<String, dynamic> data,
+  ) async {
+    final rawId = (data['promoId'] ?? data['id'] ?? '').toString().trim();
+    final promoId = int.tryParse(rawId);
+    if (promoId != null && promoId > 0) {
+      try {
+        final promos = await PromoService().fetchActivePromos();
+        PromoModel? match;
+        for (final p in promos) {
+          if (p.id == promoId) {
+            match = p;
+            break;
+          }
+        }
+        if (match != null && navigator.mounted) {
+          navigator.push(MaterialPageRoute(
+            builder: (_) => PromoDetailPage(promo: match!),
+          ));
+          return;
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('Open promo target failed: $e');
+      }
+    }
+    if (!navigator.mounted) return;
+    navigator.push(MaterialPageRoute(
+      builder: (_) => const PromotionsPage(),
+    ));
+  }
+
+  Future<void> _openArrivalTarget(
+    NavigatorState navigator,
+    Map<String, dynamic> data,
+  ) async {
+    final arrivalId = (data['arrivalId'] ?? data['id'] ?? '').toString().trim();
+    if (!navigator.mounted) return;
+    navigator.push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text("Today's arrivals")),
+        body: LatestArrivalsSection(
+          initialArrivalId: arrivalId.isEmpty ? null : arrivalId,
+          autoOpenInitial: arrivalId.isNotEmpty,
+        ),
+      ),
+    ));
+  }
+
+  Future<void> _openMarketplaceTarget(
+    NavigatorState navigator,
+    Map<String, dynamic> data,
+  ) async {
+    final docId =
+        (data['marketplaceItemId'] ?? data['itemId'] ?? data['id'] ?? '')
+            .toString()
+            .trim();
+    if (docId.isNotEmpty) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('marketplace_items')
+            .doc(docId)
+            .get();
+        if (doc.exists && navigator.mounted) {
+          final item = _marketplaceItemFromFirestore(doc);
+          navigator.push(MaterialPageRoute(
+            builder: (_) => DetailsPage(
+              item: item,
+              cartService: CartServiceProvider.getInstance(),
+            ),
+          ));
+          return;
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('Open marketplace target failed: $e');
+      }
+    }
+    if (!navigator.mounted) return;
+    navigator.push(MaterialPageRoute(
+      builder: (_) => MarketPage(
+        cartService: CartServiceProvider.getInstance(),
+      ),
+    ));
+  }
+
+  market.MarketplaceDetailModel _marketplaceItemFromFirestore(
+    DocumentSnapshot doc,
+  ) {
+    final data = (doc.data() as Map<String, dynamic>?) ?? {};
+    int? sqlId;
+    final rawSql = data['sqlItemId'] ?? data['backendId'] ?? data['itemId'];
+    if (rawSql is int) {
+      sqlId = rawSql;
+    } else if (rawSql != null) {
+      sqlId = int.tryParse(rawSql.toString());
+    }
+    final id = sqlId ?? doc.id.hashCode.abs();
+    final image = (data['imageUrl'] ?? data['image'] ?? data['photo'] ?? '')
+        .toString()
+        .trim();
+    List<String> gallery = const [];
+    final g = data['galleryUrls'] ?? data['gallery'];
+    if (g is List) {
+      gallery = g.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
+    }
+    double price = 0;
+    final p = data['price'];
+    if (p is num) {
+      price = p.toDouble();
+    } else if (p != null) {
+      price = double.tryParse(p.toString()) ?? 0;
+    }
+    DateTime? created;
+    final createdRaw = data['createdAt'];
+    if (createdRaw is Timestamp) created = createdRaw.toDate();
+
+    return market.MarketplaceDetailModel(
+      id: id,
+      name: (data['name'] ?? data['title'] ?? data['productName'] ?? 'Item')
+          .toString(),
+      image: image,
+      price: price,
+      description: (data['description'] ?? '').toString(),
+      location: (data['location'] ?? '').toString(),
+      category: (data['category'] ?? '').toString(),
+      gallery: gallery,
+      merchantId: (data['merchantId'] ?? '').toString(),
+      merchantName: (data['merchantName'] ?? '').toString(),
+      sellerUserId: (data['sellerUserId'] ?? '').toString(),
+      serviceProviderId: (data['serviceProviderId'] ?? '').toString(),
+      serviceType: (data['serviceType'] ?? 'marketplace').toString(),
+      firestoreDocId: doc.id,
+      createdAt: created,
+    );
   }
 
   /// Push / manual payloads can include `badgeRoute` for quick-action badges, e.g.

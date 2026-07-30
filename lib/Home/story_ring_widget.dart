@@ -54,6 +54,9 @@ class StoryProfileRing extends StatelessWidget {
   /// opening a separate Firestore stream per ring.
   final MerchantStoryGroup? fixedGroup;
   final VoidCallback? onNoStoriesTap;
+  /// When set, a normal tap always runs this (e.g. open full profile photo).
+  /// Stories still open via long-press when available.
+  final VoidCallback? onAvatarTap;
 
   const StoryProfileRing({
     super.key,
@@ -67,6 +70,7 @@ class StoryProfileRing extends StatelessWidget {
     this.allGroups,
     this.fixedGroup,
     this.onNoStoriesTap,
+    this.onAvatarTap,
   });
 
   @override
@@ -105,6 +109,7 @@ class StoryProfileRing extends StatelessWidget {
 
     return InkWell(
       onTap: () => _onTap(context, state),
+      onLongPress: () => _openStories(context, state),
       borderRadius: BorderRadius.circular(size / 2 + 4),
       child: Container(
         width: size,
@@ -180,10 +185,20 @@ class StoryProfileRing extends StatelessWidget {
   }
 
   void _onTap(BuildContext context, MerchantStoryRingState state) {
+    // Prefer explicit avatar action (e.g. view profile photo).
+    if (onAvatarTap != null) {
+      onAvatarTap!();
+      return;
+    }
     if (!state.hasStories || state.group == null) {
       onNoStoriesTap?.call();
       return;
     }
+    _openStories(context, state);
+  }
+
+  void _openStories(BuildContext context, MerchantStoryRingState state) {
+    if (!state.hasStories || state.group == null) return;
 
     final groups = allGroups ?? [state.group!];
     final index = groups.indexWhere((g) => g.merchantId == merchantId);

@@ -25,7 +25,6 @@ import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
-import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 // Merchant dashboards
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
@@ -59,7 +58,6 @@ class _BottomnavbarState extends State<Bottomnavbar>
     with WidgetsBindingObserver {
   late int _selectedIndex;
 
-  bool _isLoading = true;
   bool _isMerchant = false;
   bool _isDriver = false;
   bool _isLoggedIn = false;
@@ -68,18 +66,48 @@ class _BottomnavbarState extends State<Bottomnavbar>
   bool _pagesReady = false;
 
   final cartService = CartServiceProvider.getInstance();
+  StreamSubscription<User?>? _authSub;
 
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex.clamp(0, 4);
+    // Paint the shell immediately — no second splash after role redirect.
+    _pages = _defaultPages();
+    _pagesReady = true;
     WidgetsBinding.instance.addObserver(this);
-    FirebaseAuth.instance.authStateChanges().listen((_) => _refreshAuthState());
+    _authSub =
+        FirebaseAuth.instance.authStateChanges().listen((_) => _refreshAuthState());
     _initialize();
   }
 
+  List<Widget> _defaultPages() => [
+        Vero360Homepage(email: widget.email, isDriverHome: false),
+        MarketPage(
+          key: const ValueKey('main_market_tab'),
+          cartService: cartService,
+          onBackToHome: () => setState(() => _selectedIndex = 0),
+        ),
+        const AuthGuard(
+          featureName: 'Messages',
+          showChildBehindDialog: true,
+          child: ChatListPage(),
+        ),
+        AuthGuard(
+          featureName: 'Cart',
+          showChildBehindDialog: true,
+          child: CartPage(cartService: cartService),
+        ),
+        const AuthGuard(
+          featureName: 'Profile',
+          showChildBehindDialog: true,
+          child: ProfilePage(),
+        ),
+      ];
+
   @override
   void dispose() {
+    _authSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -102,35 +130,13 @@ class _BottomnavbarState extends State<Bottomnavbar>
         debugPrint('BottomNavbar._initialize: $e\n$st');
         return true;
       }());
-      // Ensure pages exist even on failure so UI can render.
       if (!_pagesReady) {
-        _pages = [
-          Vero360Homepage(email: widget.email, isDriverHome: false),
-          MarketPage(
-            cartService: cartService,
-            onBackToHome: () => setState(() => _selectedIndex = 0),
-          ),
-          const AuthGuard(
-            featureName: 'Messages',
-            showChildBehindDialog: true,
-            child: ChatListPage(),
-          ),
-          AuthGuard(
-            featureName: 'Cart',
-            showChildBehindDialog: true,
-            child: CartPage(cartService: cartService),
-          ),
-          const AuthGuard(
-            featureName: 'Profile',
-            showChildBehindDialog: true,
-            child: ProfilePage(),
-          ),
-        ];
+        _pages = _defaultPages();
         _pagesReady = true;
       }
     } finally {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {});
         if (_isDriver) {
           WidgetsBinding.instance.addPostFrameCallback((_) async {
             if (!mounted) return;
@@ -235,8 +241,17 @@ class _BottomnavbarState extends State<Bottomnavbar>
   Future<void> _checkUserRoleAndSetup() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = (prefs.getString('user_role') ?? prefs.getString('role') ?? '').toLowerCase().trim();
-    _isMerchant = raw == 'merchant';
-    _isDriver = raw == 'driver';
+    final nextMerchant = raw == 'merchant';
+    final nextDriver = raw == 'driver';
+
+    // Keep the current tab. Only rebuild page widgets when role flags change
+    // (or on first setup) — rebuilding every auth/role refresh remounts Market
+    // and feels like a jump back to Home.
+    final roleChanged =
+        !_pagesReady || _isMerchant != nextMerchant || _isDriver != nextDriver;
+    _isMerchant = nextMerchant;
+    _isDriver = nextDriver;
+    if (!roleChanged) return;
 
     final homePage = Vero360Homepage(
       key: ValueKey(
@@ -249,6 +264,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _pages = [
       homePage,
       MarketPage(
+        key: const ValueKey('main_market_tab'),
         cartService: cartService,
         onBackToHome: () => setState(() => _selectedIndex = 0),
       ),
@@ -261,10 +277,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
       ),
     ];
     _pagesReady = true;
-
-    if (_isMerchant && mounted) {
-      WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _redirectMerchant(prefs); });
-    }
+    // Merchants stay in this shell (Dashboard = tab 4). Do not pushAndRemoveUntil
+    // to a fresh merchant dashboard — that resets nav to Home and disposes the
+    // current tab mid-load (see setState-after-dispose dashboard logs).
   }
 
   Widget _merchantProfileTab(SharedPreferences prefs) {
@@ -276,27 +291,6 @@ class _BottomnavbarState extends State<Bottomnavbar>
       'courier' => CourierMerchantDashboard(email: email),
       _ => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () => setState(() => _selectedIndex = 0), embeddedInMainNav: true),
     };
-  }
-
-  void _redirectMerchant(SharedPreferences prefs) {
-    final key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ?? 'marketplace';
-    final email = prefs.getString('email') ?? widget.email;
-    if (key == 'food') {
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(
-          builder: (_) => Bottomnavbar(email: email, initialIndex: 4),
-        ),
-        (route) => false,
-      );
-      return;
-    }
-    Widget page = switch (key) {
-      'accommodation' => AccommodationMerchantDashboard(email: email),
-      'courier' => CourierMerchantDashboard(email: email),
-      _ => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () {}),
-    };
-    Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => page), (route) => false);
   }
 
   void _onItemTapped(int index) {
@@ -311,7 +305,11 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 
   Widget _buildBody() {
-    return _pages[_selectedIndex];
+    // Keep off-tab pages alive so auth/role refreshes don't remount Marketplace.
+    return IndexedStack(
+      index: _selectedIndex,
+      children: _pages,
+    );
   }
 
   void _showAuthDialog() {
@@ -456,14 +454,6 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const VeroLaunchSplash(
-        title: 'Opening…',
-        message: 'Loading your home…',
-        showSpinner: true,
-      );
-    }
-
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
@@ -505,6 +495,14 @@ List<VeroNavItemData> veroMainNavItems({required bool isMerchant}) => [
         label: isMerchant ? 'Dashboard' : 'Profile',
       ),
     ];
+
+/// Bottom inset so scrollable content clears the floating [VeroMainNavigationBar]
+/// when the shell uses `extendBody: true` (bar overlays the body).
+double veroFloatingNavClearance(BuildContext context, {double extra = 16}) {
+  final safeBottom = MediaQuery.paddingOf(context).bottom;
+  // Safe area + nav pad (10) + bar height (70) + breathing room.
+  return safeBottom + 10 + 70 + extra;
+}
 
 /// Opens the main app shell ([Bottomnavbar]) on a given tab (0–4).
 void openVeroMainShell(BuildContext context, {required String email, int tabIndex = 0}) {

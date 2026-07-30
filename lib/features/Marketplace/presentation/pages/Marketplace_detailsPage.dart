@@ -141,6 +141,7 @@ class _DetailsPageState extends State<DetailsPage> {
   static const Color _border = Color(0xFFECEEF2);
 
   Future<_SellerInfo>? _sellerFuture;
+  _SellerInfo? _seller;
   final TextEditingController _commentController = TextEditingController();
   final FToast _fToast = FToast();
 
@@ -151,15 +152,33 @@ class _DetailsPageState extends State<DetailsPage> {
   static const _autoInterval = Duration(seconds: 4);
   bool _openingChat = false;
 
+  /// Instant shop-hours for OPEN/CLOSED (independent of full seller load).
+  String? _openingHours;
+  List<int> _openingDays = const [];
+  Timer? _shopStatusTicker;
+
   @override
   void initState() {
     super.initState();
     unawaited(BackendChatService.warmForMarketplaceChat().catchError((_) {}));
     unawaited(BackendMessagingSocket.connect().catchError((_) {}));
     _pc = PageController();
-    _sellerFuture = _loadSeller();
+    _seedOpeningHoursFast();
+    _sellerFuture = _loadSeller().then((s) {
+      if (mounted) {
+        setState(() {
+          _seller = s;
+          final h = (s.openingHours ?? '').trim();
+          if (h.isNotEmpty) _openingHours = h;
+        });
+      }
+      return s;
+    });
     _prefetchSellerChat();
     _fToast.init(context);
+    _shopStatusTicker = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
 
     final it = widget.item;
     final images = it.gallery.where((u) => u.toString().trim().isNotEmpty).toList();
@@ -198,6 +217,7 @@ class _DetailsPageState extends State<DetailsPage> {
 
   @override
   void dispose() {
+    _shopStatusTicker?.cancel();
     _autoTimer?.cancel();
     _pc.dispose();
     _commentController.dispose();
@@ -217,6 +237,102 @@ class _DetailsPageState extends State<DetailsPage> {
   }
 
   // seller/data
+  void _seedOpeningHoursFast() {
+    final i = widget.item;
+    final mid = (i.merchantId ?? '').trim();
+    final sid = (i.sellerUserId ?? '').trim();
+    final fromItem = (i.sellerOpeningHours ?? '').trim();
+    final fromCache = MerchantSellerLoader.peekOpeningHours(mid) ??
+        MerchantSellerLoader.peekOpeningHours(sid);
+    final seed = fromItem.isNotEmpty ? fromItem : (fromCache ?? '');
+    if (seed.isNotEmpty) {
+      _openingHours = seed;
+      MerchantSellerLoader.cacheOpeningHours(mid, seed);
+      MerchantSellerLoader.cacheOpeningHours(sid, seed);
+    }
+    final days = MerchantSellerLoader.peekOpeningDays(mid) ??
+        MerchantSellerLoader.peekOpeningDays(sid);
+    if (days != null && days.isNotEmpty) {
+      _openingDays = days;
+    }
+    unawaited(_prefetchOpeningHoursOnly());
+  }
+
+  Future<void> _prefetchOpeningHoursOnly() async {
+    final i = widget.item;
+    final mid = (i.merchantId ?? '').trim();
+    final sid = (i.sellerUserId ?? '').trim();
+
+    // Disk first (very fast).
+    final diskHours = await MerchantSellerLoader.peekOpeningHoursPersisted(mid) ??
+        await MerchantSellerLoader.peekOpeningHoursPersisted(sid);
+    final diskDays = await MerchantSellerLoader.peekOpeningDaysPersisted(mid) ??
+        await MerchantSellerLoader.peekOpeningDaysPersisted(sid);
+    if (!mounted) return;
+    var dirty = false;
+    if (diskHours != null &&
+        diskHours.isNotEmpty &&
+        _openingHours != diskHours) {
+      _openingHours = diskHours;
+      dirty = true;
+    }
+    if (diskDays != null &&
+        diskDays.isNotEmpty &&
+        !_sameDays(_openingDays, diskDays)) {
+      _openingDays = diskDays;
+      dirty = true;
+    }
+    if (dirty) setState(() {});
+
+    // Always refresh from server so OPEN/CLOSED matches latest merchant edit.
+    final schedule = await MerchantSellerLoader.prefetchShopSchedule(
+      mid.isNotEmpty ? mid : sid,
+      extraIds: [sid, mid, i.serviceProviderId],
+    );
+    if (!mounted) return;
+    final hours = (schedule.hours ?? '').trim();
+    final days = schedule.days;
+    dirty = false;
+    if (hours.isNotEmpty && _openingHours != hours) {
+      _openingHours = hours;
+      dirty = true;
+    }
+    if (days.isNotEmpty && !_sameDays(_openingDays, days)) {
+      _openingDays = days;
+      dirty = true;
+    }
+    // Force rebuild even when equal so chip re-evaluates open-now.
+    if (dirty || hours.isNotEmpty || days.isNotEmpty) {
+      setState(() {});
+    }
+  }
+
+  bool _sameDays(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  String? get _resolvedOpeningHours {
+    final live = (_openingHours ?? '').trim();
+    if (live.isNotEmpty) return live;
+    final fromSeller = (_seller?.openingHours ?? '').trim();
+    if (fromSeller.isNotEmpty) return fromSeller;
+    final fromItem = (widget.item.sellerOpeningHours ?? '').trim();
+    if (fromItem.isNotEmpty) return fromItem;
+    return MerchantSellerLoader.peekOpeningHours(widget.item.merchantId) ??
+        MerchantSellerLoader.peekOpeningHours(widget.item.sellerUserId);
+  }
+
+  List<int> get _resolvedOpeningDays {
+    if (_openingDays.isNotEmpty) return _openingDays;
+    return MerchantSellerLoader.peekOpeningDays(widget.item.merchantId) ??
+        MerchantSellerLoader.peekOpeningDays(widget.item.sellerUserId) ??
+        const [];
+  }
+
   Future<_SellerInfo> _loadSeller() async {
     final i = widget.item;
     final seller = await MerchantSellerLoader.load(
@@ -224,13 +340,14 @@ class _DetailsPageState extends State<DetailsPage> {
       sellerUserId: i.sellerUserId,
       serviceProviderId: i.serviceProviderId,
       sellerBusinessName: i.sellerBusinessName,
-      sellerOpeningHours: i.sellerOpeningHours,
+      sellerOpeningHours: i.sellerOpeningHours ?? _openingHours,
       sellerStatus: i.sellerStatus,
       sellerBusinessDescription: i.sellerBusinessDescription,
       sellerRating: i.sellerRating,
       sellerLogoUrl: i.sellerLogoUrl,
+      backendUserIdHint: i.merchantBackendId,
     );
-    return _SellerInfo(
+    final info = _SellerInfo(
       businessName: seller.businessName,
       openingHours: seller.openingHours,
       status: seller.status,
@@ -242,6 +359,7 @@ class _DetailsPageState extends State<DetailsPage> {
       backendMerchantId: seller.backendMerchantId,
       recentReviews: seller.recentReviews,
     );
+    return info;
   }
 
   void _prefetchSellerChat() {
@@ -287,6 +405,15 @@ class _DetailsPageState extends State<DetailsPage> {
   }
 
   Future<void> _goToCheckout(MarketplaceDetailModel item) async {
+    if (item.isOutOfStock) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item is out of stock',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
     final prefs = await SharedPreferences.getInstance();
     final _ = prefs.getInt('userId'); // kept as-is
     // ignore: use_build_context_synchronously
@@ -318,35 +445,63 @@ class _DetailsPageState extends State<DetailsPage> {
     );
   }
 
-  Widget _statusChip(String? status) {
-    final s = (status ?? '').toLowerCase().trim();
-    Color bg = Colors.grey.shade200, fg = Colors.black87;
-    var isPending = false;
-    if (s == 'open') {
-      bg = Colors.green.shade50;
-      fg = Colors.green.shade700;
-    } else if (s == 'closed') {
-      bg = Colors.red.shade50;
-      fg = Colors.red.shade700;
-    } else if (s == 'busy') {
-      bg = Colors.orange.shade50;
-      fg = Colors.orange.shade800;
-    } else if (s == 'pending') {
-      isPending = true;
-      bg = Colors.orange.shade100;
-      fg = Colors.orange.shade900;
+  TimeOfDay? _parseShopTime(String raw) {
+    final t = raw.trim().split(':');
+    if (t.length != 2) return null;
+    final h = int.tryParse(t[0]);
+    final m = int.tryParse(t[1]);
+    if (h == null || m == null) return null;
+    if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+    return TimeOfDay(hour: h, minute: m);
+  }
+
+  bool _isShopOpenFromHours(
+    String? openingHours, [
+    List<int> openingDays = const [],
+  ]) {
+    final s = (openingHours ?? '').trim();
+    if (s.isEmpty) return false;
+    if (openingDays.isNotEmpty &&
+        !openingDays.contains(DateTime.now().weekday)) {
+      return false;
     }
+    final parts = s.replaceAll('–', '-').replaceAll('—', '-').split('-');
+    if (parts.length != 2) return false;
+    final open = _parseShopTime(parts[0]);
+    final close = _parseShopTime(parts[1]);
+    if (open == null || close == null) return false;
+    final now = TimeOfDay.now();
+    final nowM = now.hour * 60 + now.minute;
+    final openM = open.hour * 60 + open.minute;
+    final closeM = close.hour * 60 + close.minute;
+    if (openM == closeM) return false;
+    if (openM < closeM) {
+      return nowM >= openM && nowM < closeM;
+    }
+    return nowM >= openM || nowM < closeM;
+  }
+
+  Widget _shopStatusChip(String? openingHours, [List<int>? openingDays]) {
+    final open = _isShopOpenFromHours(
+      openingHours,
+      openingDays ?? _resolvedOpeningDays,
+    );
+    final fg = open ? Colors.green.shade700 : Colors.red.shade700;
+    final bg = open ? Colors.green.shade50 : Colors.red.shade50;
     return Chip(
-      label: Text((status ?? '—').toUpperCase()),
-      backgroundColor: bg,
-      labelStyle: TextStyle(
-        color: fg,
-        fontWeight: FontWeight.w700,
-        fontSize: isPending ? 11 : 12,
+      label: Text(
+        open ? 'OPEN' : 'CLOSED',
+        style: TextStyle(
+          color: fg,
+          fontWeight: FontWeight.w900,
+          fontSize: 12,
+          letterSpacing: 0.2,
+        ),
       ),
+      backgroundColor: bg,
       visualDensity: VisualDensity.compact,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      padding: EdgeInsets.symmetric(horizontal: isPending ? 2 : 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
     );
   }
 
@@ -435,7 +590,8 @@ class _DetailsPageState extends State<DetailsPage> {
     required String merchantId,
     required bool hasMerchant,
     String? businessName,
-    String? status,
+    String? openingHours,
+    List<int> openingDays = const [],
     double? rating,
     int reviewCount = 0,
     List<MerchantReview> recentReviews = const [],
@@ -446,6 +602,11 @@ class _DetailsPageState extends State<DetailsPage> {
     const ink = Color(0xFF101010);
     const muted = Color(0xFF6B7280);
     const border = Color(0xFFECEEF2);
+    final days = openingDays.isNotEmpty ? openingDays : _resolvedOpeningDays;
+    final shopOpen = _isShopOpenFromHours(openingHours, days);
+    final statusLabel = shopOpen ? 'OPEN' : 'CLOSED';
+    final statusColor =
+        shopOpen ? Colors.green.shade700 : Colors.red.shade700;
 
     return Container(
       decoration: BoxDecoration(
@@ -476,6 +637,8 @@ class _DetailsPageState extends State<DetailsPage> {
                     children: [
                       Text(
                         merchantDisplayName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 17,
@@ -484,10 +647,12 @@ class _DetailsPageState extends State<DetailsPage> {
                         ),
                       ),
                       const SizedBox(height: 6),
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           _ratingStars(rating, showScore: reviewCount > 0),
-                          const SizedBox(width: 8),
                           Text(
                             reviewCount > 0
                                 ? '$reviewCount review${reviewCount == 1 ? '' : 's'}'
@@ -503,7 +668,8 @@ class _DetailsPageState extends State<DetailsPage> {
                     ],
                   ),
                 ),
-                _statusChip(status),
+                const SizedBox(width: 8),
+                _shopStatusChip(openingHours, days),
               ],
             ),
             const SizedBox(height: 14),
@@ -527,8 +693,18 @@ class _DetailsPageState extends State<DetailsPage> {
                   _merchantDetailRow(
                     icon: Icons.info_outline_rounded,
                     label: 'Status',
-                    value: (status ?? '').isEmpty ? '—' : status!.toUpperCase(),
+                    value: statusLabel,
+                    valueColor: statusColor,
+                    valueBold: true,
                   ),
+                  if ((openingHours ?? '').trim().isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    _merchantDetailRow(
+                      icon: Icons.schedule_rounded,
+                      label: 'Hours',
+                      value: openingHours!.trim(),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -711,29 +887,38 @@ class _DetailsPageState extends State<DetailsPage> {
     required IconData icon,
     required String label,
     required String? value,
+    Color? valueColor,
+    bool valueBold = false,
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Icon(icon, size: 16, color: const Color(0xFF9CA3AF)),
         const SizedBox(width: 8),
-        SizedBox(
-          width: 100,
+        Flexible(
+          flex: 2,
           child: Text(
             label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontSize: 12,
               color: Color(0xFF6B7280),
             ),
           ),
         ),
+        const SizedBox(width: 8),
         Expanded(
+          flex: 3,
           child: Text(
             (value ?? '').trim().isEmpty ? '—' : value!.trim(),
-            style: const TextStyle(
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.right,
+            style: TextStyle(
               fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF101010),
+              fontWeight: valueBold ? FontWeight.w900 : FontWeight.w600,
+              color: valueColor ?? const Color(0xFF101010),
             ),
           ),
         ),
@@ -1086,10 +1271,16 @@ class _DetailsPageState extends State<DetailsPage> {
   Widget _buildProductCard({
     required MarketplaceDetailModel item,
     required String merchantDisplayName,
+    String? openingHours,
+    List<int> openingDays = const [],
   }) {
     final price =
         'MWK ${NumberFormat('#,###', 'en').format(item.price.truncate())}';
     final category = (item.category ?? '').trim();
+    final days = openingDays.isNotEmpty ? openingDays : _resolvedOpeningDays;
+    final shopOpen = _isShopOpenFromHours(openingHours, days);
+    final statusFg = shopOpen ? Colors.green.shade700 : Colors.red.shade700;
+    final statusBg = shopOpen ? Colors.green.shade50 : Colors.red.shade50;
 
     return Container(
       width: double.infinity,
@@ -1109,29 +1300,57 @@ class _DetailsPageState extends State<DetailsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (category.isNotEmpty) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: _brandSoft.withValues(alpha: 0.65),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                category.toUpperCase(),
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: _brandOrange,
-                  letterSpacing: 0.6,
+          Row(
+            children: [
+              if (category.isNotEmpty)
+                Flexible(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: _brandSoft.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      category.toUpperCase(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: _brandOrange,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ),
+                ),
+              if (category.isNotEmpty) const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: statusBg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  shopOpen ? 'OPEN' : 'CLOSED',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: statusFg,
+                    letterSpacing: 0.4,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 10),
-          ],
+            ],
+          ),
+          const SizedBox(height: 10),
           Text(
             item.name,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 24,
+              fontSize: 22,
               fontWeight: FontWeight.w800,
               color: _ink,
               height: 1.2,
@@ -1433,71 +1652,70 @@ class _DetailsPageState extends State<DetailsPage> {
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
+    final s = _seller;
+    final businessName = s?.businessName ?? item.sellerBusinessName;
+    final openingHours = _resolvedOpeningHours;
+    final openingDays = _resolvedOpeningDays;
+    final rating = s?.rating ?? item.sellerRating;
+    final reviewCount = s?.reviewCount ?? 0;
+    final recentReviews = s?.recentReviews ?? const <MerchantReview>[];
+    final businessDesc = s?.description ?? item.sellerBusinessDescription;
+    final logo = s?.logoUrl ?? item.sellerLogoUrl;
+
+    final hasMerchant =
+        (item.merchantId != null && item.merchantId!.isNotEmpty) ||
+            (item.serviceProviderId != null &&
+                item.serviceProviderId!.isNotEmpty);
+
+    final merchantId = item.merchantId ?? item.serviceProviderId ?? '';
+    final merchantDisplayName = businessName ??
+        item.sellerBusinessName ??
+        item.merchantName ??
+        'Merchant';
 
     return Scaffold(
       backgroundColor: _bg,
       appBar: _buildAppBar(),
       bottomNavigationBar: _buildBottomBar(item),
-      body: FutureBuilder<_SellerInfo>(
-        future: _sellerFuture ??= _loadSeller(),
-        builder: (context, snapshot) {
-          final s = snapshot.data;
-          final businessName = s?.businessName;
-          final status = s?.status;
-          final rating = s?.rating;
-          final reviewCount = s?.reviewCount ?? 0;
-          final recentReviews = s?.recentReviews ?? const <MerchantReview>[];
-          final businessDesc = s?.description;
-          final logo = s?.logoUrl;
-
-          final hasMerchant =
-              (item.merchantId != null && item.merchantId!.isNotEmpty) ||
-                  (item.serviceProviderId != null &&
-                      item.serviceProviderId!.isNotEmpty);
-
-          final merchantId =
-              item.merchantId ?? item.serviceProviderId ?? '';
-          final merchantDisplayName =
-              businessName ?? item.sellerBusinessName ?? item.merchantName ?? 'Merchant';
-
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            children: [
-              _buildHeroGallery(),
-              const SizedBox(height: 16),
-              _buildProductCard(
-                item: item,
-                merchantDisplayName: merchantDisplayName,
-              ),
-              const SizedBox(height: 12),
-              _buildChatButton(item),
-              const SizedBox(height: 24),
-              _sectionLabel('Seller'),
-              _buildMerchantCard(
-                item: item,
-                merchantDisplayName: merchantDisplayName,
-                merchantId: merchantId,
-                hasMerchant: hasMerchant,
-                businessName: businessName,
-                status: status,
-                rating: rating,
-                reviewCount: reviewCount,
-                recentReviews: recentReviews,
-                businessDesc: businessDesc,
-                logo: logo,
-                merchantBackendId: s?.backendMerchantId,
-              ),
-              if (hasMerchant && merchantId.trim().isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _buildMerchantProductsButton(
-                  merchantId: merchantId,
-                  merchantDisplayName: merchantDisplayName,
-                ),
-              ],
-              const SizedBox(height: 8),
-            ],
-          );
-        },
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          _buildHeroGallery(),
+          const SizedBox(height: 16),
+          _buildProductCard(
+            item: item,
+            merchantDisplayName: merchantDisplayName,
+            openingHours: openingHours,
+            openingDays: openingDays,
+          ),
+          const SizedBox(height: 12),
+          _buildChatButton(item),
+          const SizedBox(height: 24),
+          _sectionLabel('Seller'),
+          _buildMerchantCard(
+            item: item,
+            merchantDisplayName: merchantDisplayName,
+            merchantId: merchantId,
+            hasMerchant: hasMerchant,
+            businessName: businessName,
+            openingHours: openingHours,
+            openingDays: openingDays,
+            rating: rating,
+            reviewCount: reviewCount,
+            recentReviews: recentReviews,
+            businessDesc: businessDesc,
+            logo: logo,
+            merchantBackendId: s?.backendMerchantId,
+          ),
+          if (hasMerchant && merchantId.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildMerchantProductsButton(
+              merchantId: merchantId,
+              merchantDisplayName: merchantDisplayName,
+            ),
+          ],
+          const SizedBox(height: 8),
+        ],
       ),
     );
   }

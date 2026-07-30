@@ -2,8 +2,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 /// HTTP(S) images with disk cache ([CachedNetworkImage]). On failure, retries the
-/// other scheme (http ↔ https). Does not set disk or memory resize limits so the
-/// cached file and decode stay at full resolution.
+/// other scheme (http ↔ https). Pass [memCacheWidth]/[memCacheHeight] for
+/// thumbnails so Flutter does not decode full-resolution bitmaps.
 class ResilientCachedNetworkImage extends StatefulWidget {
   const ResilientCachedNetworkImage({
     required this.url,
@@ -11,12 +11,20 @@ class ResilientCachedNetworkImage extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.width,
     this.height,
+    this.memCacheWidth,
+    this.memCacheHeight,
+    this.showSpinner = true,
+    this.placeholderColor,
   });
 
   final String url;
   final BoxFit fit;
   final double? width;
   final double? height;
+  final int? memCacheWidth;
+  final int? memCacheHeight;
+  final bool showSpinner;
+  final Color? placeholderColor;
 
   @override
   State<ResilientCachedNetworkImage> createState() =>
@@ -54,40 +62,38 @@ class _ResilientCachedNetworkImageState
   @override
   Widget build(BuildContext context) {
     final u = _currentUrl;
+    final placeholderBg =
+        widget.placeholderColor ?? Colors.grey.shade100;
+    Widget placeholder() => Container(
+          width: widget.width,
+          height: widget.height,
+          color: placeholderBg,
+          alignment: Alignment.center,
+          child: widget.showSpinner
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : null,
+        );
+
     return CachedNetworkImage(
       imageUrl: u,
       fit: widget.fit,
       width: widget.width,
       height: widget.height,
+      memCacheWidth: widget.memCacheWidth,
+      memCacheHeight: widget.memCacheHeight,
       fadeInDuration: Duration.zero,
       fadeOutDuration: Duration.zero,
-      placeholder: (context, _) => Container(
-        width: widget.width,
-        height: widget.height,
-        color: Colors.grey.shade100,
-        alignment: Alignment.center,
-        child: const SizedBox(
-          width: 24,
-          height: 24,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      ),
+      placeholder: (context, _) => placeholder(),
       errorWidget: (context, _, __) {
         if (!_tryAlternate && _flipScheme(u) != u) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() => _tryAlternate = true);
           });
-          return Container(
-            width: widget.width,
-            height: widget.height,
-            color: Colors.grey.shade100,
-            alignment: Alignment.center,
-            child: const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          );
+          return placeholder();
         }
         return Container(
           width: widget.width,

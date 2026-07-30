@@ -175,7 +175,7 @@ class LatestArrivalsServicess {
 
   // ---------------- create/update/delete (auth required) ----------------
 
-  Future<void> create(LatestArrivalModel item) async {
+  Future<LatestArrivalModel> create(LatestArrivalModel item) async {
     final base = await _apiBase();
     final url = _u('/latestarrivals', base);
     final t = await _token();
@@ -185,7 +185,16 @@ class LatestArrivalsServicess {
       headers: _auth(t, extra: {'Content-Type': 'application/json'}),
       body: json.encode(item.toJson()),
     );
-    _decode(r, where: 'POST $url');
+    final body = _decode(r, where: 'POST $url');
+    if (body is Map) {
+      final map = body['data'] is Map
+          ? Map<String, dynamic>.from(body['data'] as Map)
+          : Map<String, dynamic>.from(body);
+      try {
+        return LatestArrivalModel.fromJson(map);
+      } catch (_) {}
+    }
+    return item;
   }
 
   Future<void> update(int id, Map<String, dynamic> patch) async {

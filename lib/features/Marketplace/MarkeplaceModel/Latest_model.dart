@@ -59,8 +59,12 @@ class LatestArrivalModel {
   });
 
   factory LatestArrivalModel.fromJson(Map<String, dynamic> j) {
+    final rawId = j['id'] ?? j['_id'] ?? 0;
+    final id = rawId is int
+        ? rawId
+        : int.tryParse(rawId.toString()) ?? 0;
     return LatestArrivalModel(
-      id: (j['id'] ?? 0) as int,
+      id: id,
       image: (j['image'] ?? '').toString(),
       name: (j['name'] ?? '').toString(),
       price: double.tryParse(j['price']?.toString() ?? '0') ?? 0,

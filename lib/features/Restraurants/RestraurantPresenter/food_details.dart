@@ -1,7 +1,11 @@
 // lib/features/Restraurants/RestraurantPresenter/food_details.dart
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
@@ -13,13 +17,13 @@ import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
-import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
-// ── Brand colours ─────────────────────────────────────────────────────────────
-const Color _red     = Color(0xFFC62828);
-const Color _ink     = Color(0xFF1A1109);
-const Color _divider = Color(0xFFEEEEEE);
+// ── Brand colours (Vero) ──────────────────────────────────────────────────────
+const Color _veroOrange = Color(0xFFFF8A00);
+const Color _ink        = Color(0xFF1A1109);
+const Color _divider    = Color(0xFFEEEEEE);
 
 // ── Image helpers ─────────────────────────────────────────────────────────────
 bool _isBase64(String s) {
@@ -28,22 +32,135 @@ bool _isBase64(String s) {
   return RegExp(r'^[A-Za-z0-9+/=\s]+$').hasMatch(x);
 }
 
-Widget _buildImage(String raw, {BoxFit fit = BoxFit.contain}) {
-  Widget err() => const Center(
-    child: Icon(Icons.restaurant_menu_rounded, size: 80, color: Colors.white38),
-  );
-  if (raw.isEmpty) return err();
-  if (raw.startsWith('http://') || raw.startsWith('https://')) {
-    return Image.network(raw, fit: fit, errorBuilder: (_, __, ___) => err());
+class _FoodHeroImage extends StatefulWidget {
+  const _FoodHeroImage({required this.raw, this.fit = BoxFit.cover});
+  final String raw;
+  final BoxFit fit;
+
+  @override
+  State<_FoodHeroImage> createState() => _FoodHeroImageState();
+}
+
+class _FoodHeroImageState extends State<_FoodHeroImage> {
+  String? _httpUrl;
+  Uint8List? _bytes;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
   }
-  if (_isBase64(raw)) {
+
+  @override
+  void didUpdateWidget(covariant _FoodHeroImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.raw != widget.raw) _resolve();
+  }
+
+  Future<void> _resolve() async {
+    final raw = widget.raw.trim();
+    if (raw.isEmpty) {
+      if (mounted) setState(() => _ready = true);
+      return;
+    }
+    final lower = raw.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      if (mounted) {
+        setState(() {
+          _httpUrl = raw;
+          _ready = true;
+        });
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) => _precache(raw));
+      return;
+    }
+    if (_isBase64(raw)) {
+      try {
+        final part = raw.contains(',') ? raw.split(',').last : raw;
+        final bytes = base64Decode(part.replaceAll(RegExp(r'\s'), ''));
+        if (mounted) {
+          setState(() {
+            _bytes = bytes;
+            _ready = true;
+          });
+        }
+        return;
+      } catch (_) {}
+    }
     try {
-      final part  = raw.contains(',') ? raw.split(',').last : raw;
-      final bytes = base64Decode(part.replaceAll(RegExp(r'\s'), ''));
-      return Image.memory(bytes, fit: fit, errorBuilder: (_, __, ___) => err());
-    } catch (_) {}
+      final ref = lower.startsWith('gs://')
+          ? FirebaseStorage.instance.refFromURL(raw)
+          : FirebaseStorage.instance.ref(raw);
+      final url = await ref.getDownloadURL();
+      if (!mounted) return;
+      setState(() {
+        _httpUrl = url;
+        _ready = true;
+      });
+      _precache(url);
+    } catch (_) {
+      if (mounted) setState(() => _ready = true);
+    }
   }
-  return err();
+
+  void _precache(String url) {
+    if (!mounted || url.isEmpty) return;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    // Keep hero sharp — avoid heavy downsampling that looks "compressed".
+    final cachePx = (MediaQuery.sizeOf(context).width * dpr).round().clamp(640, 1600);
+    unawaited(
+      precacheImage(
+        CachedNetworkImageProvider(url, maxWidth: cachePx, maxHeight: cachePx),
+        context,
+      ).catchError((_) {}),
+    );
+  }
+
+  Widget _err() => const Center(
+        child: Icon(Icons.restaurant_menu_rounded, size: 80, color: Colors.white54),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready && _httpUrl == null && _bytes == null) {
+      return const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white),
+        ),
+      );
+    }
+    final url = (_httpUrl ?? '').trim();
+    if (url.isNotEmpty) {
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final cachePx =
+          (MediaQuery.sizeOf(context).width * dpr).round().clamp(640, 1600);
+      return ResilientCachedNetworkImage(
+        url: url,
+        fit: widget.fit,
+        width: double.infinity,
+        height: double.infinity,
+        memCacheWidth: cachePx,
+        memCacheHeight: cachePx,
+        showSpinner: false,
+        placeholderColor: const Color(0xFFFFF4E8),
+      );
+    }
+    final bytes = _bytes;
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        fit: widget.fit,
+        width: double.infinity,
+        height: double.infinity,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => _err(),
+      );
+    }
+    return _err();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,12 +185,26 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
 
   int  _pageIdx           = 0;
   int  _qty               = 1;
-  bool _isLoadingDefaults = true;
   bool _payStarting       = false;
   bool _descExpanded      = false;
 
   double? _deliveryLat, _deliveryLng;
+  bool _pinning = false;
+  Timer? _heroAutoSlide;
   final _addressService = AddressService();
+
+  List<String> get _heroImages {
+    final item = widget.foodItem;
+    final images = <String>[
+      if (item.FoodImage.trim().isNotEmpty) item.FoodImage.trim(),
+      ...item.gallery.map((e) => e.trim()).where((e) => e.isNotEmpty),
+    ];
+    final unique = <String>[];
+    for (final u in images) {
+      if (!unique.contains(u)) unique.add(u);
+    }
+    return unique.isNotEmpty ? unique : [''];
+  }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
   @override
@@ -81,11 +212,34 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     super.initState();
     _pageCtrl = PageController();
     _tabCtrl  = TabController(length: 2, vsync: this);
-    _loadDefaults();
+    _hydrateDefaultsFast();
+    _startHeroAutoSlide();
+  }
+
+  void _startHeroAutoSlide() {
+    _heroAutoSlide?.cancel();
+    final count = _heroImages.length;
+    if (count <= 1) return;
+    _heroAutoSlide = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted || !_pageCtrl.hasClients) return;
+      final next = (_pageIdx + 1) % count;
+      _pageCtrl.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 480),
+        curve: Curves.easeInOutCubic,
+      );
+    });
+  }
+
+  void _onHeroPageChanged(int i) {
+    setState(() => _pageIdx = i);
+    // Restart timer so manual swipes don't fight the auto-slide.
+    _startHeroAutoSlide();
   }
 
   @override
   void dispose() {
+    _heroAutoSlide?.cancel();
     _pageCtrl.dispose();
     _tabCtrl.dispose();
     _descCtrl.dispose();
@@ -96,172 +250,342 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     super.dispose();
   }
 
-  // ── Defaults ───────────────────────────────────────────────────────────────
-  Future<void> _loadDefaults() async {
+  /// Prefill from prefs / address cache without blocking the food hero UI.
+  Future<void> _hydrateDefaultsFast() async {
     try {
-      final sp    = await SharedPreferences.getInstance();
-      final token = sp.getString('jwt_token') ??
-          sp.getString('token') ?? sp.getString('jwt');
-      if (token == null || token.isEmpty) {
-        setState(() => _isLoadingDefaults = false); return;
-      }
-      final name  = sp.getString('user_full_name') ?? sp.getString('name');
-      final phone = sp.getString('user_phone')     ?? sp.getString('phone');
+      final sp = await SharedPreferences.getInstance();
+      final name = sp.getString('user_full_name') ?? sp.getString('name');
+      final phone = sp.getString('user_phone') ?? sp.getString('phone');
       final email = sp.getString('email');
-      String? location;
-      try {
-        final addrs = await _addressService.getMyAddresses();
-        Address? def;
-        if (addrs.isNotEmpty) {
-          def = addrs.firstWhere(
-              (a) => a.isDefault == true, orElse: () => addrs.first);
+      if (mounted) {
+        setState(() {
+          if (name?.trim().isNotEmpty == true) _nameCtrl.text = name!;
+          if (phone?.trim().isNotEmpty == true) _phoneCtrl.text = phone!;
+          if (email?.trim().isNotEmpty == true) _emailCtrl.text = email!;
+        });
+      }
+
+      final cached = await _addressService.getCachedDefaultAddress();
+      if (cached != null && mounted) {
+        final d = cached.description.trim();
+        final c = cached.city.trim();
+        final location = d.isNotEmpty && c.isNotEmpty
+            ? '$d, $c'
+            : d.isNotEmpty
+                ? d
+                : (c.isNotEmpty ? c : null);
+        setState(() {
+          if (location != null && location.isNotEmpty) {
+            _locationCtrl.text = location;
+          }
+          if (cached.lat != null && cached.lng != null) {
+            _deliveryLat = cached.lat;
+            _deliveryLng = cached.lng;
+          }
+        });
+      }
+
+      unawaited(_refreshAddressFromNetwork());
+      unawaited(_autoPinDelivery());
+    } catch (_) {
+      unawaited(_autoPinDelivery());
+    }
+  }
+
+  Future<void> _refreshAddressFromNetwork() async {
+    try {
+      final addrs = await _addressService.getMyAddresses();
+      if (!mounted || addrs.isEmpty) return;
+      final def = addrs.firstWhere(
+        (a) => a.isDefault == true,
+        orElse: () => addrs.first,
+      );
+      final d = def.description.trim();
+      final c = def.city.trim();
+      final location = d.isNotEmpty && c.isNotEmpty
+          ? '$d, $c'
+          : d.isNotEmpty
+              ? d
+              : (c.isNotEmpty ? c : null);
+      if (!mounted) return;
+      setState(() {
+        if (location != null &&
+            location.isNotEmpty &&
+            _locationCtrl.text.trim().isEmpty) {
+          _locationCtrl.text = location;
         }
-        if (def != null) {
-          final d = (def.description ?? '').trim();
-          final c = (def.city ?? '').trim();
-          location = d.isNotEmpty && c.isNotEmpty ? '$d, $c'
-                   : d.isNotEmpty ? d : c.isNotEmpty ? c : null;
+        if (_deliveryLat == null &&
+            def.lat != null &&
+            def.lng != null) {
+          _deliveryLat = def.lat;
+          _deliveryLng = def.lng;
+        }
+      });
+    } catch (_) {}
+  }
+
+  /// Auto-pin coords so Buy works without tapping Pin first.
+  Future<bool> _autoPinDelivery() async {
+    if (_deliveryLat != null && _deliveryLng != null) return true;
+    if (_pinning) return false;
+    _pinning = true;
+    try {
+      try {
+        final last = await Geolocator.getLastKnownPosition();
+        if (last != null && mounted) {
+          setState(() {
+            _deliveryLat = last.latitude;
+            _deliveryLng = last.longitude;
+          });
+          if (_locationCtrl.text.trim().isEmpty) {
+            unawaited(_fillAddressFromCoords(last.latitude, last.longitude));
+          }
+          return true;
         }
       } catch (_) {}
-      setState(() {
-        if (name?.trim().isNotEmpty     == true) _nameCtrl.text     = name!;
-        if (phone?.trim().isNotEmpty    == true) _phoneCtrl.text    = phone!;
-        if (location?.trim().isNotEmpty == true) _locationCtrl.text = location!;
-        if (email?.trim().isNotEmpty    == true) _emailCtrl.text    = email!;
-        _isLoadingDefaults = false;
-      });
-    } catch (_) { setState(() => _isLoadingDefaults = false); }
+
+      if (await _gpsSilent()) return true;
+      if (await _geocodeSilent()) return true;
+      return false;
+    } finally {
+      _pinning = false;
+    }
+  }
+
+  Future<void> _fillAddressFromCoords(double lat, double lng) async {
+    try {
+      final marks = await placemarkFromCoordinates(lat, lng);
+      if (!mounted || marks.isEmpty) return;
+      final p = marks.first;
+      final line = [
+        p.street,
+        p.subLocality,
+        p.locality,
+        p.administrativeArea,
+        p.country,
+      ].where((e) => e != null && e.trim().isNotEmpty).join(', ');
+      if (line.isNotEmpty && _locationCtrl.text.trim().isEmpty) {
+        setState(() => _locationCtrl.text = line);
+      }
+    } catch (_) {}
   }
 
   void _toast(String msg, bool ok) =>
       ToastHelper.showCustomToast(context, msg, isSuccess: ok, errorMessage: '');
 
   Future<void> _openMaps() async {
-    final q   = _locationCtrl.text.trim();
+    final q = _locationCtrl.text.trim();
     final uri = Uri.parse(
         'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(q.isEmpty ? 'delivery address' : q)}');
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else { _toast('Could not open Maps', false); }
+    } else {
+      _toast('Could not open Maps', false);
+    }
   }
 
-  Future<void> _gps() async {
+  Future<bool> _gpsSilent() async {
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
-        _toast('Turn on location services', false); return;
-      }
+      if (!await Geolocator.isLocationServiceEnabled()) return false;
       var perm = await Geolocator.checkPermission();
       if (perm == LocationPermission.denied) {
         perm = await Geolocator.requestPermission();
       }
       if (perm == LocationPermission.denied ||
           perm == LocationPermission.deniedForever) {
-        _toast('Location permission denied', false); return;
+        return false;
       }
       final pos = await Geolocator.getCurrentPosition(
-          locationSettings:
-              const LocationSettings(accuracy: LocationAccuracy.high));
-      final marks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
-      if (marks.isEmpty) return;
-      final p    = marks.first;
-      final line = [p.street, p.subLocality, p.locality,
-                    p.administrativeArea, p.country]
-          .where((e) => e != null && e.trim().isNotEmpty).join(', ');
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 8),
+        ),
+      );
+      if (!mounted) return false;
       setState(() {
         _deliveryLat = pos.latitude;
         _deliveryLng = pos.longitude;
-        if (line.isNotEmpty) _locationCtrl.text = line;
       });
-    } catch (e) { _toast('Could not get location: $e', false); }
+      if (_locationCtrl.text.trim().isEmpty) {
+        unawaited(_fillAddressFromCoords(pos.latitude, pos.longitude));
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
-  Future<void> _geocodeTyped() async {
+  Future<void> _gps() async {
+    final ok = await _gpsSilent();
+    if (!ok) {
+      _toast('Could not get location. Check permissions.', false);
+      return;
+    }
+    if (_locationCtrl.text.trim().isEmpty &&
+        _deliveryLat != null &&
+        _deliveryLng != null) {
+      await _fillAddressFromCoords(_deliveryLat!, _deliveryLng!);
+    }
+    if (mounted) _toast('Location pinned', true);
+  }
+
+  Future<bool> _geocodeSilent() async {
     final addr = _locationCtrl.text.trim();
-    if (addr.length < 4) { _toast('Enter a clearer address first', false); return; }
+    if (addr.length < 4) return false;
     try {
       final list = await locationFromAddress(addr);
-      if (list.isEmpty) return;
+      if (list.isEmpty || !mounted) return false;
       setState(() {
         _deliveryLat = list.first.latitude;
         _deliveryLng = list.first.longitude;
       });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _geocodeTyped() async {
+    final addr = _locationCtrl.text.trim();
+    if (addr.length < 4) {
+      final ok = await _autoPinDelivery();
+      if (ok) {
+        _toast('Location pinned', true);
+      } else {
+        _toast('Allow location or enter an address', false);
+      }
+      return;
+    }
+    final ok = await _geocodeSilent();
+    if (ok) {
       _toast('Location pinned', true);
-    } catch (_) { _toast('Could not find that address', false); }
+      return;
+    }
+    if (await _gpsSilent()) {
+      _toast('Location pinned via GPS', true);
+    } else {
+      _toast('Could not find that address', false);
+    }
   }
 
   Future<void> _startCheckout() async {
+    if (_payStarting) return;
+    setState(() => _payStarting = true);
+
     final item = widget.foodItem;
-    final mid  = item.merchantId?.trim();
+    final mid = item.merchantId?.trim();
     if (mid == null || mid.isEmpty) {
-      _toast('This dish cannot be ordered online (missing seller).', false); return;
+      if (mounted) setState(() => _payStarting = false);
+      _toast('This dish cannot be ordered online (missing seller).', false);
+      return;
     }
     if (!_formKey.currentState!.validate()) {
-      _toast('Please complete all required fields', false); return;
+      if (mounted) setState(() => _payStarting = false);
+      _toast('Please complete all required fields', false);
+      return;
     }
-    final name  = _nameCtrl.text.trim();
+    final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
-    final loc   = _locationCtrl.text.trim();
-    var email   = _emailCtrl.text.trim();
+    final loc = _locationCtrl.text.trim();
+    var email = _emailCtrl.text.trim();
     if (email.isEmpty) {
       final d = phone.replaceAll(RegExp(r'\D'), '');
       email = d.isNotEmpty ? 'guest+$d@guest.vero360.app' : 'guest@vero360.app';
     }
-    if (_deliveryLat == null || _deliveryLng == null) await _geocodeTyped();
-    setState(() => _payStarting = true);
-    try { await InternetAddress.lookup('api.paychangu.com'); }
-    on SocketException {
-      if (mounted) setState(() => _payStarting = false);
-      _toast('No internet — check connection', false); return;
+
+    // One-tap Buy: pin automatically if needed (no manual Pin tap).
+    if (_deliveryLat == null || _deliveryLng == null) {
+      await _autoPinDelivery();
     }
+    if ((_deliveryLat == null || _deliveryLng == null) && loc.length < 4) {
+      if (mounted) setState(() => _payStarting = false);
+      _toast('Add a delivery address or allow location.', false);
+      return;
+    }
+
+    try {
+      await InternetAddress.lookup('api.paychangu.com');
+    } on SocketException {
+      if (mounted) setState(() => _payStarting = false);
+      _toast('No internet — check connection', false);
+      return;
+    }
+
     final amount = (item.price * _qty).round();
     if (amount < 1) {
       if (mounted) setState(() => _payStarting = false);
-      _toast('Invalid price', false); return;
+      _toast('Invalid price', false);
+      return;
     }
     final txRef = 'vero-food-${DateTime.now().millisecondsSinceEpoch}';
     final parts = name.split(RegExp(r'\s+'));
     final fName = parts.isNotEmpty ? parts.first : 'Customer';
     final lName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
     try {
-      final res = await http.post(
-        PayChanguConfig.paymentUri, headers: PayChanguConfig.authHeaders,
-        body: json.encode({
-          'tx_ref': txRef, 'first_name': fName, 'last_name': lName,
-          'email': email, 'phone_number': phone, 'currency': 'MWK',
-          'amount': amount.toString(),
-          'payment_methods': ['card', 'mobile_money', 'bank'],
-          'callback_url': PayChanguConfig.callbackUrl,
-          'return_url':   PayChanguConfig.returnUrl,
-          'customization': {
-            'title': 'Vero360 Food',
-            'description': '${item.FoodName} x$_qty • $loc',
-          },
-        }),
-      ).timeout(const Duration(seconds: 30));
+      final res = await http
+          .post(
+            PayChanguConfig.paymentUri,
+            headers: PayChanguConfig.authHeaders,
+            body: json.encode({
+              'tx_ref': txRef,
+              'first_name': fName,
+              'last_name': lName,
+              'email': email,
+              'phone_number': phone,
+              'currency': 'MWK',
+              'amount': amount.toString(),
+              'payment_methods': ['card', 'mobile_money', 'bank'],
+              'callback_url': PayChanguConfig.callbackUrl,
+              'return_url': PayChanguConfig.returnUrl,
+              'customization': {
+                'title': 'Vero360 Food',
+                'description': '${item.FoodName} x$_qty • $loc',
+              },
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
       if (!mounted) return;
-      setState(() => _payStarting = false);
       if (res.statusCode != 200 && res.statusCode != 201) {
-        _toast('Payment start failed (${res.statusCode})', false); return;
+        setState(() => _payStarting = false);
+        _toast('Payment start failed (${res.statusCode})', false);
+        return;
       }
-      final body   = json.decode(res.body) as Map<String, dynamic>;
+      final body = json.decode(res.body) as Map<String, dynamic>;
       final status = (body['status'] ?? '').toString().toLowerCase();
       if (status != 'success') {
-        _toast(body['message']?.toString() ?? 'Payment failed', false); return;
+        setState(() => _payStarting = false);
+        _toast(body['message']?.toString() ?? 'Payment failed', false);
+        return;
       }
       final checkoutUrl = body['data']['checkout_url'] as String;
-      final note        = _descCtrl.text.trim();
-      final img = item.FoodImage.startsWith('http') ? item.FoodImage : null;
+      final note = _descCtrl.text.trim();
+      final imgRaw = item.FoodImage.trim().isNotEmpty
+          ? item.FoodImage.trim()
+          : (item.gallery.isNotEmpty ? item.gallery.first.trim() : '');
+      final img =
+          (imgRaw.startsWith('http://') || imgRaw.startsWith('https://'))
+              ? imgRaw
+              : null;
       if (!mounted) return;
+      setState(() => _payStarting = false);
       await Navigator.of(context).push<void>(MaterialPageRoute(
         builder: (_) => InAppPaymentPage(
-          checkoutUrl: checkoutUrl, txRef: txRef,
-          totalAmount: item.price * _qty, rootContext: context,
+          checkoutUrl: checkoutUrl,
+          txRef: txRef,
+          totalAmount: item.price * _qty,
+          rootContext: context,
           foodCheckout: FoodCheckoutContext(
-            merchantId: mid, customerName: name, customerPhone: phone,
-            customerEmail: email, deliveryAddress: loc,
-            deliveryLat: _deliveryLat, deliveryLng: _deliveryLng,
-            foodName: item.FoodName, totalMwk: item.price * _qty,
-            customerNote: note.isEmpty ? null : note, foodImageUrl: img,
+            merchantId: mid,
+            customerName: name,
+            customerPhone: phone,
+            customerEmail: email,
+            deliveryAddress: loc,
+            deliveryLat: _deliveryLat,
+            deliveryLng: _deliveryLng,
+            foodName: item.FoodName,
+            totalMwk: item.price * _qty,
+            customerNote: note.isEmpty ? null : note,
+            foodImageUrl: img,
             sqlListingId: item.id != 0 ? item.id.toString() : null,
             firestoreListingId: item.firestoreListingId,
           ),
@@ -279,28 +603,20 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
   // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    if (_isLoadingDefaults) {
-      return const Scaffold(
-        backgroundColor: _red,
-        body: Center(
-            child: CircularProgressIndicator(color: Colors.white)),
-      );
-    }
-
     final item   = widget.foodItem;
-    final images = item.gallery.isNotEmpty ? item.gallery : [item.FoodImage];
+    final heroImages = _heroImages;
     final cat    = ((item.category ?? 'Meals').trim().isEmpty)
         ? 'Meals' : item.category!.trim();
     final desc   = item.description?.trim() ?? '';
     final mq     = MediaQuery.of(context);
 
-    // How tall the red hero zone is
-    const double heroHeight = 380.0;
+    // How tall the orange hero zone is
+    const double heroHeight = 420.0;
     // How much the food image overflows into the white card
-    const double overflow   = 70.0;
+    const double overflow   = 48.0;
 
     return Scaffold(
-      backgroundColor: _red,
+      backgroundColor: _veroOrange,
       // No AppBar — we paint everything manually
       body: Stack(
         children: [
@@ -312,7 +628,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
               child: Column(
                 children: [
 
-                  // ── RED HERO AREA ─────────────────────────────────────
+                  // ── ORANGE HERO AREA ──────────────────────────────────
                   SizedBox(
                     height: heroHeight,
                     width: double.infinity,
@@ -320,35 +636,67 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                       clipBehavior: Clip.none,
                       children: [
 
-                        // Solid red fill
-                        Positioned.fill(child: Container(color: _red)),
+                        // Soft gradient fill
+                        Positioned.fill(
+                          child: DecoratedBox(
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [Color(0xFFFF9A1F), Color(0xFFFF7A00)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                            ),
+                          ),
+                        ),
 
-                        // Food image — centred, overflows downward
+                        // Food image — edge-to-edge so it doesn't look shrunk
                         Positioned(
-                          top: mq.padding.top + 60,
-                          left: 0, right: 0,
+                          top: mq.padding.top + 8,
+                          left: 0,
+                          right: 0,
                           bottom: -overflow,
                           child: PageView.builder(
                             controller: _pageCtrl,
-                            itemCount: images.length,
-                            onPageChanged: (i) =>
-                                setState(() => _pageIdx = i),
-                            itemBuilder: (_, i) => Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 20),
-                              child: _buildImage(images[i],
-                                  fit: BoxFit.contain),
+                            itemCount: heroImages.length,
+                            onPageChanged: _onHeroPageChanged,
+                            itemBuilder: (_, i) => SizedBox.expand(
+                              child: _FoodHeroImage(
+                                raw: heroImages[i],
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        // Soft fade into white card
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: -overflow,
+                          height: 72,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.white.withValues(alpha: 0),
+                                    Colors.white.withValues(alpha: 0.92),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
                         ),
 
                         // Page indicator dots
-                        if (images.length > 1)
+                        if (heroImages.length > 1)
                           Positioned(
-                            bottom: 8, left: 0, right: 0,
+                            bottom: 14, left: 0, right: 0,
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
-                              children: List.generate(images.length, (i) {
+                              children: List.generate(heroImages.length, (i) {
                                 final a = i == _pageIdx;
                                 return AnimatedContainer(
                                   duration:
@@ -360,9 +708,15 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                                   decoration: BoxDecoration(
                                     color: a
                                         ? Colors.white
-                                        : Colors.white38,
+                                        : Colors.white54,
                                     borderRadius:
                                         BorderRadius.circular(99),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.25),
+                                        blurRadius: 4,
+                                      ),
+                                    ],
                                   ),
                                 );
                               }),
@@ -405,7 +759,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                               style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.w900,
-                                  color: _red),
+                                  color: _veroOrange),
                             ),
                           ],
                         ),
@@ -466,7 +820,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                                                       fontSize: 13,
                                                       fontWeight:
                                                           FontWeight.w700,
-                                                      color: _red),
+                                                      color: _veroOrange),
                                                 ),
                                               ),
                                             ),
@@ -556,10 +910,10 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                           child: TextButton.icon(
                             onPressed: _geocodeTyped,
                             icon: const Icon(Icons.pin_drop_outlined,
-                                size: 16, color: _red),
+                                size: 16, color: _veroOrange),
                             label: const Text('Pin on map',
                                 style: TextStyle(
-                                    color: _red,
+                                    color: _veroOrange,
                                     fontWeight: FontWeight.w600,
                                     fontSize: 12)),
                             style: TextButton.styleFrom(
@@ -641,11 +995,11 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
               child: Container(
                 height: 58,
                 decoration: BoxDecoration(
-                  color: _red,
+                  color: _veroOrange,
                   borderRadius: BorderRadius.circular(18),
                   boxShadow: [
                     BoxShadow(
-                        color: _red.withOpacity(0.35),
+                        color: _veroOrange.withOpacity(0.35),
                         blurRadius: 16,
                         offset: const Offset(0, 6)),
                   ],
@@ -689,23 +1043,34 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
 
                     // ── Buy ─────────────────────────────────────────────
                     Expanded(
-                      child: GestureDetector(
-                        onTap: _payStarting ? null : _startCheckout,
-                        child: Center(
-                          child: _payStarting
-                              ? const SizedBox(
-                                  width: 22, height: 22,
-                                  child: CircularProgressIndicator(
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: _payStarting ? null : () {
+                            FocusScope.of(context).unfocus();
+                            unawaited(_startCheckout());
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Center(
+                            child: _payStarting
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
                                       strokeWidth: 2.5,
-                                      color: Colors.white))
-                              : const Text(
-                                  'Buy',
-                                  style: TextStyle(
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text(
+                                    'Buy',
+                                    style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.w800,
                                       color: Colors.white,
-                                      letterSpacing: 0.3),
-                                ),
+                                      letterSpacing: 0.3,
+                                    ),
+                                  ),
+                          ),
                         ),
                       ),
                     ),
@@ -729,7 +1094,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
           onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.all(7),
-            child: Icon(icon, size: 18, color: _red),
+            child: Icon(icon, size: 18, color: _veroOrange),
           ),
         ),
       );
@@ -737,14 +1102,14 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
   Widget _iconBtn(IconData icon, String tip, VoidCallback onTap) => Tooltip(
     message: tip,
     child: Material(
-      color: _red.withOpacity(0.10),
+      color: _veroOrange.withOpacity(0.10),
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(10),
-          child: Icon(icon, color: _red, size: 20),
+          child: Icon(icon, color: _veroOrange, size: 20),
         ),
       ),
     ),
@@ -768,7 +1133,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                   fontWeight: FontWeight.w600, fontSize: 12.5, color: _ink)),
           if (required)
             const Text(' *',
-                style: TextStyle(color: _red, fontSize: 12)),
+                style: TextStyle(color: _veroOrange, fontSize: 12)),
         ]),
         const SizedBox(height: 5),
         TextFormField(
@@ -777,7 +1142,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
           maxLines: maxLines,
           style: const TextStyle(
               fontSize: 14, color: _ink, fontWeight: FontWeight.w500),
-          cursorColor: _red,
+          cursorColor: _veroOrange,
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: TextStyle(
@@ -795,7 +1160,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                 borderSide: BorderSide(color: _divider, width: 1.2)),
             focusedBorder: const OutlineInputBorder(
                 borderRadius: BorderRadius.all(Radius.circular(14)),
-                borderSide: BorderSide(color: _red, width: 1.8)),
+                borderSide: BorderSide(color: _veroOrange, width: 1.8)),
             errorBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
                 borderSide:
@@ -850,10 +1215,10 @@ class _SegmentedTabs extends StatelessWidget {
         padding:
             const EdgeInsets.symmetric(horizontal: 26, vertical: 10),
         decoration: BoxDecoration(
-          color: active ? _red : Colors.white,
+          color: active ? _veroOrange : Colors.white,
           borderRadius: BorderRadius.circular(99),
           border: Border.all(
-              color: active ? _red : const Color(0xFFDDDDDD)),
+              color: active ? _veroOrange : const Color(0xFFDDDDDD)),
         ),
         child: Text(
           label,

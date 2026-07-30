@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../MarkeplaceModel/marketplace.model.dart';
 import '../../MarkeplaceService/marketplace.service.dart';
+import '../../MarkeplaceService/marketplace_moderation.dart';
 import '../../../../utils/toasthelper.dart';
 
 class _LocalMedia {
@@ -129,6 +130,20 @@ class _MarketplaceEditPageState extends State<MarketplaceEditPage> {
       return;
     }
 
+    final blockReason = MarketplaceModeration.clientBlockReason(
+      title: _name.text.trim(),
+      description: _desc.text,
+    );
+    if (blockReason != null) {
+      ToastHelper.showCustomToast(
+        context,
+        blockReason,
+        isSuccess: false,
+        errorMessage: 'Blocked',
+      );
+      return;
+    }
+
     setState(() => _saving = true);
     try {
       for (final m in _newGallery) {
@@ -140,20 +155,42 @@ class _MarketplaceEditPageState extends State<MarketplaceEditPage> {
         _videos.add(url);
       }
 
+      final existing = await _firestore
+          .collection('marketplace_items')
+          .doc(docId)
+          .get();
+      final existingData = existing.data() ?? <String, dynamic>{};
+      final prevReview =
+          (existingData['reviewStatus'] ?? '').toString().trim().toLowerCase();
+      final wasApproved = prevReview == 'approved' ||
+          (prevReview.isEmpty && existingData['isActive'] == true);
+
       final patch = <String, dynamic>{
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? widget.item.price,
         'description': _desc.text.trim(),
-        'isActive': _isActive,
-        if (_category != null) 'category': _category,
         'updatedAt': FieldValue.serverTimestamp(),
+        if (_category != null) 'category': _category,
       };
+
+      if (!wasApproved || prevReview == 'rejected' || prevReview == 'pending') {
+        patch['isActive'] = false;
+        patch['reviewStatus'] = 'pending';
+        patch['rejectedReason'] = FieldValue.delete();
+        patch['moderationResubmittedAt'] = FieldValue.serverTimestamp();
+      } else {
+        patch['isActive'] = _isActive;
+      }
 
       if (_cover.isNotEmpty) {
         if (_cover.startsWith('http')) {
           patch['imageUrl'] = _cover;
         } else {
           patch['image'] = _cover;
+        }
+        if (wasApproved && _cover != widget.item.image) {
+          patch['isActive'] = false;
+          patch['reviewStatus'] = 'pending';
         }
       }
 
@@ -174,9 +211,10 @@ class _MarketplaceEditPageState extends State<MarketplaceEditPage> {
       } catch (_) {}
 
       if (!mounted) return;
+      final resubmitted = patch['reviewStatus'] == 'pending';
       ToastHelper.showCustomToast(
         context,
-        'Saved',
+        resubmitted ? 'Submitted for review' : 'Saved',
         isSuccess: true,
         errorMessage: 'Saved',
       );

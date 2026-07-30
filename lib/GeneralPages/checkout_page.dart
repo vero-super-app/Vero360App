@@ -2,7 +2,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -19,6 +21,7 @@ import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 enum DeliveryType { speed, cts, ankolo, smart, pickup }
 
@@ -43,10 +46,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
   static const Color _brandSoft = Color(0xFFFFE8CC);
   static const Color _pageBg = Color(0xFFF4F6FA);
 
-  DeliveryType _deliveryType = DeliveryType.cts;
+  DeliveryType _deliveryType = DeliveryType.speed;
 
   int _qty = 1;
   bool _submitting = false;
+
+  int get _maxQty => widget.item.maxOrderQty;
+  bool get _outOfStock => widget.item.isOutOfStock || _maxQty <= 0;
 
   // Address
   final _addrSvc = AddressService();
@@ -54,6 +60,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _loadingAddr = true;
   bool _loggedIn = false;
   String? _pickupLocation; // merchant/shop address for pickup
+
+  /// Resolved http(s) URL for the product thumb (avoids Firebase lookup on rebuild).
+  String? _itemImageHttpUrl;
+  Uint8List? _itemImageBytes;
+  bool _itemImageReady = false;
 
   // Money formatter (MWK)
   late final NumberFormat _mwkFmt =
@@ -77,11 +88,188 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   void initState() {
     super.initState();
-    // Defer so auth and context are ready (avoids "address not loaded until re-navigate")
+    _prepareItemImage();
+    // Sync memory hit so the first frame already has an address.
+    final mem = AddressService.peekDefaultAddress();
+    if (mem != null) {
+      _defaultAddr = mem;
+      _loadingAddr = false;
+      _loggedIn = true;
+    } else {
+      _hydrateAddressFromCache();
+    }
+    // Defer network refresh so first frame can show cached address + image.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadAuthAndAddressWithRetry();
+      _precacheItemImage();
     });
+  }
+
+  /// Instant paint from memory/disk — never blocks on the API.
+  Future<void> _hydrateAddressFromCache() async {
+    final mem = AddressService.peekDefaultAddress();
+    if (mem != null) {
+      if (!mounted) return;
+      setState(() {
+        _defaultAddr = mem;
+        _loadingAddr = false;
+        _loggedIn = true;
+      });
+      return;
+    }
+    final disk = await _addrSvc.getCachedDefaultAddress();
+    if (!mounted || disk == null) return;
+    setState(() {
+      _defaultAddr = disk;
+      _loadingAddr = false;
+      _loggedIn = true;
+    });
+  }
+
+  /// Initial load: paint cache first, then soft-refresh from API.
+  Future<void> _loadAuthAndAddressWithRetry() async {
+    await _initAuthAndAddress();
+    if (!mounted) return;
+    // Short retry only when auth was clearly not ready and we still have nothing.
+    if (!_loggedIn && _defaultAddr == null && !_loadingAddr) {
+      await Future.delayed(const Duration(milliseconds: 250));
+      if (!mounted) return;
+      await _initAuthAndAddress();
+    }
+  }
+
+  Future<void> _initAuthAndAddress({bool forceRefresh = false}) async {
+    // When pickup is selected we will show merchant address instead of user address.
+    _pickupLocation = widget.item.location.trim().isEmpty
+        ? widget.item.sellerBusinessName
+        : widget.item.location.trim();
+
+    final hadCached = _defaultAddr != null;
+    // Soft refresh: keep showing the last address; only spinner if we have none.
+    setState(() {
+      if (!hadCached || forceRefresh) {
+        _loadingAddr = !hadCached;
+      }
+      if (!hadCached) {
+        _loggedIn = false;
+      }
+    });
+
+    final token = await _readAuthToken();
+    if (!mounted) return;
+
+    if (token == null) {
+      setState(() {
+        _loggedIn = false;
+        _loadingAddr = false;
+        if (forceRefresh) _defaultAddr = null;
+      });
+      return;
+    }
+
+    try {
+      // Prefer memory/disk instantly when not forcing a refresh.
+      if (!forceRefresh && !hadCached) {
+        final cached = await _addrSvc.getCachedDefaultAddress();
+        if (mounted && cached != null) {
+          setState(() {
+            _loggedIn = true;
+            _defaultAddr = cached;
+            _loadingAddr = false;
+          });
+        }
+      }
+
+      final list = await _addrSvc.getMyAddresses(forceRefresh: forceRefresh);
+
+      Address? def;
+      for (final a in list) {
+        if (a.isDefault) {
+          def = a;
+          break;
+        }
+      }
+      def ??= list.isNotEmpty ? list.first : null;
+
+      if (!mounted) return;
+      setState(() {
+        _loggedIn = true;
+        _defaultAddr = def;
+        _loadingAddr = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loggedIn = true;
+        _loadingAddr = false;
+        // Keep any previously shown cached address on network failure.
+      });
+    }
+  }
+
+  Future<void> _prepareItemImage() async {
+    final raw = widget.item.image.trim();
+    if (raw.isEmpty) {
+      if (mounted) setState(() => _itemImageReady = true);
+      return;
+    }
+
+    final lower = raw.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      if (!mounted) return;
+      setState(() {
+        _itemImageHttpUrl = raw;
+        _itemImageReady = true;
+      });
+      return;
+    }
+
+    try {
+      final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+      if (base64Part.length > 150) {
+        final bytes = base64Decode(base64Part);
+        if (!mounted) return;
+        setState(() {
+          _itemImageBytes = bytes;
+          _itemImageReady = true;
+        });
+        return;
+      }
+    } catch (_) {}
+
+    try {
+      final ref = lower.startsWith('gs://')
+          ? FirebaseStorage.instance.refFromURL(raw)
+          : FirebaseStorage.instance.ref(raw);
+      final url = await ref.getDownloadURL();
+      if (!mounted) return;
+      setState(() {
+        _itemImageHttpUrl = url;
+        _itemImageReady = true;
+      });
+      _precacheItemImage();
+    } catch (_) {
+      if (mounted) setState(() => _itemImageReady = true);
+    }
+  }
+
+  void _precacheItemImage() {
+    if (!mounted) return;
+    final url = (_itemImageHttpUrl ?? '').trim();
+    if (url.isEmpty) return;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cachePx = (88 * dpr).round().clamp(88, 256);
+    unawaited(
+      precacheImage(
+        CachedNetworkImageProvider(
+          url,
+          maxWidth: cachePx,
+          maxHeight: cachePx,
+        ),
+        context,
+      ).catchError((_) {}),
+    );
   }
 
   @override
@@ -90,35 +278,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   // ── UI helpers ──────────────────────────────────────────────────────────
-  InputDecoration _inputDecoration({
-    String? label,
-    String? hint,
-    Widget? prefixIcon,
-    String? helper,
-    String? error,
-  }) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      helperText: helper,
-      helperMaxLines: 2, // ✅ prevent helper overflow
-      errorText: error,
-      errorMaxLines: 2, // ✅ prevent error overflow
-      filled: true,
-      fillColor: Colors.white,
-      prefixIcon: prefixIcon,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      enabledBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: Colors.black, width: 1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      focusedBorder: const OutlineInputBorder(
-        borderSide: BorderSide(color: _brandOrange, width: 2),
-        borderRadius: BorderRadius.all(Radius.circular(12)),
-      ),
-    );
-  }
-
   OutlinedButtonThemeData get _outlinedTheme => OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: Colors.black87,
@@ -128,32 +287,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
           textStyle: const TextStyle(fontWeight: FontWeight.w700),
         ),
       );
-
-  Widget _pill({required IconData icon, required String text}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16),
-          const SizedBox(width: 6),
-          Text(text, style: const TextStyle(fontWeight: FontWeight.w700)),
-        ],
-      ),
-    );
-  }
 
   // ── Delivery helpers ─────────────────────────────────────────────────────
   String _deliveryLabel(DeliveryType d) {
@@ -171,152 +304,203 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
-  // ✅ Rich dropdown menu item (2 lines) — used ONLY in the dropdown menu
-  Widget _deliveryMenuItem({
-    required String title,
-    required String subtitle,
-    required IconData icon,
-  }) {
-    final w = MediaQuery.sizeOf(context).width;
-    final middleMaxW = (w * 0.45).clamp(120.0, 210.0);
+  String _deliverySubtitle(DeliveryType d) {
+    switch (d) {
+      case DeliveryType.speed:
+        return 'Fast delivery';
+      case DeliveryType.cts:
+        return 'Standard';
+      case DeliveryType.ankolo:
+        return 'Online tracking';
+      case DeliveryType.smart:
+        return 'Online tracking';
+      case DeliveryType.pickup:
+        return 'Collect at shop';
+    }
+  }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+  IconData _deliveryIcon(DeliveryType d) {
+    switch (d) {
+      case DeliveryType.speed:
+        return Icons.bolt_rounded;
+      case DeliveryType.cts:
+        return Icons.local_shipping_rounded;
+      case DeliveryType.ankolo:
+        return Icons.local_shipping_outlined;
+      case DeliveryType.smart:
+        return Icons.electric_moped_rounded;
+      case DeliveryType.pickup:
+        return Icons.storefront_rounded;
+    }
+  }
+
+  Widget _section({required String title, String? subtitle, required Widget child}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: _brandSoft,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _brandOrange.withValues(alpha: 0.25)),
-            ),
-            child: Icon(icon, size: 18, color: Colors.black87),
-          ),
-          const SizedBox(width: 10),
-          ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: middleMaxW),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w800, height: 1.05),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700, height: 1.05),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 15,
+              color: _brandNavy,
+              letterSpacing: -0.2,
             ),
           ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
+                height: 1.3,
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          child,
         ],
       ),
     );
   }
 
-  // ✅ Compact single-line selected item — used inside the closed field (fixes bottom overflow)
-  Widget _deliverySelectedItem({
-    required String title,
-    required IconData icon,
-  }) {
+  Widget _stepsHeader() {
+    Widget step(String label, bool active) {
+      return Expanded(
+        child: Column(
+          children: [
+            Container(
+              height: 3,
+              decoration: BoxDecoration(
+                color: active ? _brandOrange : Colors.black.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: active ? _brandNavy : Colors.grey.shade500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Row(
       children: [
-        Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: _brandSoft,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: _brandOrange.withValues(alpha: 0.25)),
-          ),
-          child: Icon(icon, size: 18, color: Colors.black87),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-          ),
-        ),
+        step('Order', true),
+        const SizedBox(width: 8),
+        step('Delivery', true),
+        const SizedBox(width: 8),
+        step('Pay', false),
       ],
+    );
+  }
+
+  Widget _courierTile(DeliveryType type) {
+    final selected = _deliveryType == type;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => setState(() => _deliveryType = type),
+        borderRadius: BorderRadius.circular(14),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
+          decoration: BoxDecoration(
+            color: selected ? _brandSoft : const Color(0xFFF8F9FC),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected
+                  ? _brandOrange
+                  : Colors.black.withValues(alpha: 0.08),
+              width: selected ? 1.6 : 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    _deliveryIcon(type),
+                    size: 18,
+                    color: selected ? _brandOrange : _brandNavy,
+                  ),
+                  const Spacer(),
+                  if (selected)
+                    const Icon(Icons.check_circle_rounded,
+                        size: 16, color: _brandOrange),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _deliveryLabel(type),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 13,
+                  color: _brandNavy,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _deliverySubtitle(type),
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade600,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _courierGrid() {
+    const options = DeliveryType.values;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxW = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width - 64;
+        const gap = 8.0;
+        final cols = maxW < 340 ? 2 : 3;
+        final tileW = ((maxW - gap * (cols - 1)) / cols).clamp(96.0, 200.0);
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final d in options)
+              SizedBox(width: tileW, child: _courierTile(d)),
+          ],
+        );
+      },
     );
   }
 
   // ── Auth + Default address bootstrap (single source: Firebase then SP) ───
   Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
-
-  /// Initial load: run after first frame, then retry once if auth wasn't ready.
-  Future<void> _loadAuthAndAddressWithRetry() async {
-    await _initAuthAndAddress();
-    if (!mounted) return;
-    // If we still have no address and not logged in, auth may have been initializing — retry once.
-    if (!_loggedIn && _defaultAddr == null && !_loadingAddr) {
-      await Future.delayed(const Duration(milliseconds: 1200));
-      if (!mounted) return;
-      await _initAuthAndAddress();
-    }
-  }
-
-  Future<void> _initAuthAndAddress({bool forceRefresh = false}) async {
-    // When pickup is selected we will show merchant address instead of user address.
-    _pickupLocation = widget.item.location.trim().isEmpty
-        ? widget.item.sellerBusinessName
-        : widget.item.location.trim();
-
-    setState(() {
-      _loadingAddr = true;
-      _defaultAddr = null;
-      _loggedIn = false;
-    });
-
-    final token = await _readAuthToken();
-    if (!mounted) return;
-
-    if (token == null) {
-      setState(() {
-        _loggedIn = false;
-        _loadingAddr = false;
-      });
-      return;
-    }
-
-    try {
-      final list = await _addrSvc.getMyAddresses(forceRefresh: forceRefresh);
-
-      Address? def;
-      for (final a in list) {
-        if (a.isDefault) {
-          def = a;
-          break;
-        }
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _loggedIn = true;
-        _defaultAddr = def;
-        _loadingAddr = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _loggedIn = true;
-        _defaultAddr = null;
-        _loadingAddr = false;
-      });
-    }
-  }
 
   Future<bool> _ensureDefaultAddressIfNeeded() async {
     // For shop pickup we do not require a customer delivery address.
@@ -374,6 +558,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   // ── Pay routing (Paychangu handles card/mobile on their page) ─────────────
   Future<void> _onPayPressed() async {
+    if (_outOfStock) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item is out of stock',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (_qty > _maxQty) {
+      setState(() => _qty = _maxQty.clamp(1, 99999));
+      ToastHelper.showCustomToast(
+        context,
+        'Only $_maxQty available',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
     if (!await _requireLogin()) return;
     if (!await _ensureDefaultAddressIfNeeded()) return;
     await _startPayChanguPayment();
@@ -463,6 +666,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     merchantId: mid,
                     merchantName: mname,
                     serviceType: _isPromotion ? 'promotion' : 'marketplace',
+                    availableStock: widget.item.stockQuantity,
                   ),
                 ]
               : null;
@@ -529,108 +733,74 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
-  // ── Image like Marketplace (http / base64 / firebase storage) ───────────
+  // ── Fast thumb: disk cache + sized decode (same pattern as cart) ─────────
+  Widget _itemImagePlaceholder(double size) {
+    return Container(
+      width: size,
+      height: size,
+      color: const Color(0xFFF1F1F1),
+      alignment: Alignment.center,
+      child: const SizedBox(
+        width: 22,
+        height: 22,
+        child: CircularProgressIndicator(strokeWidth: 2, color: _brandOrange),
+      ),
+    );
+  }
+
+  Widget _itemImageMissing(double size) {
+    return Container(
+      width: size,
+      height: size,
+      color: Colors.grey.shade300,
+      child: const Icon(Icons.image_not_supported),
+    );
+  }
+
   Widget _itemImage(String raw, {double size = 96}) {
-    final s = raw.trim();
-    if (s.isEmpty) {
-      return Container(
-        width: size,
-        height: size,
-        color: Colors.grey.shade300,
-        child: const Icon(Icons.image_not_supported),
-      );
+    if (!_itemImageReady &&
+        _itemImageHttpUrl == null &&
+        _itemImageBytes == null) {
+      return _itemImagePlaceholder(size);
     }
 
-    // HTTP URL
-    if (s.startsWith('http://') || s.startsWith('https://')) {
-      return Image.network(
-        s,
+    final url = (_itemImageHttpUrl ?? '').trim();
+    if (url.isNotEmpty) {
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final cachePx = (size * dpr).round().clamp(64, 256);
+      return ResilientCachedNetworkImage(
+        url: url,
         width: size,
         height: size,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(
-          width: size,
-          height: size,
-          color: Colors.grey.shade300,
-          child: const Icon(Icons.image_not_supported),
-        ),
+        memCacheWidth: cachePx,
+        memCacheHeight: cachePx,
       );
     }
 
-    // Firebase Storage gs://
-    if (s.startsWith('gs://')) {
-      return FutureBuilder<String>(
-        future: FirebaseStorage.instance.refFromURL(s).getDownloadURL(),
-        builder: (context, snap) {
-          if (!snap.hasData) {
-            return Container(
-              width: size,
-              height: size,
-              color: Colors.grey.shade200,
-              child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            );
-          }
-          return Image.network(
-            snap.data!,
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              width: size,
-              height: size,
-              color: Colors.grey.shade300,
-              child: const Icon(Icons.image_not_supported),
-            ),
-          );
-        },
+    final bytes = _itemImageBytes;
+    if (bytes != null) {
+      final cacheW = (size * MediaQuery.devicePixelRatioOf(context)).round();
+      return Image.memory(
+        bytes,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        cacheWidth: cacheW,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => _itemImageMissing(size),
       );
     }
 
-    // Try Base64
-    try {
-      final base64Part = s.contains(',') ? s.split(',').last : s;
-      if (base64Part.length > 150) {
-        final bytes = base64Decode(base64Part);
-        return Image.memory(bytes, width: size, height: size, fit: BoxFit.cover);
-      }
-    } catch (_) {}
-
-    // Try Firebase Storage path
-    return FutureBuilder<String>(
-      future: FirebaseStorage.instance.ref(s).getDownloadURL(),
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade300,
-            child: const Icon(Icons.image_not_supported),
-          );
-        }
-        return Image.network(
-          snap.data!,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade300,
-            child: const Icon(Icons.image_not_supported),
-          ),
-        );
-      },
-    );
+    return _itemImageMissing(size);
   }
 
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
-
-    final addressOk = _deliveryType == DeliveryType.pickup || _defaultAddr != null;
-    // Let _onPayPressed/_requireLogin handle auth messaging so users
-    // see a "log in first" message when they tap Pay Now, including for pickup.
-    final canPay = !_submitting && addressOk;
+    final addressOk =
+        _deliveryType == DeliveryType.pickup || _defaultAddr != null;
+    final canPay = !_submitting && addressOk && !_outOfStock;
 
     return Theme(
       data: Theme.of(context).copyWith(outlinedButtonTheme: _outlinedTheme),
@@ -638,359 +808,298 @@ class _CheckoutPageState extends State<CheckoutPage> {
         backgroundColor: _pageBg,
         appBar: AppBar(
           elevation: 0,
-          scrolledUnderElevation: 0.5,
+          scrolledUnderElevation: 0,
           backgroundColor: _brandOrange,
           foregroundColor: Colors.white,
           centerTitle: false,
-          titleSpacing: 8,
-          title: const Row(
-            children: [
-              Icon(Icons.shopping_bag_rounded, size: 26),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Checkout',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 20,
-                    letterSpacing: -0.3,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ],
+          titleSpacing: 0,
+          title: const Text(
+            'Checkout',
+            style: TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 20,
+              letterSpacing: -0.4,
+              color: Colors.white,
+            ),
           ),
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new_rounded),
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
             onPressed: () => Navigator.of(context).maybePop(),
             tooltip: 'Back',
           ),
         ),
-        body: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-            children: [
-              // Trust banner
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: _brandSoft,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.verified_user_rounded, size: 20, color: _brandNavy.withValues(alpha: 0.85)),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Secure checkout — review delivery and payment details.',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade800,
-                          height: 1.35,
-                        ),
-                      ),
+        body: Column(
+          children: [
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
+                  _stepsHeader(),
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                          color: Colors.black.withValues(alpha: 0.06)),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // Item summary
-              Card(
-                elevation: 6,
-                shadowColor: Colors.black12,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                clipBehavior: Clip.antiAlias,
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: _itemImage(item.image, size: 96),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              item.name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                    child: Row(
+                      children: [
+                        Icon(Icons.lock_outline_rounded,
+                            size: 18,
+                            color: _brandNavy.withValues(alpha: 0.7)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Secure checkout · PayChangu protected',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade700,
                             ),
-                            const SizedBox(height: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: _brandSoft,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: _brandOrange),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  _section(
+                    title: 'Your order',
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: _itemImage(item.image, size: 88),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 15,
+                                  color: _brandNavy,
+                                  height: 1.25,
+                                ),
                               ),
-                              child: Text(
+                              const SizedBox(height: 8),
+                              Text(
                                 _formatMoney(item.price),
-                                style: const TextStyle(fontWeight: FontWeight.w800),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                  color: _brandOrange,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                _qtyBtn(Icons.remove, () {
-                                  if (_qty > 1) setState(() => _qty--);
-                                }),
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                                  child: Text(
-                                    '$_qty',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
+                              const SizedBox(height: 12),
+                              if (_outOfStock)
+                                const Text(
+                                  'Out of stock',
+                                  style: TextStyle(
+                                    color: Colors.red,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                )
+                              else ...[
+                                Row(
+                                  children: [
+                                    _qtyBtn(Icons.remove_rounded, () {
+                                      if (_qty > 1) setState(() => _qty--);
+                                    }),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 14),
+                                      child: Text(
+                                        '$_qty',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900,
+                                          color: _brandNavy,
+                                        ),
+                                      ),
+                                    ),
+                                    _qtyBtn(Icons.add_rounded, () {
+                                      if (_qty >= _maxQty) {
+                                        ToastHelper.showCustomToast(
+                                          context,
+                                          'Only $_maxQty available',
+                                          isSuccess: false,
+                                          errorMessage: '',
+                                        );
+                                        return;
+                                      }
+                                      setState(() => _qty++);
+                                    }),
+                                  ],
+                                ),
+                                if (widget.item.stockQuantity != null) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    '$_maxQty available',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.grey.shade700,
                                     ),
                                   ),
-                                ),
-                                _qtyBtn(Icons.add, () => setState(() => _qty++)),
+                                ],
                               ],
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ),
-
-              const SizedBox(height: 12),
-
-              // Delivery Type dropdown
-              Card(
-                elevation: 6,
-                shadowColor: Colors.black12,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                clipBehavior: Clip.antiAlias,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Delivery Type',
-                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-                      ),
-                      const SizedBox(height: 10),
-
-                      DropdownButtonFormField<DeliveryType>(
-                        initialValue: _deliveryType,
-                        isExpanded: true,
-
-                        // ✅ THIS is what fixes the bottom overflow in the CLOSED field
-                        selectedItemBuilder: (_) => [
-                          _deliverySelectedItem(
-                            title: 'Speed',
-                            icon: Icons.flash_on_rounded,
-                          ),
-                          _deliverySelectedItem(
-                            title: 'CTS',
-                            icon: Icons.local_shipping_rounded,
-                          ),
-                          _deliverySelectedItem(
-                            title: 'Ankolo',
-                            icon: Icons.local_shipping_outlined,
-                          ),
-                          _deliverySelectedItem(
-                            title: 'Smart',
-                            icon: Icons.local_shipping,
-                          ),
-                          _deliverySelectedItem(
-                            title: 'Pickup',
-                            icon: Icons.storefront_rounded,
-                          ),
-                        ],
-
-                        // ✅ this controls the dropdown menu item height (safe for all flutter versions)
-                        itemHeight: 72,
-
-                        decoration: _inputDecoration(
-                          label: 'Choose delivery option',
-                          prefixIcon: const Icon(Icons.local_shipping_rounded),
-                          helper: _deliveryType == DeliveryType.pickup
-                              ? 'Pickup selected — no delivery address needed'
-                              : 'Delivery address is required',
-                        ).copyWith(
-                          contentPadding:
-                              const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                        ),
-
-                        items: [
-                          DropdownMenuItem(
-                            value: DeliveryType.speed,
-                            child: _deliveryMenuItem(
-                              title: 'Speed',
-                              subtitle: 'Fast delivery',
-                              icon: Icons.flash_on_rounded,
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: DeliveryType.cts,
-                            child: _deliveryMenuItem(
-                              title: 'CTS',
-                              subtitle: 'Standard delivery',
-                              icon: Icons.local_shipping_rounded,
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: DeliveryType.ankolo,
-                            child: _deliveryMenuItem(
-                              title: 'Ankolo',
-                              subtitle: 'Ankolo courier',
-                              icon: Icons.local_shipping_outlined,
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: DeliveryType.smart,
-                            child: _deliveryMenuItem(
-                              title: 'Smart',
-                              subtitle: 'Smart courier',
-                              icon: Icons.local_shipping,
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: DeliveryType.pickup,
-                            child: _deliveryMenuItem(
-                              title: 'Pickup',
-                              subtitle: 'Collect at shop',
-                              icon: Icons.storefront_rounded,
-                            ),
-                          ),
-                        ],
-                        onChanged: (v) {
-                          if (v == null) return;
-                          setState(() => _deliveryType = v);
-                        },
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          _pill(
-                            icon: _deliveryType == DeliveryType.pickup
-                                ? Icons.storefront_rounded
-                                : Icons.local_shipping_rounded,
-                            text: _deliveryLabel(_deliveryType),
-                          ),
-                        ],
-                      ),
-                    ],
+                  const SizedBox(height: 12),
+                  _section(
+                    title: 'Courier',
+                    subtitle: _deliveryType == DeliveryType.pickup
+                        ? 'Pickup selected — no delivery address needed'
+                        : 'Choose how you want your order delivered',
+                    child: _courierGrid(),
                   ),
-                ),
-              ),
-
-              const SizedBox(height: 12),
-
-              // Delivery Address
-              _DeliveryAddressCard(
-                loading: _loadingAddr,
-                loggedIn: _loggedIn,
-                address: _defaultAddr,
-                pickupSelected: _deliveryType == DeliveryType.pickup,
-                pickupLocation: _pickupLocation,
-                onManage: () async {
-                  await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
-                  await _initAuthAndAddress(forceRefresh: true);
-                },
-              ),
-
-              const SizedBox(height: 12),
-
-              // Order Summary + big orange Pay Now (same style as cart checkout)
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(color: Colors.grey.shade200),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 16,
-                      spreadRadius: 0,
-                      offset: const Offset(0, -4),
-                    ),
-                  ],
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Order Summary',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        color: _brandNavy,
-                        letterSpacing: -0.2,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _rowLine('Subtotal', _formatMoney(_subtotal)),
-                    const SizedBox(height: 8),
-                    const Divider(thickness: 1),
-                    const SizedBox(height: 8),
-                    _rowLine('Total', _formatMoney(_total), bold: true),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: canPay ? _onPayPressed : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _brandOrange,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 3,
+                  const SizedBox(height: 12),
+                  _DeliveryAddressCard(
+                    loading: _loadingAddr,
+                    loggedIn: _loggedIn,
+                    address: _defaultAddr,
+                    pickupSelected: _deliveryType == DeliveryType.pickup,
+                    pickupLocation: _pickupLocation,
+                    onManage: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const AddressPage()),
+                      );
+                      await _initAuthAndAddress(forceRefresh: true);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _section(
+                    title: 'Summary',
+                    child: Column(
+                      children: [
+                        _rowLine('Subtotal', _formatMoney(_subtotal)),
+                        const SizedBox(height: 10),
+                        _rowLine(
+                          'Delivery',
+                          _deliveryType == DeliveryType.pickup
+                              ? 'Pickup'
+                              : _deliveryLabel(_deliveryType),
                         ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            if (_submitting)
-                              const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                ),
-                              )
-                            else
-                              const Icon(Icons.payment, color: Colors.white),
-                            const SizedBox(width: 10),
-                            Text(
-                              _submitting ? 'Processing...' : 'Pay Now',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w900,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Divider(
+                              height: 1, color: Colors.grey.shade200),
                         ),
-                      ),
+                        _rowLine('Total', _formatMoney(_total), bold: true),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            _stickyPayBar(canPay: canPay),
+          ],
         ),
+      ),
+    );
+  }
+
+  Widget _stickyPayBar({required bool canPay}) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        12,
+        16,
+        12 + MediaQuery.paddingOf(context).bottom,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          top: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Total',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatMoney(_total),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: _brandNavy,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 2,
+            child: FilledButton(
+              onPressed: canPay ? _onPayPressed : null,
+              style: FilledButton.styleFrom(
+                backgroundColor: _brandOrange,
+                disabledBackgroundColor: Colors.grey.shade300,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                elevation: 0,
+              ),
+              child: _submitting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : const Text(
+                      'Pay Now',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -999,31 +1108,34 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Widget _qtyBtn(IconData icon, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(10),
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: Colors.black, width: 1),
-          borderRadius: BorderRadius.circular(8),
+          color: const Color(0xFFF4F6FA),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
+          borderRadius: BorderRadius.circular(10),
         ),
-        padding: const EdgeInsets.all(6),
-        child: Icon(icon, size: 18),
+        padding: const EdgeInsets.all(8),
+        child: Icon(icon, size: 18, color: _brandNavy),
       ),
     );
   }
 
   Widget _rowLine(String left, String right, {bool bold = false}) {
     final style = TextStyle(
-      fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+      fontWeight: bold ? FontWeight.w900 : FontWeight.w600,
       fontSize: bold ? 16 : 14,
+      color: bold ? _brandNavy : Colors.grey.shade800,
     );
     return Row(
       children: [
         Expanded(
-          child: Text(left, style: style, maxLines: 1, overflow: TextOverflow.ellipsis),
+          child: Text(left,
+              style: style, maxLines: 1, overflow: TextOverflow.ellipsis),
         ),
         const SizedBox(width: 10),
-        Text(right, style: style, maxLines: 1, overflow: TextOverflow.ellipsis),
+        Text(right,
+            style: style, maxLines: 1, overflow: TextOverflow.ellipsis),
       ],
     );
   }
@@ -1049,86 +1161,120 @@ class _DeliveryAddressCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      elevation: 6,
-      shadowColor: Colors.black12,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Delivery Address',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-            const SizedBox(height: 8),
-            if (pickupSelected)
-              _line(
-                'Shop pickup selected',
-                (pickupLocation ?? '').trim().isEmpty
-                    ? 'Pickup at merchant shop (address from listing)'
-                    : pickupLocation!.trim(),
-              )
-            else if (loading)
-              const SizedBox(
-                height: 40,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              )
-            else if (!loggedIn)
-              _line('Not logged in', 'Please log in to select address')
-            else if (address == null)
-              _line('No default address', 'Set your default delivery address')
-            else
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _line(_label(address!.addressType), address!.city),
-                  if (address!.description.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      address!.description,
-                      style: TextStyle(color: Colors.grey.shade700),
-                    ),
-                  ],
-                ],
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Delivery address',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                    color: Color(0xFF16284C),
+                    letterSpacing: -0.2,
+                  ),
+                ),
               ),
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: pickupSelected ? null : onManage,
-                icon: const Icon(Icons.location_pin),
-                label: Text(address == null ? 'Set address' : 'Change'),
-              ),
+              if (!pickupSelected)
+                TextButton.icon(
+                  onPressed: onManage,
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFFF8A00),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: const Icon(Icons.edit_location_alt_rounded, size: 18),
+                  label: Text(
+                    address == null ? 'Set' : 'Change',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (pickupSelected)
+            _addrBox(
+              Icons.storefront_rounded,
+              'Shop pickup',
+              (pickupLocation ?? '').trim().isEmpty
+                  ? 'Pickup at merchant shop'
+                  : pickupLocation!.trim(),
+            )
+          else if (loading)
+            const SizedBox(
+              height: 48,
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (!loggedIn)
+            _addrBox(Icons.lock_outline_rounded, 'Not logged in',
+                'Please log in to select address')
+          else if (address == null)
+            _addrBox(Icons.location_off_outlined, 'No default address',
+                'Set your default delivery address')
+          else
+            _addrBox(
+              Icons.place_rounded,
+              _label(address!.addressType),
+              [
+                address!.city,
+                if (address!.description.isNotEmpty) address!.description,
+              ].join(' · '),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }
 
-  static Widget _line(String a, String b) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            a,
-            style: const TextStyle(fontWeight: FontWeight.w800),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+  static Widget _addrBox(IconData icon, String title, String body) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FC),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: const Color(0xFF16284C)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                    color: Color(0xFF16284C),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  body,
+                  style: TextStyle(
+                    color: Colors.grey.shade700,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(width: 10),
-        Flexible(
-          child: Text(
-            b,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.right,
-            style: const TextStyle(color: Colors.black87),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

@@ -25,6 +25,19 @@ class StoryService {
   static final StreamController<String> _merchantViewRefresh =
       StreamController<String>.broadcast();
 
+  /// Forces home story row to re-resolve viewed rings without waiting on story docs.
+  static final StreamController<void> _activeStoriesRefresh =
+      StreamController<void>.broadcast();
+
+  /// Last emitted home story groups (with viewed flags). Survives tab switches.
+  static List<MerchantStoryGroup>? lastActiveGroups;
+
+  /// viewerId::merchantId → hasUnviewed
+  static final Map<String, bool> _merchantUnviewedCache = {};
+
+  /// viewerId::storyId → viewed
+  static final Map<String, bool> _storyViewedCache = {};
+
   static Stream<String> get merchantViewRefreshStream =>
       _merchantViewRefresh.stream;
 
@@ -33,25 +46,129 @@ class StoryService {
     _merchantViewRefresh.add(merchantId);
   }
 
+  static void _notifyActiveStoriesRefresh() {
+    if (!_activeStoriesRefresh.isClosed) {
+      _activeStoriesRefresh.add(null);
+    }
+  }
+
+  static String _merchantCacheKey(String viewerId, String merchantId) =>
+      '$viewerId::$merchantId';
+
+  static String _storyCacheKey(String viewerId, String storyId) =>
+      '$viewerId::$storyId';
+
+  static void cacheMerchantUnviewed(
+    String viewerId,
+    String merchantId,
+    bool hasUnviewed,
+  ) {
+    if (viewerId.isEmpty || merchantId.isEmpty) return;
+    _merchantUnviewedCache[_merchantCacheKey(viewerId, merchantId)] =
+        hasUnviewed;
+  }
+
+  static void cacheStoryViewed(String viewerId, String storyId) {
+    if (viewerId.isEmpty || storyId.isEmpty) return;
+    _storyViewedCache[_storyCacheKey(viewerId, storyId)] = true;
+  }
+
+  static bool? peekMerchantUnviewed(String viewerId, String merchantId) {
+    if (viewerId.isEmpty || merchantId.isEmpty) return null;
+    return _merchantUnviewedCache[_merchantCacheKey(viewerId, merchantId)];
+  }
+
   static const Duration storyLifetime = Duration(hours: 24);
 
   /// Stream of active story groups (non-expired), grouped by merchant.
   /// When [viewerId] is set, each group includes [MerchantStoryGroup.hasUnviewed].
-  /// Emits grouped stories immediately, then re-emits once viewed-state is resolved.
+  /// Uses an in-memory viewed cache on the first emit so rings don't flash
+  /// unviewed (blue/green) → viewed (gray) when returning to Home.
   Stream<List<MerchantStoryGroup>> getActiveStoriesStream({String? viewerId}) {
-    final now = Timestamp.now();
-    return _firestore
-        .collection(_collection)
-        .where('expiresAt', isGreaterThan: now)
-        .orderBy('expiresAt', descending: false)
-        .limit(100)
-        .snapshots()
-        .asyncExpand((snap) async* {
-          final groups = _groupByMerchant(snap.docs);
-          yield groups;
-          if (viewerId == null || viewerId.isEmpty || groups.isEmpty) return;
-          yield await _attachUnviewedFlags(groups, viewerId);
-        });
+    final controller = StreamController<List<MerchantStoryGroup>>();
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? storySub;
+    StreamSubscription<void>? refreshSub;
+    var emitGen = 0;
+
+    Future<void> emitFromSnap(
+      QuerySnapshot<Map<String, dynamic>> snap,
+    ) async {
+      if (controller.isClosed) return;
+      final myGen = ++emitGen;
+      final groups = _groupByMerchant(snap.docs);
+      final painted = _applyCachedUnviewedFlags(groups, viewerId);
+      lastActiveGroups = painted;
+      if (!controller.isClosed) controller.add(painted);
+      if (viewerId == null || viewerId.isEmpty || groups.isEmpty) return;
+      final resolved = await _attachUnviewedFlags(groups, viewerId);
+      if (myGen != emitGen || controller.isClosed) return;
+      lastActiveGroups = resolved;
+      controller.add(resolved);
+    }
+
+    controller.onListen = () {
+      // Instant paint from last known rings (keeps gray after Marketplace).
+      final cached = lastActiveGroups;
+      if (cached != null && cached.isNotEmpty && !controller.isClosed) {
+        controller.add(cached);
+      }
+
+      final now = Timestamp.now();
+      storySub = _firestore
+          .collection(_collection)
+          .where('expiresAt', isGreaterThan: now)
+          .orderBy('expiresAt', descending: false)
+          .limit(100)
+          .snapshots()
+          .listen(
+            (snap) => emitFromSnap(snap),
+            onError: (e, st) {
+              if (!controller.isClosed) controller.addError(e, st);
+            },
+          );
+
+      refreshSub = _activeStoriesRefresh.stream.listen((_) async {
+        try {
+          final nowTs = Timestamp.now();
+          final snap = await _firestore
+              .collection(_collection)
+              .where('expiresAt', isGreaterThan: nowTs)
+              .orderBy('expiresAt', descending: false)
+              .limit(100)
+              .get();
+          await emitFromSnap(snap);
+        } catch (_) {}
+      });
+    };
+
+    controller.onCancel = () {
+      storySub?.cancel();
+      refreshSub?.cancel();
+    };
+
+    return controller.stream;
+  }
+
+  List<MerchantStoryGroup> _applyCachedUnviewedFlags(
+    List<MerchantStoryGroup> groups,
+    String? viewerId,
+  ) {
+    if (viewerId == null || viewerId.isEmpty) return groups;
+    return [
+      for (final g in groups) g.copyWith(hasUnviewed: _cachedHasUnviewed(viewerId, g)),
+    ];
+  }
+
+  bool _cachedHasUnviewed(String viewerId, MerchantStoryGroup g) {
+    final cached = peekMerchantUnviewed(viewerId, g.merchantId);
+    if (cached != null) return cached;
+    if (g.items.isNotEmpty &&
+        g.items.every((i) =>
+            _storyViewedCache[_storyCacheKey(viewerId, i.storyId)] == true)) {
+      return false;
+    }
+    // Unknown merchants: gray first, then green if truly unviewed (avoids blue flash).
+    return false;
   }
 
   /// Watch one merchant's active stories + viewed state for profile rings.
@@ -142,10 +259,12 @@ class StoryService {
     final flags = await Future.wait(
       groups.map((g) => _groupHasUnviewedForViewer(g.items, viewerId)),
     );
-    return [
-      for (var i = 0; i < groups.length; i++)
-        groups[i].copyWith(hasUnviewed: flags[i]),
-    ];
+    final out = <MerchantStoryGroup>[];
+    for (var i = 0; i < groups.length; i++) {
+      cacheMerchantUnviewed(viewerId, groups[i].merchantId, flags[i]);
+      out.add(groups[i].copyWith(hasUnviewed: flags[i]));
+    }
+    return out;
   }
 
   Future<bool> _groupHasUnviewedForViewer(
@@ -156,16 +275,26 @@ class StoryService {
     if (viewerId == null || viewerId.isEmpty) return true;
 
     final viewedDocs = await Future.wait(
-      items.map(
-        (item) => _firestore
+      items.map((item) async {
+        final key = _storyCacheKey(viewerId, item.storyId);
+        if (_storyViewedCache[key] == true) {
+          return true; // treated as "exists" / viewed
+        }
+        final doc = await _firestore
             .collection(_collection)
             .doc(item.storyId)
             .collection(_viewersSubcollection)
             .doc(viewerId)
-            .get(),
-      ),
+            .get();
+        if (doc.exists) {
+          _storyViewedCache[key] = true;
+          return true;
+        }
+        return false;
+      }),
     );
-    return viewedDocs.any((doc) => !doc.exists);
+    // hasUnviewed when any story is not viewed
+    return viewedDocs.any((viewed) => !viewed);
   }
 
   List<MerchantStoryGroup> _groupByMerchant(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
@@ -376,7 +505,31 @@ class StoryService {
         'viewerProfileImageUrl': viewerProfileImageUrl,
     }, SetOptions(merge: true));
 
-    if (merchantId.isNotEmpty) _notifyMerchantStoriesViewed(merchantId);
+    cacheStoryViewed(viewerId, storyId);
+    if (merchantId.isNotEmpty) {
+      // Recompute merchant ring from known story docs for this merchant.
+      try {
+        final ring = await getMerchantStoryRingState(
+          merchantId: merchantId,
+          viewerId: viewerId,
+        );
+        cacheMerchantUnviewed(viewerId, merchantId, ring.hasUnviewed);
+        // Keep lastActiveGroups in sync so Home doesn't flash unviewed.
+        final last = lastActiveGroups;
+        if (last != null) {
+          lastActiveGroups = [
+            for (final g in last)
+              g.merchantId == merchantId
+                  ? g.copyWith(hasUnviewed: ring.hasUnviewed)
+                  : g,
+          ];
+        }
+      } catch (_) {
+        cacheMerchantUnviewed(viewerId, merchantId, false);
+      }
+      _notifyMerchantStoriesViewed(merchantId);
+      _notifyActiveStoriesRefresh();
+    }
   }
 
   /// Get list of viewers who saw this story (for merchant insights).

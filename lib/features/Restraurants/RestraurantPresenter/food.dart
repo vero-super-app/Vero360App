@@ -2,7 +2,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
@@ -16,6 +19,7 @@ import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_deta
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 class FoodPage extends StatefulWidget {
   const FoodPage({super.key});
@@ -28,8 +32,7 @@ class _FoodPageState extends State<FoodPage> {
   // ── Brand palette ─────────────────────────────────────────────────────────
   static const Color _veroOrange   = Color(0xFFFF8A00);
   static const Color _ink          = Color(0xFF1A1109);
-  static const Color _pageBg       = Color(0xFFF8F8F8);
-  static const Color _cardBg       = Colors.white;
+  static const Color _pageBg       = Color(0xFFF7F8FA);
   static const Color _divider      = Color(0xFFEEEEEE);
 
   // ── Services / controllers ─────────────────────────────────────────────────
@@ -62,12 +65,104 @@ class _FoodPageState extends State<FoodPage> {
   @override
   void initState() {
     super.initState();
-    _future = _loadAll();
     _searchCtrl.addListener(_onSearchChanged);
+    // Must init before first build — never leave `late _future` unset.
+    _future = _loadAll();
+    unawaited(_bootstrap());
+  }
+
+  /// Warm last-known location, then reload so nearby dishes rank first.
+  Future<void> _bootstrap() async {
+    if (!kIsWeb) {
+      final quick = await _locationService.getQuickPosition();
+      if (mounted && quick != null) {
+        setState(() {
+          _userPosition = quick;
+          // Don't spin forever — we already have a usable position.
+          _locationLoading = false;
+        });
+        final next = _loadAll();
+        setState(() {
+          _future = next;
+        });
+        unawaited(_resolveLocationLabel(quick).then((l) {
+          if (mounted && l != null) setState(() => _locationLabel = l);
+        }));
+      } else if (mounted) {
+        setState(() => _locationLoading = true);
+      }
+    }
+
+    if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadNavPrefs();
-      if (!kIsWeb) _initLocation();
+      if (!kIsWeb) unawaited(_refineLocationAndReload());
     });
+  }
+
+  Future<void> _refineLocationAndReload() async {
+    if (!mounted) return;
+    // Keep banner usable: only show spinner if we have no position yet.
+    if (_userPosition == null) {
+      setState(() => _locationLoading = true);
+    }
+    try {
+      final pos = await _locationService
+          .getCurrentLocation(timeLimit: const Duration(seconds: 4))
+          .timeout(const Duration(seconds: 5), onTimeout: () => null);
+      if (!mounted) return;
+      if (pos == null) {
+        setState(() => _locationLoading = false);
+        return;
+      }
+
+      final prev = _userPosition;
+      final movedKm = prev == null
+          ? null
+          : FoodService.distanceKm(
+              prev.latitude,
+              prev.longitude,
+              pos.latitude,
+              pos.longitude,
+            );
+      final movedFar = prev == null || (movedKm != null && movedKm > 0.35);
+
+      unawaited(_resolveLocationLabel(pos).then((l) {
+        if (mounted && l != null) setState(() => _locationLabel = l);
+      }));
+
+      setState(() {
+        _userPosition = pos;
+        _locationLoading = false;
+      });
+
+      if (movedFar && mounted) {
+        final next = _loadAll();
+        setState(() {
+          _future = next;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _locationLoading = false);
+    }
+  }
+
+  Future<String?> _resolveLocationLabel(Position pos) async {
+    try {
+      final marks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
+      if (marks.isEmpty) return null;
+      final pl = marks.first;
+      final parts = <String>[
+        if ((pl.locality ?? '').trim().isNotEmpty) pl.locality!.trim(),
+        if ((pl.subAdministrativeArea ?? '').trim().isNotEmpty)
+          pl.subAdministrativeArea!.trim(),
+      ];
+      if (parts.isNotEmpty) return parts.join(', ');
+      final country = (pl.country ?? '').trim();
+      return country.isNotEmpty ? country : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _loadNavPrefs() async {
@@ -104,7 +199,9 @@ class _FoodPageState extends State<FoodPage> {
         longitude: _userPosition?.longitude,
         radiusKm:  _radiusKm,
       );
-      return _sortByDistanceIfPossible(items);
+      final sorted = _sortByDistanceIfPossible(items);
+      _precacheFoodImages(sorted);
+      return sorted;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -121,7 +218,9 @@ class _FoodPageState extends State<FoodPage> {
         longitude: _userPosition?.longitude,
         radiusKm:  _radiusKm,
       );
-      return _sortByDistanceIfPossible(items);
+      final sorted = _sortByDistanceIfPossible(items);
+      _precacheFoodImages(sorted);
+      return sorted;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -131,7 +230,9 @@ class _FoodPageState extends State<FoodPage> {
     setState(() { _loading = true; _photoMode = true; });
     try {
       final items = await foodService.searchFoodByPhoto(file);
-      return _sortByDistanceIfPossible(items);
+      final sorted = _sortByDistanceIfPossible(items);
+      _precacheFoodImages(sorted);
+      return sorted;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -139,39 +240,38 @@ class _FoodPageState extends State<FoodPage> {
 
   Future<void> _initLocation() async {
     if (kIsWeb) return;
-    setState(() => _locationLoading = true);
-    try {
-      final pos = await _locationService.getCurrentLocation();
-      if (!mounted) return;
-      if (pos == null) {
-        setState(() { _locationLoading = false; _locationLabel = null; });
-        return;
-      }
-      String? label;
-      try {
-        final marks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
-        if (marks.isNotEmpty) {
-          final pl = marks.first;
-          final parts = <String>[
-            if ((pl.locality ?? '').trim().isNotEmpty) pl.locality!.trim(),
-            if ((pl.subAdministrativeArea ?? '').trim().isNotEmpty)
-              pl.subAdministrativeArea!.trim(),
-          ];
-          label = parts.isNotEmpty
-              ? parts.join(', ')
-              : (pl.country ?? '').trim().isNotEmpty ? pl.country : null;
-        }
-      } catch (_) {}
-      setState(() {
-        _userPosition   = pos;
-        _locationLabel  = label;
-        _locationLoading = false;
-      });
-      if (!mounted) return;
-      setState(() => _future = _loadAll());
-    } catch (_) {
-      if (mounted) setState(() => _locationLoading = false);
+    await _refineLocationAndReload();
+  }
+
+  void _precacheFoodImages(List<FoodModel> items) {
+    if (!mounted) return;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    // Thumb-sized decode — much faster than full-res food photos.
+    final cachePx = (120 * dpr).round().clamp(96, 240);
+    // Near-you dishes first (already sorted); warm the first row hard.
+    for (final item in items.take(16)) {
+      final url = _foodCoverUrl(item);
+      if (url == null) continue;
+      unawaited(
+        precacheImage(
+          CachedNetworkImageProvider(
+            url,
+            maxWidth: cachePx,
+            maxHeight: cachePx,
+          ),
+          context,
+        ).catchError((_) {}),
+      );
     }
+  }
+
+  static String? _foodCoverUrl(FoodModel item) {
+    final raw = item.FoodImage.trim().isNotEmpty
+        ? item.FoodImage.trim()
+        : (item.gallery.isNotEmpty ? item.gallery.first.trim() : '');
+    final lower = raw.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) return raw;
+    return null;
   }
 
   // ── Search handlers ────────────────────────────────────────────────────────
@@ -179,13 +279,19 @@ class _FoodPageState extends State<FoodPage> {
     setState(() {});
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
-      setState(() => _future = _searchByQuery(_searchCtrl.text));
+      final next = _searchByQuery(_searchCtrl.text);
+      setState(() {
+        _future = next;
+      });
     });
   }
 
   void _onSubmit(String value) {
     _debounce?.cancel();
-    setState(() => _future = _searchByQuery(value));
+    final next = _searchByQuery(value);
+    setState(() {
+      _future = next;
+    });
   }
 
   Future<void> _pickAndSearchPhoto(ImageSource source) async {
@@ -193,7 +299,10 @@ class _FoodPageState extends State<FoodPage> {
         source: source, imageQuality: 85, maxWidth: 1280);
     if (picked == null) return;
     if (!mounted) return;
-    setState(() => _future = _searchByPhoto(File(picked.path)));
+    final next = _searchByPhoto(File(picked.path));
+    setState(() {
+      _future = next;
+    });
   }
 
   Future<void> _showPhotoPickerSheet() async {
@@ -201,7 +310,10 @@ class _FoodPageState extends State<FoodPage> {
       final XFile? picked = await _picker.pickImage(
           source: ImageSource.gallery, imageQuality: 85, maxWidth: 1280);
       if (picked == null || !mounted) return;
-      setState(() => _future = _searchByPhoto(File(picked.path)));
+      final next = _searchByPhoto(File(picked.path));
+      setState(() {
+        _future = next;
+      });
       return;
     }
     if (!mounted) return;
@@ -301,7 +413,10 @@ class _FoodPageState extends State<FoodPage> {
 
   Future<void> _refresh() async {
     _searchCtrl.clear();
-    setState(() => _future = _loadAll());
+    final next = _loadAll();
+    setState(() {
+      _future = next;
+    });
     await _future;
   }
 
@@ -357,7 +472,11 @@ class _FoodPageState extends State<FoodPage> {
               FilledButton(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  setState(() { _radiusKm = radius; _future = _loadAll(); });
+                  final next = _loadAll();
+                  setState(() {
+                    _radiusKm = radius;
+                    _future = next;
+                  });
                 },
                 style: FilledButton.styleFrom(
                   backgroundColor: _veroOrange, foregroundColor: Colors.white,
@@ -580,7 +699,41 @@ class _FoodPageState extends State<FoodPage> {
             ? null
             : const SizedBox.shrink(),
         leadingWidth: Navigator.of(context).canPop() ? null : 0,
-        title: const SizedBox.shrink(),
+        title: const Text(
+          'Food',
+          style: TextStyle(
+            fontWeight: FontWeight.w900,
+            fontSize: 22,
+            color: _ink,
+          ),
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: _veroOrange.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.local_fire_department_rounded,
+                      size: 16, color: _veroOrange),
+                  SizedBox(width: 4),
+                  Text(
+                    'Vero',
+                    style: TextStyle(
+                      color: _veroOrange,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
 
       bottomNavigationBar: VeroMainNavigationBar(
@@ -677,19 +830,78 @@ class _FoodPageState extends State<FoodPage> {
                   if (filtered.isEmpty) return _buildEmptyCategory();
 
                   final p = _userPosition;
-                  final popular = filtered.take(12).toList();
-                  final nearest = p != null
-                      ? FoodService.sortByDistanceToUser(
-                          List<FoodModel>.from(filtered),
-                          p.latitude, p.longitude).take(12).toList()
-                      : popular;
+                  final nearYou = p != null
+                      ? FoodService.filterWithinRadius(
+                          filtered,
+                          latitude: p.latitude,
+                          longitude: p.longitude,
+                          radiusKm: _radiusKm,
+                        )
+                      : const <FoodModel>[];
+                  // Prefer local kitchens; fall back to full list if none geo-tagged nearby.
+                  final localFirst = nearYou.isNotEmpty
+                      ? nearYou
+                      : (p != null
+                          ? FoodService.sortByDistanceToUser(
+                              List<FoodModel>.from(filtered),
+                              p.latitude,
+                              p.longitude,
+                            )
+                          : filtered);
+                  final nearRow = localFirst.take(12).toList();
+                  final popular = localFirst.take(12).toList();
 
                   return ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(0, 16, 0, 28),
                     children: [
-                      _SectionHeader(title: 'Popular Food', accent: _veroOrange,
-                          ink: _ink, onSeeAll: () {}),
+                      _SectionHeader(
+                        title: nearYou.isNotEmpty
+                            ? 'Near you'
+                            : 'Popular Food',
+                        accent: _veroOrange,
+                        ink: _ink,
+                        onSeeAll: () {},
+                      ),
+                      if (nearYou.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                          child: Text(
+                            _locationLabel != null
+                                ? 'Kitchens around $_locationLabel'
+                                : 'Prioritized by your current location',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 4),
+                      SizedBox(
+                        height: 276,
+                        child: ListView.separated(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          scrollDirection: Axis.horizontal,
+                          itemCount: nearRow.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 14),
+                          itemBuilder: (_, i) => _FoodCard(
+                            item: nearRow[i],
+                            userLat: p?.latitude, userLng: p?.longitude,
+                            accent: _veroOrange, ink: _ink,
+                            onTap: () => Navigator.push(context,
+                                MaterialPageRoute(builder: (_) =>
+                                    FoodDetailsPage(foodItem: nearRow[i]))),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      _SectionHeader(
+                        title: nearYou.isNotEmpty ? 'More nearby' : 'Nearest',
+                        accent: _veroOrange,
+                        ink: _ink,
+                        onSeeAll: () {},
+                      ),
                       const SizedBox(height: 4),
                       SizedBox(
                         height: 276,
@@ -705,27 +917,6 @@ class _FoodPageState extends State<FoodPage> {
                             onTap: () => Navigator.push(context,
                                 MaterialPageRoute(builder: (_) =>
                                     FoodDetailsPage(foodItem: popular[i]))),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      _SectionHeader(title: 'Nearest', accent: _veroOrange,
-                          ink: _ink, onSeeAll: () {}),
-                      const SizedBox(height: 4),
-                      SizedBox(
-                        height: 276,
-                        child: ListView.separated(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          scrollDirection: Axis.horizontal,
-                          itemCount: nearest.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 14),
-                          itemBuilder: (_, i) => _FoodCard(
-                            item: nearest[i],
-                            userLat: p?.latitude, userLng: p?.longitude,
-                            accent: _veroOrange, ink: _ink,
-                            onTap: () => Navigator.push(context,
-                                MaterialPageRoute(builder: (_) =>
-                                    FoodDetailsPage(foodItem: nearest[i]))),
                           ),
                         ),
                       ),
@@ -889,35 +1080,137 @@ Widget _foodMetaRow(IconData icon, String text) => Row(
       ],
     );
 
-class _FoodImageTile extends StatelessWidget {
+class _FoodImageTile extends StatefulWidget {
   const _FoodImageTile({required this.raw, this.height = 116});
   final String raw;
   final double height;
 
   @override
-  Widget build(BuildContext context) {
-    Widget placeholder() => Container(
-      height: height, width: double.infinity,
-      color: Colors.grey.shade100,
-      alignment: Alignment.center,
-      child: Icon(Icons.restaurant_menu_rounded,
-          size: 36, color: Colors.grey.shade300),
-    );
+  State<_FoodImageTile> createState() => _FoodImageTileState();
+}
 
-    if (raw.isEmpty) return placeholder();
-    if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return Image.network(raw, height: height, width: double.infinity,
-          fit: BoxFit.cover, errorBuilder: (_, __, ___) => placeholder());
+class _FoodImageTileState extends State<_FoodImageTile> {
+  String? _resolvedHttp;
+  Uint8List? _bytes;
+  bool _resolvingStorage = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _kickStorageResolveIfNeeded();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FoodImageTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.raw != widget.raw) {
+      _resolvedHttp = null;
+      _bytes = null;
+      _resolvingStorage = false;
+      _kickStorageResolveIfNeeded();
     }
+  }
+
+  void _kickStorageResolveIfNeeded() {
+    final raw = widget.raw.trim();
+    if (raw.isEmpty) return;
+    final lower = raw.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) return;
     if (_foodImageLooksLikeBase64(raw)) {
       try {
         final part = raw.contains(',') ? raw.split(',').last : raw;
-        final bytes = base64Decode(part.replaceAll(RegExp(r'\s'), ''));
-        return Image.memory(bytes, height: height, width: double.infinity,
-            fit: BoxFit.cover, errorBuilder: (_, __, ___) => placeholder());
+        _bytes = base64Decode(part.replaceAll(RegExp(r'\s'), ''));
       } catch (_) {}
+      return;
     }
-    return placeholder();
+    _resolvingStorage = true;
+    unawaited(_resolveStorage(raw, lower));
+  }
+
+  Future<void> _resolveStorage(String raw, String lower) async {
+    try {
+      final ref = lower.startsWith('gs://')
+          ? FirebaseStorage.instance.refFromURL(raw)
+          : FirebaseStorage.instance.ref(raw);
+      final url = await ref.getDownloadURL();
+      if (!mounted) return;
+      setState(() {
+        _resolvedHttp = url;
+        _resolvingStorage = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _resolvingStorage = false);
+    }
+  }
+
+  Widget _placeholder({bool loading = false}) => Container(
+        height: widget.height,
+        width: double.infinity,
+        color: const Color(0xFFFFF4E8),
+        alignment: Alignment.center,
+        child: loading
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFFFF8A00),
+                ),
+              )
+            : Icon(Icons.restaurant_menu_rounded,
+                size: 36, color: Colors.orange.shade200),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final raw = widget.raw.trim();
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cachePx = (widget.height * dpr).round().clamp(96, 240);
+
+    // HTTP URLs paint immediately — no setState delay.
+    if (raw.toLowerCase().startsWith('http://') ||
+        raw.toLowerCase().startsWith('https://')) {
+      return ResilientCachedNetworkImage(
+        url: raw,
+        height: widget.height,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        memCacheWidth: cachePx,
+        memCacheHeight: cachePx,
+        showSpinner: false,
+        placeholderColor: const Color(0xFFFFF4E8),
+      );
+    }
+
+    final resolved = (_resolvedHttp ?? '').trim();
+    if (resolved.isNotEmpty) {
+      return ResilientCachedNetworkImage(
+        url: resolved,
+        height: widget.height,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        memCacheWidth: cachePx,
+        memCacheHeight: cachePx,
+        showSpinner: false,
+        placeholderColor: const Color(0xFFFFF4E8),
+      );
+    }
+
+    final bytes = _bytes;
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        height: widget.height,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        cacheWidth: cachePx,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => _placeholder(),
+      );
+    }
+
+    if (_resolvingStorage) return _placeholder(loading: true);
+    return _placeholder();
   }
 }
 
@@ -972,7 +1265,12 @@ class _FoodCard extends StatelessWidget {
               ClipRRect(
                 borderRadius:
                     const BorderRadius.vertical(top: Radius.circular(22)),
-                child: _FoodImageTile(raw: item.FoodImage, height: 116),
+                child: _FoodImageTile(
+                  raw: item.FoodImage.trim().isNotEmpty
+                      ? item.FoodImage
+                      : (item.gallery.isNotEmpty ? item.gallery.first : ''),
+                  height: 116,
+                ),
               ),
               Positioned(
                 top: 10, right: 10,

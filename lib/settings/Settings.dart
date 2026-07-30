@@ -23,6 +23,7 @@ import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 
 // REQUIRED PAGES
 import 'package:vero360_app/GeneralPages/address.dart'; // AddressPage
@@ -84,6 +85,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _notificationsEnabled = true;
   bool _notificationsOrders = true;
   bool _notificationsMessages = true;
+  bool _notificationsEngagement = true;
 
   // security: Face ID / fingerprint app lock
   bool _biometricLockEnabled = false;
@@ -197,6 +199,8 @@ class _SettingsPageState extends State<SettingsPage> {
       _notificationsEnabled = prefs.getBool('pref_notifications_enabled') ?? true;
       _notificationsOrders = prefs.getBool('pref_notifications_orders') ?? true;
       _notificationsMessages = prefs.getBool('pref_notifications_messages') ?? true;
+      _notificationsEngagement =
+          prefs.getBool(EngagementNotificationService.prefEnabled) ?? true;
       _biometricLockEnabled = prefs.getBool('pref_biometric_lock') ?? false;
     });
   }
@@ -214,6 +218,15 @@ class _SettingsPageState extends State<SettingsPage> {
     await prefs.setBool('pref_notifications_enabled', _notificationsEnabled);
     await prefs.setBool('pref_notifications_orders', _notificationsOrders);
     await prefs.setBool('pref_notifications_messages', _notificationsMessages);
+    await prefs.setBool(
+      EngagementNotificationService.prefEnabled,
+      _notificationsEngagement,
+    );
+    unawaited(
+      EngagementNotificationService.instance.syncTopicSubscription(
+        enabledOverride: _notificationsEnabled && _notificationsEngagement,
+      ),
+    );
     await prefs.setBool('pref_biometric_lock', _biometricLockEnabled);
   }
 
@@ -619,14 +632,18 @@ class _SettingsPageState extends State<SettingsPage> {
     _maybeHaptic();
     final auth = LocalAuthentication();
     bool canCheck = false;
+    bool isSupported = false;
     List<BiometricType> available = [];
     try {
+      isSupported = await auth.isDeviceSupported();
       canCheck = await auth.canCheckBiometrics;
-      if (canCheck) available = await auth.getAvailableBiometrics();
+      available = await auth.getAvailableBiometrics();
     } catch (_) {}
 
     if (!mounted) return;
-    final hasBiometric = canCheck && available.isNotEmpty;
+    // Some Android devices report empty types while still supporting biometrics.
+    final hasBiometric =
+        isSupported && (canCheck || available.isNotEmpty);
     final isFace = available.contains(BiometricType.face);
     final isFinger = available.contains(BiometricType.fingerprint);
     final biometricLabel = isFace && isFinger
@@ -674,8 +691,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text(
                       _t(
-                        'Face ID or fingerprint is not available on this device.',
-                        'Face ID kapena chala silipezeka pa chipangizochi.',
+                        'Face ID or fingerprint is not available on this device. Set one up in your phone settings first.',
+                        'Face ID kapena chala silipezeka pa chipangizochi. Kayikani mu settings za foni yanu.',
                       ),
                       style: TextStyle(
                         color: Colors.grey.shade700,
@@ -687,6 +704,49 @@ class _SettingsPageState extends State<SettingsPage> {
                   SwitchListTile(
                     value: _biometricLockEnabled,
                     onChanged: (v) async {
+                      if (v) {
+                        // Verify biometrics work before enabling app lock.
+                        try {
+                          final ok = await auth.authenticate(
+                            localizedReason: _t(
+                              'Confirm $biometricLabel to enable app lock',
+                              'Tsimikizirani $biometricLabel kuti muyatsitse chitseko',
+                            ),
+                            options: const AuthenticationOptions(
+                              stickyAuth: true,
+                              useErrorDialogs: true,
+                              biometricOnly: false,
+                            ),
+                          );
+                          if (!ok) {
+                            if (mounted) {
+                              ToastHelper.showCustomToast(
+                                context,
+                                _t(
+                                  'Could not verify biometrics. App lock was not enabled.',
+                                  'Sitinathe kutsimikizira biometric. Chitseko sichinayatsidwe.',
+                                ),
+                                isSuccess: false,
+                                errorMessage: '',
+                              );
+                            }
+                            return;
+                          }
+                        } catch (_) {
+                          if (mounted) {
+                            ToastHelper.showCustomToast(
+                              context,
+                              _t(
+                                'Biometrics failed. Check phone settings and try again.',
+                                'Biometric yalephera. Onani settings za foni ndikuyesanso.',
+                              ),
+                              isSuccess: false,
+                              errorMessage: '',
+                            );
+                          }
+                          return;
+                        }
+                      }
                       setLocal(() => _biometricLockEnabled = v);
                       setState(() => _biometricLockEnabled = v);
                       await _saveBiometricLockPref(v);
@@ -920,6 +980,26 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: Text(_t('Messages', 'Mauthenga'),
                       style: const TextStyle(fontWeight: FontWeight.w800)),
                   subtitle: Text(_t('Chat and support messages', 'Mauthenga a nkhani ndi thandizo')),
+                ),
+                SwitchListTile(
+                  value: _notificationsEngagement,
+                  onChanged: _notificationsEnabled
+                      ? (v) async {
+                          setLocal(() => _notificationsEngagement = v);
+                          setState(() => _notificationsEngagement = v);
+                          await _savePersonalizationPrefs();
+                        }
+                      : null,
+                  title: Text(
+                    _t('Deals & new listings', 'Zogulitsa ndi zatsopano'),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(
+                    _t(
+                      'Promotions, today’s arrivals, and marketplace (often when something new is posted)',
+                      'Zotsatsa, zofika lero, ndi msika (nthawi zambiri zikakhala zatsopano)',
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 8),
               ],
@@ -1634,7 +1714,7 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final canCheck = await auth.canCheckBiometrics;
       final isSupported = await auth.isDeviceSupported();
-      if (!canCheck || !isSupported) {
+      if (!isSupported && !canCheck) {
         if (mounted) {
           ToastHelper.showCustomToast(
             context,
@@ -1655,8 +1735,9 @@ class _SettingsPageState extends State<SettingsPage> {
           'Tsimikizirani kuti ndinu inu kuti muchotse akaunti',
         ),
         options: const AuthenticationOptions(
-          biometricOnly: true,
+          biometricOnly: false,
           stickyAuth: true,
+          useErrorDialogs: true,
         ),
       );
       if (!ok && mounted) {

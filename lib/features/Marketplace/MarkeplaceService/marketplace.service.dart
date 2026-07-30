@@ -95,13 +95,16 @@ class MarketplaceService {
 
   /// Upload from BYTES (works for HEIC and temp files that disappear).
   /// Uses API endpoint (/vero/uploads) so it hits Nest, not bare root.
+  /// Pass [token] when uploading many files to avoid repeated prefs reads.
   Future<String> uploadBytes(
     Uint8List bytes, {
     required String filename,
     String? mimeType,
+    String? token,
+    Duration timeout = const Duration(seconds: 45),
   }) async {
-    final token = await _token();
-    if (token == null || token.isEmpty) {
+    final auth = (token != null && token.isNotEmpty) ? token : await _token();
+    if (auth == null || auth.isEmpty) {
       throw const ApiException(
         message: 'Please sign in before uploading.',
       );
@@ -117,12 +120,13 @@ class MarketplaceService {
         : _safeDefaultNameFromMime(detectedMime ?? '');
 
     if (kDebugMode) {
-      debugPrint('Uploading bytes -> $uri');
-      debugPrint('Filename: $safeName, mime: $detectedMime');
+      debugPrint(
+        'Uploading bytes -> $uri (${bytes.length} bytes, $safeName)',
+      );
     }
 
     final req = http.MultipartRequest('POST', uri)
-      ..headers.addAll(_authHeaders(token, extra: {
+      ..headers.addAll(_authHeaders(auth, extra: {
         'Accept': 'application/json',
       }))
       ..files.add(http.MultipartFile.fromBytes(
@@ -133,8 +137,8 @@ class MarketplaceService {
             detectedMime != null ? MediaType.parse(detectedMime) : null,
       ));
 
-    final streamed = await req.send();
-    final resp = await http.Response.fromStream(streamed);
+    final streamed = await req.send().timeout(timeout);
+    final resp = await http.Response.fromStream(streamed).timeout(timeout);
 
     if (kDebugMode) {
       debugPrint('UploadBytes status: ${resp.statusCode}');

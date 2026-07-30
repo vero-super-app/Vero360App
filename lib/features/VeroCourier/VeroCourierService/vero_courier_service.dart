@@ -110,15 +110,23 @@ class CourierService {
     String? senderEmail,
   }) async {
     final data = await getMyDeliveries();
-    return data
+    // Auth-scoped endpoint is the source of truth. Only filter when we have a
+    // usable phone/email AND that filter still returns matches.
+    final phone = senderPhone.trim();
+    final email = (senderEmail ?? '').trim();
+    if (phone.isEmpty && email.isEmpty) return data;
+
+    final filtered = data
         .where(
           (d) => deliveryBelongsToSender(
             d,
-            senderPhone: senderPhone,
-            senderEmail: senderEmail,
+            senderPhone: phone,
+            senderEmail: email.isEmpty ? null : email,
           ),
         )
         .toList();
+    if (filtered.isEmpty && data.isNotEmpty) return data;
+    return filtered;
   }
 
   Future<CourierDelivery> updateStatus({

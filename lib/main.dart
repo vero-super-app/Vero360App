@@ -48,10 +48,11 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
+import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
-import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
@@ -401,10 +402,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late final AppLinks _appLinks;
   StreamSubscription<Uri>? _sub;
 
-  // Which shell we’re currently showing
-  String _currentShell = 'customer';
+  /// Empty until first cached-role redirect. Prevents remounting the same shell
+  /// mid-session (which blinked Home / disposed merchant dashboards).
+  String _currentShell = '';
 
   bool _showBiometricLock = false;
+  /// True after a successful unlock until the user truly backgrounds the app
+  /// (not while the system PIN / biometric sheet is open).
+  bool _biometricSessionUnlocked = false;
+  bool _biometricAuthInProgress = false;
   AppLifecycleState? _lastLifecycleState;
 
   @override
@@ -458,12 +464,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final wasInBackground = _lastLifecycleState == AppLifecycleState.paused ||
-        _lastLifecycleState == AppLifecycleState.inactive;
+    final previous = _lastLifecycleState;
     _lastLifecycleState = state;
-    if (state == AppLifecycleState.resumed && wasInBackground) {
+
+    if (state == AppLifecycleState.paused) {
+      // System PIN/biometric UI also pauses the activity. Do not treat that as
+      // "user left the app" or the next resume will lock again after unlock.
+      if (!_biometricAuthInProgress && !_showBiometricLock) {
+        _biometricSessionUnlocked = false;
+      }
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed &&
+        previous == AppLifecycleState.paused) {
       _checkBiometricLockOnResume();
       unawaited(OrderEscrowService.processDueAutoReleasesForSignedInUser());
+      unawaited(EngagementNotificationService.instance.maybeSendDailyDigest());
     }
   }
 
@@ -471,20 +488,41 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (kIsWeb) return;
     if (defaultTargetPlatform != TargetPlatform.iOS &&
         defaultTargetPlatform != TargetPlatform.android) return;
+    // Already locked, mid-auth (PIN sheet), or unlocked this session.
+    if (_showBiometricLock ||
+        _biometricAuthInProgress ||
+        _biometricSessionUnlocked) {
+      return;
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       final enabled = prefs.getBool('pref_biometric_lock') ?? false;
       if (!enabled || !mounted) return;
+      if (_showBiometricLock ||
+          _biometricAuthInProgress ||
+          _biometricSessionUnlocked) {
+        return;
+      }
       final auth = LocalAuthentication();
+      final isSupported = await auth.isDeviceSupported();
       final canCheck = await auth.canCheckBiometrics;
-      final hasBiometrics = await auth.getAvailableBiometrics();
-      if (!canCheck || hasBiometrics.isEmpty) return;
+      if (!isSupported && !canCheck) return;
       if (mounted) setState(() => _showBiometricLock = true);
     } catch (_) {}
   }
 
   void _onBiometricUnlockSuccess() {
+    _biometricSessionUnlocked = true;
+    _biometricAuthInProgress = false;
     if (mounted) setState(() => _showBiometricLock = false);
+  }
+
+  void _onBiometricAuthStarted() {
+    _biometricAuthInProgress = true;
+  }
+
+  void _onBiometricAuthEnded() {
+    _biometricAuthInProgress = false;
   }
 
   @override
@@ -500,15 +538,19 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final onboardingDone = prefs.getBool('onboarding_completed_v1') ?? false;
     if (!onboardingDone) return;
-    final role = (prefs.getString('user_role') ?? '').toLowerCase();
+    final role = (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
+        .toLowerCase();
     final email = prefs.getString('email') ?? '';
 
+    // First launch: _currentShell is '' so we push once. Later calls skip when
+    // already on the right shell (avoids Home blink / tab reset).
     if (role == 'merchant') {
-      await _pushMerchant(email);
+      if (_currentShell != 'merchant') await _pushMerchant(email);
     } else if (role == 'driver') {
-      _pushDriver(email);
-    } else if (role == 'customer') {
-      _pushCustomer(email);
+      if (_currentShell != 'driver') _pushDriver(email);
+    } else {
+      // customer, empty, or unknown — main customer shell
+      if (_currentShell != 'customer') _pushCustomer(email);
     }
   }
 
@@ -611,17 +653,26 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               content = Stack(
                 children: [
                   content,
-                  _BiometricLockOverlay(onUnlock: _onBiometricUnlockSuccess),
+                  _BiometricLockOverlay(
+                    onUnlock: _onBiometricUnlockSuccess,
+                    onAuthStarted: _onBiometricAuthStarted,
+                    onAuthEnded: _onBiometricAuthEnded,
+                  ),
                 ],
               );
             }
             return content;
           },
 
-          // ✅ Onboarding is independent and runs before main shell
+          // Splash until cached-role redirect replaces this route. Do NOT mount
+          // Bottomnavbar here — merchants would flash customer Home first.
           home: OnboardingGate(
             onCompleted: () => _onOnboardingGateCompletedHook?.call(),
-            child: const Bottomnavbar(email: ''),
+            child: const VeroLaunchSplash(
+              title: 'Opening…',
+              message: 'Loading your home…',
+              showSpinner: true,
+            ),
           ),
 
           // ✅ restrict named routes too
@@ -639,7 +690,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 return MaterialPageRoute(
                   builder: (_) => OnboardingGate(
                     onCompleted: () => _onOnboardingGateCompletedHook?.call(),
-                    child: const Bottomnavbar(email: ''),
+                    child: const VeroLaunchSplash(
+                      title: 'Opening…',
+                      message: 'Loading your home…',
+                      showSpinner: true,
+                    ),
                   ),
                 );
 
@@ -681,8 +736,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 /// Full-screen overlay shown when app lock (Face ID / fingerprint) is enabled and user returns to app.
 class _BiometricLockOverlay extends StatefulWidget {
   final VoidCallback onUnlock;
+  final VoidCallback onAuthStarted;
+  final VoidCallback onAuthEnded;
 
-  const _BiometricLockOverlay({required this.onUnlock});
+  const _BiometricLockOverlay({
+    required this.onUnlock,
+    required this.onAuthStarted,
+    required this.onAuthEnded,
+  });
 
   @override
   State<_BiometricLockOverlay> createState() => _BiometricLockOverlayState();
@@ -695,12 +756,20 @@ class _BiometricLockOverlayState extends State<_BiometricLockOverlay> {
   Future<void> _authenticate() async {
     if (_authenticating) return;
     setState(() => _authenticating = true);
+    widget.onAuthStarted();
     try {
       final auth = LocalAuthentication();
+      final isSupported = await auth.isDeviceSupported();
       final canCheck = await auth.canCheckBiometrics;
       final available = await auth.getAvailableBiometrics();
-      if (!canCheck || available.isEmpty) {
-        if (mounted) setState(() => _authenticating = false);
+      if (!isSupported && !canCheck) {
+        widget.onAuthEnded();
+        if (mounted) {
+          setState(() {
+            _label = 'Biometrics unavailable';
+            _authenticating = false;
+          });
+        }
         return;
       }
       final isFace = available.contains(BiometricType.face);
@@ -709,16 +778,27 @@ class _BiometricLockOverlayState extends State<_BiometricLockOverlay> {
           ? 'Unlock Vero360 with Face ID or fingerprint'
           : isFace
               ? 'Unlock Vero360 with Face ID'
-              : 'Unlock Vero360 with fingerprint';
+              : isFinger
+                  ? 'Unlock Vero360 with fingerprint'
+                  : 'Unlock Vero360';
       final success = await auth.authenticate(
         localizedReason: reason,
         options: const AuthenticationOptions(
           stickyAuth: true,
           useErrorDialogs: true,
+          biometricOnly: false,
         ),
       );
-      if (success && mounted) widget.onUnlock();
-    } catch (_) {}
+      if (success && mounted) {
+        widget.onUnlock();
+      } else {
+        widget.onAuthEnded();
+        if (mounted) setState(() => _label = 'Try again');
+      }
+    } catch (_) {
+      widget.onAuthEnded();
+      if (mounted) setState(() => _label = 'Try again');
+    }
     if (mounted) setState(() => _authenticating = false);
   }
 

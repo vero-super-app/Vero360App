@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show File;
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -29,14 +31,19 @@ import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchan
 import 'package:vero360_app/features/Promotions/presentation/Postpromotion.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
 
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
+import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 // Add login screen import (using your correct path)
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'
+    show veroFloatingNavClearance;
 
 import 'package:vero360_app/Home/homepage.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
@@ -82,26 +89,27 @@ SliverGridDelegate _merchantItemsGridDelegate(BuildContext context) {
       MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.8).scale(14) /
           14.0;
 
-  var ratio = 0.78;
+  // Lower ratio = taller cells (more room for status / reject reason).
+  var ratio = 0.72;
   var spacing = 12.0;
   if (w < 330) {
-    ratio = 0.52;
+    ratio = 0.48;
     spacing = 8;
   } else if (w < 360) {
-    ratio = 0.58;
+    ratio = 0.52;
     spacing = 8;
   } else if (w < 400) {
-    ratio = 0.65;
+    ratio = 0.58;
     spacing = 10;
   } else if (w < 430) {
-    ratio = 0.72;
+    ratio = 0.64;
     spacing = 10;
   }
 
   if (textScale > 1.08) {
-    ratio -= 0.04 * ((textScale - 1.0) * 2).clamp(0.0, 1.0);
+    ratio -= 0.06 * ((textScale - 1.0) * 2).clamp(0.0, 1.0);
   }
-  ratio = ratio.clamp(0.48, 0.82);
+  ratio = ratio.clamp(0.42, 0.78);
 
   return SliverGridDelegateWithFixedCrossAxisCount(
     crossAxisCount: 2,
@@ -170,6 +178,8 @@ class _MarketplaceMerchantDashboardState
   final _price = TextEditingController();
   final _location = TextEditingController();
   final _desc = TextEditingController();
+  final _stock = TextEditingController(text: '1');
+  int _stockQty = 1;
 
   late TabController _marketplaceTabs;
 
@@ -198,10 +208,16 @@ class _MarketplaceMerchantDashboardState
   bool _loadingItems = true;
   bool _busyRow = false;
 
+  /// Instant My Items cache (survives tab switches / reopen in-session).
+  static final Map<String, List<Map<String, dynamic>>> _itemsMemoryByUid =
+      <String, List<Map<String, dynamic>>>{};
+
+  static const String _prefsItemsCachePrefix = 'merchant_my_items_cache_v1_';
+
   // Filters (My Items)
   String _searchQuery = '';
   String _filterCategory = 'all'; // all | food | ...
-  String _filterStatus = 'all'; // all | active | inactive
+  String _filterStatus = 'all'; // all | active | inactive | pending | rejected
 
   // Dashboard state
   /// Real sold orders (confirmed+paid or delivered) from OrderService for Recent Sales.
@@ -227,8 +243,16 @@ class _MarketplaceMerchantDashboardState
   String _merchantEmail = 'No Email';
   String _merchantPhone = 'No Phone';
   String _merchantProfileUrl = '';
+  /// Short public blurb shown on shop + product details (max 120 chars).
+  String _businessDescription = '';
+  /// Local disk path from [ProfilePhotoCache] for instant avatar display.
+  String? _localPhotoPath;
 
-  bool _meOffline = false;
+  TimeOfDay? _openTime;
+  TimeOfDay? _closeTime;
+  /// Dart [DateTime.weekday] values: 1 = Mon … 7 = Sun. Empty = every day.
+  Set<int> _openDays = {};
+
   bool _loadingMe = false;
   bool _profileUploading = false;
 
@@ -240,6 +264,10 @@ class _MarketplaceMerchantDashboardState
   // First-time merchant guide (show once after login, then persist as done)
   static const String _kMerchantGuidePrefKey = 'marketplace_merchant_guide_v1_done';
   static const String _kMerchantGuideShowOnNextOpenKey = 'marketplace_merchant_guide_show_on_next_open';
+  static const String _kBusinessDescPrefKey = 'merchant_business_description';
+  static const String _kShopHoursPrefKey = 'merchant_shop_opening_hours';
+  static const String _kShopDaysPrefKey = 'merchant_shop_opening_days';
+  static const int _kBusinessDescMaxLen = 120;
   bool _showMerchantGuide = false;
   int _merchantGuideStep = 0;
   bool _merchantGuideCheckScheduled = false;
@@ -748,19 +776,146 @@ class _MarketplaceMerchantDashboardState
     super.initState();
     if (widget.embeddedInMainNav) _selectedIndex = 4;
     _marketplaceTabs = TabController(length: 3, vsync: this);
+    _marketplaceTabs.addListener(() {
+      if (_marketplaceTabs.indexIsChanging) return;
+      // My Items tab: ensure cached list is visible immediately.
+      if (_marketplaceTabs.index == 2 && _items.isEmpty) {
+        _hydrateItemsFromLocalCache();
+        if (_items.isEmpty) {
+          unawaited(_hydrateItemsFromPrefsCache());
+        } else if (mounted) {
+          setState(() => _loadingItems = false);
+        }
+        unawaited(_loadItems(showLoading: false));
+      }
+    });
 
     _uid = _auth.currentUser?.uid ?? '';
 
-    _loadMerchantProfileFromPrefs();
-    _hydrateFromFirebaseAuth();
-    _ensureBusinessName();
-    _syncBackendUserIdToFirestore();
-    _pullPhoneAndProfileFromFirestore();
+    // Instant My Items from memory/prefs before any network.
+    _hydrateItemsFromLocalCache();
 
-    _fetchCurrentUserMe();
-    _loadMerchantData();
-    _loadItems();
+    // 1) Instant UI from Auth + prefs (no network).
+    _hydrateFromFirebaseAuth();
+    unawaited(_bootstrapFast());
+
+    // 2) Items + wallet ASAP (cache-first). Don't flash skeleton if cache hit.
+    unawaited(_loadItems(showLoading: _items.isEmpty));
+    unawaited(_loadWalletBalance());
+
+    // 3) Heavier network work after first frame — don't block skeleton exit.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_loadMerchantData());
+      unawaited(_fetchCurrentUserMe());
+      unawaited(_pullPhoneAndProfileFromFirestore());
+      unawaited(_ensureBusinessName());
+      // Backfill can rewrite many docs — defer so dashboard opens fast.
+      Future<void>.delayed(const Duration(seconds: 2), () {
+        if (!mounted) return;
+        unawaited(_syncBackendUserIdToFirestore());
+      });
+    });
+
     _startPeriodicUpdates();
+  }
+
+  /// Prefs + clear loading shell without waiting on APIs.
+  Future<void> _bootstrapFast() async {
+    await _loadMerchantProfileFromPrefs();
+    // Disk cache may be ready after prefs — apply if memory was empty.
+    if (_items.isEmpty) {
+      await _hydrateItemsFromPrefsCache();
+    }
+    if (!mounted) return;
+    // Show dashboard chrome immediately; sections fill in as data arrives.
+    setState(() {
+      _isLoading = false;
+      _initialLoadComplete = true;
+      if (_items.isNotEmpty) _loadingItems = false;
+    });
+  }
+
+  void _hydrateItemsFromLocalCache() {
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) return;
+    final mem = _itemsMemoryByUid[uid];
+    if (mem == null || mem.isEmpty) return;
+    _items = mem.map((e) => Map<String, dynamic>.from(e)).toList();
+    _totalItems = _items.length;
+    _activeItems = _items.where((e) => e['isActive'] == true).length;
+    _loadingItems = false;
+  }
+
+  Future<void> _hydrateItemsFromPrefsCache() async {
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('$_prefsItemsCachePrefix$uid');
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      final list = <Map<String, dynamic>>[];
+      for (final e in decoded) {
+        if (e is Map) {
+          list.add(Map<String, dynamic>.from(e));
+        }
+      }
+      if (list.isEmpty) return;
+      _itemsMemoryByUid[uid] =
+          list.map((e) => Map<String, dynamic>.from(e)).toList();
+      if (!mounted) return;
+      setState(() {
+        _items = list;
+        _totalItems = list.length;
+        _activeItems = list.where((e) => e['isActive'] == true).length;
+        _loadingItems = false;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _persistItemsCache(List<Map<String, dynamic>> items) async {
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) return;
+    final copy = items.map((e) => Map<String, dynamic>.from(e)).toList();
+    _itemsMemoryByUid[uid] = copy;
+    try {
+      // Keep prefs payload small — drop huge base64 blobs from disk cache.
+      final slim = copy.map((e) {
+        final m = Map<String, dynamic>.from(e);
+        final img = (m['image'] ?? '').toString();
+        if (img.length > 4000) m.remove('image');
+        final gal = m['gallery'];
+        if (gal is List && gal.isNotEmpty) {
+          m['gallery'] = gal.take(2).where((x) {
+            return x.toString().length < 4000;
+          }).toList();
+        }
+        return m;
+      }).toList();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        '$_prefsItemsCachePrefix$uid',
+        jsonEncode(slim),
+      );
+    } catch (_) {}
+  }
+
+  void _applyItemsToUi(List<Map<String, dynamic>> list, {bool persist = true}) {
+    final total = list.length;
+    final active = list.where((e) => e['isActive'] == true).length;
+    if (!mounted) {
+      if (persist) unawaited(_persistItemsCache(list));
+      return;
+    }
+    setState(() {
+      _items = list;
+      _totalItems = total;
+      _activeItems = active;
+      _loadingItems = false;
+    });
+    if (persist) unawaited(_persistItemsCache(list));
   }
 
   @override
@@ -771,6 +926,7 @@ class _MarketplaceMerchantDashboardState
     _price.dispose();
     _location.dispose();
     _desc.dispose();
+    _stock.dispose();
     _recentSalesSearchController.dispose();
     _recentSalesSearchFocus.dispose();
     super.dispose();
@@ -778,16 +934,15 @@ class _MarketplaceMerchantDashboardState
 
   void _startPeriodicUpdates() {
     _ticker?.cancel();
-    _ticker = Timer.periodic(const Duration(seconds: 30), (_) async {
+    // Slightly less aggressive; run jobs in parallel so UI stays responsive.
+    _ticker = Timer.periodic(const Duration(seconds: 45), (_) {
       if (!mounted) return;
-      if (_sheetOpen) return; // ✅ important
+      if (_sheetOpen) return;
       _hydrateFromFirebaseAuth();
-      await _ensureBusinessName();
-      await _fetchCurrentUserMe();
-      await _loadMerchantData();
-      // Silent refresh so "My Items" grid stays stable on screen.
-      await _loadItems(showLoading: false);
-      await _loadOrderStats();
+      unawaited(_loadWalletBalance());
+      unawaited(_loadItems(showLoading: false));
+      unawaited(_loadOrderStats());
+      unawaited(_fetchCurrentUserMe());
     });
   }
 
@@ -809,6 +964,9 @@ class _MarketplaceMerchantDashboardState
         if (photo.isNotEmpty) _merchantProfileUrl = photo;
       });
     }
+    if (photo.isNotEmpty) {
+      unawaited(_warmProfilePhotoCache(photo));
+    }
   }
 
   /// Pull phone and profile picture from Firestore users/{uid} when Auth/prefs are empty.
@@ -824,22 +982,64 @@ class _MarketplaceMerchantDashboardState
       final picVal = (data['profilePicture'] ?? data['profilepicture'] ?? '')
           .toString()
           .trim();
-      if (phoneVal.isEmpty && picVal.isEmpty) return;
+      final descVal = (data['businessDescription'] ?? data['description'] ?? '')
+          .toString()
+          .trim();
+      final hoursVal = (data['openingHours'] ?? '').toString().trim();
+      final daysVal = data['openingDays'];
+      if (phoneVal.isEmpty &&
+          picVal.isEmpty &&
+          descVal.isEmpty &&
+          hoursVal.isEmpty &&
+          daysVal == null) {
+        return;
+      }
       final prefs = await SharedPreferences.getInstance();
       if (phoneVal.isNotEmpty) {
         await prefs.setString('phone', phoneVal);
         await prefs.setString('merchant_profile_phone', phoneVal);
       }
       if (picVal.isNotEmpty) await prefs.setString('profilepicture', picVal);
+      if (descVal.isNotEmpty) {
+        await prefs.setString(_kBusinessDescPrefKey, descVal);
+      }
+      if (hoursVal.isNotEmpty) {
+        await prefs.setString(_kShopHoursPrefKey, hoursVal);
+      }
+      if (daysVal != null) {
+        final tmp = <int>{};
+        if (daysVal is List) {
+          for (final e in daysVal) {
+            final n = e is int ? e : int.tryParse('$e');
+            if (n != null && n >= 1 && n <= 7) tmp.add(n);
+          }
+        }
+        if (tmp.isNotEmpty) {
+          await prefs.setString(
+              _kShopDaysPrefKey, (tmp.toList()..sort()).join(','));
+        }
+      }
       if (!mounted) return;
       setState(() {
         if (phoneVal.isNotEmpty && _merchantPhone == 'No Phone') {
           _merchantPhone = phoneVal;
         }
-        if (picVal.isNotEmpty && _merchantProfileUrl.trim().isEmpty) {
+        if (picVal.isNotEmpty) {
           _merchantProfileUrl = picVal;
         }
+        if (descVal.isNotEmpty) {
+          _businessDescription = descVal;
+        }
+        if (hoursVal.isNotEmpty) {
+          _applyOpeningHoursString(hoursVal);
+        }
+        if (daysVal != null) {
+          _applyOpeningDays(daysVal);
+        }
       });
+      if (picVal.isNotEmpty) {
+        unawaited(_warmProfilePhotoCache(picVal));
+      }
     } catch (_) {}
   }
 
@@ -940,6 +1140,37 @@ class _MarketplaceMerchantDashboardState
       if (data != null) {
         resolved =
             (data['businessName'] ?? data['name'] ?? '').toString().trim();
+        final desc = (data['businessDescription'] ?? data['description'] ?? '')
+            .toString()
+            .trim();
+        final hours = (data['openingHours'] ?? '').toString().trim();
+        final days = data['openingDays'];
+        if (desc.isNotEmpty && mounted) {
+          setState(() => _businessDescription = desc);
+          unawaited(SharedPreferences.getInstance().then((p) {
+            p.setString(_kBusinessDescPrefKey, desc);
+          }));
+        }
+        if ((hours.isNotEmpty || days != null) && mounted) {
+          setState(() {
+            if (hours.isNotEmpty) _applyOpeningHoursString(hours);
+            if (days != null) _applyOpeningDays(days);
+          });
+          unawaited(SharedPreferences.getInstance().then((p) {
+            if (hours.isNotEmpty) p.setString(_kShopHoursPrefKey, hours);
+            if (days is List) {
+              final tmp = <int>[];
+              for (final e in days) {
+                final n = e is int ? e : int.tryParse('$e');
+                if (n != null && n >= 1 && n <= 7) tmp.add(n);
+              }
+              if (tmp.isNotEmpty) {
+                tmp.sort();
+                p.setString(_kShopDaysPrefKey, tmp.join(','));
+              }
+            }
+          }));
+        }
       }
     } catch (_) {}
 
@@ -1073,12 +1304,263 @@ class _MarketplaceMerchantDashboardState
     final phone = _sanitizePhone(
       prefs.getString('merchant_profile_phone') ?? prefs.getString('phone') ?? '',
     );
+    final pic =
+        prefs.getString('profilepicture') ?? _merchantProfileUrl;
+    final desc = (prefs.getString(_kBusinessDescPrefKey) ?? '').trim();
+    final hours = (prefs.getString(_kShopHoursPrefKey) ?? '').trim();
+    final daysRaw = (prefs.getString(_kShopDaysPrefKey) ?? '').trim();
+    final localPath = await ProfilePhotoCache.peekLocalPath();
+    if (!mounted) return;
     setState(() {
       _merchantEmail = prefs.getString('email') ?? _merchantEmail;
       if (phone.isNotEmpty) _merchantPhone = phone;
-      _merchantProfileUrl =
-          prefs.getString('profilepicture') ?? _merchantProfileUrl;
+      _merchantProfileUrl = pic;
+      if (desc.isNotEmpty) _businessDescription = desc;
+      if (hours.isNotEmpty) _applyOpeningHoursString(hours);
+      if (daysRaw.isNotEmpty) _applyOpeningDays(daysRaw);
+      _localPhotoPath = localPath;
     });
+    // Warm/refresh disk cache in background so next open is instant.
+    if (_merchantProfileUrl.trim().isNotEmpty) {
+      unawaited(_warmProfilePhotoCache(_merchantProfileUrl));
+    }
+  }
+
+  Future<void> _warmProfilePhotoCache([String? url]) async {
+    final remote = (url ?? _merchantProfileUrl).trim();
+    if (remote.isEmpty) return;
+    final file = await ProfilePhotoCache.ensureCached(remote);
+    if (!mounted || file == null) return;
+    if (_localPhotoPath == file.path) return;
+    setState(() => _localPhotoPath = file.path);
+  }
+
+  Future<void> _editBusinessDescription() async {
+    final saved = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _BusinessDescriptionSheet(
+        initialText: _businessDescription,
+        maxLength: _kBusinessDescMaxLen,
+        brandColor: _brandOrange,
+      ),
+    );
+    if (saved == null || !mounted) return;
+    await _saveBusinessDescription(saved);
+  }
+
+  Future<void> _saveBusinessDescription(String raw) async {
+    final desc = raw.trim();
+    if (desc.length > _kBusinessDescMaxLen) {
+      _toastErr('Keep it under $_kBusinessDescMaxLen characters.');
+      return;
+    }
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) {
+      _toastErr('Please sign in again.');
+      return;
+    }
+
+    try {
+      final payload = <String, dynamic>{
+        'businessDescription': desc,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      await Future.wait([
+        _firestore
+            .collection('marketplace_merchants')
+            .doc(uid)
+            .set(payload, SetOptions(merge: true)),
+        _firestore
+            .collection('users')
+            .doc(uid)
+            .set(payload, SetOptions(merge: true)),
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kBusinessDescPrefKey, desc);
+      if (!mounted) return;
+      setState(() => _businessDescription = desc);
+      _toastOk(desc.isEmpty ? 'Description cleared' : 'Description saved');
+    } catch (e) {
+      debugPrint('Save business description: $e');
+      if (!mounted) return;
+      _toastErr('Could not save description. Try again.');
+    }
+  }
+
+  String _formatShopTime(TimeOfDay t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  TimeOfDay? _parseShopTime(String raw) {
+    final t = raw.trim().split(':');
+    if (t.length != 2) return null;
+    final h = int.tryParse(t[0]);
+    final m = int.tryParse(t[1]);
+    if (h == null || m == null) return null;
+    if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+    return TimeOfDay(hour: h, minute: m);
+  }
+
+  void _applyOpeningHoursString(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) {
+      _openTime = null;
+      _closeTime = null;
+      return;
+    }
+    final parts = s.replaceAll('–', '-').replaceAll('—', '-').split('-');
+    if (parts.length != 2) return;
+    final open = _parseShopTime(parts[0]);
+    final close = _parseShopTime(parts[1]);
+    if (open == null || close == null) return;
+    _openTime = open;
+    _closeTime = close;
+  }
+
+  void _applyOpeningDays(dynamic raw) {
+    final next = <int>{};
+    if (raw is List) {
+      for (final e in raw) {
+        final n = e is int ? e : int.tryParse('$e');
+        if (n != null && n >= 1 && n <= 7) next.add(n);
+      }
+    } else if (raw is String && raw.trim().isNotEmpty) {
+      for (final part in raw.split(RegExp(r'[,;\s]+'))) {
+        final n = int.tryParse(part.trim());
+        if (n != null && n >= 1 && n <= 7) next.add(n);
+      }
+    }
+    _openDays = next;
+  }
+
+  static const _kDayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  String _formatOpenDaysLabel(Set<int> days) {
+    if (days.isEmpty || days.length == 7) return 'Every day';
+    final sorted = days.toList()..sort();
+    // Contiguous ranges → Mon–Fri style
+    final ranges = <String>[];
+    int start = sorted.first;
+    int prev = sorted.first;
+    for (var i = 1; i < sorted.length; i++) {
+      final d = sorted[i];
+      if (d == prev + 1) {
+        prev = d;
+        continue;
+      }
+      ranges.add(start == prev
+          ? _kDayLabels[start - 1]
+          : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
+      start = prev = d;
+    }
+    ranges.add(start == prev
+        ? _kDayLabels[start - 1]
+        : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
+    return ranges.join(', ');
+  }
+
+  String get _shopHoursSummary {
+    if (_openTime == null || _closeTime == null) return 'Set shop hours';
+    final times =
+        '${_formatShopTime(_openTime!)}–${_formatShopTime(_closeTime!)}';
+    return '${_formatOpenDaysLabel(_openDays)} · $times';
+  }
+
+  bool get _isShopOpenNow {
+    final open = _openTime;
+    final close = _closeTime;
+    if (open == null || close == null) return false;
+    final today = DateTime.now().weekday; // 1=Mon … 7=Sun
+    if (_openDays.isNotEmpty && !_openDays.contains(today)) return false;
+    final now = TimeOfDay.now();
+    final nowM = now.hour * 60 + now.minute;
+    final openM = open.hour * 60 + open.minute;
+    final closeM = close.hour * 60 + close.minute;
+    if (openM == closeM) return false;
+    if (openM < closeM) {
+      return nowM >= openM && nowM < closeM;
+    }
+    return nowM >= openM || nowM < closeM;
+  }
+
+  Future<void> _editShopHours() async {
+    final result = await showModalBottomSheet<
+        ({TimeOfDay open, TimeOfDay close, Set<int> days})>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _ShopHoursSheet(
+        initialOpen: _openTime ?? const TimeOfDay(hour: 8, minute: 0),
+        initialClose: _closeTime ?? const TimeOfDay(hour: 17, minute: 0),
+        initialDays: _openDays.isEmpty
+            ? {1, 2, 3, 4, 5, 6, 7}
+            : Set<int>.from(_openDays),
+        brandColor: _brandOrange,
+      ),
+    );
+    if (result == null || !mounted) return;
+    await _saveShopHours(result.open, result.close, result.days);
+  }
+
+  Future<void> _saveShopHours(
+    TimeOfDay open,
+    TimeOfDay close,
+    Set<int> days,
+  ) async {
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) {
+      _toastErr('Please sign in again.');
+      return;
+    }
+    final hours = '${_formatShopTime(open)}–${_formatShopTime(close)}';
+    final dayList = (days.isEmpty || days.length == 7)
+        ? <int>[1, 2, 3, 4, 5, 6, 7]
+        : (days.toList()..sort());
+    try {
+      final payload = <String, dynamic>{
+        'openingHours': hours,
+        'openingDays': dayList,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      await Future.wait([
+        _firestore
+            .collection('marketplace_merchants')
+            .doc(uid)
+            .set(payload, SetOptions(merge: true)),
+        _firestore
+            .collection('users')
+            .doc(uid)
+            .set(payload, SetOptions(merge: true)),
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kShopHoursPrefKey, hours);
+      await prefs.setString(_kShopDaysPrefKey, dayList.join(','));
+      MerchantSellerLoader.cacheOpeningHours(uid, hours);
+      MerchantSellerLoader.cacheOpeningDays(uid, dayList);
+      if (!mounted) return;
+      setState(() {
+        _openTime = open;
+        _closeTime = close;
+        _openDays = dayList.toSet();
+      });
+      _toastOk('Shop hours saved');
+    } catch (e) {
+      debugPrint('Save shop hours: $e');
+      if (!mounted) return;
+      _toastErr('Could not save hours. Try again.');
+    }
   }
 
   // ✅ /users/me for email/phone/pic/rating
@@ -1087,7 +1569,6 @@ class _MarketplaceMerchantDashboardState
 
     setState(() {
       _loadingMe = true;
-      _meOffline = false;
     });
 
     try {
@@ -1145,19 +1626,21 @@ class _MarketplaceMerchantDashboardState
 
         if (!mounted) return;
         final authPhoto = (_auth.currentUser?.photoURL ?? '').trim();
+        final nextPic = authPhoto.isNotEmpty
+            ? authPhoto
+            : (picVal.isNotEmpty ? picVal : _merchantProfileUrl);
         setState(() {
           if (emailVal.isNotEmpty) _merchantEmail = emailVal;
           if (phoneVal.isNotEmpty) _merchantPhone = phoneVal;
           // Prefer Firebase Auth photo; else use API profile picture
-          _merchantProfileUrl =
-              authPhoto.isNotEmpty ? authPhoto : picVal;
+          if (nextPic.trim().isNotEmpty) _merchantProfileUrl = nextPic;
         });
-      } else {
-        setState(() => _meOffline = true);
+        if (nextPic.trim().isNotEmpty) {
+          unawaited(_warmProfilePhotoCache(nextPic));
+        }
       }
     } catch (e) {
       if (kDebugMode) debugPrint('Error fetching /users/me');
-      if (mounted) setState(() => _meOffline = true);
     } finally {
       if (mounted) setState(() => _loadingMe = false);
     }
@@ -1180,6 +1663,7 @@ class _MarketplaceMerchantDashboardState
         if (!dashboardData.containsKey('error')) {
           final merchant = dashboardData['merchant'];
 
+          if (!mounted) return;
           setState(() {
             // Recent sales come from real orders in _loadOrderStats(), not dashboard API
 
@@ -1268,10 +1752,13 @@ class _MarketplaceMerchantDashboardState
       final firebaseUid = _auth.currentUser?.uid ?? _uid;
       if (firebaseUid.trim().isEmpty) return;
 
-      final walletDoc = await _firestore
-          .collection('merchant_wallets')
-          .doc(firebaseUid)
-          .get();
+      final ref = _firestore.collection('merchant_wallets').doc(firebaseUid);
+      DocumentSnapshot<Map<String, dynamic>>? walletDoc;
+      try {
+        final cached = await ref.get(const GetOptions(source: Source.cache));
+        if (cached.exists) walletDoc = cached;
+      } catch (_) {}
+      walletDoc ??= await ref.get();
 
       if (!walletDoc.exists || !mounted) return;
 
@@ -1290,9 +1777,20 @@ class _MarketplaceMerchantDashboardState
   }
 
   // ----------------- Nest/API userId (for sellerUserId filter) -----------------
-  Future<String?> _getNestUserId() async {
+  String? _cachedNestUserId;
+
+  Future<String?> _getNestUserId({bool allowNetwork = true}) async {
+    if (_cachedNestUserId != null && _cachedNestUserId!.isNotEmpty) {
+      return _cachedNestUserId;
+    }
     try {
       final sp = await SharedPreferences.getInstance();
+      final cached = (sp.getString('merchant_nest_user_id') ?? '').trim();
+      if (cached.isNotEmpty) {
+        _cachedNestUserId = cached;
+        return cached;
+      }
+
       final token = sp.getString('jwt') ??
           sp.getString('token') ??
           sp.getString('jwt_token') ??
@@ -1305,9 +1803,16 @@ class _MarketplaceMerchantDashboardState
               utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
           final payload = jsonDecode(payloadJson) as Map<String, dynamic>;
           final rawId = payload['sub'] ?? payload['id'] ?? payload['userId'];
-          if (rawId != null) return rawId.toString();
+          if (rawId != null) {
+            final id = rawId.toString();
+            _cachedNestUserId = id;
+            unawaited(sp.setString('merchant_nest_user_id', id));
+            return id;
+          }
         }
       }
+
+      if (!allowNetwork) return null;
 
       final bearer = await _getBearerTokenForApi();
       if (bearer == null || bearer.isEmpty) return null;
@@ -1331,7 +1836,10 @@ class _MarketplaceMerchantDashboardState
 
       final rawId = user['id'] ?? user['userId'] ?? user['sub'];
       if (rawId == null) return null;
-      return rawId.toString();
+      final id = rawId.toString();
+      _cachedNestUserId = id;
+      unawaited(sp.setString('merchant_nest_user_id', id));
+      return id;
     } catch (_) {
       return null;
     }
@@ -1341,48 +1849,93 @@ class _MarketplaceMerchantDashboardState
   /// When [showLoading] is false, keeps the current grid visible while refreshing
   /// in the background (used by periodic updates so the UI stays stable).
   Future<void> _loadItems({bool showLoading = true}) async {
-    if (showLoading && mounted) setState(() => _loadingItems = true);
+    // Prefer showing cached items — never blank the grid while refreshing.
+    if (_items.isEmpty) {
+      _hydrateItemsFromLocalCache();
+      if (_items.isEmpty) await _hydrateItemsFromPrefsCache();
+    }
+
+    if (showLoading && mounted && _items.isEmpty) {
+      setState(() => _loadingItems = true);
+    } else if (mounted && _items.isNotEmpty) {
+      setState(() => _loadingItems = false);
+    }
 
     try {
-      final nestSellerId = await _getNestUserId();
-      final firebaseUid = _auth.currentUser?.uid ?? _uid;
+      final firebaseUid = (_auth.currentUser?.uid ?? _uid).trim();
+      // Prefer Firebase UID query first (no network). Nest id is optional merge.
+      final nestSellerId = await _getNestUserId(allowNetwork: false);
 
-      Query<Map<String, dynamic>> query =
-          _firestore.collection('marketplace_items');
-
-      if (nestSellerId != null && nestSellerId.trim().isNotEmpty) {
-        query = query.where('sellerUserId', isEqualTo: nestSellerId.trim());
-      } else if (firebaseUid.trim().isNotEmpty) {
-        query = query.where('merchantId', isEqualTo: firebaseUid.trim());
+      Future<QuerySnapshot<Map<String, dynamic>>> runQuery(
+        Query<Map<String, dynamic>> query, {
+        required bool preferCache,
+      }) async {
+        if (preferCache) {
+          try {
+            final cached =
+                await query.get(const GetOptions(source: Source.cache));
+            if (cached.docs.isNotEmpty) return cached;
+          } catch (_) {}
+        }
+        return query.get();
       }
 
-      final snap = await query.get();
-      final list =
-          snap.docs.map((doc) => {...doc.data(), 'id': doc.id}).toList();
+      final byMerchant = <String, Map<String, dynamic>>{};
 
-      final total = list.length;
-      final active = list.where((e) => e['isActive'] == true).length;
+      if (firebaseUid.isNotEmpty) {
+        final q = _firestore
+            .collection('marketplace_items')
+            .where('merchantId', isEqualTo: firebaseUid);
+        final snap = await runQuery(q, preferCache: true);
+        for (final doc in snap.docs) {
+          byMerchant[doc.id] = {...doc.data(), 'id': doc.id};
+        }
+        // Paint cache/server merchantId results immediately.
+        if (byMerchant.isNotEmpty) {
+          _applyItemsToUi(byMerchant.values.toList());
+        }
+      }
 
-      if (!mounted) return;
-      setState(() {
-        _items = list;
-        _totalItems = total;
-        _activeItems = active;
-        // _soldItems and _totalEarnings come from _loadOrderStats (real completed orders)
-      });
+      // Optional: also match sellerUserId (Nest) without blocking first paint.
+      final nestId =
+          nestSellerId ?? await _getNestUserId(allowNetwork: true);
+      if (nestId != null && nestId.trim().isNotEmpty) {
+        final q = _firestore
+            .collection('marketplace_items')
+            .where('sellerUserId', isEqualTo: nestId.trim());
+        final snap = await runQuery(q, preferCache: true);
+        for (final doc in snap.docs) {
+          byMerchant[doc.id] = {...doc.data(), 'id': doc.id};
+        }
+      }
+
+      // Refresh merchantId from server once (after cache paint).
+      if (firebaseUid.isNotEmpty) {
+        try {
+          final server = await _firestore
+              .collection('marketplace_items')
+              .where('merchantId', isEqualTo: firebaseUid)
+              .get(const GetOptions(source: Source.server));
+          for (final doc in server.docs) {
+            byMerchant[doc.id] = {...doc.data(), 'id': doc.id};
+          }
+        } catch (_) {}
+      }
+
+      _applyItemsToUi(byMerchant.values.toList());
     } catch (e) {
       debugPrint('Error loading items: $e');
       if (!mounted) return;
-      if (showLoading) {
+      if (showLoading && _items.isEmpty) {
         setState(() {
           _items = [];
           _totalItems = 0;
           _activeItems = 0;
-          // keep _soldItems from _loadOrderStats
+          _loadingItems = false;
         });
+      } else if (mounted) {
+        setState(() => _loadingItems = false);
       }
-    } finally {
-      if (showLoading && mounted) setState(() => _loadingItems = false);
     }
   }
 
@@ -1391,16 +1944,47 @@ class _MarketplaceMerchantDashboardState
     return _items.where((it) {
       final name = (it['name'] ?? '').toString().toLowerCase();
       final cat = (it['category'] ?? 'other').toString().toLowerCase();
-      final active = it['isActive'] == true;
+      final review = _itemReviewStatus(it);
+      final active = it['isActive'] == true && review == 'approved';
 
       final okQ = q.isEmpty || name.contains(q);
       final okCat = (_filterCategory == 'all') || cat == _filterCategory;
       final okStatus = (_filterStatus == 'all') ||
           (_filterStatus == 'active' && active) ||
-          (_filterStatus == 'inactive' && !active);
+          (_filterStatus == 'inactive' &&
+              review == 'approved' &&
+              it['isActive'] != true) ||
+          (_filterStatus == 'pending' &&
+              (review == 'pending' || review.isEmpty && it['isActive'] != true)) ||
+          (_filterStatus == 'rejected' && review == 'rejected');
 
       return okQ && okCat && okStatus;
     }).toList();
+  }
+
+  /// `pending` | `approved` | `rejected` | '' (legacy).
+  static String _itemReviewStatus(Map<String, dynamic> it) {
+    final raw = (it['reviewStatus'] ?? '').toString().trim().toLowerCase();
+    if (raw == 'pending' || raw == 'approved' || raw == 'rejected') return raw;
+    // Legacy listings without reviewStatus: treat active as approved.
+    if (it['isActive'] == true) return 'approved';
+    return '';
+  }
+
+  static String _reviewLabel(Map<String, dynamic> it) {
+    final review = _itemReviewStatus(it);
+    if (review == 'pending') return 'Under review';
+    if (review == 'rejected') return 'Rejected';
+    if (it['isActive'] == true) return 'Live';
+    return 'Inactive';
+  }
+
+  static Color _reviewColor(Map<String, dynamic> it) {
+    final review = _itemReviewStatus(it);
+    if (review == 'pending') return Colors.orange;
+    if (review == 'rejected') return Colors.red;
+    if (it['isActive'] == true) return Colors.green;
+    return Colors.grey;
   }
 
   // ----------------- Pull-to-refresh -----------------
@@ -1410,15 +1994,27 @@ class _MarketplaceMerchantDashboardState
     await _ensureBusinessName();
     await _fetchCurrentUserMe();
     await _loadMerchantData();
-    await _loadItems();
+    await _loadItems(showLoading: false);
     await _loadOrderStats();
+    if (_merchantProfileUrl.trim().isNotEmpty) {
+      unawaited(_warmProfilePhotoCache(_merchantProfileUrl));
+    }
   }
 
   // ----------------- Profile image helpers -----------------
   ImageProvider? _profileImageProvider() {
+    final local = _localPhotoPath;
+    if (!kIsWeb && local != null && local.isNotEmpty) {
+      try {
+        final f = File(local);
+        if (f.existsSync()) return FileImage(f);
+      } catch (_) {}
+    }
     final s = _merchantProfileUrl.trim();
     if (s.isEmpty) return null;
-    if (s.startsWith('http')) return NetworkImage(s);
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      return CachedNetworkImageProvider(s);
+    }
     try {
       final bytes = base64Decode(s);
       return MemoryImage(bytes);
@@ -1677,6 +2273,7 @@ class _MarketplaceMerchantDashboardState
     try {
       setState(() => _profileUploading = true);
       String url;
+      final pickedBytes = await file.readAsBytes();
 
       // Prefer backend upload (works when Firebase Storage returns 404 / App Check).
       try {
@@ -1705,8 +2302,17 @@ class _MarketplaceMerchantDashboardState
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('profilepicture', url);
 
+      // Persist bytes locally so the avatar shows instantly next time.
+      final local = await ProfilePhotoCache.saveBytes(
+        pickedBytes,
+        remoteUrl: url,
+      );
+
       if (!mounted) return;
-      setState(() => _merchantProfileUrl = url);
+      setState(() {
+        _merchantProfileUrl = url;
+        _localPhotoPath = local?.path ?? _localPhotoPath;
+      });
 
       _toastOk('Profile picture updated');
     } on FirebaseException catch (e) {
@@ -1725,7 +2331,15 @@ class _MarketplaceMerchantDashboardState
             }, SetOptions(merge: true));
             final prefs = await SharedPreferences.getInstance();
             await prefs.setString('profilepicture', url);
-            setState(() => _merchantProfileUrl = url);
+            final bytes = await file.readAsBytes();
+            final local = await ProfilePhotoCache.saveBytes(
+              bytes,
+              remoteUrl: url,
+            );
+            setState(() {
+              _merchantProfileUrl = url;
+              _localPhotoPath = local?.path ?? _localPhotoPath;
+            });
             _toastOk('Profile picture updated');
             return;
           }
@@ -1828,9 +2442,13 @@ class _MarketplaceMerchantDashboardState
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('profilepicture', '');
+      await ProfilePhotoCache.clear();
 
       if (!mounted) return;
-      setState(() => _merchantProfileUrl = '');
+      setState(() {
+        _merchantProfileUrl = '';
+        _localPhotoPath = null;
+      });
 
       _toastOk('Profile picture removed');
     } catch (e) {
@@ -1888,37 +2506,66 @@ class _MarketplaceMerchantDashboardState
     if (e is FirebaseException) {
       switch (e.code) {
         case 'permission-denied':
-          return 'Firestore blocked this save (security rules). Update Firestore Rules '
-              'in Firebase Console — see firebase/firestore.rules in the project.';
+          return 'You don’t have permission to post this listing. Please sign in again and try once more.';
+        case 'unauthenticated':
+          return 'Please sign in to post on Marketplace.';
         case 'unavailable':
-          return 'Firestore is offline. Check your internet and try again.';
+        case 'deadline-exceeded':
+          return 'We’re having trouble connecting. Check your internet and try again.';
+        case 'resource-exhausted':
+          return 'Too many requests right now. Please wait a moment and try again.';
         default:
-          return 'Firestore error (${e.code}). Please try again.';
+          return 'Couldn’t post your listing. Please try again.';
       }
     }
     if (e is StateError) {
-      return e.message;
+      final msg = e.message.trim();
+      if (msg.isNotEmpty &&
+          !msg.toLowerCase().contains('firestore') &&
+          !msg.toLowerCase().contains('firebase')) {
+        return msg;
+      }
     }
-    return 'Failed to post item. Please try again.';
+    return 'Couldn’t post your listing. Please try again.';
   }
 
   // ----------------- CREATE item -----------------
   Future<void> _create() async {
-    if (_cover == null) {
-      _toastErr('Please pick a cover photo');
-      return;
-    }
-    if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
-      _toastErr('Please fill all required fields');
-      return;
-    }
-
-    final user = _auth.currentUser;
-    await AuthHandler.refreshFirebaseTokenIfSignedIn();
-
-    setState(() => _submitting = true);
+    // Sync lock BEFORE any await so one tap cannot post twice on slow networks.
+    if (_submitting) return;
+    _submitting = true;
+    if (mounted) setState(() {});
 
     try {
+      if (_cover == null) {
+        _toastErr('Please pick a cover photo');
+        return;
+      }
+      if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
+        _toastErr('Please fill all required fields');
+        return;
+      }
+
+      final stockRaw = _stock.text.trim();
+      final stock = int.tryParse(stockRaw);
+      if (stockRaw.isEmpty || stock == null || stock < 1) {
+        _toastErr('Enter how many items you have in stock (at least 1)');
+        return;
+      }
+      _stockQty = stock;
+
+      final blockReason = MarketplaceModeration.clientBlockReason(
+        title: _name.text,
+        description: _desc.text,
+      );
+      if (blockReason != null) {
+        _toastErr(blockReason);
+        return;
+      }
+
+      final user = _auth.currentUser;
+      unawaited(AuthHandler.refreshFirebaseTokenIfSignedIn());
+
       final firebaseUid = user?.uid ?? _uid;
       if (firebaseUid.trim().isEmpty) {
         _toastErr('Missing user id — sign in and try again.');
@@ -1992,34 +2639,41 @@ class _MarketplaceMerchantDashboardState
         if (imageHashes.isNotEmpty) 'imageHashes': imageHashes,
         'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         'location': _location.text.trim(),
-        'isActive': _isActive,
+        // Always pending until Cloud Function auto-moderation approves.
+        'isActive': false,
+        'reviewStatus': 'pending',
         'category': _category ?? 'other',
         'createdAt': FieldValue.serverTimestamp(),
         'sellerUserId': effectiveSellerId,
         'merchantId': firebaseUid,
+        'firebaseUid': firebaseUid,
         if (sellerId != null)
           'merchantBackendId': int.tryParse(sellerId.trim()),
         'merchantName': merchantDisplay,
         'serviceType': 'marketplace',
+        'stockQuantity': _stockQty,
+        'quantity': _stockQty,
       };
 
       await _firestore.collection('marketplace_items').add(data);
-      debugPrint('Firestore write OK → marketplace_items');
+      debugPrint('Firestore write OK → marketplace_items (pending review)');
 
       if (!mounted) return;
-      _toastOk('Item Posted Successfully!');
+      _toastOk('Submitted for review. We’ll notify you when it’s live.');
 
       _name.clear();
       _price.clear();
       _location.clear();
       _desc.clear();
+      _stock.text = '1';
+      _stockQty = 1;
       _cover = null;
       _gallery.clear();
       _isActive = true;
       _category = 'other';
 
       setState(() {});
-      await _loadItems();
+      unawaited(_loadItems(showLoading: false));
       _marketplaceTabs.animateTo(2);
     } on FirebaseException catch (e) {
       debugPrint('Create item Firestore error: ${e.code} ${e.message}');
@@ -2058,6 +2712,7 @@ class _MarketplaceMerchantDashboardState
       final id = item['id'] as String;
       await _firestore.collection('marketplace_items').doc(id).delete();
       _items.removeWhere((e) => e['id'] == id);
+      unawaited(_persistItemsCache(_items));
 
       if (!mounted) return;
       _toastOk('Deleted • ${item['name']}');
@@ -2092,6 +2747,14 @@ class _MarketplaceMerchantDashboardState
         TextEditingController(text: (item['location'] ?? '').toString());
     final descCtrl =
         TextEditingController(text: (item['description'] ?? '').toString());
+    final stockCtrl = TextEditingController(
+      text: (() {
+        final raw = item['stockQuantity'] ?? item['quantity'] ?? item['stock'];
+        final n = raw is num ? raw.toInt() : int.tryParse('${raw ?? ''}');
+        return '${(n == null || n < 1) ? 1 : n}';
+      })(),
+    );
+    int stockQty = int.tryParse(stockCtrl.text) ?? 1;
 
     String category = (item['category'] ?? 'other').toString();
     bool isActive = item['isActive'] == true;
@@ -2247,6 +2910,8 @@ class _MarketplaceMerchantDashboardState
               final n = nameCtrl.text.trim();
               final p = double.tryParse(priceCtrl.text.trim()) ?? 0;
               final loc = locationCtrl.text.trim();
+              final stockRaw = stockCtrl.text.trim();
+              final stock = int.tryParse(stockRaw);
 
               if (n.isEmpty || p <= 0 || loc.isEmpty) {
                 ToastHelper.showCustomToast(
@@ -2257,10 +2922,36 @@ class _MarketplaceMerchantDashboardState
                 );
                 return;
               }
+              if (stockRaw.isEmpty || stock == null || stock < 1) {
+                ToastHelper.showCustomToast(
+                  rootCtx,
+                  'Enter quantity in stock (at least 1)',
+                  isSuccess: false,
+                  errorMessage: '',
+                );
+                return;
+              }
+              stockQty = stock;
 
               setSheet(() => saving = true);
 
               try {
+                final blockReason = MarketplaceModeration.clientBlockReason(
+                  title: n,
+                  description: descCtrl.text,
+                );
+                if (blockReason != null) {
+                  ToastHelper.showCustomToast(
+                    rootCtx,
+                    blockReason,
+                    isSuccess: false,
+                    errorMessage: '',
+                  );
+                  setSheet(() => saving = false);
+                  return;
+                }
+
+                final prevReview = _itemReviewStatus(item);
                 final patch = <String, dynamic>{
                   'name': n,
                   'price': p,
@@ -2269,9 +2960,22 @@ class _MarketplaceMerchantDashboardState
                   'description': descCtrl.text.trim().isEmpty
                       ? null
                       : descCtrl.text.trim(),
-                  'isActive': isActive,
+                  'stockQuantity': stockQty,
+                  'quantity': stockQty,
                   'updatedAt': FieldValue.serverTimestamp(),
                 };
+
+                if (prevReview == 'rejected' || prevReview == 'pending') {
+                  // Resubmit for auto-moderation.
+                  patch['isActive'] = false;
+                  patch['reviewStatus'] = 'pending';
+                  patch['rejectedReason'] = FieldValue.delete();
+                  patch['moderationResubmittedAt'] =
+                      FieldValue.serverTimestamp();
+                } else {
+                  // Already approved: merchant can pause/unpause.
+                  patch['isActive'] = isActive;
+                }
 
                 if (newCover != null) {
                   patch['image'] = base64Encode(newCover!.bytes);
@@ -2279,6 +2983,11 @@ class _MarketplaceMerchantDashboardState
                   if (coverHash != null) {
                     patch['imageHash'] = coverHash;
                     patch['imageHashes'] = FieldValue.arrayUnion([coverHash]);
+                  }
+                  if (prevReview == 'approved') {
+                    // New cover on live item → re-review.
+                    patch['isActive'] = false;
+                    patch['reviewStatus'] = 'pending';
                   }
                 }
 
@@ -2366,6 +3075,62 @@ class _MarketplaceMerchantDashboardState
                       decoration: _inputDecoration(label: 'Price (MWK)'),
                     ),
                     const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Quantity in stock *',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                        IconButton.filledTonal(
+                          onPressed: saving || stockQty <= 1
+                              ? null
+                              : () => setSheet(() {
+                                    stockQty =
+                                        (stockQty - 1).clamp(1, 99999);
+                                    stockCtrl.text = '$stockQty';
+                                  }),
+                          icon: const Icon(Icons.remove_rounded),
+                        ),
+                        SizedBox(
+                          width: 56,
+                          child: TextField(
+                            controller: stockCtrl,
+                            enabled: !saving,
+                            textAlign: TextAlign.center,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly
+                            ],
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              border: InputBorder.none,
+                            ),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 18,
+                            ),
+                            onChanged: (v) {
+                              final n = int.tryParse(v) ?? 1;
+                              setSheet(
+                                  () => stockQty = n.clamp(1, 99999));
+                            },
+                          ),
+                        ),
+                        IconButton.filledTonal(
+                          onPressed: saving
+                              ? null
+                              : () => setSheet(() {
+                                    stockQty =
+                                        (stockQty + 1).clamp(1, 99999);
+                                    stockCtrl.text = '$stockQty';
+                                  }),
+                          icon: const Icon(Icons.add_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
                     TextField(
                       controller: locationCtrl,
                       decoration: _inputDecoration(label: 'Location'),
@@ -2394,20 +3159,56 @@ class _MarketplaceMerchantDashboardState
                           _inputDecoration(label: 'Description (optional)'),
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Switch(
-                          value: isActive,
-                          onChanged: saving
-                              ? null
-                              : (v) => setSheet(() => isActive = v),
+                    if (_itemReviewStatus(item) == 'rejected') ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFEBEE),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFFFCDD2)),
                         ),
-                        Text(
-                          isActive ? 'Active' : 'Inactive',
-                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        child: Text(
+                          (item['rejectedReason'] ??
+                                  'This listing was not approved. Edit and save to resubmit for review.')
+                              .toString(),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            height: 1.35,
+                          ),
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    if (_itemReviewStatus(item) == 'pending') ...[
+                      const Text(
+                        'Under review — edits will keep this listing pending until approved.',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    if (_itemReviewStatus(item) == 'approved')
+                      Row(
+                        children: [
+                          Switch(
+                            value: isActive,
+                            onChanged: saving
+                                ? null
+                                : (v) => setSheet(() => isActive = v),
+                          ),
+                          Text(
+                            isActive ? 'Live' : 'Inactive',
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ],
+                      ),
                     const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,
@@ -2424,9 +3225,12 @@ class _MarketplaceMerchantDashboardState
                                 ),
                               )
                             : const Icon(Icons.save),
-                        label: const Text(
-                          'Save Changes',
-                          style: TextStyle(fontWeight: FontWeight.w900),
+                        label: Text(
+                          _itemReviewStatus(item) == 'rejected' ||
+                                  _itemReviewStatus(item) == 'pending'
+                              ? 'Post on Marketplace'
+                              : 'Save Changes',
+                          style: const TextStyle(fontWeight: FontWeight.w900),
                         ),
                       ),
                     ),
@@ -2445,10 +3249,11 @@ class _MarketplaceMerchantDashboardState
     priceCtrl.dispose();
     locationCtrl.dispose();
     descCtrl.dispose();
+    stockCtrl.dispose();
     _sheetOpen = false;
 
     if (didSave == true && mounted) {
-      await _loadItems();
+      await _loadItems(showLoading: false);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _toastOk('Item updated');
@@ -2662,9 +3467,7 @@ class _MarketplaceMerchantDashboardState
                 merchantImageUrl:
                     _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
                 size: 36,
-                imageProvider: _merchantProfileUrl.isNotEmpty
-                    ? NetworkImage(_merchantProfileUrl)
-                    : null,
+                imageProvider: _profileImageProvider(),
                 placeholderIcon: Icons.person,
                 onNoStoriesTap: () {
                   final uid = _auth.currentUser?.uid;
@@ -3000,7 +3803,12 @@ class _MarketplaceMerchantDashboardState
                     onRefresh: _refreshAll,
                     child: SingleChildScrollView(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        16,
+                        16,
+                        veroFloatingNavClearance(context),
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -3141,6 +3949,89 @@ class _MarketplaceMerchantDashboardState
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
+                  const SizedBox(height: 8),
+                  Material(
+                    color: Colors.white.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      onTap: _editBusinessDescription,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(
+                              Icons.notes_rounded,
+                              size: 16,
+                              color: Colors.white70,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _businessDescription.trim().isEmpty
+                                    ? 'Add a short business description'
+                                    : _businessDescription.trim(),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.92),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12.5,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(
+                              Icons.edit_outlined,
+                              size: 14,
+                              color: Colors.white70,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: _editShopHours,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.schedule_rounded,
+                              size: 14,
+                              color: Colors.white70,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                _shopHoursSummary,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.9),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            const Icon(
+                              Icons.edit_outlined,
+                              size: 13,
+                              color: Colors.white54,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
@@ -3174,19 +4065,26 @@ class _MarketplaceMerchantDashboardState
                           ],
                         ),
                       ),
-                      if (_meOffline)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                              color: const Color(0xFFFFEDEE),
-                              borderRadius: BorderRadius.circular(999)),
-                          child: const Text('',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 12,
-                                  color: Colors.red)),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _isShopOpenNow
+                              ? const Color(0xFFE7F6EC)
+                              : const Color(0xFFFFEDEE),
+                          borderRadius: BorderRadius.circular(999),
                         ),
+                        child: Text(
+                          _isShopOpenNow ? 'OPEN' : 'CLOSED',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12,
+                            color: _isShopOpenNow
+                                ? Colors.green.shade700
+                                : Colors.red.shade700,
+                          ),
+                        ),
+                      ),
                       if (_loadingMe)
                         const SizedBox(
                           width: 18,
@@ -3636,7 +4534,12 @@ class _MarketplaceMerchantDashboardState
   // ----------------- ✅ Add Item Tab (with multi-photos) -----------------
   Widget _buildAddItemTab() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        16,
+        16,
+        veroFloatingNavClearance(context),
+      ),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
@@ -3645,7 +4548,9 @@ class _MarketplaceMerchantDashboardState
         ),
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Column(
+          child: AbsorbPointer(
+            absorbing: _submitting,
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('Add New Item',
@@ -3797,6 +4702,56 @@ class _MarketplaceMerchantDashboardState
                   keyboardType: TextInputType.number,
                   decoration: _inputDecoration(label: 'Price (MWK)')),
               const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Quantity in stock *',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: _stockQty <= 1
+                        ? null
+                        : () => setState(() {
+                              _stockQty = (_stockQty - 1).clamp(1, 99999);
+                              _stock.text = '$_stockQty';
+                            }),
+                    icon: const Icon(Icons.remove_rounded),
+                  ),
+                  SizedBox(
+                    width: 56,
+                    child: TextField(
+                      controller: _stock,
+                      textAlign: TextAlign.center,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly
+                      ],
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                      ),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                      ),
+                      onChanged: (v) {
+                        final n = int.tryParse(v) ?? 1;
+                        setState(() => _stockQty = n.clamp(1, 99999));
+                      },
+                    ),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: () => setState(() {
+                      _stockQty = (_stockQty + 1).clamp(1, 99999);
+                      _stock.text = '$_stockQty';
+                    }),
+                    icon: const Icon(Icons.add_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
               TextField(
                 controller: _location,
                 decoration: _inputDecoration(label: 'Location').copyWith(
@@ -3833,29 +4788,46 @@ class _MarketplaceMerchantDashboardState
                 decoration: _inputDecoration(label: 'Description (optional)'),
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Switch(
-                      value: _isActive,
-                      onChanged: (v) => setState(() => _isActive = v)),
-                  Text(_isActive ? 'Active' : 'Inactive',
-                      style: const TextStyle(fontWeight: FontWeight.w900)),
-                  const Spacer(),
-                  FilledButton.icon(
-                    style: _filledBtnStyle(),
-                    onPressed: _submitting ? null : _create,
-                    icon: _submitting
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.upload_rounded),
-                    label: const Text('Post Item'),
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF4E5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFFD59A)),
+                ),
+                child: const Text(
+                  'New listings are reviewed automatically before going live. '
+                  'You’ll get a notification when yours is approved.',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    height: 1.35,
                   ),
-                ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  style: _filledBtnStyle(),
+                  onPressed: _submitting ? null : _create,
+                  icon: _submitting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.upload_rounded),
+                  label: Text(
+                    _submitting ? 'Posting…' : 'Post on Marketplace',
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
               ),
             ],
+            ),
           ),
         ),
       ),
@@ -3914,9 +4886,19 @@ class _MarketplaceMerchantDashboardState
                       onTap: () => setState(() => _filterStatus = 'all'),
                     ),
                     _chip(
-                      label: 'Active',
+                      label: 'Live',
                       selected: _filterStatus == 'active',
                       onTap: () => setState(() => _filterStatus = 'active'),
+                    ),
+                    _chip(
+                      label: 'Under review',
+                      selected: _filterStatus == 'pending',
+                      onTap: () => setState(() => _filterStatus = 'pending'),
+                    ),
+                    _chip(
+                      label: 'Rejected',
+                      selected: _filterStatus == 'rejected',
+                      onTap: () => setState(() => _filterStatus = 'rejected'),
                     ),
                     _chip(
                       label: 'Inactive',
@@ -3935,7 +4917,12 @@ class _MarketplaceMerchantDashboardState
               : filtered.isEmpty
                   ? const Center(child: Text('No items match your filters'))
                   : GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        0,
+                        16,
+                        veroFloatingNavClearance(context),
+                      ),
                       itemCount: filtered.length,
                       gridDelegate: _merchantItemsGridDelegate(context),
                       itemBuilder: (_, i) => _ItemCard(
@@ -4552,45 +5539,35 @@ class _ModernItemMiniCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final active = item['isActive'] == true;
+    final statusLabel = _MarketplaceMerchantDashboardState._reviewLabel(item);
+    final statusColor = _MarketplaceMerchantDashboardState._reviewColor(item);
 
-    // ✅ LayoutBuilder prevents pixel overflow inside Grid cells
-    return LayoutBuilder(
-      builder: (context, c) {
-        final h = c.maxHeight;
-        final narrow = c.maxWidth < 168;
-        // Leave room for 3 text lines + padding; shorter image on tiny cells.
-        const minTextBlock = 76.0;
-        final maxImg = narrow ? 118.0 : 140.0;
-        final imgH = min(maxImg, max(h - minTextBlock, 56.0));
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black12),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final narrow = c.maxWidth < 168;
+          final padH = narrow ? 8.0 : 10.0;
+          final padV = narrow ? 5.0 : 7.0;
 
-        return Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.black12),
-          ),
-          child: Column(
+          return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(18)),
-                child: SizedBox(
-                    height: imgH,
-                    child: _ImageAny(_coverImageSourceFromItem(item))),
+              Expanded(
+                flex: 6,
+                child: _ImageAny(_coverImageSourceFromItem(item)),
               ),
               Expanded(
+                flex: 4,
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    narrow ? 8 : 12,
-                    narrow ? 6 : 8,
-                    narrow ? 8 : 12,
-                    narrow ? 8 : 10,
-                  ),
+                  padding: EdgeInsets.fromLTRB(padH, padV, padH, padV),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.start,
                     children: [
                       Text(
                         (item['name'] ?? 'Unknown').toString(),
@@ -4598,49 +5575,53 @@ class _ModernItemMiniCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
-                          fontSize: narrow ? 12.5 : 14,
+                          fontSize: narrow ? 12.0 : 13.5,
+                          height: 1.15,
                         ),
                       ),
-                      SizedBox(height: narrow ? 2 : 4),
+                      const SizedBox(height: 2),
                       Text(
-                        mwk0(item['price']), // ✅ commas
+                        mwk0(item['price']),
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
                           color: Colors.green,
-                          fontSize: narrow ? 12 : 14,
+                          fontSize: narrow ? 11.5 : 13.0,
+                          height: 1.15,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      SizedBox(height: narrow ? 2 : 4),
-                      Row(
-                        children: [
-                          Icon(Icons.circle,
-                              size: narrow ? 8 : 10,
-                              color: active ? Colors.green : Colors.red),
-                          SizedBox(width: narrow ? 4 : 6),
-                          Flexible(
-                            child: Text(
-                              active ? 'Active' : 'Inactive',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                color: Colors.black54,
-                                fontSize: narrow ? 11 : 12,
+                      const SizedBox(height: 2),
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Icon(Icons.circle,
+                                size: narrow ? 8 : 10, color: statusColor),
+                            SizedBox(width: narrow ? 4 : 6),
+                            Flexible(
+                              child: Text(
+                                statusLabel,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.black54,
+                                  fontSize: narrow ? 10.5 : 12,
+                                  height: 1.15,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
             ],
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
@@ -4660,79 +5641,101 @@ class _ItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final active = item['isActive'] == true;
+    final statusLabel = _MarketplaceMerchantDashboardState._reviewLabel(item);
+    final statusColor = _MarketplaceMerchantDashboardState._reviewColor(item);
+    final isRejected =
+        _MarketplaceMerchantDashboardState._itemReviewStatus(item) ==
+            'rejected';
+    final rejectReason = (item['rejectedReason'] ?? '').toString().trim();
+    final showRejectReason = isRejected && rejectReason.isNotEmpty;
 
-    // ✅ LayoutBuilder prevents bottom overflow in Grid
-    return LayoutBuilder(
-      builder: (context, c) {
-        final h = c.maxHeight;
-        final narrow = c.maxWidth < 168;
-        const minTextBlock = 82.0;
-        final maxImg = narrow ? 120.0 : 150.0;
-        final imgH = min(maxImg, max(h - minTextBlock, 58.0));
+    // Flex layout: image shrinks; text never overflows the grid cell.
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onEdit,
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final narrow = c.maxWidth < 168;
+            final padH = narrow ? 8.0 : 10.0;
+            final padV = narrow ? 5.0 : 7.0;
+            final nameSize = narrow ? 12.0 : 13.5;
+            final priceSize = narrow ? 11.5 : 13.0;
+            final metaSize = narrow ? 10.5 : 12.0;
+            final reasonSize = narrow ? 9.5 : 10.5;
 
-        return Material(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(18),
-            onTap: onEdit,
-            child: Stack(
+            return Stack(
               children: [
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    ClipRRect(
-                      borderRadius:
-                          const BorderRadius.vertical(top: Radius.circular(18)),
-                      child: SizedBox(
-                        height: imgH,
-                        child: _ImageAny(_coverImageSourceFromItem(item)),
-                      ),
+                    Expanded(
+                      flex: showRejectReason ? 5 : 6,
+                      child: _ImageAny(_coverImageSourceFromItem(item)),
                     ),
                     Expanded(
+                      flex: showRejectReason ? 5 : 4,
                       child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          narrow ? 8 : 12,
-                          narrow ? 6 : 8,
-                          narrow ? 8 : 12,
-                          narrow ? 8 : 10,
-                        ),
+                        padding: EdgeInsets.fromLTRB(padH, padV, padH, padV),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.start,
                           children: [
                             Text(
                               (item['name'] ?? 'Unknown').toString(),
                               style: TextStyle(
                                 fontWeight: FontWeight.w900,
-                                fontSize: narrow ? 12.5 : 14,
+                                fontSize: nameSize,
+                                height: 1.15,
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            SizedBox(height: narrow ? 2 : 4),
+                            const SizedBox(height: 2),
                             Text(
-                              mwk0(item['price']), // ✅ commas
+                              mwk0(item['price']),
                               style: TextStyle(
                                 fontWeight: FontWeight.w900,
                                 color: Colors.green,
-                                fontSize: narrow ? 12 : 14,
+                                fontSize: priceSize,
+                                height: 1.15,
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            SizedBox(height: narrow ? 2 : 4),
+                            const SizedBox(height: 2),
                             Text(
                               (item['category'] ?? 'other').toString(),
                               style: TextStyle(
                                 color: Colors.black54,
                                 fontWeight: FontWeight.w800,
-                                fontSize: narrow ? 11 : 13,
+                                fontSize: metaSize,
+                                height: 1.15,
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
+                            if (showRejectReason) ...[
+                              const SizedBox(height: 2),
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.topLeft,
+                                  child: Text(
+                                    rejectReason,
+                                    style: TextStyle(
+                                      color: Colors.red.shade700,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: reasonSize,
+                                      height: 1.2,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -4740,48 +5743,54 @@ class _ItemCard extends StatelessWidget {
                   ],
                 ),
                 Positioned(
-                  top: 10,
-                  left: 10,
+                  top: 8,
+                  left: 8,
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: narrow ? 8 : 10,
+                      vertical: narrow ? 4 : 5,
+                    ),
                     decoration: BoxDecoration(
-                      color: active ? Colors.green : Colors.red,
+                      color: statusColor,
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
-                      active ? 'Active' : 'Inactive',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900),
+                      statusLabel,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: narrow ? 10.5 : 12,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ),
                 ),
                 Positioned(
-                  top: 10,
-                  right: 10,
+                  top: 8,
+                  right: 8,
                   child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       _iconBtn(
                         icon: Icons.edit,
                         color: const Color(0xFF16284C),
                         onTap: onEdit,
+                        compact: narrow,
                       ),
-                      const SizedBox(width: 8),
+                      SizedBox(width: narrow ? 4 : 6),
                       _iconBtn(
                         icon: Icons.delete,
                         color: Colors.red,
                         onTap: busy ? null : onDelete,
+                        compact: narrow,
                       ),
                     ],
                   ),
                 ),
               ],
-            ),
-          ),
-        );
-      },
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -4789,7 +5798,9 @@ class _ItemCard extends StatelessWidget {
     required IconData icon,
     required Color color,
     required VoidCallback? onTap,
+    bool compact = false,
   }) {
+    final size = compact ? 28.0 : 32.0;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -4798,9 +5809,9 @@ class _ItemCard extends StatelessWidget {
       ),
       child: IconButton(
         icon: Icon(icon),
-        iconSize: 18,
+        iconSize: compact ? 15 : 17,
         padding: EdgeInsets.zero,
-        constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+        constraints: BoxConstraints.tightFor(width: size, height: size),
         color: color,
         onPressed: onTap,
       ),
@@ -4859,6 +5870,336 @@ class _ImageAny extends StatelessWidget {
       color: const Color(0xFFF3F4F7),
       child: const Center(
         child: Icon(Icons.image_not_supported_rounded, color: Colors.black26),
+      ),
+    );
+  }
+}
+
+/// Owns [TextEditingController] for the business-description editor sheet.
+class _BusinessDescriptionSheet extends StatefulWidget {
+  const _BusinessDescriptionSheet({
+    required this.initialText,
+    required this.maxLength,
+    required this.brandColor,
+  });
+
+  final String initialText;
+  final int maxLength;
+  final Color brandColor;
+
+  @override
+  State<_BusinessDescriptionSheet> createState() =>
+      _BusinessDescriptionSheetState();
+}
+
+class _BusinessDescriptionSheetState extends State<_BusinessDescriptionSheet> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: 16 + bottomInset,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Business description',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Short blurb customers see on your shop and product pages '
+              '(max ${widget.maxLength} characters).',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _controller,
+              maxLength: widget.maxLength,
+              maxLines: 3,
+              minLines: 2,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) =>
+                  Navigator.pop(context, _controller.text.trim()),
+              decoration: InputDecoration(
+                hintText: 'e.g. Fresh produce & household goods in Lilongwe',
+                filled: true,
+                fillColor: const Color(0xFFF4F6FA),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+                counterStyle: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: widget.brandColor,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              onPressed: () =>
+                  Navigator.pop(context, _controller.text.trim()),
+              child: const Text(
+                'Save',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ShopHoursSheet extends StatefulWidget {
+  const _ShopHoursSheet({
+    required this.initialOpen,
+    required this.initialClose,
+    required this.initialDays,
+    required this.brandColor,
+  });
+
+  final TimeOfDay initialOpen;
+  final TimeOfDay initialClose;
+  final Set<int> initialDays;
+  final Color brandColor;
+
+  @override
+  State<_ShopHoursSheet> createState() => _ShopHoursSheetState();
+}
+
+class _ShopHoursSheetState extends State<_ShopHoursSheet> {
+  static const _labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  late TimeOfDay _open;
+  late TimeOfDay _close;
+  late Set<int> _days;
+
+  @override
+  void initState() {
+    super.initState();
+    _open = widget.initialOpen;
+    _close = widget.initialClose;
+    _days = Set<int>.from(widget.initialDays);
+    if (_days.isEmpty) {
+      _days = {1, 2, 3, 4, 5, 6, 7};
+    }
+  }
+
+  String _fmt(TimeOfDay t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  Future<void> _pickOpen() async {
+    final t = await showTimePicker(context: context, initialTime: _open);
+    if (t != null) setState(() => _open = t);
+  }
+
+  Future<void> _pickClose() async {
+    final t = await showTimePicker(context: context, initialTime: _close);
+    if (t != null) setState(() => _close = t);
+  }
+
+  void _toggleDay(int day) {
+    setState(() {
+      if (_days.contains(day)) {
+        if (_days.length > 1) _days.remove(day);
+      } else {
+        _days.add(day);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final narrow = MediaQuery.sizeOf(context).width < 360;
+    final openBtn = OutlinedButton.icon(
+      onPressed: _pickOpen,
+      icon: const Icon(Icons.wb_sunny_outlined, size: 18),
+      label: Text(
+        'Open ${_fmt(_open)}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+    final closeBtn = OutlinedButton.icon(
+      onPressed: _pickClose,
+      icon: const Icon(Icons.nights_stay_outlined, size: 18),
+      label: Text(
+        'Close ${_fmt(_close)}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: 16 + bottomInset,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Shop hours',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Customers see OPEN or CLOSED based on these days and times.',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Open days',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 1; i <= 7; i++)
+                  FilterChip(
+                    label: Text(
+                      _labels[i - 1],
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                        color: _days.contains(i)
+                            ? Colors.white
+                            : Colors.grey.shade800,
+                      ),
+                    ),
+                    selected: _days.contains(i),
+                    onSelected: (_) => _toggleDay(i),
+                    selectedColor: widget.brandColor,
+                    checkmarkColor: Colors.white,
+                    backgroundColor: const Color(0xFFF4F6FA),
+                    side: BorderSide(
+                      color: _days.contains(i)
+                          ? widget.brandColor
+                          : Colors.grey.shade300,
+                    ),
+                    showCheckmark: false,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => setState(() => _days = {1, 2, 3, 4, 5, 6, 7}),
+                child: Text(
+                  'Every day',
+                  style: TextStyle(
+                    color: widget.brandColor,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (narrow) ...[
+              openBtn,
+              const SizedBox(height: 10),
+              closeBtn,
+            ] else
+              Row(
+                children: [
+                  Expanded(child: openBtn),
+                  const SizedBox(width: 10),
+                  Expanded(child: closeBtn),
+                ],
+              ),
+            const SizedBox(height: 16),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: widget.brandColor,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              onPressed: () => Navigator.pop(
+                context,
+                (open: _open, close: _close, days: Set<int>.from(_days)),
+              ),
+              child: const Text(
+                'Save hours',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }

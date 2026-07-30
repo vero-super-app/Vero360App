@@ -13,6 +13,8 @@ class CartModel {
   final String merchantId;
   final String merchantName;
   final String serviceType;
+  /// Supplier stock cap (null = unknown / legacy unlimited).
+  final int? availableStock;
 
   CartModel({
     required this.userId,
@@ -26,6 +28,7 @@ class CartModel {
     required this.merchantId,
     required this.merchantName,
     required this.serviceType,
+    this.availableStock,
   });
 
   factory CartModel.fromJson(Map<String, dynamic> json) {
@@ -53,6 +56,9 @@ class CartModel {
       merchantId: str(json['merchantId'] ?? json['merchant_id'] ?? 'unknown'),
       merchantName: str(json['merchantName'] ?? json['merchant_name'] ?? 'Unknown Merchant'),
       serviceType: str(json['serviceType'] ?? json['service_type'] ?? 'marketplace'),
+      availableStock: json['availableStock'] == null && json['stockQuantity'] == null
+          ? null
+          : safeInt(json['availableStock'] ?? json['stockQuantity'], def: 0),
     );
   }
 
@@ -68,6 +74,8 @@ class CartModel {
     'merchantName': merchantName,
     'serviceType': serviceType,
     if (comment != null) 'comment': comment,
+    if (availableStock != null) 'availableStock': availableStock,
+    if (availableStock != null) 'stockQuantity': availableStock,
   };
 
   CartModel copyWith({
@@ -82,6 +90,7 @@ class CartModel {
     String? merchantId,
     String? merchantName,
     String? serviceType,
+    int? availableStock,
   }) {
     return CartModel(
       userId: userId ?? this.userId,
@@ -95,8 +104,12 @@ class CartModel {
       merchantId: merchantId ?? this.merchantId,
       merchantName: merchantName ?? this.merchantName,
       serviceType: serviceType ?? this.serviceType,
+      availableStock: availableStock ?? this.availableStock,
     );
   }
+
+  int get maxOrderQty =>
+      availableStock == null ? 99 : availableStock!.clamp(0, 99999);
 
   double get total => price * quantity;
   

@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../MarkeplaceService/marketplace_moderation.dart';
+
 /// --------------------
 /// Local marketplace model (Firestore)
 /// --------------------
@@ -20,6 +22,8 @@ class MarketplaceDetailModel {
   final DateTime? createdAt;
   final List<String> gallery;
   final List<String> videos;
+  /// Available units. Null = legacy / unlimited (buyer capped at 99).
+  final int? stockQuantity;
 
   MarketplaceDetailModel({
     required this.id,
@@ -35,10 +39,18 @@ class MarketplaceDetailModel {
     this.createdAt,
     this.gallery = const [],
     this.videos = const [],
+    this.stockQuantity,
   });
 
   /// ✅ True only if we have a real numeric backend id > 0
   bool get hasValidSqlItemId => sqlItemId != null && sqlItemId! > 0;
+
+  bool get isOutOfStock => stockQuantity != null && stockQuantity! <= 0;
+
+  int get maxOrderQty {
+    if (stockQuantity == null) return 99;
+    return stockQuantity!.clamp(0, 99999);
+  }
 
   factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
     final data = (doc.data() as Map<String, dynamic>?) ?? {};
@@ -129,11 +141,16 @@ class MarketplaceDetailModel {
       description:
           data['description']?.toString(),
       location: data['location']?.toString(),
-      isActive: data['isActive'] is bool ? data['isActive'] as bool : true,
+      isActive: MarketplaceModeration.isPubliclyVisible(data),
       createdAt: created,
       sqlItemId: sqlId,
       gallery: gallery,
       videos: videos,
+      stockQuantity: () {
+        final raw = data['stockQuantity'] ?? data['quantity'] ?? data['stock'];
+        if (raw is num) return raw.toInt();
+        return int.tryParse('${raw ?? ''}');
+      }(),
     );
   }
 }

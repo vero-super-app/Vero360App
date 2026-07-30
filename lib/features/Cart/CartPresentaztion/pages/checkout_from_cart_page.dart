@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -23,6 +25,7 @@ import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class CheckoutFromCartPage extends StatefulWidget {
@@ -40,12 +43,16 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   static const Color _pageBg = Color(0xFFF4F6FA);
 
   bool _paying = false;
-  DeliveryType _deliveryType = DeliveryType.cts;
+  DeliveryType _deliveryType = DeliveryType.speed;
 
   final _addrSvc = AddressService();
   Address? _defaultAddr;
   bool _loadingAddr = true;
   bool _loggedIn = false;
+
+  /// raw image string → resolved http URL (or empty if failed / not network)
+  final Map<String, String> _resolvedHttpUrls = {};
+  final Map<String, Uint8List> _decodedBytes = {};
 
   late final NumberFormat _mwkFmt =
       NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
@@ -71,19 +78,310 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     }
   }
 
+  String _deliverySubtitle(DeliveryType d) {
+    switch (d) {
+      case DeliveryType.speed:
+        return 'Fast delivery';
+      case DeliveryType.cts:
+        return 'Standard';
+      case DeliveryType.ankolo:
+        return 'Online tracking';
+      case DeliveryType.smart:
+        return 'Online tracking';
+      case DeliveryType.pickup:
+        return 'Collect at shop';
+    }
+  }
+
+  IconData _deliveryIcon(DeliveryType d) {
+    switch (d) {
+      case DeliveryType.speed:
+        return Icons.bolt_rounded;
+      case DeliveryType.cts:
+        return Icons.local_shipping_rounded;
+      case DeliveryType.ankolo:
+        return Icons.local_shipping_outlined;
+      case DeliveryType.smart:
+        return Icons.electric_moped_rounded;
+      case DeliveryType.pickup:
+        return Icons.storefront_rounded;
+    }
+  }
+
+  Widget _section({required String title, String? subtitle, required Widget child}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 15,
+              color: _brandNavy,
+              letterSpacing: -0.2,
+            ),
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
+                height: 1.3,
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _stepsHeader() {
+    Widget step(String label, bool active) {
+      return Expanded(
+        child: Column(
+          children: [
+            Container(
+              height: 3,
+              decoration: BoxDecoration(
+                color: active ? _brandOrange : Colors.black.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: active ? _brandNavy : Colors.grey.shade500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        step('Order', true),
+        const SizedBox(width: 8),
+        step('Delivery', true),
+        const SizedBox(width: 8),
+        step('Pay', false),
+      ],
+    );
+  }
+
+  Widget _courierTile(DeliveryType type) {
+    final selected = _deliveryType == type;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => setState(() => _deliveryType = type),
+        borderRadius: BorderRadius.circular(14),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
+          decoration: BoxDecoration(
+            color: selected ? _brandSoft : const Color(0xFFF8F9FC),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected
+                  ? _brandOrange
+                  : Colors.black.withValues(alpha: 0.08),
+              width: selected ? 1.6 : 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    _deliveryIcon(type),
+                    size: 18,
+                    color: selected ? _brandOrange : _brandNavy,
+                  ),
+                  const Spacer(),
+                  if (selected)
+                    const Icon(Icons.check_circle_rounded,
+                        size: 16, color: _brandOrange),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _deliveryLabel(type),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 13,
+                  color: _brandNavy,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _deliverySubtitle(type),
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade600,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _courierGrid() {
+    const options = DeliveryType.values;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxW = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width - 64;
+        const gap = 8.0;
+        final cols = maxW < 340 ? 2 : 3;
+        final tileW = ((maxW - gap * (cols - 1)) / cols).clamp(96.0, 200.0);
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final d in options)
+              SizedBox(width: tileW, child: _courierTile(d)),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    _prepareCartImages();
+    final mem = AddressService.peekDefaultAddress();
+    if (mem != null) {
+      _defaultAddr = mem;
+      _loadingAddr = false;
+      _loggedIn = true;
+    } else {
+      _hydrateAddressFromCache();
+    }
     _initAuthAndAddress();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _precacheCartImages();
+    });
+  }
+
+  /// Instant paint from memory/disk — never blocks on the API.
+  Future<void> _hydrateAddressFromCache() async {
+    final mem = AddressService.peekDefaultAddress();
+    if (mem != null) {
+      if (!mounted) return;
+      setState(() {
+        _defaultAddr = mem;
+        _loadingAddr = false;
+        _loggedIn = true;
+      });
+      return;
+    }
+    final disk = await _addrSvc.getCachedDefaultAddress();
+    if (!mounted || disk == null) return;
+    setState(() {
+      _defaultAddr = disk;
+      _loadingAddr = false;
+      _loggedIn = true;
+    });
+  }
+
+  void _prepareCartImages() {
+    for (final item in widget.items) {
+      final raw = item.image.trim();
+      if (raw.isEmpty) continue;
+      final lower = raw.toLowerCase();
+      if (lower.startsWith('http://') || lower.startsWith('https://')) {
+        _resolvedHttpUrls[raw] = raw;
+        continue;
+      }
+      try {
+        final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+        if (base64Part.length > 150) {
+          _decodedBytes[raw] = base64Decode(base64Part);
+          continue;
+        }
+      } catch (_) {}
+      unawaited(_resolveStorageUrl(raw));
+    }
+  }
+
+  Future<void> _resolveStorageUrl(String raw) async {
+    try {
+      final lower = raw.toLowerCase();
+      final ref = lower.startsWith('gs://')
+          ? FirebaseStorage.instance.refFromURL(raw)
+          : FirebaseStorage.instance.ref(raw);
+      final url = await ref.getDownloadURL();
+      if (!mounted) return;
+      setState(() => _resolvedHttpUrls[raw] = url);
+      _precacheUrl(url);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _resolvedHttpUrls[raw] = '');
+    }
+  }
+
+  void _precacheCartImages() {
+    for (final url in _resolvedHttpUrls.values) {
+      if (url.isNotEmpty) _precacheUrl(url);
+    }
+  }
+
+  void _precacheUrl(String url) {
+    if (!mounted || url.isEmpty) return;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cachePx = (64 * dpr).round().clamp(64, 192);
+    unawaited(
+      precacheImage(
+        CachedNetworkImageProvider(
+          url,
+          maxWidth: cachePx,
+          maxHeight: cachePx,
+        ),
+        context,
+      ).catchError((_) {}),
+    );
   }
 
   Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
 
-  Future<void> _initAuthAndAddress() async {
+  Future<void> _initAuthAndAddress({bool forceRefresh = false}) async {
+    final hadCached = _defaultAddr != null;
     setState(() {
-      _loadingAddr = true;
-      _defaultAddr = null;
-      _loggedIn = false;
+      if (!hadCached || forceRefresh) {
+        _loadingAddr = !hadCached;
+      }
+      if (!hadCached) {
+        _loggedIn = false;
+      }
     });
     final token = await _readAuthToken();
     if (!mounted) return;
@@ -91,11 +389,23 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       setState(() {
         _loggedIn = false;
         _loadingAddr = false;
+        if (forceRefresh) _defaultAddr = null;
       });
       return;
     }
     try {
-      final list = await _addrSvc.getMyAddresses();
+      if (!forceRefresh && !hadCached) {
+        final cached = await _addrSvc.getCachedDefaultAddress();
+        if (mounted && cached != null) {
+          setState(() {
+            _loggedIn = true;
+            _defaultAddr = cached;
+            _loadingAddr = false;
+          });
+        }
+      }
+
+      final list = await _addrSvc.getMyAddresses(forceRefresh: forceRefresh);
       Address? def;
       for (final a in list) {
         if (a.isDefault) {
@@ -103,6 +413,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
           break;
         }
       }
+      def ??= list.isNotEmpty ? list.first : null;
+      if (!mounted) return;
       setState(() {
         _loggedIn = true;
         _defaultAddr = def;
@@ -112,7 +424,6 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       if (!mounted) return;
       setState(() {
         _loggedIn = true;
-        _defaultAddr = null;
         _loadingAddr = false;
       });
     }
@@ -149,7 +460,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     return false;
   }
 
-  // ✅ Same image logic as CheckoutPage (http / base64 / gs:// / firebase storage path)
+  // ✅ Fast thumbs: disk cache + sized decode (same idea as cart / single checkout)
   Widget _itemImage(String raw, {double size = 64}) {
     final s = raw.trim();
     if (s.isEmpty) {
@@ -161,13 +472,30 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       );
     }
 
-    // HTTP URL
-    if (s.startsWith('http://') || s.startsWith('https://')) {
-      return Image.network(
-        s,
+    final url = _resolvedHttpUrls[s];
+    if (url != null && url.isNotEmpty) {
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final cachePx = (size * dpr).round().clamp(64, 192);
+      return ResilientCachedNetworkImage(
+        url: url,
         width: size,
         height: size,
         fit: BoxFit.cover,
+        memCacheWidth: cachePx,
+        memCacheHeight: cachePx,
+      );
+    }
+
+    final bytes = _decodedBytes[s];
+    if (bytes != null) {
+      final cacheW = (size * MediaQuery.devicePixelRatioOf(context)).round();
+      return Image.memory(
+        bytes,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        cacheWidth: cacheW,
+        gaplessPlayback: true,
         errorBuilder: (_, __, ___) => Container(
           width: size,
           height: size,
@@ -177,69 +505,26 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       );
     }
 
-    // Firebase Storage gs://
-    if (s.startsWith('gs://')) {
-      return FutureBuilder<String>(
-        future: FirebaseStorage.instance.refFromURL(s).getDownloadURL(),
-        builder: (context, snap) {
-          if (!snap.hasData) {
-            return Container(
-              width: size,
-              height: size,
-              color: Colors.grey.shade100,
-              child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            );
-          }
-          return Image.network(
-            snap.data!,
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              width: size,
-              height: size,
-              color: Colors.grey.shade200,
-              child: const Icon(Icons.image_not_supported, color: Colors.grey),
-            ),
-          );
-        },
+    // Still resolving Firebase path, or failed.
+    if (url == null && !_decodedBytes.containsKey(s)) {
+      return Container(
+        width: size,
+        height: size,
+        color: const Color(0xFFF1F1F1),
+        alignment: Alignment.center,
+        child: const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2, color: _brandOrange),
+        ),
       );
     }
 
-    // Try Base64
-    try {
-      final base64Part = s.contains(',') ? s.split(',').last : s;
-      if (base64Part.length > 150) {
-        final bytes = base64Decode(base64Part);
-        return Image.memory(bytes, width: size, height: size, fit: BoxFit.cover);
-      }
-    } catch (_) {}
-
-    // Try Firebase Storage path
-    return FutureBuilder<String>(
-      future: FirebaseStorage.instance.ref(s).getDownloadURL(),
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade200,
-            child: const Icon(Icons.image_not_supported, color: Colors.grey),
-          );
-        }
-        return Image.network(
-          snap.data!,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade200,
-            child: const Icon(Icons.image_not_supported, color: Colors.grey),
-          ),
-        );
-      },
+    return Container(
+      width: size,
+      height: size,
+      color: Colors.grey.shade200,
+      child: const Icon(Icons.image_not_supported, color: Colors.grey),
     );
   }
 
@@ -357,126 +642,103 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     }
   }
 
-  Widget _row(String label, String value, {bool bold = false, bool green = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
-              color: Colors.grey[700],
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
-              color: green ? const Color(0xFF2E7D32) : Colors.black,
-            ),
-          ),
-        ],
-      ),
+  Widget _row(String label, String value, {bool bold = false}) {
+    final style = TextStyle(
+      fontWeight: bold ? FontWeight.w900 : FontWeight.w600,
+      fontSize: bold ? 16 : 14,
+      color: bold ? _brandNavy : Colors.grey.shade800,
+    );
+    return Row(
+      children: [
+        Expanded(
+          child: Text(label,
+              style: style, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+        const SizedBox(width: 10),
+        Text(value,
+            style: style, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final canPay = !_paying &&
+        widget.items.isNotEmpty &&
+        (_deliveryType == DeliveryType.pickup || _defaultAddr != null);
+
     return Scaffold(
       backgroundColor: _pageBg,
       appBar: AppBar(
         elevation: 0,
-        scrolledUnderElevation: 0.5,
+        scrolledUnderElevation: 0,
         backgroundColor: _brandOrange,
         foregroundColor: Colors.white,
         centerTitle: false,
-        titleSpacing: 8,
-        title: const Row(
-          children: [
-            Icon(Icons.shopping_bag_rounded, size: 26),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Checkout',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 20,
-                  letterSpacing: -0.3,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ],
+        titleSpacing: 0,
+        title: const Text(
+          'Checkout',
+          style: TextStyle(
+            fontWeight: FontWeight.w900,
+            fontSize: 20,
+            letterSpacing: -0.4,
+            color: Colors.white,
+          ),
         ),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
           onPressed: () => Navigator.of(context).maybePop(),
           tooltip: 'Back to cart',
         ),
       ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: _brandSoft,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.verified_user_rounded,
-                      size: 20, color: _brandNavy.withValues(alpha: 0.85)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Secure checkout — review your address and payment details.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade800,
-                        height: 1.35,
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              children: [
+                _stepsHeader(),
+                const SizedBox(height: 14),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: Colors.black.withValues(alpha: 0.06)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.lock_outline_rounded,
+                          size: 18,
+                          color: _brandNavy.withValues(alpha: 0.7)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Secure checkout · PayChangu protected',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 12),
-
-          Card(
-            elevation: 6,
-            shadowColor: Colors.black12,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            clipBehavior: Clip.antiAlias,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Your Items',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16,
-                      color: _brandNavy,
-                      letterSpacing: -0.2,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  ListView.separated(
+                ),
+                const SizedBox(height: 14),
+                _section(
+                  title: 'Your items',
+                  subtitle: '${widget.items.length} item${widget.items.length == 1 ? '' : 's'} in this order',
+                  child: ListView.separated(
                     itemCount: widget.items.length,
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    separatorBuilder: (_, __) => const Divider(height: 14),
+                    separatorBuilder: (_, __) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Divider(height: 1, color: Colors.grey.shade200),
+                    ),
                     itemBuilder: (_, i) {
                       final it = widget.items[i];
                       return Row(
@@ -497,15 +759,23 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                               children: [
                                 Text(
                                   it.name,
-                                  maxLines: 1,
+                                  maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
-                                      fontWeight: FontWeight.w700, fontSize: 15),
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 14,
+                                    color: _brandNavy,
+                                    height: 1.25,
+                                  ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  '${_mwk(it.price)}  •  Qty: ${it.quantity}',
-                                  style: TextStyle(color: Colors.grey.shade700),
+                                  '${_mwk(it.price)}  ·  Qty ${it.quantity}',
+                                  style: TextStyle(
+                                    color: Colors.grey.shade600,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12.5,
+                                  ),
                                 ),
                               ],
                             ),
@@ -513,8 +783,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                           Text(
                             _mwk(it.price * it.quantity),
                             style: const TextStyle(
-                              color: Colors.green,
-                              fontWeight: FontWeight.bold,
+                              color: _brandNavy,
+                              fontWeight: FontWeight.w900,
                               fontSize: 14,
                             ),
                           ),
@@ -522,161 +792,147 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                       );
                     },
                   ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          // Delivery Type
-          Card(
-            elevation: 6,
-            shadowColor: Colors.black12,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            clipBehavior: Clip.antiAlias,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Delivery Type',
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<DeliveryType>(
-                    initialValue: _deliveryType,
-                    isExpanded: true,
-                    decoration: InputDecoration(
-                      labelText: 'Choose delivery option',
-                      filled: true,
-                      fillColor: Colors.white,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: DeliveryType.speed, child: Text('Speed')),
-                      DropdownMenuItem(value: DeliveryType.cts, child: Text('CTS')),
-                      DropdownMenuItem(value: DeliveryType.ankolo, child: Text('Ankolo')),
-                      DropdownMenuItem(value: DeliveryType.smart, child: Text('Smart')),
-                      DropdownMenuItem(value: DeliveryType.pickup, child: Text('Pickup')),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setState(() => _deliveryType = v);
+                ),
+                const SizedBox(height: 12),
+                _section(
+                  title: 'Courier',
+                  subtitle: _deliveryType == DeliveryType.pickup
+                      ? 'Pickup selected — no delivery address needed'
+                      : 'Choose how you want your order delivered',
+                  child: _courierGrid(),
+                ),
+                const SizedBox(height: 12),
+                _DeliveryAddressCard(
+                  loading: _loadingAddr,
+                  loggedIn: _loggedIn,
+                  address: _defaultAddr,
+                  pickupSelected: _deliveryType == DeliveryType.pickup,
+                  pickupLocation: 'Pickup at merchant(s)',
+                    onManage: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const AddressPage()),
+                      );
+                      await _initAuthAndAddress(forceRefresh: true);
                     },
+                ),
+                const SizedBox(height: 12),
+                _section(
+                  title: 'Summary',
+                  child: Column(
+                    children: [
+                      _row('Subtotal', _mwk(_subtotal)),
+                      const SizedBox(height: 10),
+                      _row(
+                        'Delivery',
+                        _deliveryType == DeliveryType.pickup
+                            ? 'Pickup'
+                            : _deliveryLabel(_deliveryType),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child:
+                            Divider(height: 1, color: Colors.grey.shade200),
+                      ),
+                      _row('Total', _mwk(_total), bold: true),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Selected: ${_deliveryLabel(_deliveryType)}',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey.shade700,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          // Delivery Address
-          _DeliveryAddressCard(
-            loading: _loadingAddr,
-            loggedIn: _loggedIn,
-            address: _defaultAddr,
-            pickupSelected: _deliveryType == DeliveryType.pickup,
-            pickupLocation: 'Pickup at merchant(s)',
-            onManage: () async {
-              await Navigator.push(context, MaterialPageRoute(builder: (_) => const AddressPage()));
-              await _initAuthAndAddress();
-            },
-          ),
-
-          const SizedBox(height: 12),
-
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border.all(color: Colors.grey.shade200),
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 16,
-                  spreadRadius: 0,
-                  offset: const Offset(0, 4),
                 ),
               ],
             ),
+          ),
+          _stickyPayBar(canPay: canPay),
+        ],
+      ),
+    );
+  }
+
+  Widget _stickyPayBar({required bool canPay}) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        12,
+        16,
+        12 + MediaQuery.paddingOf(context).bottom,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          top: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Order Summary',
+                  'Total',
                   style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _mwk(_total),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
                     color: _brandNavy,
-                    letterSpacing: -0.2,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _row('Subtotal', _mwk(_subtotal)),
-                const SizedBox(height: 8),
-                const Divider(thickness: 1),
-                const SizedBox(height: 8),
-                _row('Total', _mwk(_total), bold: true, green: true),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: (_paying || widget.items.isEmpty || !(_deliveryType == DeliveryType.pickup || _defaultAddr != null))
-                        ? null
-                        : _startPayChanguPayment,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _brandOrange,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 3,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        if (_paying)
-                          const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                            ),
-                          )
-                        else
-                          const Icon(Icons.payment, color: Colors.white),
-                        const SizedBox(width: 10),
-                        Text(
-                          _paying ? 'Processing...' : 'Pay Now',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
+                    letterSpacing: -0.3,
                   ),
                 ),
               ],
             ),
           ),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 2,
+            child: FilledButton(
+              onPressed: canPay ? _startPayChanguPayment : null,
+              style: FilledButton.styleFrom(
+                backgroundColor: _brandOrange,
+                disabledBackgroundColor: Colors.grey.shade300,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                elevation: 0,
+              ),
+              child: _paying
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : const Text(
+                      'Pay Now',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+            ),
+          ),
         ],
-        ),
       ),
     );
   }
@@ -702,86 +958,120 @@ class _DeliveryAddressCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      elevation: 6,
-      shadowColor: Colors.black12,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Delivery Address',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-            const SizedBox(height: 8),
-            if (pickupSelected)
-              _line(
-                'Pickup selected',
-                (pickupLocation ?? '').trim().isEmpty
-                    ? 'Pickup at merchant(s)'
-                    : pickupLocation!.trim(),
-              )
-            else if (loading)
-              const SizedBox(
-                height: 40,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              )
-            else if (!loggedIn)
-              _line('Not logged in', 'Please log in to select address')
-            else if (address == null)
-              _line('No default address', 'Set your default delivery address')
-            else
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _line(_label(address!.addressType), address!.city),
-                  if (address!.description.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      address!.description,
-                      style: TextStyle(color: Colors.grey.shade700),
-                    ),
-                  ],
-                ],
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Delivery address',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                    color: Color(0xFF16284C),
+                    letterSpacing: -0.2,
+                  ),
+                ),
               ),
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: pickupSelected ? null : onManage,
-                icon: const Icon(Icons.location_pin),
-                label: Text(address == null ? 'Set address' : 'Change'),
-              ),
+              if (!pickupSelected)
+                TextButton.icon(
+                  onPressed: onManage,
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFFF8A00),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: const Icon(Icons.edit_location_alt_rounded, size: 18),
+                  label: Text(
+                    address == null ? 'Set' : 'Change',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (pickupSelected)
+            _addrBox(
+              Icons.storefront_rounded,
+              'Shop pickup',
+              (pickupLocation ?? '').trim().isEmpty
+                  ? 'Pickup at merchant(s)'
+                  : pickupLocation!.trim(),
+            )
+          else if (loading)
+            const SizedBox(
+              height: 48,
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (!loggedIn)
+            _addrBox(Icons.lock_outline_rounded, 'Not logged in',
+                'Please log in to select address')
+          else if (address == null)
+            _addrBox(Icons.location_off_outlined, 'No default address',
+                'Set your default delivery address')
+          else
+            _addrBox(
+              Icons.place_rounded,
+              _label(address!.addressType),
+              [
+                address!.city,
+                if (address!.description.isNotEmpty) address!.description,
+              ].join(' · '),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }
 
-  static Widget _line(String a, String b) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            a,
-            style: const TextStyle(fontWeight: FontWeight.w800),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+  static Widget _addrBox(IconData icon, String title, String body) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FC),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: const Color(0xFF16284C)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                    color: Color(0xFF16284C),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  body,
+                  style: TextStyle(
+                    color: Colors.grey.shade700,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(width: 10),
-        Flexible(
-          child: Text(
-            b,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.right,
-            style: const TextStyle(color: Colors.black87),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -872,7 +1162,7 @@ class InAppPaymentPage extends StatefulWidget {
     this.clearCartOnSuccess = false,
     this.cartItemsForMerchantCredit,
     this.shippingAddress,
-    this.deliveryType = DeliveryType.cts,
+    this.deliveryType = DeliveryType.speed,
     this.popOnlyOnSuccess = false,
     this.onSuccessNavigate,
     this.accommodationEscrow,
@@ -1137,16 +1427,20 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     if (_resultHandled) return;
     _resultHandled = true;
     _pollTimer?.cancel();
-    if (widget.clearCartOnSuccess) {
-      unawaited(() async {
-        try {
-          final cart = CartServiceProvider.getInstance();
-          await cart.clearCart();
-        } catch (e) {
-          debugPrint('[InAppPaymentPage] Failed to clear cart: $e');
-        }
-      }());
-    }
+
+    final shouldClearCart = widget.clearCartOnSuccess;
+    final clearFuture = shouldClearCart
+        ? () async {
+            try {
+              final cart = CartServiceProvider.getInstance();
+              await cart.clearCart();
+            } catch (e) {
+              debugPrint('[InAppPaymentPage] Failed to clear cart: $e');
+            }
+          }()
+        : Future<void>.value();
+
+    // Non-cart paths still fire-and-forget; cart path awaits below.
 
     final food = widget.foodCheckout;
     if (food != null) {
@@ -1224,14 +1518,17 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     } else if (widget.popOnlyOnSuccess) {
       if (mounted) Navigator.of(context).pop();
     } else {
-      if (mounted) {
+      // Cart checkout: finish clearing before leaving so the cart isn't "stuck".
+      unawaited(() async {
+        await clearFuture;
+        if (!mounted) return;
         Navigator.of(context).pop(); // close webview
-        // Keep root (e.g. BottomNavbar) so back from Orders stays in app
+        if (!widget.rootContext.mounted) return;
         Navigator.of(widget.rootContext).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const OrdersPage()),
           (route) => route.isFirst,
         );
-      }
+      }());
     }
   }
 

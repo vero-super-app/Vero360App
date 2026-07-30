@@ -15,8 +15,11 @@ import 'package:vero360_app/features/ride_share/services/active_ride_storage.dar
 class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
   late RideShareHttpService _httpService;
   StreamSubscription<Ride>? _rideSub;
+  Timer? _statusPollTimer;
   int? _activeRideId;
   ActiveRideRole? _activeRole;
+
+  static const _statusPollInterval = Duration(seconds: 8);
 
   @override
   RideLifecycleState build() {
@@ -28,6 +31,8 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
   void _cleanup() {
     _rideSub?.cancel();
     _rideSub = null;
+    _statusPollTimer?.cancel();
+    _statusPollTimer = null;
     _activeRideId = null;
     _activeRole = null;
     _httpService.clearRideSubscription();
@@ -116,18 +121,7 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
     try {
       final ride = await _httpService.getRideDetails(rideId);
       if (ride.id != rideId) return;
-      if (ride.isCompleted) {
-        state = RideCompleted(ride: ride);
-      } else if (ride.isCancelled) {
-        state = RideCancelled(ride: ride);
-      } else {
-        state = RideActive(ride: ride);
-        unawaited(_activeRideController.onRideBecameActive(
-          rideId: ride.id,
-          role: role,
-          status: ride.status,
-        ));
-      }
+      _applyRideSnapshot(ride, role: role);
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[RideLifecycle] initial fetch error: $e');
@@ -140,9 +134,10 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
   Future<void> markArrived() async {
     final current = state;
     if (current is! RideActive || _activeRideId == null) return;
-    state = current.copyWith(isLoading: true, actionError: null);
+    state = current.copyWith(isLoading: true, clearActionError: true);
     try {
-      await _httpService.markDriverArrived(_activeRideId!);
+      final ride = await _httpService.markDriverArrived(_activeRideId!);
+      _applyRideSnapshot(ride, role: _activeRole ?? ActiveRideRole.driver);
     } catch (e) {
       state = current.copyWith(isLoading: false, actionError: e.toString());
     }
@@ -151,9 +146,10 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
   Future<void> startRide() async {
     final current = state;
     if (current is! RideActive || _activeRideId == null) return;
-    state = current.copyWith(isLoading: true, actionError: null);
+    state = current.copyWith(isLoading: true, clearActionError: true);
     try {
-      await _httpService.startRide(_activeRideId!);
+      final ride = await _httpService.startRide(_activeRideId!);
+      _applyRideSnapshot(ride, role: _activeRole ?? ActiveRideRole.driver);
     } catch (e) {
       state = current.copyWith(isLoading: false, actionError: e.toString());
     }
@@ -162,9 +158,13 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
   Future<void> completeRide({double? actualDistance}) async {
     final current = state;
     if (current is! RideActive || _activeRideId == null) return;
-    state = current.copyWith(isLoading: true, actionError: null);
+    state = current.copyWith(isLoading: true, clearActionError: true);
     try {
-      await _httpService.completeRide(_activeRideId!, actualDistance: actualDistance);
+      final ride = await _httpService.completeRide(
+        _activeRideId!,
+        actualDistance: actualDistance,
+      );
+      _applyRideSnapshot(ride, role: _activeRole ?? ActiveRideRole.driver);
     } catch (e) {
       state = current.copyWith(isLoading: false, actionError: e.toString());
     }
@@ -175,9 +175,10 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
   Future<void> cancelRide(String reason) async {
     final current = state;
     if (current is! RideActive || _activeRideId == null) return;
-    state = current.copyWith(isLoading: true, actionError: null);
+    state = current.copyWith(isLoading: true, clearActionError: true);
     try {
-      final cancelled = await _httpService.cancelRide(_activeRideId!, reason: reason);
+      final cancelled =
+          await _httpService.cancelRide(_activeRideId!, reason: reason);
       state = RideCancelled(ride: cancelled);
       unawaited(_activeRideController.onRideEnded());
     } catch (e) {
@@ -202,8 +203,38 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
 
   // --------------- Internal ---------------
 
+  void _applyRideSnapshot(Ride ride, {required ActiveRideRole role}) {
+    if (ride.isCompleted) {
+      state = RideCompleted(ride: ride);
+      unawaited(_activeRideController.onRideEnded());
+      return;
+    }
+    if (ride.isCancelled) {
+      state = RideCancelled(ride: ride);
+      unawaited(_activeRideController.onRideEnded());
+      return;
+    }
+
+    final current = state;
+    state = current is RideActive
+        ? current.copyWith(ride: ride, isLoading: false, clearActionError: true)
+        : RideActive(ride: ride);
+
+    unawaited(ActiveRideStorage.save(
+      rideId: ride.id,
+      role: role,
+      status: ride.status,
+    ));
+    unawaited(_activeRideController.onRideBecameActive(
+      rideId: ride.id,
+      role: role,
+      status: ride.status,
+    ));
+  }
+
   void _subscribeToUpdates(int rideId, {required ActiveRideRole role}) {
     _rideSub?.cancel();
+    _statusPollTimer?.cancel();
     _activeRideId = rideId;
     _activeRole = role;
 
@@ -218,40 +249,33 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
     _rideSub = _httpService.rideUpdateStream.listen(
       (ride) {
         if (ride.id != rideId) return;
-
-        if (ride.isCompleted) {
-          state = RideCompleted(ride: ride);
-          unawaited(_activeRideController.onRideEnded());
-          return;
-        }
-        if (ride.isCancelled) {
-          state = RideCancelled(ride: ride);
-          unawaited(_activeRideController.onRideEnded());
-          return;
-        }
-
-        final current = state;
-        state = current is RideActive
-            ? current.copyWith(ride: ride, isLoading: false)
-            : RideActive(ride: ride);
-
-        unawaited(ActiveRideStorage.save(
-          rideId: ride.id,
-          role: role,
-          status: ride.status,
-        ));
-        if (role == ActiveRideRole.driver) {
-          unawaited(_activeRideController.onRideBecameActive(
-            rideId: ride.id,
-            role: role,
-            status: ride.status,
-          ));
-        }
+        _applyRideSnapshot(ride, role: role);
       },
       onError: (e) {
         if (kDebugMode) debugPrint('[RideLifecycle] stream error: $e');
       },
     );
+
+    // HTTP poll fallback when WebSocket status events are missed.
+    _statusPollTimer = Timer.periodic(_statusPollInterval, (_) async {
+      if (_activeRideId != rideId) return;
+      final current = state;
+      if (current is! RideActive) return;
+      try {
+        final ride = await _httpService.getRideDetails(rideId);
+        if (_activeRideId != rideId) return;
+        if (ride.status == current.ride.status &&
+            !ride.isCompleted &&
+            !ride.isCancelled) {
+          return;
+        }
+        _applyRideSnapshot(ride, role: role);
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[RideLifecycle] status poll error: $e');
+        }
+      }
+    });
   }
 }
 

@@ -139,6 +139,30 @@ class _PassengerRideTrackingScreenState
     BuildContext context, {
     String reason = 'Passenger cancelled',
   }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel this ride?'),
+        content: Text(
+          reason.contains('stop')
+              ? 'This cancels the trip for you and the driver. '
+                  'Only the driver can complete a ride and set the fare.'
+              : 'Are you sure you want to cancel this ride request?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep ride'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Cancel ride'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
     try {
       await ref.read(rideLifecycleProvider.notifier).cancelRide(reason);
       if (mounted && context.mounted) Navigator.pop(context);
@@ -243,37 +267,25 @@ class _PassengerRideTrackingScreenState
           driverLabel: ride?.driver?.fullName ?? 'Your Driver',
           trackingMode: true,
         ),
-        topOverlay: RideGlassTopBar(
+        topOverlay: const RideGlassTopBar(
           title: 'Vero Ride',
-          trailing: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: RideShareColors.primarySoft,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              lifecycleState is RideActive
-                  ? rideStatusBadge(lifecycleState.ride.status)
-                  : 'Trip',
-              style: const TextStyle(
-                color: RideShareColors.primaryDeep,
-                fontWeight: FontWeight.w800,
-                fontSize: 11,
-              ),
-            ),
-          ),
         ),
         floatingActions: Positioned(
           right: 16,
-          bottom: MediaQuery.of(context).size.height * 0.42,
-          child: RideMapFab(
-            icon: Icons.my_location,
-            onTap: () => _recenter(
-              driverLatLng ??
-                  (pickupPlace != null
-                      ? LatLng(pickupPlace.latitude, pickupPlace.longitude)
-                      : null),
-            ),
+          bottom: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RideMapFab(
+                icon: Icons.my_location,
+                onTap: () => _recenter(
+                  driverLatLng ??
+                      (pickupPlace != null
+                          ? LatLng(pickupPlace.latitude, pickupPlace.longitude)
+                          : null),
+                ),
+              ),
+            ],
           ),
         ),
         bottomSheet: lifecycleState is RideActive
@@ -286,11 +298,9 @@ class _PassengerRideTrackingScreenState
   Widget _buildSheet(RideActive state) {
     final ride = state.ride;
     final driver = ride.driver;
-    final fare =
-        'MK${(ride.actualFare ?? ride.estimatedFare).toStringAsFixed(0)}';
-    final distance = '${ride.estimatedDistance.toStringAsFixed(1)} km';
+    final showDriver = driver != null && !state.isRequested;
 
-    return RideNavySheet(
+    return RideLightSheet(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -299,16 +309,14 @@ class _PassengerRideTrackingScreenState
             badge: rideStatusBadge(ride.status),
             subtitle: _subtitle(ride),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           RideTripProgressBar(
             progress: rideStatusProgress(ride.status),
             leftLabel: 'Pickup',
             rightLabel: 'Dropoff',
           ),
-          const SizedBox(height: 16),
-          RideMetricRow(distanceLabel: distance, fareLabel: fare),
-          if (driver != null && state.isAccepted) ...[
-            const SizedBox(height: 14),
+          if (showDriver) ...[
+            const SizedBox(height: 20),
             RidePersonCard(
               name: driver.fullName,
               subtitle: ride.taxi != null
@@ -333,12 +341,12 @@ class _PassengerRideTrackingScreenState
               ],
             ),
           ],
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           if (state.isRequested) ...[
-            Text(
+            const Text(
               'Searching for nearby drivers…',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+              style: TextStyle(color: RideShareColors.onSurfaceVariant),
             ),
             const SizedBox(height: 14),
             RideSecondaryCta(
@@ -349,56 +357,13 @@ class _PassengerRideTrackingScreenState
                   : () => _handleCancel(context),
             ),
           ] else ...[
-            Row(
-              children: [
-                Expanded(
-                  child: SizedBox(
-                    height: 52,
-                    child: ElevatedButton.icon(
-                      onPressed: () => showRideSafetySheet(context),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: RideShareColors.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      icon: const Icon(Icons.emergency_share, size: 18),
-                      label: const Text(
-                        'Safety',
-                        style: TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: SizedBox(
-                    height: 52,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _shareTrip(ride),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: BorderSide(
-                          color: Colors.white.withValues(alpha: 0.2),
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      icon: const Icon(Icons.ios_share, size: 18),
-                      label: const Text(
-                        'Share',
-                        style: TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+            RidePassengerActionGrid(
+              onSafety: () => showRideSafetySheet(context),
+              onShare: () => _shareTrip(ride),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             RideSecondaryCta(
-              label: state.isInProgress ? 'End Ride' : 'Cancel Ride',
+              label: 'Cancel Ride',
               icon: Icons.close,
               onPressed: state.isLoading
                   ? null
@@ -408,16 +373,6 @@ class _PassengerRideTrackingScreenState
                             ? 'Passenger requested stop'
                             : 'Passenger cancelled',
                       ),
-            ),
-          ],
-          if (!state.isRequested) ...[
-            const SizedBox(height: 8),
-            RideQuickActionsRow(
-              onMessage: ride.driverId != null
-                  ? () => _openMessaging(state)
-                  : null,
-              onCall: () => _callDriver(state),
-              onSafety: () => showRideSafetySheet(context),
             ),
           ],
         ],

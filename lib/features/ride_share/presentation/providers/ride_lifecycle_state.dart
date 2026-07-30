@@ -35,11 +35,17 @@ class RideActive extends RideLifecycleState {
   bool get isDriverArrived => status == RideStatus.driverArrived;
   bool get isInProgress => status == RideStatus.inProgress;
 
-  RideActive copyWith({Ride? ride, bool? isLoading, String? actionError}) {
+  RideActive copyWith({
+    Ride? ride,
+    bool? isLoading,
+    String? actionError,
+    bool clearActionError = false,
+  }) {
     return RideActive(
       ride: ride ?? this.ride,
       isLoading: isLoading ?? this.isLoading,
-      actionError: actionError,
+      actionError:
+          clearActionError ? null : (actionError ?? this.actionError),
     );
   }
 }

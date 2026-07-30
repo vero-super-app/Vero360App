@@ -484,14 +484,14 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       );
     }
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (int i = 0; i < vehicles.length; i++) ...[
-          _buildVehicleCard(vehicles[i]),
-          if (i < vehicles.length - 1) const SizedBox(height: 8),
-        ],
-      ],
+    return SizedBox(
+      height: 132,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: vehicles.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) => _buildVehicleCard(vehicles[index]),
+      ),
     );
   }
 
@@ -515,124 +515,73 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       }
     }
 
+    final eta = _duration > 0 ? '$_duration min' : '…';
+
     return GestureDetector(
       onTap: () => _handleVehicleSelected(vehicleType.class_),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        duration: const Duration(milliseconds: 200),
+        width: 140,
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected ? vehicleType.color : Colors.grey[200]!,
+            color: isSelected
+                ? const Color(0xFFFF8A00)
+                : const Color(0xFFC4C6CF).withValues(alpha: 0.25),
             width: isSelected ? 2 : 1,
           ),
-          borderRadius: BorderRadius.circular(14),
-          color:
-              isSelected ? vehicleType.color.withOpacity(0.06) : Colors.white,
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: vehicleType.color.withOpacity(0.15),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 6,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-        ),
-        child: Row(
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: vehicleType.color.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    vehicleType.icon,
-                    color: vehicleType.color,
-                    size: 24,
-                  ),
-                ),
-                if (isSelected)
-                  Positioned(
-                    right: -4,
-                    top: -4,
-                    child: Container(
-                      width: 18,
-                      height: 18,
-                      decoration: BoxDecoration(
-                        color: vehicleType.color,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2),
-                      ),
-                      child: const Icon(
-                        Icons.check,
-                        size: 10,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-              ],
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isSelected ? 0.1 : 0.04),
+              blurRadius: isSelected ? 12 : 6,
+              offset: const Offset(0, 2),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          vehicleType.name,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '· ${vehicleType.capacity} seat${vehicleType.capacity > 1 ? 's' : ''}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[500],
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    vehicleType.description,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[500],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? const Color(0xFFFF8A00).withValues(alpha: 0.1)
+                    : const Color(0xFFF6F3F2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                vehicleType.icon,
+                size: 22,
+                color: isSelected
+                    ? const Color(0xFFD94F00)
+                    : const Color(0xFF16284C),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(height: 8),
             Text(
-              displayPrice,
-              style: TextStyle(
+              vehicleType.name,
+              style: const TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
-                color: vehicleType.color,
+                color: Color(0xFF16284C),
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '$eta • $displayPrice',
+              style: const TextStyle(
+                fontSize: 10,
+                color: Color(0xFF43474E),
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
             ),
           ],
         ),

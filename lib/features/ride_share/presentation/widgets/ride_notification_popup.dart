@@ -7,9 +7,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/driver_ride_request_sheet.dart';
-import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
-/// Incoming ride request overlay — navy premium sheet with countdown timer.
+/// Incoming ride request overlay — light sheet with countdown timer.
 class RideNotificationPopup extends StatefulWidget {
   final DriverRideRequest rideRequest;
   final WidgetRef ref;
@@ -124,8 +123,7 @@ class _RideNotificationPopupState extends State<RideNotificationPopup>
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
                 child: Container(
-                  color:
-                      RideShareColors.primaryContainer.withValues(alpha: 0.4),
+                  color: const Color(0xFF000613).withValues(alpha: 0.4),
                 ),
               ),
             ),

@@ -64,6 +64,26 @@ class RideInRideShell extends StatelessWidget {
           Positioned(
             left: 0,
             right: 0,
+            top: 0,
+            height: MediaQuery.of(context).size.height * 0.22,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      RideShareColors.background.withValues(alpha: 0.8),
+                      RideShareColors.background.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
             bottom: 0,
             height: MediaQuery.of(context).size.height * 0.18,
             child: IgnorePointer(
@@ -73,7 +93,7 @@ class RideInRideShell extends StatelessWidget {
                     begin: Alignment.bottomCenter,
                     end: Alignment.topCenter,
                     colors: [
-                      RideShareColors.primaryContainer.withValues(alpha: 0.35),
+                      RideShareColors.primaryContainer.withValues(alpha: 0.1),
                       Colors.transparent,
                     ],
                   ),
@@ -105,10 +125,12 @@ class RideInRideShell extends StatelessWidget {
 class RideGlassTopBar extends StatelessWidget {
   final String title;
   final Widget? trailing;
+  final VoidCallback? onMenu;
 
   const RideGlassTopBar({
     required this.title,
     this.trailing,
+    this.onMenu,
     super.key,
   });
 
@@ -124,37 +146,39 @@ class RideGlassTopBar extends StatelessWidget {
             filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
             child: Container(
               height: 56,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
-                color: RideShareColors.background.withValues(alpha: 0.88),
+                color: RideShareColors.background.withValues(alpha: 0.85),
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: RideShareColors.outlineVariant.withValues(alpha: 0.4),
+                  color: RideShareColors.outlineVariant.withValues(alpha: 0.3),
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               child: Row(
                 children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: RideShareColors.primarySoft,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(
-                      Icons.local_taxi,
-                      color: RideShareColors.primary,
-                      size: 20,
+                  IconButton(
+                    onPressed: onMenu ?? () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.menu),
+                    color: RideShareColors.titleText,
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.transparent,
                     ),
                   ),
-                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       title,
                       style: const TextStyle(
-                        fontSize: 18,
+                        fontSize: 20,
                         fontWeight: FontWeight.w800,
-                        color: RideShareColors.titleText,
+                        color: RideShareColors.primaryContainer,
+                        letterSpacing: -0.3,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -171,7 +195,7 @@ class RideGlassTopBar extends StatelessWidget {
   }
 }
 
-/// Compact navy status chip over the map (driver next-step banner).
+/// Frosted light status banner over the map (driver next-step).
 class RideNavBanner extends StatelessWidget {
   final String eyebrow;
   final String title;
@@ -192,69 +216,79 @@ class RideNavBanner extends StatelessWidget {
       bottom: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: RideShareColors.primaryContainer,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: RideShareColors.primaryContainer.withValues(alpha: 0.35),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: RideShareColors.outlineVariant.withValues(alpha: 0.3),
                 ),
-                child: Icon(icon, color: Colors.white, size: 28),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.1),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      eyebrow.toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.8,
-                        color: Colors.white.withValues(alpha: 0.7),
-                      ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      color: RideShareColors.primaryContainer,
+                      borderRadius: BorderRadius.circular(12),
                     ),
+                    child: Icon(icon, color: Colors.white, size: 30),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          eyebrow.toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.8,
+                            color: RideShareColors.onSurfaceVariant,
+                          ),
+                        ),
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                            color: RideShareColors.titleText,
+                            height: 1.2,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (trailing != null) ...[
+                    const SizedBox(width: 8),
                     Text(
-                      title,
+                      trailing!,
                       style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: RideShareColors.primaryContainer,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
-                ),
+                ],
               ),
-              if (trailing != null) ...[
-                const SizedBox(width: 8),
-                Text(
-                  trailing!,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ),
@@ -262,55 +296,84 @@ class RideNavBanner extends StatelessWidget {
   }
 }
 
-/// Navy bottom sheet used by both passenger and driver in-ride UIs.
-class RideNavySheet extends StatelessWidget {
+/// Light bottom sheet used by both passenger and driver in-ride UIs.
+class RideLightSheet extends StatelessWidget {
   final Widget child;
+  final bool floating;
+  final bool showHandle;
+  final EdgeInsetsGeometry? contentPadding;
 
-  const RideNavySheet({required this.child, super.key});
+  const RideLightSheet({
+    required this.child,
+    this.floating = false,
+    this.showHandle = true,
+    this.contentPadding,
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      child: Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.58,
+    final radius = floating
+        ? BorderRadius.circular(24)
+        : const BorderRadius.vertical(top: Radius.circular(32));
+
+    final sheet = Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.62,
+      ),
+      decoration: BoxDecoration(
+        color: RideShareColors.background,
+        borderRadius: radius,
+        border: Border.all(
+          color: RideShareColors.outlineVariant.withValues(alpha: 0.25),
         ),
-        decoration: BoxDecoration(
-          color: RideShareColors.primaryContainer,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.28),
-              blurRadius: 32,
-              offset: const Offset(0, -8),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 40,
+            offset: const Offset(0, -10),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (showHandle && !floating) ...[
             const SizedBox(height: 10),
             Container(
-              width: 44,
-              height: 5,
+              width: 48,
+              height: 6,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.25),
+                color: RideShareColors.titleText.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(3),
               ),
             ),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-                child: child,
-              ),
-            ),
           ],
-        ),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: contentPadding ??
+                  EdgeInsets.fromLTRB(16, floating ? 20 : 16, 16, 20),
+              child: child,
+            ),
+          ),
+        ],
       ),
+    );
+
+    return SafeArea(
+      top: false,
+      child: floating
+          ? Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: sheet,
+            )
+          : sheet,
     );
   }
 }
+
+/// Backward-compatible alias for callers still naming the navy sheet.
+typedef RideNavySheet = RideLightSheet;
 
 class RideStatusHeadline extends StatelessWidget {
   final String title;
@@ -339,14 +402,15 @@ class RideStatusHeadline extends StatelessWidget {
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w800,
-                  color: Colors.white,
+                  color: RideShareColors.titleText,
+                  height: 1.25,
                 ),
               ),
             ),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.12),
+                color: RideShareColors.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
@@ -355,7 +419,7 @@ class RideStatusHeadline extends StatelessWidget {
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.6,
-                  color: RideShareColors.primarySoft,
+                  color: RideShareColors.primaryDeep,
                 ),
               ),
             ),
@@ -367,16 +431,16 @@ class RideStatusHeadline extends StatelessWidget {
             children: [
               Icon(
                 subtitleIcon ?? Icons.location_on,
-                size: 16,
-                color: Colors.white.withValues(alpha: 0.7),
+                size: 18,
+                color: RideShareColors.onSurfaceVariant,
               ),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   subtitle!,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white.withValues(alpha: 0.75),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: RideShareColors.onSurfaceVariant,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -413,10 +477,21 @@ class RideTripProgressBar extends StatelessWidget {
             height: 6,
             child: Stack(
               children: [
-                Container(color: Colors.white.withValues(alpha: 0.12)),
+                Container(color: RideShareColors.surfaceContainerHigh),
                 FractionallySizedBox(
                   widthFactor: clamped,
-                  child: Container(color: RideShareColors.primary),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: RideShareColors.primary,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: RideShareColors.primary.withValues(alpha: 0.4),
+                          blurRadius: 8,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -429,16 +504,18 @@ class RideTripProgressBar extends StatelessWidget {
             children: [
               Text(
                 leftLabel ?? '',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.white.withValues(alpha: 0.65),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: RideShareColors.onSurfaceVariant,
                 ),
               ),
               Text(
                 rightLabel ?? '',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.white.withValues(alpha: 0.65),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: RideShareColors.onSurfaceVariant,
                 ),
               ),
             ],
@@ -472,11 +549,13 @@ class RidePersonCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
+        color: RideShareColors.surfaceContainerLow,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        border: Border.all(
+          color: RideShareColors.outlineVariant.withValues(alpha: 0.5),
+        ),
       ),
       child: Row(
         children: [
@@ -484,11 +563,18 @@ class RidePersonCard extends StatelessWidget {
             clipBehavior: Clip.none,
             children: [
               Container(
-                width: 60,
-                height: 60,
+                width: 64,
+                height: 64,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
-                  color: RideShareColors.primary.withValues(alpha: 0.25),
+                  color: RideShareColors.primaryContainer.withValues(alpha: 0.12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                   image: avatarUrl != null && avatarUrl!.isNotEmpty
                       ? DecorationImage(
                           image: NetworkImage(avatarUrl!),
@@ -503,7 +589,7 @@ class RidePersonCard extends StatelessWidget {
                               ? (initials ?? name)[0].toUpperCase()
                               : '?',
                           style: const TextStyle(
-                            color: Colors.white,
+                            color: RideShareColors.primaryContainer,
                             fontSize: 22,
                             fontWeight: FontWeight.w800,
                           ),
@@ -521,6 +607,13 @@ class RidePersonCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: RideShareColors.primary,
                       borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.1),
+                          blurRadius: 4,
+                          offset: const Offset(0, 1),
+                        ),
+                      ],
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -531,7 +624,7 @@ class RidePersonCard extends StatelessWidget {
                           rating!.toStringAsFixed(1),
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 11,
+                            fontSize: 12,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -549,16 +642,16 @@ class RidePersonCard extends StatelessWidget {
                 Text(
                   name,
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 17,
+                    color: RideShareColors.titleText,
+                    fontSize: 18,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 if (subtitle != null)
                   Text(
                     subtitle!,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.7),
+                    style: const TextStyle(
+                      color: RideShareColors.onSurfaceVariant,
                       fontSize: 13,
                     ),
                   ),
@@ -567,10 +660,10 @@ class RidePersonCard extends StatelessWidget {
                   Text(
                     meta!,
                     style: const TextStyle(
-                      color: RideShareColors.primarySoft,
-                      fontSize: 12,
+                      color: RideShareColors.primaryDeep,
+                      fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      letterSpacing: 1.2,
+                      letterSpacing: 1.4,
                     ),
                   ),
                 ],
@@ -599,15 +692,23 @@ class RideCircleIconButton extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(left: 8),
       child: Material(
-        color: Colors.white.withValues(alpha: 0.12),
+        color: Colors.white,
         shape: const CircleBorder(),
+        elevation: 1,
+        shadowColor: Colors.black26,
         child: InkWell(
           customBorder: const CircleBorder(),
           onTap: onTap,
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: Icon(icon, color: Colors.white, size: 20),
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: RideShareColors.outlineVariant.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Icon(icon, color: RideShareColors.onSurfaceVariant, size: 20),
           ),
         ),
       ),
@@ -632,7 +733,9 @@ class RideQuickActionsRow extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+          top: BorderSide(
+            color: RideShareColors.outlineVariant.withValues(alpha: 0.25),
+          ),
         ),
       ),
       child: Row(
@@ -685,7 +788,8 @@ class _Action extends StatelessWidget {
             border: showDivider
                 ? Border(
                     right: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.12),
+                      color:
+                          RideShareColors.outlineVariant.withValues(alpha: 0.25),
                     ),
                   )
                 : null,
@@ -693,12 +797,12 @@ class _Action extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 18, color: Colors.white.withValues(alpha: 0.8)),
+              Icon(icon, size: 18, color: RideShareColors.primaryContainer),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: const TextStyle(
-                  color: Colors.white,
+                  color: RideShareColors.titleText,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -748,18 +852,20 @@ class _MetricChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
+        color: RideShareColors.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        border: Border.all(
+          color: RideShareColors.outlineVariant.withValues(alpha: 0.4),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 11,
-              color: Colors.white.withValues(alpha: 0.65),
+              color: RideShareColors.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 2),
@@ -768,7 +874,7 @@ class _MetricChip extends StatelessWidget {
             style: const TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w800,
-              color: Colors.white,
+              color: RideShareColors.titleText,
             ),
           ),
         ],
@@ -806,7 +912,8 @@ class RidePrimaryCta extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          elevation: 0,
+          elevation: 2,
+          shadowColor: RideShareColors.primary.withValues(alpha: 0.4),
         ),
         icon: isLoading
             ? const SizedBox(
@@ -847,8 +954,11 @@ class RideSecondaryCta extends StatelessWidget {
       child: OutlinedButton.icon(
         onPressed: onPressed,
         style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.white,
-          side: BorderSide(color: Colors.white.withValues(alpha: 0.25)),
+          foregroundColor: RideShareColors.titleText,
+          backgroundColor: RideShareColors.surfaceContainerHigh,
+          side: BorderSide(
+            color: RideShareColors.outlineVariant.withValues(alpha: 0.3),
+          ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -858,6 +968,169 @@ class RideSecondaryCta extends StatelessWidget {
           label,
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
+      ),
+    );
+  }
+}
+
+/// Two-column Safety + Share actions matching passenger mockup.
+class RidePassengerActionGrid extends StatelessWidget {
+  final VoidCallback? onSafety;
+  final VoidCallback? onShare;
+
+  const RidePassengerActionGrid({
+    this.onSafety,
+    this.onShare,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: SizedBox(
+            height: 56,
+            child: ElevatedButton.icon(
+              onPressed: onSafety,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: RideShareColors.primary,
+                foregroundColor: Colors.white,
+                elevation: 2,
+                shadowColor: RideShareColors.primary.withValues(alpha: 0.35),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              icon: const Icon(Icons.emergency_share, size: 20),
+              label: const Text(
+                'Safety/SOS',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: SizedBox(
+            height: 56,
+            child: OutlinedButton.icon(
+              onPressed: onShare,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: RideShareColors.titleText,
+                backgroundColor: RideShareColors.surfaceContainerHigh,
+                side: BorderSide(
+                  color: RideShareColors.outlineVariant.withValues(alpha: 0.3),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              icon: const Icon(Icons.ios_share, size: 18),
+              label: const Text(
+                'Share Trip',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Compact passenger avatar card for driver destination row.
+class RidePassengerMiniCard extends StatelessWidget {
+  final String name;
+  final double? rating;
+  final String? avatarUrl;
+
+  const RidePassengerMiniCard({
+    required this.name,
+    this.rating,
+    this.avatarUrl,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: RideShareColors.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: RideShareColors.outlineVariant.withValues(alpha: 0.15),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: RideShareColors.primaryContainer.withValues(alpha: 0.12),
+              border: Border.all(color: RideShareColors.primary, width: 2),
+              image: avatarUrl != null && avatarUrl!.isNotEmpty
+                  ? DecorationImage(
+                      image: NetworkImage(avatarUrl!),
+                      fit: BoxFit.cover,
+                    )
+                  : null,
+            ),
+            child: avatarUrl == null || avatarUrl!.isEmpty
+                ? Center(
+                    child: Text(
+                      name.isNotEmpty ? name[0].toUpperCase() : '?',
+                      style: const TextStyle(
+                        color: RideShareColors.primaryContainer,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
+                      ),
+                    ),
+                  )
+                : null,
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            width: 72,
+            child: Text(
+              name,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: RideShareColors.titleText,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          if (rating != null)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.star, size: 12, color: RideShareColors.primary),
+                const SizedBox(width: 2),
+                Text(
+                  rating!.toStringAsFixed(1),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: RideShareColors.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+        ],
       ),
     );
   }
@@ -890,24 +1163,42 @@ class _RideSwipeToCompleteState extends State<RideSwipeToComplete> {
       builder: (context, constraints) {
         final maxDx = (constraints.maxWidth - 60).clamp(0.0, 400.0);
         return Container(
-          height: 60,
+          height: 64,
           decoration: BoxDecoration(
             color: _done
                 ? RideShareColors.primary
-                : Colors.white.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                : RideShareColors.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(32),
+            border: Border.all(
+              color: RideShareColors.outlineVariant.withValues(alpha: 0.15),
+            ),
           ),
           child: Stack(
             alignment: Alignment.centerLeft,
             children: [
+              if (_dx > 0 && !_done)
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(32),
+                      gradient: LinearGradient(
+                        colors: [
+                          RideShareColors.primary.withValues(alpha: 0.2),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               Center(
                 child: Text(
-                  _done ? 'Completed' : widget.label,
+                  _done ? 'Ride Completed' : widget.label.toUpperCase(),
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: _done ? 1 : 0.7),
+                    color: _done
+                        ? Colors.white
+                        : RideShareColors.titleText.withValues(alpha: 0.4),
                     fontWeight: FontWeight.w800,
-                    letterSpacing: 0.8,
+                    letterSpacing: 1.0,
                     fontSize: 12,
                   ),
                 ),
@@ -936,15 +1227,24 @@ class _RideSwipeToCompleteState extends State<RideSwipeToComplete> {
                           }
                         : null,
                     child: Container(
-                      width: 52,
-                      height: 52,
-                      decoration: const BoxDecoration(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
                         color: RideShareColors.primary,
                         shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color:
+                                RideShareColors.primary.withValues(alpha: 0.4),
+                            blurRadius: 10,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
                       child: Icon(
                         _done ? Icons.check : Icons.chevron_right,
                         color: Colors.white,
+                        size: 28,
                       ),
                     ),
                   ),
@@ -976,7 +1276,7 @@ class RideMapFab extends StatelessWidget {
         child: SizedBox(
           width: 48,
           height: 48,
-          child: Icon(icon, color: RideShareColors.primaryContainer),
+          child: Icon(icon, color: RideShareColors.titleText),
         ),
       ),
     );

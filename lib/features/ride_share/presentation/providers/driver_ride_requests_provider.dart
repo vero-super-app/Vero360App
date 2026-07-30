@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
@@ -136,14 +137,9 @@ class DriverRideRequestsWebSocketService {
 
   Future<void> connect() async {
     try {
-      // Get auth token
-      final firebaseUser = FirebaseAuth.instance.currentUser;
-      if (kDebugMode) {
-        debugPrint('[DriverRideRequests] Firebase user present');
-      }
-
       String? token;
 
+      final firebaseUser = FirebaseAuth.instance.currentUser;
       if (firebaseUser != null) {
         try {
           token = await firebaseUser.getIdToken();
@@ -156,9 +152,15 @@ class DriverRideRequestsWebSocketService {
           }
           token = null;
         }
-      } else {
-        if (kDebugMode) {
-          debugPrint('[DriverRideRequests] No Firebase user logged in');
+      }
+
+      if (token == null || token.isEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        token = prefs.getString('jwt_token') ??
+            prefs.getString('token') ??
+            prefs.getString('jwt');
+        if (kDebugMode && token != null && token.isNotEmpty) {
+          debugPrint('[DriverRideRequests] Using SharedPreferences JWT fallback');
         }
       }
 

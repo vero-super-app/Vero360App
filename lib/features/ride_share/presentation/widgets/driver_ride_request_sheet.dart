@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
-/// Navy premium ride-request card shared by overlay popup and accept dialog.
+/// Light ride-request card shared by overlay popup and accept dialog.
 class DriverRideRequestSheet extends StatelessWidget {
   final DriverRideRequest request;
   final Animation<double>? timer;
@@ -47,20 +47,16 @@ class DriverRideRequestSheet extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            RideShareColors.primaryContainer,
-            Color(0xFF0E1A33),
-          ],
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: RideShareColors.outlineVariant.withValues(alpha: 0.6),
         ),
-        borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 28,
-            offset: const Offset(0, 12),
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 50,
+            offset: const Offset(0, 20),
           ),
         ],
       ),
@@ -74,16 +70,16 @@ class DriverRideRequestSheet extends StatelessWidget {
               builder: (context, _) {
                 return LinearProgressIndicator(
                   value: (1.0 - timer!.value).clamp(0.0, 1.0),
-                  minHeight: 5,
-                  backgroundColor: Colors.white.withValues(alpha: 0.15),
+                  minHeight: 6,
+                  backgroundColor: RideShareColors.surfaceContainerHigh,
                   color: RideShareColors.primary,
                 );
               },
             )
           else
-            Container(height: 5, color: RideShareColors.primary),
+            Container(height: 6, color: RideShareColors.primary),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -93,7 +89,7 @@ class DriverRideRequestSheet extends StatelessWidget {
                       child: Text(
                         'New Ride Request',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: RideShareColors.primaryContainer,
                           fontSize: 20,
                           fontWeight: FontWeight.w800,
                         ),
@@ -125,7 +121,8 @@ class DriverRideRequestSheet extends StatelessWidget {
                   decoration: BoxDecoration(
                     border: Border.symmetric(
                       horizontal: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.12),
+                        color: RideShareColors.outlineVariant
+                            .withValues(alpha: 0.5),
                       ),
                     ),
                   ),
@@ -141,7 +138,8 @@ class DriverRideRequestSheet extends StatelessWidget {
                       Container(
                         width: 1,
                         height: 48,
-                        color: Colors.white.withValues(alpha: 0.12),
+                        color: RideShareColors.outlineVariant
+                            .withValues(alpha: 0.5),
                       ),
                       Expanded(
                         child: _stat(
@@ -153,35 +151,32 @@ class DriverRideRequestSheet extends StatelessWidget {
                       Container(
                         width: 1,
                         height: 48,
-                        color: Colors.white.withValues(alpha: 0.12),
+                        color: RideShareColors.outlineVariant
+                            .withValues(alpha: 0.5),
                       ),
                       Expanded(
                         child: _stat(
-                          label: 'Passenger',
-                          valueWidget: Row(
+                          label: 'Rating',
+                          valueWidget: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(
+                              Icon(
                                 Icons.star_rounded,
                                 size: 16,
                                 color: RideShareColors.primary,
                               ),
-                              const SizedBox(width: 2),
-                              Flexible(
-                                child: Text(
-                                  passengerShort,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 14,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                              SizedBox(width: 2),
+                              Text(
+                                '—',
+                                style: TextStyle(
+                                  color: RideShareColors.primaryContainer,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 15,
                                 ),
                               ),
                             ],
                           ),
-                          sub: 'Waiting',
+                          sub: passengerShort,
                         ),
                       ),
                     ],
@@ -201,10 +196,10 @@ class DriverRideRequestSheet extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
+                          const Text(
                             'Pickup Address',
                             style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.55),
+                              color: RideShareColors.onSurfaceVariant,
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
                             ),
@@ -215,7 +210,7 @@ class DriverRideRequestSheet extends StatelessWidget {
                                 ? request.pickupAddress
                                 : 'Pickup location',
                             style: const TextStyle(
-                              color: Colors.white,
+                              color: RideShareColors.primaryContainer,
                               fontWeight: FontWeight.w600,
                               fontSize: 15,
                             ),
@@ -223,10 +218,10 @@ class DriverRideRequestSheet extends StatelessWidget {
                           if (request.dropoffAddress.isNotEmpty &&
                               request.dropoffAddress != 'Destination') ...[
                             const SizedBox(height: 10),
-                            Text(
+                            const Text(
                               'Drop-off',
                               style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.55),
+                                color: RideShareColors.onSurfaceVariant,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -234,8 +229,8 @@ class DriverRideRequestSheet extends StatelessWidget {
                             const SizedBox(height: 2),
                             Text(
                               request.dropoffAddress,
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.9),
+                              style: const TextStyle(
+                                color: RideShareColors.titleText,
                                 fontWeight: FontWeight.w500,
                                 fontSize: 14,
                               ),
@@ -258,7 +253,9 @@ class DriverRideRequestSheet extends StatelessWidget {
                       foregroundColor: Colors.white,
                       disabledBackgroundColor:
                           RideShareColors.primary.withValues(alpha: 0.5),
-                      elevation: 0,
+                      elevation: 4,
+                      shadowColor:
+                          RideShareColors.primary.withValues(alpha: 0.35),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
@@ -282,7 +279,7 @@ class DriverRideRequestSheet extends StatelessWidget {
                           ),
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 TextButton(
                   onPressed: busy ? null : onDecline,
                   child: declining
@@ -291,13 +288,13 @@ class DriverRideRequestSheet extends StatelessWidget {
                           height: 18,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white54,
+                            color: RideShareColors.onSurfaceVariant,
                           ),
                         )
-                      : Text(
+                      : const Text(
                           'Decline',
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.65),
+                            color: RideShareColors.onSurfaceVariant,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -320,10 +317,10 @@ class DriverRideRequestSheet extends StatelessWidget {
       children: [
         Text(
           label.toUpperCase(),
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.5),
+          style: const TextStyle(
+            color: RideShareColors.onSurfaceVariant,
             fontSize: 10,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w600,
             letterSpacing: 0.6,
           ),
         ),
@@ -332,7 +329,7 @@ class DriverRideRequestSheet extends StatelessWidget {
             Text(
               value ?? '—',
               style: const TextStyle(
-                color: Colors.white,
+                color: RideShareColors.primaryContainer,
                 fontWeight: FontWeight.w800,
                 fontSize: 15,
               ),
@@ -341,10 +338,13 @@ class DriverRideRequestSheet extends StatelessWidget {
         const SizedBox(height: 2),
         Text(
           sub,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.5),
+          style: const TextStyle(
+            color: RideShareColors.onSurfaceVariant,
             fontSize: 11,
           ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
         ),
       ],
     );

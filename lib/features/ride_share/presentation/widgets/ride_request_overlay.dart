@@ -27,6 +27,8 @@ class RideRequestOverlay extends ConsumerStatefulWidget {
 class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
   DriverRideRequest? _activeRequest;
   final Set<String> _shownRequestIds = <String>{};
+  /// Declined locally/server-side — suppress re-showing until request expires.
+  final Set<String> _declinedRequestIds = <String>{};
 
   @override
   void initState() {
@@ -64,6 +66,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
           next.whenData((request) {
             if (!mounted) return;
             final requestId = request.rideId.toString();
+            if (_declinedRequestIds.contains(requestId)) return;
             if (!_shownRequestIds.contains(requestId)) {
               _shownRequestIds.add(requestId);
               unawaited(_handleNewWebSocketRequest(request));
@@ -97,14 +100,18 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
                 .toSet();
             _shownRequestIds.removeWhere(
               (id) =>
-                  id != _activeRequest?.id && !activePendingIds.contains(id),
+                  id != _activeRequest?.id &&
+                  !_declinedRequestIds.contains(id) &&
+                  !activePendingIds.contains(id),
             );
+            _declinedRequestIds.removeWhere((id) => !activePendingIds.contains(id));
             for (final ride in combined.rides) {
               final status = ride.status.toLowerCase();
               if (status != 'pending' && status != 'requested') {
                 _forgetShownRequest(ride.id);
                 continue;
               }
+              if (_declinedRequestIds.contains(ride.id)) continue;
               if (!_shownRequestIds.contains(ride.id)) {
                 _shownRequestIds.add(ride.id);
                 if (mounted) _showNotification(ride);
@@ -131,6 +138,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
                 final request = _activeRequest;
                 if (mounted) setState(() => _activeRequest = null);
                 if (request != null) {
+                  _declinedRequestIds.add(request.id);
                   _forgetShownRequest(request.id);
                   unawaited(_declineRequestQuietly(request.id));
                 }
@@ -353,6 +361,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
                 }
               },
               onRejected: () {
+                _declinedRequestIds.add(request.id);
                 _forgetShownRequest(request.id);
               },
             ),

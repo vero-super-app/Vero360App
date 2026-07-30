@@ -607,15 +607,15 @@ class RideHistoryEarningsHero extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            RideShareColors.primaryContainer,
-            RideShareColors.primaryContainer.withValues(alpha: 0.88),
-            const Color(0xFF0E1A33),
+            RideShareColors.primary,
+            RideShareColors.primaryDeep,
+            RideShareColors.primaryDark,
           ],
         ),
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: RideShareColors.primaryContainer.withValues(alpha: 0.35),
+            color: RideShareColors.primary.withValues(alpha: 0.35),
             blurRadius: 24,
             offset: const Offset(0, 10),
           ),

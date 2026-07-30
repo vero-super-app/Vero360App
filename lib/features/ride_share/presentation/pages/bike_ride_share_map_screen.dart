@@ -451,14 +451,14 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
         children: [
           CircleAvatar(
             radius: 22,
-            backgroundColor: Colors.blue.withValues(alpha: 0.12),
+            backgroundColor: const Color(0xFFFF8A00).withValues(alpha: 0.12),
             backgroundImage: profilePictureUrl.isNotEmpty
                 ? NetworkImage(profilePictureUrl)
                 : null,
             child: profilePictureUrl.isEmpty
                 ? const Icon(
                     Icons.person_rounded,
-                    color: Colors.blue,
+                    color: Color(0xFFFF8A00),
                     size: 24,
                   )
                 : null,
@@ -467,12 +467,12 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: Colors.blue.withValues(alpha: 0.12),
+              color: const Color(0xFFFF8A00).withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(8),
             ),
             child: const Icon(
               Icons.my_location_rounded,
-              color: Colors.blue,
+              color: Color(0xFFFF8A00),
               size: 20,
             ),
           ),

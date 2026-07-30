@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 abstract final class RideShareColors {
   static const primary = Color(0xFFFF8A00);
   static const primaryDeep = Color(0xFFD94F00);
+  /// Darker orange for gradients / solid brand fills (replaces former navy).
+  static const primaryDark = Color(0xFF9A3A00);
   /// Alias for orange accent used as secondary-container in light in-ride UIs.
   static const secondaryContainer = primary;
   static const onSecondaryContainer = Color(0xFF612D00);
@@ -19,7 +21,8 @@ abstract final class RideShareColors {
   static const surfaceContainerLow = Color(0xFFF6F3F2);
   static const surfaceContainerHigh = Color(0xFFEAE7E7);
   static const onSurfaceVariant = Color(0xFF43474E);
-  static const primaryContainer = Color(0xFF16284C);
+  /// Brand fill / icon container — orange (was navy blue).
+  static const primaryContainer = primaryDeep;
   static const primarySoft = Color(0xFFFFE8CC);
 }
 

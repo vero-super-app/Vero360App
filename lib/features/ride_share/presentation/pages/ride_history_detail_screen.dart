@@ -77,19 +77,19 @@ class RideHistoryDetailScreen extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
+                      gradient: const LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                         colors: [
-                          RideShareColors.primaryContainer,
-                          RideShareColors.primaryContainer
-                              .withValues(alpha: 0.9),
+                          RideShareColors.primary,
+                          RideShareColors.primaryDeep,
+                          RideShareColors.primaryDark,
                         ],
                       ),
                       borderRadius: BorderRadius.circular(22),
                       boxShadow: [
                         BoxShadow(
-                          color: RideShareColors.primaryContainer
+                          color: RideShareColors.primary
                               .withValues(alpha: 0.28),
                           blurRadius: 20,
                           offset: const Offset(0, 8),

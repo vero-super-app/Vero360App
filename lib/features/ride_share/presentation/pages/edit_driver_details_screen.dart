@@ -18,7 +18,6 @@ class EditDriverDetailsScreen extends ConsumerStatefulWidget {
 class _EditDriverDetailsScreenState
     extends ConsumerState<EditDriverDetailsScreen> {
   static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandNavy = Color(0xFF16284C);
 
   final _formKey = GlobalKey<FormState>();
   final _driverService = DriverService();
@@ -177,7 +176,7 @@ class _EditDriverDetailsScreenState
                             : 'Select date',
                         style: TextStyle(
                           color: _licenseExpiry != null
-                              ? _brandNavy
+                              ? _brandOrange
                               : Colors.grey.shade600,
                         ),
                       ),
@@ -259,7 +258,7 @@ class _EditDriverDetailsScreenState
         style: const TextStyle(
           fontWeight: FontWeight.w800,
           fontSize: 15,
-          color: _brandNavy,
+          color: _brandOrange,
         ),
       ),
     );

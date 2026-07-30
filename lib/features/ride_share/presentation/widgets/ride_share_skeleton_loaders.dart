@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
 /// VeroRide skeleton palette — warm neutrals that pair with brand orange.
 class RideShareSkeleton {
@@ -174,7 +175,7 @@ class _DriverEarningsCardSkeleton extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF16284C),
+        color: RideShareColors.primaryDeep,
         borderRadius: BorderRadius.circular(16),
       ),
       child: const Column(

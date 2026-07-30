@@ -7,6 +7,7 @@ import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class VehicleTypeOption {
@@ -159,7 +160,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       name: 'Standard',
       description: 'Comfortable & reliable',
       icon: Icons.directions_car,
-      color: const Color(0xFF3B82F6),
+      color: const Color(0xFFFF8A00),
       estimatedPrice: 'Calculating...',
       subtext: 'Standard car',
       capacity: 4,
@@ -169,7 +170,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       name: 'Executive',
       description: 'Premium experience',
       icon: Icons.directions_car_filled,
-      color: const Color(0xFFFF8A00),
+      color: const Color(0xFFD94F00),
       estimatedPrice: 'Calculating...',
       subtext: 'Premium car',
       capacity: 5,
@@ -488,7 +489,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     }
 
     return SizedBox(
-      height: 132,
+      height: 164,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: vehicles.length,
@@ -502,7 +503,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     final isSelected = _selectedVehicleClass == vehicleType.class_;
     final fareData = _estimatedFares[vehicleType.class_];
 
-    String displayPrice = '...';
+    String displayPrice = '…';
     if (fareData != null) {
       final fareValue = fareData['estimatedFare'];
       double? estimatedFare;
@@ -514,7 +515,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       }
 
       if (estimatedFare != null) {
-        displayPrice = 'MK ${estimatedFare.toStringAsFixed(0)}';
+        displayPrice = _formatMkFare(estimatedFare);
       }
     }
 
@@ -524,8 +525,8 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       onTap: () => _handleVehicleSelected(vehicleType.class_),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        width: 140,
-        padding: const EdgeInsets.all(16),
+        width: 156,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
@@ -560,16 +561,16 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                 size: 22,
                 color: isSelected
                     ? const Color(0xFFD94F00)
-                    : const Color(0xFF16284C),
+                    : RideShareColors.titleText,
               ),
             ),
             const SizedBox(height: 8),
             Text(
               vehicleType.name,
               style: const TextStyle(
-                fontSize: 14,
+                fontSize: 15,
                 fontWeight: FontWeight.w700,
-                color: Color(0xFF16284C),
+                color: RideShareColors.titleText,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -577,19 +578,49 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
             ),
             const SizedBox(height: 2),
             Text(
-              '$eta • $displayPrice',
+              eta,
               style: const TextStyle(
-                fontSize: 10,
-                color: Color(0xFF43474E),
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: RideShareColors.onSurfaceVariant,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
             ),
+            const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                displayPrice,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.2,
+                  height: 1.1,
+                  color: isSelected
+                      ? RideShareColors.primaryDeep
+                      : RideShareColors.titleText,
+                ),
+                maxLines: 1,
+                textAlign: TextAlign.center,
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  String _formatMkFare(double fare) {
+    final digits = fare.round().toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      final fromEnd = digits.length - i;
+      if (i > 0 && fromEnd % 3 == 0) buffer.write(',');
+      buffer.write(digits[i]);
+    }
+    return 'MK $buffer';
   }
 
   Widget _buildSearchingState() {

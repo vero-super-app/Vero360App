@@ -21,7 +21,6 @@ class DriverProfileHubScreen extends ConsumerStatefulWidget {
 class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     with SingleTickerProviderStateMixin {
   static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandNavy = Color(0xFF16284C);
   static const Color _chipGrey = Color(0xFFF4F5F7);
 
   final _driverService = DriverService();
@@ -232,7 +231,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
             style: TextStyle(
               fontWeight: FontWeight.w800,
               fontSize: 16,
-              color: _brandNavy,
+              color: _brandOrange,
             ),
           ),
           const SizedBox(height: 4),
@@ -271,22 +270,22 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFE8F4FD),
+        color: const Color(0xFFFFE8CC),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF90CAF9)),
+        border: Border.all(color: const Color(0xFFFF8A00).withValues(alpha: 0.45)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
-              Icon(Icons.info_outline, color: Colors.blue.shade800, size: 20),
-              const SizedBox(width: 8),
+              Icon(Icons.info_outline, color: Color(0xFFD94F00), size: 20),
+              SizedBox(width: 8),
               Text(
                 'Complete your setup',
                 style: TextStyle(
                   fontWeight: FontWeight.w800,
-                  color: Colors.blue.shade900,
+                  color: Color(0xFFD94F00),
                 ),
               ),
             ],
@@ -297,14 +296,14 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
               padding: const EdgeInsets.only(bottom: 4),
               child: Row(
                 children: [
-                  Icon(Icons.radio_button_unchecked,
-                      size: 14, color: Colors.blue.shade700),
+                  const Icon(Icons.radio_button_unchecked,
+                      size: 14, color: Color(0xFFD94F00)),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       s,
-                      style: TextStyle(
-                        color: Colors.blue.shade900,
+                      style: const TextStyle(
+                        color: Color(0xFF9A3A00),
                         fontSize: 13,
                       ),
                     ),
@@ -359,7 +358,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                   style: const TextStyle(
                     fontWeight: FontWeight.w800,
                     fontSize: 17,
-                    color: _brandNavy,
+                    color: _brandOrange,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -451,7 +450,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                 title,
                 style: const TextStyle(
                   fontWeight: FontWeight.w800,
-                  color: _brandNavy,
+                  color: _brandOrange,
                 ),
               ),
             ],
@@ -486,7 +485,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                             r.value,
                             style: const TextStyle(
                               fontWeight: FontWeight.w600,
-                              color: _brandNavy,
+                              color: _brandOrange,
                             ),
                           ),
                         ),
@@ -543,7 +542,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                             : '$make $model',
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
-                          color: _brandNavy,
+                          color: _brandOrange,
                           fontSize: 15,
                         ),
                       ),
@@ -686,7 +685,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
             style: TextStyle(
               fontWeight: FontWeight.w900,
               fontSize: 17,
-              color: _brandNavy,
+              color: _brandOrange,
             ),
           ),
           const SizedBox(height: 6),
@@ -725,7 +724,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
               style: TextStyle(
                 fontWeight: FontWeight.w900,
                 fontSize: 18,
-                color: _brandNavy,
+                color: _brandOrange,
               ),
             ),
             const SizedBox(height: 8),
@@ -751,7 +750,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
             const SizedBox(height: 12),
             const Text(
               'Could not load driver profile',
-              style: TextStyle(fontWeight: FontWeight.w800, color: _brandNavy),
+              style: TextStyle(fontWeight: FontWeight.w800, color: _brandOrange),
             ),
             const SizedBox(height: 8),
             Text(

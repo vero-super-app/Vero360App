@@ -164,7 +164,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         markerId: const MarkerId('user_location'),
         position: LatLng(position.latitude, position.longitude),
         infoWindow: const InfoWindow(title: 'Your Location'),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
       ),
     );
     if (mounted) setState(() {});
@@ -218,7 +218,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
             title: 'Your Location',
           ),
           icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueBlue,
+            BitmapDescriptor.hueOrange,
           ),
         ),
       );

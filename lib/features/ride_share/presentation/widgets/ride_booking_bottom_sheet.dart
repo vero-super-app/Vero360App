@@ -54,12 +54,6 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
       icon: Icons.directions_car,
     ),
     _VehicleOption(
-      class_: VehicleClass.bike,
-      name: 'Bike',
-      description: 'Fast & economical',
-      icon: Icons.two_wheeler,
-    ),
-    _VehicleOption(
       class_: VehicleClass.executive,
       name: 'Premium',
       description: 'Luxury experience',

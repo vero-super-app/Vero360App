@@ -109,9 +109,9 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         _duration = routeInfo.durationMinutes;
       });
 
-      // Fetch all fares in parallel for better performance
+      // Fetch fares only for vehicles shown in choose-ride
       final rideShareService = ref.read(rideShareServiceProvider);
-      final fareRequests = _baseVehicleTypes.map(
+      final fareRequests = _filteredVehicles.map(
         (vehicleType) => rideShareService
             .estimateFare(
               pickupLatitude: widget.userLat,
@@ -179,7 +179,10 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
   List<VehicleTypeOption> get _filteredVehicles {
     final allowed = widget.allowedVehicleClasses;
     if (allowed == null || allowed.isEmpty) {
-      return _baseVehicleTypes;
+      // Default choose-ride: Standard + Executive only (no Bike).
+      return _baseVehicleTypes
+          .where((v) => v.class_ != VehicleClass.bike)
+          .toList();
     }
 
     final allowedSet = allowed.toSet();

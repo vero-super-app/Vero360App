@@ -567,6 +567,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                   mapController = controller;
                 },
                 initialPosition: _lastPosition,
+                // Nearby taxis are a passenger-facing feature.
+                showNearbyVehicles: false,
               ),
               Positioned(
                 top: 14,

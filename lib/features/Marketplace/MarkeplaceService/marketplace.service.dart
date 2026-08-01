@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'dart:io' show File;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:http/http.dart' as http;
@@ -14,6 +15,7 @@ import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/config/api_config.dart';
@@ -21,12 +23,14 @@ import 'package:vero360_app/config/api_config.dart';
 class MarketplaceService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
+  final FirebaseFunctions _functions = FirebaseFunctions.instance;
   static const int _noVisualDistance = 999;
-  static const int _strongVisualThreshold = 18; // very close visual match
-  static const int _softVisualThreshold = 24; // still similar
-  static const int _maxPhotoResults = 60; // keep UI focused/fast
-  static const int _deriveLimitPerSearch = 10; // cap expensive hash derivations
-  static const Duration _deriveTimeout = Duration(milliseconds: 3500);
+  static const int _strongVisualThreshold = 18; // near-duplicate product photo
+  static const int _softVisualThreshold = 22; // secondary boost only
+  static const int _maxPhotoResults = 20;
+  static const int _minVisionMatchScore = 6;
+  static const int _deriveLimitPerSearch = 8;
+  static const Duration _deriveTimeout = Duration(milliseconds: 3000);
   final Map<String, String> _derivedHashMemo = <String, String>{};
 
   // ---------- auth helpers ----------
@@ -417,15 +421,7 @@ class MarketplaceService {
         parseInt(data['sqlItemId'] ?? data['backendId'] ?? data['itemId'] ?? data['id']);
     final id = sqlId ?? _stablePositiveIdFromString(doc.id);
 
-    DateTime? createdAt;
-    final createdRaw = data['createdAt'];
-    if (createdRaw is Timestamp) {
-      createdAt = createdRaw.toDate();
-    } else if (createdRaw is DateTime) {
-      createdAt = createdRaw;
-    } else if (createdRaw != null) {
-      createdAt = DateTime.tryParse(createdRaw.toString());
-    }
+    final createdAt = MarketplaceTime.parseCreatedAt(data['createdAt']);
 
     return MarketplaceDetailModel(
       id: id,
@@ -462,12 +458,11 @@ class MarketplaceService {
   ///
   /// Marketplace content now lives in Firestore, so this method no longer calls
   /// `/marketplace/search/photo/url`.
-  ///
-  /// Current behavior:
-  /// - load active items from `marketplace_items` (cache first, then server)
-  /// - compute a visual hash from query image bytes
-  /// - compare against stored (or lazily derived) item image hashes
-  /// - rank by visual similarity first, then keyword overlap/newness
+  /// Photo search (Taobao / Idle Fish style):
+  /// 1) Cloud Vision fully scans the photo → product keywords
+  /// 2) Rank marketplace listings by name/description/category match
+  /// 3) Near-duplicate image hash is a secondary boost only
+  /// 4) Empty list when nothing meaningful matches (no catalog dump)
   Future<List<MarketplaceDetailModel>> searchByPhotoBytes(
     Uint8List bytes, {
     String filename = 'photo.jpg',
@@ -475,11 +470,18 @@ class MarketplaceService {
     try {
       if (bytes.isEmpty) return [];
       if (filename.trim().isEmpty) filename = 'photo.jpg';
+
+      final visionTerms = await _scanPhotoWithVision(bytes);
+      if (visionTerms.isEmpty) {
+        if (kDebugMode) {
+          debugPrint('searchByPhoto: Vision returned no useful terms');
+        }
+        return const <MarketplaceDetailModel>[];
+      }
+
       final queryHash = await computeVisualHash(bytes);
 
       QuerySnapshot? snapshot;
-
-      // cache first for instant UX/offline support
       try {
         snapshot = await _firestore
             .collection('marketplace_items')
@@ -487,22 +489,15 @@ class MarketplaceService {
             .get(const GetOptions(source: Source.cache));
       } catch (_) {}
 
-      // server fallback
       snapshot ??= await _firestore
           .collection('marketplace_items')
           .orderBy('createdAt', descending: true)
           .get(const GetOptions(source: Source.server));
 
-      final nameTokens = _tokenize(filename);
-      final keywordTokens = <String>{
-        ...nameTokens,
-        ..._categoryHintsFromTokens(nameTokens),
-      };
-
       final scored = <({
         MarketplaceDetailModel item,
+        int visionScore,
         int visualDistance,
-        int keywordScore,
         int ts,
         String docId,
         Set<String> hashes,
@@ -514,26 +509,14 @@ class MarketplaceService {
         final hasImage = item.image.trim().isNotEmpty || item.gallery.isNotEmpty;
         if (!hasImage) continue;
 
-        final data = (doc.data() as Map<String, dynamic>?) ?? const <String, dynamic>{};
+        final data =
+            (doc.data() as Map<String, dynamic>?) ?? const <String, dynamic>{};
         final hashes = _extractVisualHashes(data);
         if (hashes.isEmpty) {
           missingHash.add((docId: doc.id, item: item));
         }
 
-        final searchable = [
-          item.name,
-          item.category,
-          item.description,
-          item.location,
-          item.image,
-          ...item.gallery,
-        ].join(' ').toLowerCase();
-
-        int score = 0;
-        for (final t in keywordTokens) {
-          if (t.isEmpty) continue;
-          if (searchable.contains(t)) score += 3;
-        }
+        final visionScore = _scoreListingAgainstVision(item, visionTerms);
 
         int visualDistance = _noVisualDistance;
         if (queryHash != null && hashes.isNotEmpty) {
@@ -546,20 +529,27 @@ class MarketplaceService {
         final ts = item.createdAt?.millisecondsSinceEpoch ?? 0;
         scored.add((
           item: item,
+          visionScore: visionScore,
           visualDistance: visualDistance,
-          keywordScore: score,
           ts: ts,
           docId: doc.id,
           hashes: hashes,
         ));
       }
 
-      // Fast path first: return using existing stored hashes (no network image fetches).
-      // If no useful visual matches, derive only a small capped subset.
-      final hasVisualFromStored =
-          scored.any((e) => e.visualDistance != _noVisualDistance);
-      if (!hasVisualFromStored && queryHash != null && missingHash.isNotEmpty) {
-        final toDerive = missingHash.take(_deriveLimitPerSearch).toList();
+      // Derive a few missing hashes only to boost near-duplicates of Vision hits.
+      final visionCandidates = scored
+          .where((e) => e.visionScore >= _minVisionMatchScore)
+          .toList()
+        ..sort((a, b) => b.visionScore.compareTo(a.visionScore));
+
+      if (queryHash != null && missingHash.isNotEmpty) {
+        final preferIds = visionCandidates.map((e) => e.docId).toSet();
+        final toDerive = [
+          ...missingHash.where((e) => preferIds.contains(e.docId)),
+          ...missingHash.where((e) => !preferIds.contains(e.docId)),
+        ].take(_deriveLimitPerSearch).toList();
+
         for (final entry in toDerive) {
           final derived = await _deriveVisualHashFromItem(entry.item)
               .timeout(_deriveTimeout, onTimeout: () => null);
@@ -576,15 +566,14 @@ class MarketplaceService {
             }
             scored[idx] = (
               item: current.item,
+              visionScore: current.visionScore,
               visualDistance: best,
-              keywordScore: current.keywordScore,
               ts: current.ts,
               docId: current.docId,
               hashes: newHashes,
             );
           }
 
-          // Best-effort: backfill for future fast/accurate matches.
           unawaited(_firestore.collection('marketplace_items').doc(entry.docId).set({
             'imageHash': derived,
             'imageHashes': FieldValue.arrayUnion([derived]),
@@ -592,37 +581,53 @@ class MarketplaceService {
         }
       }
 
-      scored.sort((a, b) {
-        final aHasVisual = a.visualDistance != _noVisualDistance;
-        final bHasVisual = b.visualDistance != _noVisualDistance;
-        if (aHasVisual != bHasVisual) return aHasVisual ? -1 : 1;
-        if (aHasVisual && bHasVisual) {
-          final byVisual = a.visualDistance.compareTo(b.visualDistance);
-          if (byVisual != 0) return byVisual;
-        }
-        final byKeyword = b.keywordScore.compareTo(a.keywordScore);
-        if (byKeyword != 0) return byKeyword;
-        return b.ts.compareTo(a.ts);
-      });
-      if (queryHash != null) {
-        // Prefer confident visual matches first.
-        final strong = scored
-            .where((e) => e.visualDistance <= _strongVisualThreshold)
-            .map((e) => e.item)
-            .take(_maxPhotoResults)
-            .toList();
-        if (strong.isNotEmpty) return strong;
+      // Keep listings that Vision matched, or near-identical product photos.
+      final matches = scored.where((e) {
+        if (e.visionScore >= _minVisionMatchScore) return true;
+        if (e.visualDistance <= _strongVisualThreshold) return true;
+        return false;
+      }).toList();
 
-        // Then allow slightly looser visual matches before falling back.
-        final soft = scored
-            .where((e) => e.visualDistance <= _softVisualThreshold)
-            .map((e) => e.item)
-            .toList();
-        if (soft.isNotEmpty) return soft.take(_maxPhotoResults).toList();
+      if (matches.isEmpty) {
+        return const <MarketplaceDetailModel>[];
       }
 
-      final fallback = scored.map((e) => e.item).take(_maxPhotoResults).toList();
-      return fallback;
+      matches.sort((a, b) {
+        final byVision = b.visionScore.compareTo(a.visionScore);
+        if (byVision != 0) return byVision;
+        final aVis = a.visualDistance != _noVisualDistance;
+        final bVis = b.visualDistance != _noVisualDistance;
+        if (aVis && bVis) {
+          final byHash = a.visualDistance.compareTo(b.visualDistance);
+          if (byHash != 0) return byHash;
+        } else if (aVis != bVis) {
+          return aVis ? -1 : 1;
+        }
+        return b.ts.compareTo(a.ts);
+      });
+
+      // If we have solid Vision hits, drop weak tail far below the best score.
+      final bestVision = matches.first.visionScore;
+      final filtered = matches.where((e) {
+        if (e.visualDistance <= _strongVisualThreshold) return true;
+        if (bestVision >= _minVisionMatchScore) {
+          return e.visionScore >= (bestVision * 0.45).round() &&
+              e.visionScore >= _minVisionMatchScore;
+        }
+        return e.visualDistance <= _softVisualThreshold;
+      }).toList();
+
+      if (kDebugMode) {
+        debugPrint(
+          'searchByPhoto: visionTerms=${visionTerms.length} '
+          'matches=${filtered.length} topScore=$bestVision',
+        );
+      }
+
+      return filtered
+          .map((e) => e.item)
+          .take(_maxPhotoResults)
+          .toList();
     } on ApiException catch (e) {
       if (kDebugMode) debugPrint('searchByPhoto ApiException: ${e.message}');
       rethrow;
@@ -632,6 +637,102 @@ class MarketplaceService {
     }
   }
 
+  /// Calls Cloud Function that fully scans the photo with Google Vision.
+  Future<List<({String term, int weight})>> _scanPhotoWithVision(
+    Uint8List bytes,
+  ) async {
+    try {
+      if (bytes.length > 4 * 1024 * 1024) {
+        throw const ApiException(
+          message: 'Photo is too large. Try a clearer, smaller photo.',
+          statusCode: 400,
+        );
+      }
+
+      final result = await _functions
+          .httpsCallable(
+            'scanMarketplacePhoto',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 55)),
+          )
+          .call(<String, dynamic>{
+            'imageBase64': base64Encode(bytes),
+          });
+
+      final data = result.data;
+      if (data is! Map) return const [];
+
+      final out = <({String term, int weight})>[];
+      final terms = data['terms'];
+      if (terms is List) {
+        for (final t in terms) {
+          if (t is! Map) continue;
+          final term = (t['term'] ?? '').toString().trim().toLowerCase();
+          final weight = (t['weight'] is num)
+              ? (t['weight'] as num).round()
+              : int.tryParse('${t['weight']}') ?? 0;
+          if (term.length < 3 || weight <= 0) continue;
+          out.add((term: term, weight: weight));
+        }
+      }
+
+      if (out.isEmpty) {
+        final queries = data['queries'];
+        if (queries is List) {
+          for (final q in queries) {
+            final term = q.toString().trim().toLowerCase();
+            if (term.length < 3) continue;
+            out.add((term: term, weight: 3));
+          }
+        }
+      }
+
+      return out;
+    } on FirebaseFunctionsException catch (e) {
+      if (kDebugMode) {
+        debugPrint(
+          'scanMarketplacePhoto FunctionsException: ${e.code} ${e.message}',
+        );
+      }
+      throw ApiException(
+        message: e.message?.trim().isNotEmpty == true
+            ? e.message!
+            : 'Photo scan failed. Please try again.',
+        statusCode: 500,
+      );
+    }
+  }
+
+  int _scoreListingAgainstVision(
+    MarketplaceDetailModel item,
+    List<({String term, int weight})> visionTerms,
+  ) {
+    final name = item.name.toLowerCase();
+    final category = (item.category ?? '').toLowerCase();
+    final description = item.description.toLowerCase();
+    final blob = '$name $category $description';
+
+    int score = 0;
+    for (final t in visionTerms) {
+      final term = t.term;
+      if (term.isEmpty) continue;
+      if (name.contains(term)) {
+        score += t.weight * 3;
+      } else if (category.contains(term)) {
+        score += t.weight * 2;
+      } else if (description.contains(term) || blob.contains(term)) {
+        score += t.weight;
+      }
+    }
+
+    // Soft category hints from vision tokens (phones, shoes, etc.).
+    final tokenSet = visionTerms.map((e) => e.term).toSet();
+    for (final hint in _categoryHintsFromTokens(tokenSet)) {
+      if (category.contains(hint) || name.contains(hint)) {
+        score += 2;
+      }
+    }
+    return score;
+  }
 
   /// Public so create/update flows can persist robust visual hashes on write.
   Future<String?> computeVisualHash(Uint8List bytes) async {

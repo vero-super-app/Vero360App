@@ -15,6 +15,7 @@ import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 
 import 'package:vero360_app/features/Marketplace/presentation/pages/myshop.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
@@ -965,21 +966,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   // ---------------- time ago ----------------
   String _timeAgo(DateTime? date) {
     if (date == null) return 'Unknown';
-    final now = DateTime.now();
-    final diff = now.difference(date);
-    if (diff.inDays > 365) {
-      return '${(diff.inDays / 365).floor()}y ago';
-    } else if (diff.inDays > 30) {
-      return '${(diff.inDays / 30).floor()}m ago';
-    } else if (diff.inDays > 0) {
-      return '${diff.inDays}d ago';
-    } else if (diff.inHours > 0) {
-      return '${diff.inHours}h ago';
-    } else if (diff.inMinutes > 0) {
-      return '${diff.inMinutes}min ago';
-    } else {
-      return '${diff.inSeconds}s ago';
-    }
+    return MarketplaceTime.formatTimeAgo(date);
   }
 
   // ---------------- UI helpers (brand look) ----------------
@@ -2207,20 +2194,6 @@ class _ManageCard extends StatelessWidget {
 
   String _timeAgo(DateTime? date) {
     if (date == null) return 'Unknown';
-    final now = DateTime.now();
-    final diff = now.difference(date);
-    if (diff.inDays > 365) {
-      return '${(diff.inDays / 365).floor()}y ago';
-    } else if (diff.inDays > 30) {
-      return '${(diff.inDays / 30).floor()}m ago';
-    } else if (diff.inDays > 0) {
-      return '${diff.inDays}d ago';
-    } else if (diff.inHours > 0) {
-      return '${diff.inHours}h ago';
-    } else if (diff.inMinutes > 0) {
-      return '${diff.inMinutes}min ago';
-    } else {
-      return '${diff.inSeconds}s ago';
-    }
+    return MarketplaceTime.formatTimeAgo(date);
   }
 }

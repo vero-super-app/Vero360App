@@ -784,3 +784,243 @@ exports.onEngagementBroadcast = onDocumentCreated(
     console.log(`Engagement broadcast sent: ${title}`);
   },
 );
+
+/**
+ * Taobao / Idle Fish style photo scan for marketplace search.
+ * Runs Google Cloud Vision (labels, objects, logos, OCR, web entities)
+ * and returns ranked search terms the app uses to match listings.
+ *
+ * Deploy: firebase deploy --only functions:scanMarketplacePhoto
+ */
+const PHOTO_SCAN_STOP = new Set([
+  'product',
+  'products',
+  'goods',
+  'item',
+  'items',
+  'merchandise',
+  'object',
+  'objects',
+  'thing',
+  'device',
+  'gadget',
+  'technology',
+  'electronic device',
+  'electronics',
+  'clothing',
+  'fashion',
+  'apparel',
+  'textile',
+  'fabric',
+  'material',
+  'pattern',
+  'design',
+  'art',
+  'photography',
+  'photo',
+  'image',
+  'picture',
+  'screenshot',
+  'font',
+  'text',
+  'line',
+  'symbol',
+  'logo',
+  'brand',
+  'company',
+  'person',
+  'people',
+  'human',
+  'hand',
+  'finger',
+  'skin',
+  'outdoor',
+  'indoor',
+  'room',
+  'floor',
+  'wall',
+  'ceiling',
+  'furniture',
+  'tableware',
+  'food',
+  'drink',
+  'beverage',
+]);
+
+function normalizeVisionPhrase(raw) {
+  return String(raw || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s+\-&.]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isUsefulVisionPhrase(phrase) {
+  if (!phrase || phrase.length < 3) return false;
+  if (PHOTO_SCAN_STOP.has(phrase)) return false;
+  // Drop ultra-generic single words that rarely help shopping search.
+  if (
+    phrase.split(' ').length === 1 &&
+    ['white', 'black', 'red', 'blue', 'green', 'yellow', 'brown', 'grey', 'gray'].includes(
+      phrase,
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function pushWeightedTerm(map, phrase, weight) {
+  const p = normalizeVisionPhrase(phrase);
+  if (!isUsefulVisionPhrase(p)) return;
+  const prev = map.get(p) || 0;
+  if (weight > prev) map.set(p, weight);
+  // Also index meaningful tokens from multi-word phrases.
+  for (const part of p.split(' ')) {
+    if (part.length < 4 || PHOTO_SCAN_STOP.has(part)) continue;
+    const w = Math.max(1, Math.floor(weight * 0.6));
+    const cur = map.get(part) || 0;
+    if (w > cur) map.set(part, w);
+  }
+}
+
+exports.scanMarketplacePhoto = onCall(
+  {
+    timeoutSeconds: 60,
+    memory: '512MiB',
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async (request) => {
+    const data = request.data || {};
+    let imageBase64 =
+      typeof data.imageBase64 === 'string' ? data.imageBase64.trim() : '';
+    if (!imageBase64) {
+      throw new HttpsError('invalid-argument', 'imageBase64 is required.');
+    }
+    if (imageBase64.includes(',')) {
+      imageBase64 = imageBase64.split(',').pop().trim();
+    }
+
+    let buf;
+    try {
+      buf = Buffer.from(imageBase64, 'base64');
+    } catch (_) {
+      throw new HttpsError('invalid-argument', 'Invalid image data.');
+    }
+    if (!buf || buf.length < 200) {
+      throw new HttpsError('invalid-argument', 'Image too small.');
+    }
+    if (buf.length > 4 * 1024 * 1024) {
+      throw new HttpsError('invalid-argument', 'Image too large (max 4MB).');
+    }
+
+    const client = getVisionClient();
+    let result;
+    try {
+      [result] = await client.annotateImage({
+        image: { content: buf.toString('base64') },
+        features: [
+          { type: 'LABEL_DETECTION', maxResults: 25 },
+          { type: 'OBJECT_LOCALIZATION', maxResults: 15 },
+          { type: 'LOGO_DETECTION', maxResults: 10 },
+          { type: 'TEXT_DETECTION', maxResults: 15 },
+          { type: 'WEB_DETECTION', maxResults: 15 },
+        ],
+      });
+    } catch (err) {
+      console.error('scanMarketplacePhoto Vision failed', err);
+      throw new HttpsError(
+        'internal',
+        'Photo scan failed. Please try again.',
+      );
+    }
+
+    /** @type {Map<string, number>} */
+    const weighted = new Map();
+
+    for (const l of result.labelAnnotations || []) {
+      const score = typeof l.score === 'number' ? l.score : 0;
+      if (score < 0.55) continue;
+      pushWeightedTerm(weighted, l.description, score >= 0.75 ? 4 : 3);
+    }
+
+    for (const o of result.localizedObjectAnnotations || []) {
+      const score = typeof o.score === 'number' ? o.score : 0;
+      if (score < 0.45) continue;
+      pushWeightedTerm(weighted, o.name, 5);
+    }
+
+    for (const logo of result.logoAnnotations || []) {
+      const score = typeof logo.score === 'number' ? logo.score : 0;
+      if (score < 0.4) continue;
+      pushWeightedTerm(weighted, logo.description, 6);
+    }
+
+    const texts = result.textAnnotations || [];
+    if (texts.length) {
+      // First annotation is the full block; following are words/lines.
+      const full = normalizeVisionPhrase(texts[0].description || '');
+      if (full && full.length <= 80) {
+        pushWeightedTerm(weighted, full, 5);
+      }
+      for (let i = 1; i < Math.min(texts.length, 20); i++) {
+        const t = normalizeVisionPhrase(texts[i].description || '');
+        if (t.length >= 3 && t.length <= 32) {
+          pushWeightedTerm(weighted, t, 4);
+        }
+      }
+    }
+
+    const web = result.webDetection || {};
+    for (const g of web.bestGuessLabels || []) {
+      pushWeightedTerm(weighted, g.label, 5);
+    }
+    for (const e of web.webEntities || []) {
+      const score = typeof e.score === 'number' ? e.score : 0;
+      if (score < 0.35) continue;
+      pushWeightedTerm(weighted, e.description, score >= 0.6 ? 4 : 3);
+    }
+
+    const terms = [...weighted.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 30)
+      .map(([term, weight]) => ({ term, weight }));
+
+    const queries = terms
+      .filter((t) => t.weight >= 3)
+      .slice(0, 12)
+      .map((t) => t.term);
+
+    console.log(
+      `scanMarketplacePhoto: ${terms.length} terms, top=${queries.slice(0, 5).join(', ')}`,
+    );
+
+    return {
+      queries,
+      terms,
+      labels: (result.labelAnnotations || [])
+        .slice(0, 12)
+        .map((l) => ({
+          description: String(l.description || ''),
+          score: typeof l.score === 'number' ? Number(l.score.toFixed(3)) : 0,
+        })),
+      objects: (result.localizedObjectAnnotations || [])
+        .slice(0, 10)
+        .map((o) => ({
+          name: String(o.name || ''),
+          score: typeof o.score === 'number' ? Number(o.score.toFixed(3)) : 0,
+        })),
+      logos: (result.logoAnnotations || [])
+        .slice(0, 8)
+        .map((l) => ({
+          description: String(l.description || ''),
+          score: typeof l.score === 'number' ? Number(l.score.toFixed(3)) : 0,
+        })),
+      bestGuess: (web.bestGuessLabels || [])
+        .slice(0, 5)
+        .map((g) => String(g.label || '')),
+    };
+  },
+);
+
+

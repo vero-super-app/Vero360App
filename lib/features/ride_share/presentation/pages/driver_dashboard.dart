@@ -368,6 +368,21 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       ),
       child: Row(
         children: [
+          IconButton(
+            onPressed: () {
+              final nav = Navigator.of(context);
+              if (nav.canPop()) {
+                nav.pop();
+              }
+            },
+            icon: const Icon(Icons.arrow_back),
+            color: RideShareColors.titleText,
+            tooltip: 'Back',
+            style: IconButton.styleFrom(
+              backgroundColor: RideShareColors.surfaceContainerLow,
+              shape: const CircleBorder(),
+            ),
+          ),
           const SizedBox(width: 4),
           const Expanded(
             child: Text(

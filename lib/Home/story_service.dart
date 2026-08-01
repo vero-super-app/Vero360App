@@ -1,0 +1,592 @@
+// Merchant stories — Firestore + Storage (Firebase Spark plan). 24h expiry.
+// When Storage fails (e.g. -13040), falls back to storing image as base64 in Firestore.
+
+import 'dart:convert';
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+
+import 'package:vero360_app/Home/merchant_story_model.dart';
+
+const String _collection = 'merchant_stories';
+const String _storagePathPrefix = 'merchant_stories';
+const String _viewersSubcollection = 'viewers';
+
+/// Max image size for Firestore fallback (doc limit 1MB; base64 ~1.33x).
+const int _maxFallbackImageBytes = 350000;
+
+class StoryService {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;
+
+  static final StreamController<String> _merchantViewRefresh =
+      StreamController<String>.broadcast();
+
+  /// Forces home story row to re-resolve viewed rings without waiting on story docs.
+  static final StreamController<void> _activeStoriesRefresh =
+      StreamController<void>.broadcast();
+
+  /// Last emitted home story groups (with viewed flags). Survives tab switches.
+  static List<MerchantStoryGroup>? lastActiveGroups;
+
+  /// viewerId::merchantId → hasUnviewed
+  static final Map<String, bool> _merchantUnviewedCache = {};
+
+  /// viewerId::storyId → viewed
+  static final Map<String, bool> _storyViewedCache = {};
+
+  static Stream<String> get merchantViewRefreshStream =>
+      _merchantViewRefresh.stream;
+
+  static void _notifyMerchantStoriesViewed(String merchantId) {
+    if (merchantId.isEmpty || _merchantViewRefresh.isClosed) return;
+    _merchantViewRefresh.add(merchantId);
+  }
+
+  static void _notifyActiveStoriesRefresh() {
+    if (!_activeStoriesRefresh.isClosed) {
+      _activeStoriesRefresh.add(null);
+    }
+  }
+
+  static String _merchantCacheKey(String viewerId, String merchantId) =>
+      '$viewerId::$merchantId';
+
+  static String _storyCacheKey(String viewerId, String storyId) =>
+      '$viewerId::$storyId';
+
+  static void cacheMerchantUnviewed(
+    String viewerId,
+    String merchantId,
+    bool hasUnviewed,
+  ) {
+    if (viewerId.isEmpty || merchantId.isEmpty) return;
+    _merchantUnviewedCache[_merchantCacheKey(viewerId, merchantId)] =
+        hasUnviewed;
+  }
+
+  static void cacheStoryViewed(String viewerId, String storyId) {
+    if (viewerId.isEmpty || storyId.isEmpty) return;
+    _storyViewedCache[_storyCacheKey(viewerId, storyId)] = true;
+  }
+
+  static bool? peekMerchantUnviewed(String viewerId, String merchantId) {
+    if (viewerId.isEmpty || merchantId.isEmpty) return null;
+    return _merchantUnviewedCache[_merchantCacheKey(viewerId, merchantId)];
+  }
+
+  static const Duration storyLifetime = Duration(hours: 24);
+
+  /// Stream of active story groups (non-expired), grouped by merchant.
+  /// When [viewerId] is set, each group includes [MerchantStoryGroup.hasUnviewed].
+  /// Uses an in-memory viewed cache on the first emit so rings don't flash
+  /// unviewed (blue/green) → viewed (gray) when returning to Home.
+  Stream<List<MerchantStoryGroup>> getActiveStoriesStream({String? viewerId}) {
+    final controller = StreamController<List<MerchantStoryGroup>>();
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? storySub;
+    StreamSubscription<void>? refreshSub;
+    var emitGen = 0;
+
+    Future<void> emitFromSnap(
+      QuerySnapshot<Map<String, dynamic>> snap,
+    ) async {
+      if (controller.isClosed) return;
+      final myGen = ++emitGen;
+      final groups = _groupByMerchant(snap.docs);
+      final painted = _applyCachedUnviewedFlags(groups, viewerId);
+      lastActiveGroups = painted;
+      if (!controller.isClosed) controller.add(painted);
+      if (viewerId == null || viewerId.isEmpty || groups.isEmpty) return;
+      final resolved = await _attachUnviewedFlags(groups, viewerId);
+      if (myGen != emitGen || controller.isClosed) return;
+      lastActiveGroups = resolved;
+      controller.add(resolved);
+    }
+
+    controller.onListen = () {
+      // Instant paint from last known rings (keeps gray after Marketplace).
+      final cached = lastActiveGroups;
+      if (cached != null && cached.isNotEmpty && !controller.isClosed) {
+        controller.add(cached);
+      }
+
+      final now = Timestamp.now();
+      storySub = _firestore
+          .collection(_collection)
+          .where('expiresAt', isGreaterThan: now)
+          .orderBy('expiresAt', descending: false)
+          .limit(100)
+          .snapshots()
+          .listen(
+            (snap) => emitFromSnap(snap),
+            onError: (e, st) {
+              if (!controller.isClosed) controller.addError(e, st);
+            },
+          );
+
+      refreshSub = _activeStoriesRefresh.stream.listen((_) async {
+        try {
+          final nowTs = Timestamp.now();
+          final snap = await _firestore
+              .collection(_collection)
+              .where('expiresAt', isGreaterThan: nowTs)
+              .orderBy('expiresAt', descending: false)
+              .limit(100)
+              .get();
+          await emitFromSnap(snap);
+        } catch (_) {}
+      });
+    };
+
+    controller.onCancel = () {
+      storySub?.cancel();
+      refreshSub?.cancel();
+    };
+
+    return controller.stream;
+  }
+
+  List<MerchantStoryGroup> _applyCachedUnviewedFlags(
+    List<MerchantStoryGroup> groups,
+    String? viewerId,
+  ) {
+    if (viewerId == null || viewerId.isEmpty) return groups;
+    return [
+      for (final g in groups) g.copyWith(hasUnviewed: _cachedHasUnviewed(viewerId, g)),
+    ];
+  }
+
+  bool _cachedHasUnviewed(String viewerId, MerchantStoryGroup g) {
+    final cached = peekMerchantUnviewed(viewerId, g.merchantId);
+    if (cached != null) return cached;
+    if (g.items.isNotEmpty &&
+        g.items.every((i) =>
+            _storyViewedCache[_storyCacheKey(viewerId, i.storyId)] == true)) {
+      return false;
+    }
+    // Unknown merchants: gray first, then green if truly unviewed (avoids blue flash).
+    return false;
+  }
+
+  /// Watch one merchant's active stories + viewed state for profile rings.
+  Stream<MerchantStoryRingState> watchMerchantStoryRing({
+    required String merchantId,
+    String? viewerId,
+  }) {
+    final controller = StreamController<MerchantStoryRingState>();
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? storySub;
+    StreamSubscription<String>? viewSub;
+
+    Future<void> emit() async {
+      if (controller.isClosed) return;
+      try {
+        final snap = await _firestore
+            .collection(_collection)
+            .where('merchantId', isEqualTo: merchantId)
+            .get();
+        controller.add(await _buildRingStateFromDocs(snap.docs, viewerId));
+      } catch (_) {
+        if (!controller.isClosed) controller.add(MerchantStoryRingState.empty);
+      }
+    }
+
+    controller.onListen = () {
+      storySub = _firestore
+          .collection(_collection)
+          .where('merchantId', isEqualTo: merchantId)
+          .snapshots()
+          .listen((_) => emit(), onError: (_) {});
+      viewSub = _merchantViewRefresh.stream
+          .where((id) => id == merchantId)
+          .listen((_) => emit());
+      emit();
+    };
+    controller.onCancel = () {
+      storySub?.cancel();
+      viewSub?.cancel();
+    };
+    return controller.stream;
+  }
+
+  Future<MerchantStoryRingState> getMerchantStoryRingState({
+    required String merchantId,
+    String? viewerId,
+  }) async {
+    final snap = await _firestore
+        .collection(_collection)
+        .where('merchantId', isEqualTo: merchantId)
+        .get();
+    return _buildRingStateFromDocs(snap.docs, viewerId);
+  }
+
+  Future<MerchantStoryRingState> _buildRingStateFromDocs(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    String? viewerId,
+  ) async {
+    final now = DateTime.now();
+    final items = docs
+        .map(_docToItem)
+        .where((e) => e.expiresAt.isAfter(now))
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    if (items.isEmpty) return MerchantStoryRingState.empty;
+
+    final hasUnviewed = await _groupHasUnviewedForViewer(items, viewerId);
+    final group = MerchantStoryGroup(
+      merchantId: items.first.merchantId,
+      merchantName: items.first.merchantName,
+      merchantImageUrl: items.first.merchantImageUrl,
+      items: items,
+      hasUnviewed: hasUnviewed,
+    );
+
+    return MerchantStoryRingState(
+      items: items,
+      hasStories: true,
+      hasUnviewed: hasUnviewed,
+      group: group,
+    );
+  }
+
+  Future<List<MerchantStoryGroup>> _attachUnviewedFlags(
+    List<MerchantStoryGroup> groups,
+    String viewerId,
+  ) async {
+    final flags = await Future.wait(
+      groups.map((g) => _groupHasUnviewedForViewer(g.items, viewerId)),
+    );
+    final out = <MerchantStoryGroup>[];
+    for (var i = 0; i < groups.length; i++) {
+      cacheMerchantUnviewed(viewerId, groups[i].merchantId, flags[i]);
+      out.add(groups[i].copyWith(hasUnviewed: flags[i]));
+    }
+    return out;
+  }
+
+  Future<bool> _groupHasUnviewedForViewer(
+    List<MerchantStoryItem> items,
+    String? viewerId,
+  ) async {
+    if (items.isEmpty) return false;
+    if (viewerId == null || viewerId.isEmpty) return true;
+
+    final viewedDocs = await Future.wait(
+      items.map((item) async {
+        final key = _storyCacheKey(viewerId, item.storyId);
+        if (_storyViewedCache[key] == true) {
+          return true; // treated as "exists" / viewed
+        }
+        final doc = await _firestore
+            .collection(_collection)
+            .doc(item.storyId)
+            .collection(_viewersSubcollection)
+            .doc(viewerId)
+            .get();
+        if (doc.exists) {
+          _storyViewedCache[key] = true;
+          return true;
+        }
+        return false;
+      }),
+    );
+    // hasUnviewed when any story is not viewed
+    return viewedDocs.any((viewed) => !viewed);
+  }
+
+  List<MerchantStoryGroup> _groupByMerchant(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+    final now = DateTime.now();
+    final items = docs
+        .map((d) => _docToItem(d))
+        .where((e) => e.expiresAt.isAfter(now))
+        .toList();
+    final byMerchant = <String, List<MerchantStoryItem>>{};
+    for (final item in items) {
+      byMerchant.putIfAbsent(item.merchantId, () => []).add(item);
+    }
+    for (final list in byMerchant.values) {
+      list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    }
+    return byMerchant.entries
+        .map((e) => MerchantStoryGroup(
+              merchantId: e.key,
+              merchantName: e.value.first.merchantName,
+              merchantImageUrl: e.value.first.merchantImageUrl,
+              items: e.value,
+            ))
+        .toList()
+      ..sort((a, b) {
+        final aTime = a.items.last.createdAt;
+        final bTime = b.items.last.createdAt;
+        return bTime.compareTo(aTime);
+      });
+  }
+
+  MerchantStoryItem _docToItem(QueryDocumentSnapshot<Map<String, dynamic>> doc, {int viewerCount = 0}) {
+    final d = doc.data();
+    final createdAt = (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final expiresAt = (d['expiresAt'] as Timestamp?)?.toDate() ?? createdAt.add(storyLifetime);
+    return MerchantStoryItem(
+      storyId: doc.id,
+      merchantId: d['merchantId'] as String? ?? '',
+      merchantName: d['merchantName'] as String? ?? 'Merchant',
+      merchantImageUrl: d['merchantImageUrl'] as String?,
+      serviceType: d['serviceType'] as String?,
+      title: d['title'] as String?,
+      description: d['description'] as String?,
+      price: d['price'] is num ? d['price'] as num : num.tryParse('${d['price']}'),
+      mediaUrl: d['mediaUrl'] as String? ?? '',
+      imageBase64: d['imageBase64'] as String?,
+      mediaType: d['mediaType'] as String? ?? 'image',
+      caption: d['caption'] as String?,
+      musicTrackId: d['musicTrackId'] as String?,
+      musicTrackName: d['musicTrackName'] as String?,
+      createdAt: createdAt,
+      expiresAt: expiresAt,
+      viewerCount: viewerCount,
+    );
+  }
+
+  /// Fetch active (non-expired) stories for a specific merchant, newest first.
+  Future<List<MerchantStoryItem>> getMerchantStories(String merchantId) async {
+    final snap = await _firestore
+        .collection(_collection)
+        .where('merchantId', isEqualTo: merchantId)
+        .get();
+
+    final now = DateTime.now();
+    final items = snap.docs
+        .map(_docToItem)
+        .where((e) => e.expiresAt.isAfter(now))
+        .toList();
+
+    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return items;
+  }
+
+  /// Delete a single story document by its id.
+  Future<void> deleteStory(String storyId) async {
+    await _firestore.collection(_collection).doc(storyId).delete();
+  }
+
+  /// Post a new story (image or video). Tries Firebase Storage; on failure (image only) saves as base64.
+  Future<void> postStory({
+    required String merchantId,
+    required String merchantName,
+    required Uint8List imageBytes,
+    String? merchantImageUrl,
+    String? serviceType,
+    String? title,
+    String? description,
+    num? price,
+    String? caption,
+    String? musicTrackId,
+    String? musicTrackName,
+    String mediaType = 'image',
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.uid != merchantId) {
+      throw Exception('Only the merchant can post a story');
+    }
+    final now = DateTime.now();
+    final expiresAt = now.add(storyLifetime);
+
+    String? mediaUrl;
+    String? imageBase64;
+
+    if (mediaType == 'video') {
+      mediaUrl = await _uploadVideoToStorage(merchantId, imageBytes);
+    } else {
+      try {
+        mediaUrl = await _uploadToStorage(merchantId, imageBytes);
+      } catch (e) {
+        if (imageBytes.length <= _maxFallbackImageBytes) {
+          imageBase64 = base64Encode(imageBytes);
+        } else {
+          throw Exception(
+            'Upload failed. Try a smaller photo (e.g. from camera roll).\n$e',
+          );
+        }
+      }
+    }
+
+    final docRef = await _firestore.collection(_collection).add({
+      'merchantId': merchantId,
+      'merchantName': merchantName,
+      'merchantImageUrl': merchantImageUrl,
+      'serviceType': (serviceType ?? 'marketplace').toLowerCase(),
+      if (title != null && title.isNotEmpty) 'title': title,
+      if (description != null && description.isNotEmpty) 'description': description,
+      if (price != null) 'price': price,
+      'mediaUrl': mediaUrl ?? '',
+      if (imageBase64 != null) 'imageBase64': imageBase64,
+      'mediaType': mediaType,
+      if (caption != null && caption.trim().isNotEmpty) 'caption': caption.trim(),
+      if (musicTrackId != null && musicTrackId.trim().isNotEmpty) 'musicTrackId': musicTrackId.trim(),
+      if (musicTrackName != null && musicTrackName.trim().isNotEmpty) 'musicTrackName': musicTrackName.trim(),
+      'createdAt': Timestamp.fromDate(now),
+      'expiresAt': Timestamp.fromDate(expiresAt),
+    });
+    try {
+      await docRef.get(const GetOptions(source: Source.server));
+    } on FirebaseException catch (e) {
+      throw Exception(
+        'Story was not saved on the server (${e.code}). '
+        'In Firebase Console, create a Firestore database for this project, then try again.',
+      );
+    }
+  }
+
+  /// Post multiple stories in one batch (e.g. multiple slides with captions).
+  Future<void> postStoryBatch({
+    required String merchantId,
+    required String merchantName,
+    String? merchantImageUrl,
+    String? serviceType,
+    required List<StorySlideInput> slides,
+  }) async {
+    for (final slide in slides) {
+      await postStory(
+        merchantId: merchantId,
+        merchantName: merchantName,
+        imageBytes: slide.bytes,
+        merchantImageUrl: merchantImageUrl,
+        serviceType: serviceType,
+        caption: slide.caption,
+        musicTrackId: slide.musicTrackId,
+        musicTrackName: slide.musicTrackName,
+        mediaType: slide.mediaType,
+      );
+    }
+  }
+
+  Future<String> _uploadToStorage(String merchantId, Uint8List imageBytes) async {
+    final now = DateTime.now();
+    final path = '$_storagePathPrefix/$merchantId/${now.millisecondsSinceEpoch}.jpg';
+    final ref = _storage.ref().child(path);
+    await ref.putData(
+      imageBytes,
+      SettableMetadata(contentType: 'image/jpeg'),
+    );
+    return await ref.getDownloadURL();
+  }
+
+  Future<String> _uploadVideoToStorage(String merchantId, Uint8List videoBytes) async {
+    final now = DateTime.now();
+    final path = '$_storagePathPrefix/$merchantId/${now.millisecondsSinceEpoch}.mp4';
+    final ref = _storage.ref().child(path);
+    await ref.putData(
+      videoBytes,
+      SettableMetadata(contentType: 'video/mp4'),
+    );
+    return await ref.getDownloadURL();
+  }
+
+  /// Record that a viewer saw this story (call when opening/viewing a story).
+  Future<void> recordView({
+    required String storyId,
+    required String viewerId,
+    required String viewerName,
+    String? viewerProfileImageUrl,
+  }) async {
+    final storyRef = _firestore.collection(_collection).doc(storyId);
+    final storySnap = await storyRef.get();
+    final merchantId =
+        storySnap.data()?['merchantId']?.toString().trim() ?? '';
+
+    await storyRef.collection(_viewersSubcollection).doc(viewerId).set({
+      'viewerId': viewerId,
+      'viewerName': viewerName,
+      'viewedAt': FieldValue.serverTimestamp(),
+      if (viewerProfileImageUrl != null && viewerProfileImageUrl.isNotEmpty)
+        'viewerProfileImageUrl': viewerProfileImageUrl,
+    }, SetOptions(merge: true));
+
+    cacheStoryViewed(viewerId, storyId);
+    if (merchantId.isNotEmpty) {
+      // Recompute merchant ring from known story docs for this merchant.
+      try {
+        final ring = await getMerchantStoryRingState(
+          merchantId: merchantId,
+          viewerId: viewerId,
+        );
+        cacheMerchantUnviewed(viewerId, merchantId, ring.hasUnviewed);
+        // Keep lastActiveGroups in sync so Home doesn't flash unviewed.
+        final last = lastActiveGroups;
+        if (last != null) {
+          lastActiveGroups = [
+            for (final g in last)
+              g.merchantId == merchantId
+                  ? g.copyWith(hasUnviewed: ring.hasUnviewed)
+                  : g,
+          ];
+        }
+      } catch (_) {
+        cacheMerchantUnviewed(viewerId, merchantId, false);
+      }
+      _notifyMerchantStoriesViewed(merchantId);
+      _notifyActiveStoriesRefresh();
+    }
+  }
+
+  /// Get list of viewers who saw this story (for merchant insights).
+  Future<List<StoryViewerInfo>> getStoryViewers(String storyId) async {
+    final snap = await _firestore
+        .collection(_collection)
+        .doc(storyId)
+        .collection(_viewersSubcollection)
+        .orderBy('viewedAt', descending: true)
+        .get();
+    return snap.docs.map((d) {
+      final data = d.data();
+      final viewedAt = (data['viewedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+      final profileUrl = data['viewerProfileImageUrl'] as String?;
+      return StoryViewerInfo(
+        viewerId: data['viewerId'] as String? ?? '',
+        viewerName: data['viewerName'] as String? ?? 'Unknown',
+        viewedAt: viewedAt,
+        viewerProfileImageUrl: profileUrl != null && profileUrl.isNotEmpty ? profileUrl : null,
+      );
+    }).toList();
+  }
+
+  /// Get viewer count for a story.
+  Future<int> getStoryViewerCount(String storyId) async {
+    final snap = await _firestore
+        .collection(_collection)
+        .doc(storyId)
+        .collection(_viewersSubcollection)
+        .count()
+        .get();
+    return snap.count ?? 0;
+  }
+
+  /// Get viewer counts for multiple story IDs (batch).
+  Future<Map<String, int>> getStoryViewerCounts(List<String> storyIds) async {
+    final Map<String, int> out = {};
+    for (final id in storyIds) {
+      out[id] = await getStoryViewerCount(id);
+    }
+    return out;
+  }
+}
+
+/// Input for one slide when posting a story batch.
+class StorySlideInput {
+  final Uint8List bytes;
+  final String mediaType; // 'image' or 'video'
+  final String? caption;
+  final String? musicTrackId;
+  final String? musicTrackName;
+
+  const StorySlideInput({
+    required this.bytes,
+    this.mediaType = 'image',
+    this.caption,
+    this.musicTrackId,
+    this.musicTrackName,
+  });
+}

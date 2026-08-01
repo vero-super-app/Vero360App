@@ -1,0 +1,251 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
+import 'package:http/http.dart' as http;
+
+import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/GernalServices/api_exception.dart';
+
+class ApiClient {
+  static const Duration _defaultTimeout = Duration(seconds: 20);
+
+  // ---------- Public helpers ----------
+
+  static Future<http.Response> get(
+    String path, {
+    Map<String, String>? headers,
+    Duration? timeout,
+    Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
+  }) {
+    return _request(
+      method: 'GET',
+      path: path,
+      headers: headers,
+      timeout: timeout,
+      allowedStatusCodes: allowedStatusCodes,
+      queryParameters: queryParameters,
+    );
+  }
+
+  static Future<http.Response> post(
+    String path, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration? timeout,
+    Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
+  }) {
+    return _request(
+      method: 'POST',
+      path: path,
+      headers: headers,
+      body: body,
+      timeout: timeout,
+      allowedStatusCodes: allowedStatusCodes,
+      queryParameters: queryParameters,
+    );
+  }
+
+  static Future<http.Response> put(
+    String path, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration? timeout,
+    Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
+  }) {
+    return _request(
+      method: 'PUT',
+      path: path,
+      headers: headers,
+      body: body,
+      timeout: timeout,
+      allowedStatusCodes: allowedStatusCodes,
+      queryParameters: queryParameters,
+    );
+  }
+
+  static Future<http.Response> delete(
+    String path, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration? timeout,
+    Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
+  }) {
+    return _request(
+      method: 'DELETE',
+      path: path,
+      headers: headers,
+      body: body,
+      timeout: timeout,
+      allowedStatusCodes: allowedStatusCodes,
+      queryParameters: queryParameters,
+    );
+  }
+
+  /// PATCH helper
+  static Future<http.Response> patch(
+    String path, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration? timeout,
+    Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
+  }) {
+    return _request(
+      method: 'PATCH',
+      path: path,
+      headers: headers,
+      body: body,
+      timeout: timeout,
+      allowedStatusCodes: allowedStatusCodes,
+      queryParameters: queryParameters,
+    );
+  }
+
+  // ---------- Core request + error handling ----------
+
+  static Future<http.Response> _request({
+    required String method,
+    required String path,
+    Map<String, String>? headers,
+    Object? body,
+    Duration? timeout,
+    Set<int>? allowedStatusCodes,
+    Map<String, String>? queryParameters,
+  }) async {
+    // Do not block the real request on a separate health probe: ensureBackendUp()
+    // uses a short timeout and fixed paths (/vero/healthz, etc.). Ngrok cold start,
+    // slow TLS, or missing health routes often make it return false even when the
+    // API is fine — which incorrectly showed "check your internet" for every call.
+    // Optional warm-up (non-blocking feedback only):
+    if (kDebugMode) {
+      unawaited(ApiConfig.ensureBackendUp().then((ok) {
+        if (!ok) {
+          debugPrint(
+            '[ApiClient] ensureBackendUp=false (probe); still sending $method $path',
+          );
+        }
+      }));
+    }
+
+    // Build base URI (scheme/host/port + /vero/... path)
+    final baseUri = ApiConfig.endpoint(path);
+    // Attach query parameters (if provided)
+    final uri = baseUri.replace(
+      queryParameters: queryParameters?.isNotEmpty == true
+          ? {
+              ...baseUri.queryParameters,
+              ...queryParameters!,
+            }
+          : baseUri.queryParameters.isNotEmpty
+              ? baseUri.queryParameters
+              : null,
+    );
+    final allHeaders = <String, String>{
+      'Accept': 'application/json',
+      if (body != null) 'Content-Type': 'application/json',
+      ...?headers,
+    };
+
+    // 🔐 Single source of truth: AuthHandler (Firebase first, then SP)
+    try {
+      final hasAuthHeader =
+          allHeaders.keys.any((k) => k.toLowerCase() == 'authorization');
+      if (!hasAuthHeader) {
+        final token = await AuthHandler.getTokenForApi();
+        final t = token?.trim();
+        if (t != null && t.isNotEmpty) {
+          allHeaders['Authorization'] = 'Bearer $t';
+        }
+      }
+    } catch (_) {
+      // If token fetch fails, just send request without auth
+    }
+
+    try {
+      Future<http.Response> future;
+      switch (lineUpper(method)) {
+        case 'GET':
+          future = http.get(uri, headers: allHeaders);
+          break;
+        case 'POST':
+          future = http.post(uri, headers: allHeaders, body: body);
+          break;
+        case 'PUT':
+          future = http.put(uri, headers: allHeaders, body: body);
+          break;
+        case 'DELETE':
+          future = http.delete(uri, headers: allHeaders, body: body);
+          break;
+        case 'PATCH':
+          future = http.patch(uri, headers: allHeaders, body: body);
+          break;
+        default:
+          throw ArgumentError('Unsupported HTTP method: $method');
+      }
+
+      final res = await future.timeout(timeout ?? _defaultTimeout);
+
+      final allowed = allowedStatusCodes?.contains(res.statusCode) ?? false;
+      if ((res.statusCode >= 200 && res.statusCode < 300) || allowed) {
+        return res;
+      }
+
+      String? backendMsg;
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map && decoded['message'] != null) {
+          final m = decoded['message'];
+          if (m is List) {
+            backendMsg = m.join('\n');
+          } else {
+            backendMsg = m.toString();
+          }
+        }
+      } catch (_) {}
+
+      if (kDebugMode) {
+        debugPrint('API $method ${uri.path} -> ${res.statusCode} ${res.body}');
+      }
+
+      final userMsg = backendMsg ??
+          'We couldn’t process your request. Please check your details and try again.';
+
+      throw ApiException(
+        message: userMsg,
+        statusCode: res.statusCode,
+        backendMessage: backendMsg,
+      );
+    } on TimeoutException {
+      if (kDebugMode) {
+        debugPrint('API $method ${uri.path} -> timeout');
+      }
+      throw const ApiException(
+        message:
+            'Request timed out. Please check your connection and try again.',
+      );
+    } on http.ClientException catch (e) {
+      if (kDebugMode) {
+        debugPrint('API $method ${uri.path} -> network error: $e');
+      }
+      throw const ApiException(
+        message: 'Network error. Please check your connection and try again.',
+      );
+    } catch (e) {
+      if (e is ApiException) rethrow;
+      if (kDebugMode) {
+        debugPrint('API $method ${uri.path} -> unexpected error: $e');
+      }
+      throw const ApiException(
+        message: 'Something went wrong. Please try again.',
+      );
+    }
+  }
+
+  static String lineUpper(String s) => s.toUpperCase();
+}

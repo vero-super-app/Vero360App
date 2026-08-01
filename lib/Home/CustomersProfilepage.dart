@@ -1,0 +1,1666 @@
+// lib/Pages/profile_page.dart
+import 'dart:async'; // <-- for FutureOr
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
+
+// ✅ add MIME + MediaType for correct multipart content-type
+import 'package:mime/mime.dart' as mime;
+import 'package:http_parser/http_parser.dart' as http_parser;
+import 'package:vero360_app/Home/notifications_page.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
+
+// ✅ use your existing API base resolver (unchanged)
+import 'package:vero360_app/config/api_config.dart';
+
+import 'package:vero360_app/Home/myorders.dart';
+import 'package:vero360_app/GeneralPages/CustomerQRcode.dart';
+
+/* Inline pages displayed in bottom sheets (stay on same Profile screen) */
+import 'package:vero360_app/GeneralPages/ToRefund.dart';
+
+import 'package:vero360_app/GeneralPages/Toreceive.dart';
+import 'package:vero360_app/GeneralPages/Toship.dart';
+import 'package:vero360_app/GeneralPages/address.dart';
+import 'package:vero360_app/GeneralPages/changepassword.dart';
+//import 'package:vero360_app/features/Accomodation/Presentation/pages/myaccomodation.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
+
+import 'package:vero360_app/Home/homepage.dart' show LatestArrivalsSection;
+import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/GernalServices/api_client.dart';
+import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/settings/Settings.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_profile_hub_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  // --- Brand colors (Vero360 main: orange) ---
+  static const Color _veroOrange = Color(0xFFFF8A00);
+  final Color _cardBg = Colors.white;
+  final Color _chipGrey = const Color(0xFFF4F5F7);
+
+  String name = "Guest User";
+  String email = "No Email";
+  String phone = "No Phone";
+  String address = "No Address";
+  String profileUrl = "";
+  /// Local disk path for avatar — preferred over network when present.
+  String? _localPhotoPath;
+
+  bool _loading = false;
+  bool _isDriver = false;
+
+  // demo wallet figures – replace with real values if you have them
+  double balance = 450;
+  double cashback = 23;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+    _fetchCurrentUser();
+  }
+
+  void _openRideHistory() {
+    _openBottomSheet(
+      RideHistoryScreen(
+        mode: _isDriver ? RideHistoryMode.driver : RideHistoryMode.passenger,
+      ),
+    );
+  }
+
+  void _openDriverCenter() {
+    _openBottomSheet(const DriverProfileHubScreen());
+  }
+
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final role =
+        (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
+            .toLowerCase()
+            .trim();
+    String loadedName = prefs.getString('fullName') ??
+        prefs.getString('name') ??
+        'Guest User';
+    String loadedEmail = prefs.getString('email') ?? 'No Email';
+    String loadedPhone = prefs.getString('phone') ?? 'No Phone';
+    final address = prefs.getString('address') ?? 'No Address';
+    String loadedProfileUrl = prefs.getString('profilepicture') ?? '';
+    final localPath = await ProfilePhotoCache.peekLocalPath();
+    // Fallback to Firebase Auth so name/email/phone/photo show after password change or when API hasn't synced
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser != null) {
+      if ((loadedName.isEmpty || loadedName == 'Guest User') &&
+          (firebaseUser.displayName ?? '').trim().isNotEmpty) {
+        loadedName = firebaseUser.displayName!.trim();
+        await prefs.setString('fullName', loadedName);
+        await prefs.setString('name', loadedName);
+      }
+      if ((loadedEmail.isEmpty || loadedEmail == 'No Email') &&
+          (firebaseUser.email ?? '').trim().isNotEmpty) {
+        loadedEmail = firebaseUser.email!.trim();
+        await prefs.setString('email', loadedEmail);
+      }
+      if ((loadedPhone.isEmpty || loadedPhone == 'No Phone') &&
+          (firebaseUser.phoneNumber ?? '').trim().isNotEmpty) {
+        final fn = firebaseUser.phoneNumber!.trim();
+        if (!_isFirebaseInternalPhone(fn)) {
+          loadedPhone = fn;
+          await prefs.setString('phone', loadedPhone);
+        }
+      }
+      if (loadedProfileUrl.isEmpty && (firebaseUser.photoURL ?? '').trim().isNotEmpty) {
+        loadedProfileUrl = firebaseUser.photoURL!.trim();
+        await prefs.setString('profilepicture', loadedProfileUrl);
+      }
+    }
+    if (_isFirebaseInternalPhone(loadedPhone)) loadedPhone = 'No Phone';
+    if (mounted) {
+      setState(() {
+        name = loadedName;
+        email = loadedEmail;
+        phone = loadedPhone;
+        this.address = address;
+        profileUrl = loadedProfileUrl;
+        _localPhotoPath = localPath;
+        _isDriver = role == 'driver';
+      });
+    }
+
+    // Warm/refresh local disk cache in background (no UI wait).
+    if (loadedProfileUrl.isNotEmpty) {
+      unawaited(_cacheProfilePhoto(loadedProfileUrl));
+    }
+  }
+
+  Future<void> _cacheProfilePhoto(String url) async {
+    final file = await ProfilePhotoCache.ensureCached(url);
+    if (!mounted || file == null) return;
+    if (_localPhotoPath == file.path) return;
+    setState(() => _localPhotoPath = file.path);
+  }
+
+  Widget _profileAvatarImage({
+    required double size,
+    BoxFit fit = BoxFit.cover,
+  }) {
+    final local = _localPhotoPath;
+    if (!kIsWeb && local != null && local.isNotEmpty && File(local).existsSync()) {
+      return Image.file(
+        File(local),
+        width: size,
+        height: size,
+        fit: fit,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) {
+          if (profileUrl.isEmpty) {
+            return Icon(Icons.person, size: size * 0.54, color: Colors.black45);
+          }
+          return ResilientCachedNetworkImage(
+            url: profileUrl,
+            width: size,
+            height: size,
+            fit: fit,
+          );
+        },
+      );
+    }
+    if (profileUrl.isNotEmpty) {
+      return ResilientCachedNetworkImage(
+        url: profileUrl,
+        width: size,
+        height: size,
+        fit: fit,
+      );
+    }
+    return Icon(Icons.person, size: size * 0.54, color: Colors.black45);
+  }
+
+  bool get _hasPhoto {
+    if (profileUrl.trim().isNotEmpty) return true;
+    final local = _localPhotoPath;
+    return !kIsWeb &&
+        local != null &&
+        local.isNotEmpty &&
+        File(local).existsSync();
+  }
+
+  /// Firebase can expose internal provider IDs (e.g. +firebase_xxx). Don't show in UI.
+  bool _isFirebaseInternalPhone(String? s) {
+    if (s == null || s.trim().isEmpty) return true;
+    final t = s.trim().toLowerCase();
+    return t == 'no phone' || t.startsWith('+firebase_');
+  }
+
+  /// Safe phone text for UI: hide Firebase internal IDs; show "No phone number" when none.
+  String get _displayPhone =>
+      _isFirebaseInternalPhone(phone) ? 'No phone number' : phone;
+
+  String _joinName(String? first, String? last, {required String fallback}) {
+    final parts = [first, last].where((s) => s != null && s.trim().isNotEmpty);
+    if (parts.isEmpty) return fallback;
+    return parts.join(' ');
+  }
+
+  Future<String> _getAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    // Be robust to multiple keys used elsewhere in the app
+    return prefs.getString('jwt_token') ??
+        prefs.getString('token') ??
+        prefs.getString('authToken') ??
+        '';
+  }
+
+  /// True if [s] looks like a phone number (digits only or +digits), not a display name.
+  bool _looksLikePhoneNumber(String? s) {
+    if (s == null || s.trim().isEmpty) return true;
+    final t = s.trim().replaceAll(RegExp(r'[\s\-\(\)]'), '');
+    return RegExp(r'^\+?\d+$').hasMatch(t);
+  }
+
+  Future<void> _persistUserToPrefs(Map<String, dynamic> data) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // API might return either root fields or inside { user: {...} }
+    final user = (data['user'] is Map) ? (data['user'] as Map) : data;
+
+    var userName = (user['name'] ??
+            _joinName(user['firstName'], user['lastName'], fallback: ''))
+        .toString()
+        .trim();
+    // If API returns phone as "name", keep existing prefs name so profile shows real name, not number.
+    if (userName.isEmpty || _looksLikePhoneNumber(userName)) {
+      userName = prefs.getString('fullName') ?? prefs.getString('name') ?? '';
+    }
+
+    var emailVal = (user['email'] ?? user['userEmail'] ?? '').toString().trim();
+    // Hide synthetic phone-based login email on profile card.
+    if (emailVal.toLowerCase().endsWith('@phone.vero360.app')) {
+      emailVal = '';
+    }
+
+    var phoneVal =
+        (user['phone'] ?? user['phoneNumber'] ?? user['mobile'] ?? '')
+            .toString()
+            .trim();
+    if (_isFirebaseInternalPhone(phoneVal)) phoneVal = '';
+    // If backend doesn't send phone, keep previously stored phone (from login) so it doesn't become "No phone number".
+    if (phoneVal.isEmpty) {
+      final existingPhone = prefs.getString('phone') ?? '';
+      if (!_isFirebaseInternalPhone(existingPhone)) {
+        phoneVal = existingPhone;
+      }
+    }
+
+    var picVal = (user['profilepicture'] ??
+            user['profilePicture'] ??
+            user['photoURL'] ??
+            user['photoUrl'] ??
+            '')
+        .toString()
+        .trim();
+    // Don't wipe a working local/Firebase photo if the API omits the field.
+    if (picVal.isEmpty) {
+      final existingPic = (prefs.getString('profilepicture') ?? '').trim();
+      if (existingPic.isNotEmpty) {
+        picVal = existingPic;
+      } else {
+        final fbPhoto =
+            (FirebaseAuth.instance.currentUser?.photoURL ?? '').trim();
+        if (fbPhoto.isNotEmpty) picVal = fbPhoto;
+      }
+    }
+
+    String addr = 'No Address';
+    final addresses = user['addresses'];
+    if (addresses is List && addresses.isNotEmpty) {
+      final first = addresses.first;
+      if (first is Map && first['address'] != null) {
+        addr = first['address'].toString();
+      } else if (first is String && first.trim().isNotEmpty) {
+        addr = first;
+      }
+    } else if (user['address'] != null) {
+      addr = user['address'].toString();
+    }
+
+    setState(() {
+      name = userName.isEmpty ? 'Guest User' : userName;
+      email = emailVal.isEmpty ? 'No Email' : emailVal;
+      phone = phoneVal.isEmpty ? 'No Phone' : phoneVal;
+      address = (addr.trim().isEmpty) ? 'No Address' : addr.trim();
+      profileUrl = picVal;
+    });
+
+    await prefs.setString('fullName', name);
+    await prefs.setString('name', name); // keep legacy key too
+    await prefs.setString('email', email);
+    await prefs.setString('phone', phone);
+    await prefs.setString('address', address);
+    if (picVal.isNotEmpty) {
+      await prefs.setString('profilepicture', picVal);
+      unawaited(_cacheProfilePhoto(picVal));
+    }
+  }
+
+  Future<void> _deleteProfilePicture() async {
+    final token = await _getAuthToken();
+    if (token.isEmpty) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(context, 'Please log in first',
+          isSuccess: false, errorMessage: '');
+      return;
+    }
+    try {
+      setState(() => _loading = true);
+      // Uses ApiConfig.endpoint() so it automatically includes the `/vero` prefix.
+      final uri = ApiConfig.endpoint('/users/me/profile-picture');
+      final resp = await http.delete(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json'
+        },
+      );
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        setState(() {
+          profileUrl = '';
+          _localPhotoPath = null;
+        });
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('profilepicture', '');
+        await ProfilePhotoCache.clear();
+        ToastHelper.showCustomToast(context, 'Profile picture removed',
+            isSuccess: true, errorMessage: '');
+      } else {
+        ToastHelper.showCustomToast(context, 'Failed to remove',
+            isSuccess: false, errorMessage: resp.body);
+      }
+    } catch (e) {
+      ToastHelper.showCustomToast(context, 'Failed to remove',
+          isSuccess: false, errorMessage: e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _fetchCurrentUser() async {
+    setState(() => _loading = true);
+    try {
+      final token = await _getAuthToken();
+      if (token.isEmpty) {
+        debugPrint('No auth token found. Showing stored/fallback user.');
+        setState(() => _loading = false);
+        return;
+      }
+
+      await ApiConfig.init();
+      final uri = ApiConfig.endpoint('/users/me');
+      final response = await http.get(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final decoded = json.decode(response.body);
+        // Accept both {data: {...}} or just {...}
+        final Map<String, dynamic> payload =
+            decoded is Map && decoded['data'] is Map
+                ? Map<String, dynamic>.from(decoded['data'])
+                : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
+        await _persistUserToPrefs(payload);
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Session expired. Please log in.')),
+        );
+      } else {
+        debugPrint(
+            'Failed to fetch user: ${response.statusCode} ${response.body}');
+      }
+    } catch (e) {
+      debugPrint('Error fetching user: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Edit profile: name, email, phone, address. Saves via API and prefs.
+  Future<void> _openEditProfile() async {
+    final token = await _getAuthToken();
+    if (token.isEmpty) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(context, 'Please log in first',
+          isSuccess: false, errorMessage: '');
+      return;
+    }
+
+    final nameController = TextEditingController(text: name);
+    final emailController = TextEditingController(text: email);
+    final phoneController = TextEditingController(text: phone);
+    final addressController = TextEditingController(text: address);
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            16, 12, 16, 18 + MediaQuery.of(ctx).viewInsets.bottom),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Edit profile',
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  border: OutlineInputBorder(),
+                  hintText: 'Your name',
+                ),
+                textCapitalization: TextCapitalization.words,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: emailController,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                  hintText: 'Email',
+                ),
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: phoneController,
+                decoration: const InputDecoration(
+                  labelText: 'Phone',
+                  border: OutlineInputBorder(),
+                  hintText: 'Phone number',
+                ),
+                keyboardType: TextInputType.phone,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: addressController,
+                decoration: const InputDecoration(
+                  labelText: 'Address',
+                  border: OutlineInputBorder(),
+                  hintText: 'Your address',
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 20),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: _veroOrange,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('Save',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (saved != true || !mounted) return;
+
+    final newName = nameController.text.trim();
+    final newEmail = emailController.text.trim();
+    final newPhone = phoneController.text.trim();
+    final newAddress = addressController.text.trim();
+
+    setState(() => _loading = true);
+    try {
+      final body = <String, dynamic>{
+        'name': newName.isEmpty ? name : newName,
+        'email': newEmail.isEmpty ? email : newEmail,
+        'phone': newPhone.isEmpty ? phone : newPhone,
+        'address': newAddress.isEmpty ? address : newAddress,
+      };
+      final resp = await ApiClient.put(
+        '/users/me',
+        body: jsonEncode(body),
+        timeout: const Duration(seconds: 10),
+      );
+
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        setState(() {
+          name = newName.isEmpty ? name : newName;
+          email = newEmail.isEmpty ? email : newEmail;
+          phone = newPhone.isEmpty ? phone : newPhone;
+          address = newAddress.isEmpty ? address : newAddress;
+        });
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('fullName', name);
+        await prefs.setString('name', name);
+        await prefs.setString('email', email);
+        await prefs.setString('phone', phone);
+        await prefs.setString('address', address);
+        if (!mounted) return;
+        ToastHelper.showCustomToast(context, 'Profile updated',
+            isSuccess: true, errorMessage: '');
+      } else {
+        if (!mounted) return;
+        ToastHelper.showCustomToast(context, 'Failed to update profile',
+            isSuccess: false, errorMessage: resp.body);
+      }
+    } catch (e) {
+      if (mounted) {
+        ToastHelper.showCustomToast(context, 'Failed to update profile',
+            isSuccess: false, errorMessage: e.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // ---- Profile picture flow ----
+  void _showProfilePictureViewer() {
+    if (!_hasPhoto) return;
+    showDialog(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(24),
+        child: Stack(
+          alignment: Alignment.topRight,
+          children: [
+            InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(context).size.width,
+                    maxHeight: MediaQuery.of(context).size.height * 0.75,
+                  ),
+                  child: _profileAvatarImage(
+                    size: MediaQuery.of(context).size.width,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 28),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.red.shade700,
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: () async {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: const Text('Remove profile photo?'),
+                      content: const Text(
+                        'This will remove your current profile picture.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          child: const Text(
+                            'Remove',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirmed != true) return;
+                  await _deleteProfilePicture();
+                  if (!mounted) return;
+                  Navigator.of(context).pop();
+                },
+                icon: const Icon(Icons.delete_outline),
+                label: const Text(
+                  'Remove profile photo',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPhotoSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Wrap(
+          children: [
+            if (_hasPhoto)
+              ListTile(
+                leading: const Icon(Icons.visibility_outlined),
+                title: const Text('View profile picture'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showProfilePictureViewer();
+                },
+              ),
+            InkWell(
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndUpload(ImageSource.camera);
+              },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: _veroOrange,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_camera_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Take a photo',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            InkWell(
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndUpload(ImageSource.gallery);
+              },
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E88E5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.photo_library_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Choose from gallery',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (_hasPhoto)
+              ListTile(
+                leading: const Icon(Icons.remove_circle_outline),
+                title: const Text('Remove current photo'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _deleteProfilePicture(); // ← calls backend & clears local
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndUpload(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final file = await picker.pickImage(
+        source: source,
+        maxWidth: 1400,
+        imageQuality: 85,
+      );
+      if (file == null) return;
+      await _uploadProfilePicture(file);
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not pick image',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    }
+  }
+
+  // ===== Helpers for upload: set correct image/* MIME on multipart =====
+  Future<http.MultipartFile> _toMultipart(String field, XFile picked) async {
+    if (kIsWeb) {
+      final bytes = await picked.readAsBytes();
+      final mt = mime.lookupMimeType('', headerBytes: bytes) ?? 'image/jpeg';
+      final parts = mt.split('/');
+      final ext = parts.length == 2 ? parts[1] : 'jpg';
+      return http.MultipartFile.fromBytes(
+        field,
+        bytes,
+        filename: 'profile.$ext',
+        contentType: http_parser.MediaType(parts[0], parts[1]),
+      );
+    } else {
+      final path = picked.path;
+      final mt = mime.lookupMimeType(path) ?? 'image/jpeg';
+      final parts = mt.split('/');
+      final name = path.split('/').last;
+      return await http.MultipartFile.fromPath(
+        field,
+        path,
+        filename: name,
+        contentType: http_parser.MediaType(parts[0], parts[1]),
+      );
+    }
+  }
+
+  /// POST $base/users/me/profile-picture (preferred).
+  /// Fallback: POST $base/upload → PUT $base/users/me { profilepicture: url }
+  Future<void> _uploadProfilePicture(XFile picked) async {
+    final token = await _getAuthToken();
+    if (token.isEmpty) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Please log in to update your photo',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    setState(() => _loading = true);
+    await ApiConfig.init();
+
+    Future<String?> tryDirectUserUpload() async {
+      final uri = ApiConfig.endpoint('/users/me/profile-picture');
+      final req = http.MultipartRequest('POST', uri)
+        ..headers['Authorization'] = 'Bearer $token'
+        ..headers['Accept'] = 'application/json';
+
+      req.files.add(await _toMultipart('file', picked));
+
+      final sent = await req.send();
+      final resp = await http.Response.fromStream(sent);
+
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        final body = jsonDecode(resp.body);
+        final data = (body is Map && body['data'] is Map)
+            ? body['data'] as Map
+            : (body as Map? ?? {});
+        return (data['profilepicture'] ?? data['profilePicture'] ?? data['url'])
+            ?.toString();
+      }
+      if (resp.statusCode == 404) return null;
+      throw Exception('Upload failed (${resp.statusCode}) ${resp.body}');
+    }
+
+    Future<String> uploadGetUrlThenPutUser() async {
+      final uploadUri = ApiConfig.endpoint('/upload');
+      final upReq = http.MultipartRequest('POST', uploadUri)
+        ..headers['Authorization'] = 'Bearer $token'
+        ..headers['Accept'] = 'application/json';
+      upReq.files.add(await _toMultipart('file', picked));
+
+      final upSent = await upReq.send();
+      final upResp = await http.Response.fromStream(upSent);
+      if (upResp.statusCode < 200 || upResp.statusCode >= 300) {
+        throw Exception(
+            'Upload URL failed (${upResp.statusCode}) ${upResp.body}');
+      }
+      final upBody = jsonDecode(upResp.body);
+      final url =
+          (upBody is Map ? (upBody['url'] ?? upBody['data']?['url']) : null)
+              ?.toString();
+      if (url == null || url.isEmpty) {
+        throw Exception('Missing url from /upload');
+      }
+
+      final putUri = ApiConfig.endpoint('/users/me');
+      final put = await http.put(
+        putUri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({'profilepicture': url}),
+      );
+      if (put.statusCode < 200 || put.statusCode >= 300) {
+        throw Exception('PUT /users/me failed (${put.statusCode}) ${put.body}');
+      }
+      return url;
+    }
+
+    Future<String> uploadToFirebaseStorage(String uid, XFile file) async {
+      final rawExt = file.name.contains('.') ? file.name.split('.').last : 'jpg';
+      final ext = rawExt.isEmpty || rawExt.length > 4 ? 'jpg' : rawExt;
+      final path = 'profile_photos/${uid}_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final ref = FirebaseStorage.instance.ref().child(path);
+      final bytes = await file.readAsBytes();
+      final mimeType = mime.lookupMimeType(file.name, headerBytes: bytes) ?? 'image/jpeg';
+      await ref.putData(bytes, SettableMetadata(contentType: mimeType));
+      return await ref.getDownloadURL();
+    }
+
+    try {
+      String? url = await tryDirectUserUpload();
+      url ??= await uploadGetUrlThenPutUser();
+
+      final profilePictureUrl = url;
+      // Cache local bytes immediately so next opens never need the network.
+      try {
+        final bytes = await picked.readAsBytes();
+        final local = await ProfilePhotoCache.saveBytes(
+          bytes,
+          remoteUrl: profilePictureUrl,
+        );
+        if (mounted) {
+          setState(() {
+            profileUrl = profilePictureUrl;
+            _localPhotoPath = local?.path;
+          });
+        }
+      } catch (_) {
+        if (mounted) setState(() => profileUrl = profilePictureUrl);
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('profilepicture', profilePictureUrl);
+
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        try {
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'profilePicture': url,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Profile picture updated',
+        isSuccess: true,
+        errorMessage: '',
+      );
+    } catch (e) {
+      debugPrint('Upload error: $e');
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        try {
+          final url = await uploadToFirebaseStorage(user.uid, picked);
+          try {
+            final bytes = await picked.readAsBytes();
+            final local =
+                await ProfilePhotoCache.saveBytes(bytes, remoteUrl: url);
+            if (mounted) {
+              setState(() {
+                profileUrl = url;
+                _localPhotoPath = local?.path;
+              });
+            }
+          } catch (_) {
+            if (mounted) setState(() => profileUrl = url);
+          }
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('profilepicture', url);
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'profilePicture': url,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+          if (!mounted) return;
+          ToastHelper.showCustomToast(
+            context,
+            'Profile picture updated',
+            isSuccess: true,
+            errorMessage: '',
+          );
+          return;
+        } catch (firebaseErr) {
+          debugPrint('Firebase Storage fallback error: $firebaseErr');
+        }
+      }
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Failed to upload',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    setState(() => _loading = true);
+    try {
+      await AuthService().logout(context: context);
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('fullName');
+      await prefs.remove('name');
+      await prefs.remove('email');
+      await prefs.remove('phone');
+      await prefs.remove('address');
+      await prefs.remove('profilepicture');
+      await ProfilePhotoCache.clear();
+
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'You have been logged out',
+          isSuccess: true,
+          errorMessage: '',
+        );
+      }
+    } catch (e) {
+      debugPrint('Logout error: $e');
+    } finally {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
+      );
+    }
+  }
+
+  // ---------- UI helpers ----------
+  PreferredSizeWidget _appBar() {
+    return AppBar(
+      backgroundColor: _veroOrange,
+      elevation: 0,
+      titleSpacing: 0,
+      title: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Icon(Icons.person_rounded, color: Colors.white, size: 20),
+          SizedBox(width: 8),
+          Text(
+            'Profile',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
+              ),
+            ),
+          ),
+      
+      ],
+    );
+  }
+
+  Widget _topProfileCard() {
+    final avatar = GestureDetector(
+      onTap: () {
+        if (_hasPhoto) {
+          _showProfilePictureViewer();
+        } else {
+          _showPhotoSheet();
+        }
+      },
+      onLongPress: _showPhotoSheet,
+      child: CircleAvatar(
+        radius: 26,
+        backgroundColor: Colors.black12,
+        child: ClipOval(
+          child: _profileAvatarImage(size: 52),
+        ),
+      ),
+    );
+
+    return Stack(
+      children: [
+        // Rounded navy header background
+        Container(
+          height: 160, // a bit taller to avoid bottom overflow on small screens
+          decoration: BoxDecoration(
+            color: _veroOrange,
+            borderRadius: const BorderRadius.vertical(
+              bottom: Radius.circular(20),
+            ),
+          ),
+        ),
+        // Floating white profile card
+        Positioned.fill(
+          top: 16,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: _cardBg,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  avatar,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 16)),
+                        const SizedBox(height: 2),
+                        Text(email,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.black54, fontSize: 13)),
+                        const SizedBox(height: 2),
+                        Text(_displayPhone,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.black54, fontSize: 13)),
+                        const SizedBox(height: 6),
+                        GestureDetector(
+                          onTap: _openEditProfile,
+                          child: Text(
+                            'Edit Profile',
+                            style: TextStyle(
+                              color: _veroOrange,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_horiz),
+                    onSelected: (_) {},
+                    itemBuilder: (context) => [
+                      PopupMenuItem<String>(
+                        value: 'active',
+                        enabled: false,
+                        child: Row(
+                          children: [
+                            const Icon(Icons.circle,
+                                size: 10, color: Colors.green),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Active',
+                              style: TextStyle(
+                                color: Colors.green.shade700,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statChip({
+    required IconData icon,
+    required Color bg,
+    required String title,
+    required String value,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: _chipGrey,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                  color: bg, borderRadius: BorderRadius.circular(12)),
+              child: Icon(icon, size: 20, color: _veroOrange),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.black54)),
+                  const SizedBox(height: 2),
+                  Text(value,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _driverCenterSection() {
+    if (!_isDriver) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+      child: Material(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: _openDriverCenter,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: _veroOrange.withValues(alpha: 0.25),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _veroOrange.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.local_taxi_rounded,
+                    color: _veroOrange,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Driver Center',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Profile, vehicle, payout & verification',
+                        style: TextStyle(
+                          color: Colors.black54,
+                          fontSize: 12.5,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: _veroOrange,
+                  size: 28,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _ordersQuickActions() {
+    // Quick actions; use Wrap so "My VeroRide" can move to the next row
+    // on smaller phones (e.g. S10) while still appearing in one row on
+    // larger screens.
+    return Container(
+      // No horizontal margin so the card touches screen edges.
+      margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          )
+        ],
+      ),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          _orderAction(
+            'My Orders',
+            Icons.book,
+            () => _openBottomSheet(const OrdersPage()),
+            badgeRoute: NotificationStore.kBadgeMyOrders,
+          ),
+          // _orderAction(
+          //   'Shipped',
+          //   Icons.local_shipping_outlined,
+          //   () => _openBottomSheet(const ToShipPage()),
+          //   badgeRoute: NotificationStore.kBadgeShipped,
+          // ),
+          _orderAction(
+            'Received',
+            Icons.move_to_inbox_outlined,
+            () => _openBottomSheet(const DeliveredOrdersPage()),
+            badgeRoute: NotificationStore.kBadgeReceived,
+          ),
+          _orderAction(
+            'Refund',
+            Icons.replay_circle_filled_outlined,
+            () => _openBottomSheet(const ToRefundPage()),
+            badgeRoute: NotificationStore.kBadgeRefund,
+          ),
+          _orderAction(
+            _isDriver ? 'Trip Earnings' : 'VeroRide',
+            Icons.local_taxi_rounded,
+            _openRideHistory,
+          ),
+          if (_isDriver)
+            _orderAction(
+              'Driver Center',
+              Icons.manage_accounts_rounded,
+              _openDriverCenter,
+            ),
+           _orderAction('My Food', Icons.restaurant, () {
+            //_openBottomSheet(const MyBookingsPage());
+          }),
+           _orderAction('VeroCourier', Icons.local_shipping_rounded, () {
+            //_openBottomSheet(const MyBookingsPage());
+          }),
+      ]),
+    );
+  }
+
+  Widget _orderAction(
+    String label,
+    IconData icon,
+    VoidCallback onTap, {
+    String? badgeRoute,
+  }) {
+    return ListenableBuilder(
+      listenable: NotificationStore.instance,
+      builder: (context, _) {
+        final n = badgeRoute == null
+            ? 0
+            : NotificationStore.instance.unreadCountForBadgeRoute(badgeRoute);
+        return InkWell(
+          onTap: () {
+            if (badgeRoute != null) {
+              unawaited(
+                NotificationStore.instance.markBadgeRouteAsRead(badgeRoute),
+              );
+            }
+            onTap();
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: _chipGrey,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(icon, size: 20, color: _veroOrange),
+                    ),
+                    if (n > 0)
+                      Positioned(
+                        right: -4,
+                        top: -4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade700,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 16,
+                            minHeight: 16,
+                          ),
+                          child: Text(
+                            n > 99 ? '99+' : '$n',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              height: 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: 72,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<T?> _openBottomSheet<T>(Widget child) async {
+    return showModalBottomSheet<T>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.88,
+        child: child,
+      ),
+    );
+  }
+
+  Widget _otherDetailsGrid() {
+    final items = <_DetailItem>[
+      _DetailItem('My QR Code', Icons.qr_code_2, () {
+        _openBottomSheet(ProfileQrPage(
+          name: name,
+          email: email,
+          phone: phone,
+          profilePictureUrl: profileUrl,
+        ));
+      }),
+      _DetailItem(
+        _isDriver ? 'Trip History' : 'Ride History',
+        Icons.history_rounded,
+        _openRideHistory,
+      ),
+      if (_isDriver)
+        _DetailItem('Driver Center', Icons.local_taxi_outlined, () async {
+          _openDriverCenter();
+        }),
+      _DetailItem('My Address', Icons.location_on, () {
+        _openBottomSheet(const AddressPage());
+      }),
+      _DetailItem('Change Password', Icons.lock_outline, () async {
+        await _openBottomSheet(const ChangePasswordPage());
+        if (!mounted) return;
+        _loadUserData();
+        _fetchCurrentUser();
+      }),
+      _DetailItem('Notification', Icons.notifications_none, () async{await _openBottomSheet(const NotificationsPage());}),
+      _DetailItem('Settings', Icons.settings, () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const SettingsPage(),
+          ),
+        );
+      }),
+      
+    ];
+
+    return Container(
+      // No horizontal margin so this section also touches the edges.
+      margin: const EdgeInsets.fromLTRB(0, 8, 0, 24),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          )
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(6, 8, 6, 10),
+            child: Text(
+              'Other Details',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+            ),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final item in items)
+                SizedBox(
+                  width: 110,
+                  child: _detailTile(item),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------- Build ----------
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF3F4F7),
+      appBar: _appBar(),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            _topProfileCard(),
+            const SizedBox(height: 52), // space under the floating card
+            _driverCenterSection(),
+            _ordersQuickActions(),
+            _otherDetailsGrid(),
+            // 👉 LATEST ARRIVALS (API)
+            const LatestArrivalsSection(),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _detailTile(_DetailItem item) {
+    final isNotification = item.label == 'Notification';
+    return InkWell(
+      onTap: () async {
+        await item.onTap();
+      },
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        decoration: BoxDecoration(
+          color: _chipGrey,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (isNotification)
+              ListenableBuilder(
+                listenable: NotificationStore.instance,
+                builder: (_, __) {
+                  final count = NotificationStore.instance.unreadCount;
+                  return Badge(
+                    isLabelVisible: count > 0,
+                    backgroundColor: Colors.red,
+                    textColor: Colors.white,
+                    alignment: const Alignment(1.2, -0.5),
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    label: Text(
+                      count > 99 ? '99+' : '$count',
+                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                    ),
+                    child: Icon(item.icon, color: _veroOrange, size: 24),
+                  );
+                },
+              )
+            else
+              Icon(item.icon, color: _veroOrange, size: 24),
+            const SizedBox(height: 8),
+            Text(
+              item.label,
+              textAlign: TextAlign.center,
+              style:
+                  const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/* ===== Helper model for grid items (accepts both sync and async handlers) ===== */
+class _DetailItem {
+  final String label;
+  final IconData icon;
+  final Future<void> Function() onTap;
+
+  _DetailItem(this.label, this.icon, FutureOr<void> Function() handler)
+      : onTap = (() {
+          final result = handler();
+          if (result is Future) {
+            return result;
+          }
+          return Future.value();
+        });
+}
+

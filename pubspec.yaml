@@ -1,0 +1,135 @@
+name: vero360_app
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.1.1+10003
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Core Flutter
+  cupertino_icons: ^1.0.8
+  web_socket_channel: ^3.0.3
+  http: ^1.2.2
+  dio: ^5.4.0
+  intl: ^0.20.2
+  shared_preferences: ^2.2.2
+  share_plus: any  
+  fluttertoast: ^9.0.0
+  flutter_secure_storage: ^10.0.0
+  local_auth: ^2.3.0
+  qr_flutter: ^4.1.0
+  saver_gallery: ^4.0.1
+  app_links: ^6.0.0
+  permission_handler: ^12.0.1
+  uuid: ^4.4.0
+  google_sign_in: ^7.2.0
+  sign_in_with_apple: ^7.0.1
+  google_maps_flutter: ^2.2.8
+  google_maps_flutter_web: ^0.5.14+3
+  flutter_polyline_points: ^3.1.0
+  flutter_riverpod: ^3.0.3
+  riverpod_annotation: ^3.0.3
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  flutter_dotenv: ^5.1.0
+
+  record: ^6.1.2
+  audioplayers: ^6.1.0
+  firebase_messaging: 16.1.1
+  flutter_local_notifications: ^17.2.0  # or latest
+
+  mime: ^2.0.0
+  http_parser: ^4.0.2
+
+  # Location
+  geolocator: ^14.0.2
+  location: ^8.0.1
+
+  # UI / UX
+  carousel_slider: ^5.0.0
+  flutter_screenutil: ^5.9.3
+  url_launcher: ^6.3.0
+  pdfx: ^2.8.0
+
+  # Media
+  image_picker: ^1.2.0
+  video_player: ^2.9.2
+  cached_network_image: ^3.4.1
+
+  # Firebase
+  firebase_core: ^4.3.0
+  firebase_auth: ^6.1.3
+  firebase_auth_web: ^6.1.1
+  cloud_firestore: ^6.3.0
+  firebase_storage: ^13.3.0
+  geocoding: ^4.0.0
+  paychangu_flutter: ^0.0.1
+  cloud_functions: ^6.0.5
+  socket_io_client: ^2.0.2
+  hive_ce: ^2.9.0
+  hive_ce_flutter: ^2.2.0
+
+  # WebView support
+  webview_flutter: ^4.10.0 
+  webview_flutter_android: ^4.3.1
+  webview_flutter_wkwebview: ^3.17.0
+  webview_windows: ^0.4.0
+  jwt_decoder: ^2.0.1
+  flutter_map: ^6.1.0
+  latlong2: ^0.9.0
+  image: ^4.8.0
+  phosphoricons_flutter: ^1.0.0
+  flutter_slidable: ^3.1.2
+  didit_sdk: ^4.5.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  rename: ^3.0.1
+
+  build_runner: ^2.5.4
+  hive_ce_generator: ^1.9.2
+
+
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/logo_mark.png"
+
+dependency_overrides:
+  firebase_storage_web: ^3.6.22
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - .env
+    - assets/happy.jpg
+    - assets/uber-cabs-1024x576.webp
+    - assets/logo_mark.png
+    - assets/Queens-Tavern-Steak.jpg
+    - assets/veroai.png
+    - assets/google.png
+    - assets/apple.webp
+    - assets/brands/apple_music.png
+    - assets/brands/spotify.jpg
+    - assets/brands/netflix.png
+    - assets/brands/chatgpt.png
+    - assets/icons/playstore.png
+    - assets/icons/car-location-marker.png
+    - assets/courier/
+    - assets/playstore.png
+    - assets/style/map_style.txt
+    - assets/documents/Vero360_Platform_Agreement_Policy.pdf
+    - assets/documents/Vero360_Privacy_Policy.pdf
+    - assets/documents/Vero360_Merchant_Terms_Conditions.pdf
+ 

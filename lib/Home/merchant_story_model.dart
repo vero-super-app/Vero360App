@@ -1,0 +1,124 @@
+// Merchant story model — 24h stories (Firebase Spark: Firestore + Storage)
+
+/// Single viewer record for story insights.
+class StoryViewerInfo {
+  final String viewerId;
+  final String viewerName;
+  final DateTime viewedAt;
+  /// Optional profile picture URL (e.g. from Firebase Auth photoURL).
+  final String? viewerProfileImageUrl;
+
+  const StoryViewerInfo({
+    required this.viewerId,
+    required this.viewerName,
+    required this.viewedAt,
+    this.viewerProfileImageUrl,
+  });
+}
+
+class MerchantStoryItem {
+  final String storyId;
+  final String merchantId;
+  final String merchantName;
+  final String? merchantImageUrl;
+  /// marketplace | accommodation | food | courier | ride | taxi | ...
+  final String? serviceType;
+  /// Optional product/service details shown in story details bottom sheet.
+  final String? title;
+  final String? description;
+  final num? price;
+  final String mediaUrl;
+  /// When Storage fails, image can be stored as base64 in Firestore. Use [displayImageBytes] to show.
+  final String? imageBase64;
+  final String mediaType;
+  /// Optional caption for this story slide.
+  final String? caption;
+  /// Optional music track (e.g. Spotify track id or name) for Instagram-style music.
+  final String? musicTrackId;
+  final String? musicTrackName;
+  final DateTime createdAt;
+  final DateTime expiresAt;
+  /// Number of viewers (from Firestore). May be 0 if not fetched.
+  final int viewerCount;
+
+  const MerchantStoryItem({
+    required this.storyId,
+    required this.merchantId,
+    required this.merchantName,
+    this.merchantImageUrl,
+    this.serviceType,
+    this.title,
+    this.description,
+    this.price,
+    required this.mediaUrl,
+    this.imageBase64,
+    this.mediaType = 'image',
+    this.caption,
+    this.musicTrackId,
+    this.musicTrackName,
+    required this.createdAt,
+    required this.expiresAt,
+    this.viewerCount = 0,
+  });
+
+  /// True if the image is stored in Firestore (base64) instead of Storage URL.
+  bool get hasInlineImage => imageBase64 != null && imageBase64!.isNotEmpty;
+
+  bool get isExpired => DateTime.now().isAfter(expiresAt);
+}
+
+/// Live story ring state for a merchant profile (WhatsApp-style).
+class MerchantStoryRingState {
+  final List<MerchantStoryItem> items;
+  final bool hasStories;
+  final bool hasUnviewed;
+  final MerchantStoryGroup? group;
+
+  const MerchantStoryRingState({
+    this.items = const [],
+    this.hasStories = false,
+    this.hasUnviewed = false,
+    this.group,
+  });
+
+  static const empty = MerchantStoryRingState();
+}
+
+class MerchantStoryGroup {
+  final String merchantId;
+  final String merchantName;
+  final String? merchantImageUrl;
+  final List<MerchantStoryItem> items;
+  /// True when the current viewer has not seen every slide in this group.
+  final bool hasUnviewed;
+
+  const MerchantStoryGroup({
+    required this.merchantId,
+    required this.merchantName,
+    this.merchantImageUrl,
+    required this.items,
+    this.hasUnviewed = true,
+  });
+
+  MerchantStoryGroup copyWith({
+    String? merchantId,
+    String? merchantName,
+    String? merchantImageUrl,
+    List<MerchantStoryItem>? items,
+    bool? hasUnviewed,
+  }) {
+    return MerchantStoryGroup(
+      merchantId: merchantId ?? this.merchantId,
+      merchantName: merchantName ?? this.merchantName,
+      merchantImageUrl: merchantImageUrl ?? this.merchantImageUrl,
+      items: items ?? this.items,
+      hasUnviewed: hasUnviewed ?? this.hasUnviewed,
+    );
+  }
+
+  MerchantStoryItem? get latestItem =>
+      items.isEmpty ? null : items.reduce((a, b) => a.createdAt.isAfter(b.createdAt) ? a : b);
+
+  /// Total viewer count across all items (unique viewers).
+  int get totalViewerCount => items.fold<int>(0, (sum, i) => sum + i.viewerCount);
+}

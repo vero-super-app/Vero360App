@@ -1,0 +1,580 @@
+import 'dart:convert';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart'
+    show Provider, FutureProvider, StreamProvider;
+import 'package:flutter_riverpod/legacy.dart' show StateProvider;
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
+import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/GeneralModels/place_model.dart';
+import 'package:vero360_app/GeneralModels/place_prediction_model.dart';
+import 'package:vero360_app/GernalServices/ride_share_service.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
+import 'package:vero360_app/GernalServices/location_service.dart';
+import 'package:vero360_app/GernalServices/place_service.dart';
+import 'package:vero360_app/GernalServices/google_places_service.dart';
+import 'package:vero360_app/GernalServices/google_directions_service.dart';
+import 'package:vero360_app/config/google_maps_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+
+// ==================== SERVICES ====================
+final rideShareHttpServiceProvider = Provider<RideShareHttpService>((ref) {
+  final service = RideShareHttpService();
+  ref.onDispose(service.dispose);
+  return service;
+});
+
+final rideShareServiceProvider = Provider<RideShareService>((ref) {
+  final httpService = ref.watch(rideShareHttpServiceProvider);
+  return RideShareService(httpService);
+});
+
+final locationServiceProvider = Provider<LocationService>((ref) {
+  return LocationService();
+});
+
+final placeServiceProvider = Provider<PlaceService>((ref) {
+  return PlaceService();
+});
+
+final googlePlacesServiceProvider = Provider<GooglePlacesService>((ref) {
+  final apiKey = GoogleMapsConfig.apiKey;
+  if (apiKey.isEmpty) {
+    throw Exception(
+      'Google Maps API key not configured. '
+      'Run: flutter run --dart-define=GOOGLE_MAPS_API_KEY=your_key'
+    );
+  }
+  return GooglePlacesService(apiKey: apiKey);
+});
+
+final googleDirectionsServiceProvider =
+    Provider<GoogleDirectionsService>((ref) {
+  final apiKey = GoogleMapsConfig.apiKey;
+  if (apiKey.isEmpty) {
+    throw Exception(
+      'Google Maps API key not configured. '
+      'Run: flutter run --dart-define=GOOGLE_MAPS_API_KEY=your_key'
+    );
+  }
+  return GoogleDirectionsService(apiKey: apiKey);
+});
+
+// ==================== CURRENT LOCATION ====================
+const _lastKnownLatKey = 'last_known_lat';
+const _lastKnownLngKey = 'last_known_lng';
+
+/// Reads the last GPS position persisted to SharedPreferences.
+/// Returns instantly (no GPS call), so the map can start here while
+/// the real GPS fix is being acquired.
+final lastKnownLocationProvider = FutureProvider<Position?>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  final lat = prefs.getDouble(_lastKnownLatKey);
+  final lng = prefs.getDouble(_lastKnownLngKey);
+  if (lat == null || lng == null) return null;
+  return Position(
+    latitude: lat,
+    longitude: lng,
+    timestamp: DateTime.now(),
+    accuracy: 0,
+    altitude: 0,
+    altitudeAccuracy: 0,
+    heading: 0,
+    headingAccuracy: 0,
+    speed: 0,
+    speedAccuracy: 0,
+  );
+});
+
+final currentLocationProvider = FutureProvider<Position?>((ref) async {
+  final locationService = ref.watch(locationServiceProvider);
+  final position = await locationService.getCurrentLocation();
+  if (position != null) {
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setDouble(_lastKnownLatKey, position.latitude);
+      prefs.setDouble(_lastKnownLngKey, position.longitude);
+    });
+  }
+  return position;
+});
+
+final locationStreamProvider = StreamProvider<Position>((ref) {
+  final locationService = ref.watch(locationServiceProvider);
+  return locationService.getLocationStream();
+});
+
+/// Resolved address for current location (reverse geocoding). Use for pickup card.
+final currentLocationAddressProvider = FutureProvider<String?>((ref) async {
+  final position = await ref.watch(currentLocationProvider.future);
+  if (position == null) return null;
+  final placeService = ref.watch(placeServiceProvider);
+  return placeService.getAddressFromCoordinates(
+    position.latitude,
+    position.longitude,
+  );
+});
+
+/// Pickup display: user's name, profile picture URL, and address (Google reverse-geocoded when available).
+class PickupDisplay {
+  final String userName;
+  final String profilePictureUrl;
+  final String address;
+
+  PickupDisplay({
+    required this.userName,
+    required this.profilePictureUrl,
+    required this.address,
+  });
+}
+
+final pickupDisplayProvider = FutureProvider<PickupDisplay>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  final rawName = prefs.getString('fullName') ??
+      prefs.getString('name') ??
+      await AuthStorage.userNameFromToken();
+  final String userName = (rawName == null || rawName.trim().isEmpty)
+      ? 'Your Location'
+      : rawName.trim();
+  final String profilePictureUrl =
+      prefs.getString('profilepicture')?.trim() ??
+      prefs.getString('profilePicture')?.trim() ??
+      '';
+
+  // Prefer current location reverse-geocoded (Google-detected) address when we have position
+  final position = await ref.watch(currentLocationProvider.future);
+  if (position != null) {
+    final placeService = ref.watch(placeServiceProvider);
+    final addr = await placeService.getAddressFromCoordinates(
+      position.latitude,
+      position.longitude,
+    );
+    if (addr != null && addr.isNotEmpty) {
+      return PickupDisplay(
+        userName: userName,
+        profilePictureUrl: profilePictureUrl,
+        address: addr,
+      );
+    }
+  }
+
+  // Fallback: saved profile address or "Current Location"
+  final savedAddr = prefs.getString('address')?.trim();
+  final useSavedAddress = savedAddr != null &&
+      savedAddr.isNotEmpty &&
+      savedAddr.toLowerCase() != 'no address';
+
+  if (useSavedAddress) {
+    return PickupDisplay(
+      userName: userName,
+      profilePictureUrl: profilePictureUrl,
+      address: savedAddr,
+    );
+  }
+
+  return PickupDisplay(
+    userName: userName,
+    profilePictureUrl: profilePictureUrl,
+    address: 'Current Location',
+  );
+});
+
+// ==================== PLACE SEARCH ====================
+/// Google Places Autocomplete search provider
+/// Returns list of place predictions from Google Places API
+final placeSearchProvider =
+    FutureProvider.family<List<PlacePrediction>, String>((ref, query) async {
+  if (query.isEmpty) return [];
+
+  final googlePlacesService = ref.watch(googlePlacesServiceProvider);
+  return await googlePlacesService.autocompleteSearch(query);
+});
+
+/// Get detailed information about a place using Google Places Details API
+/// Enriches PlacePrediction with coordinates (latitude/longitude)
+final placeDetailsProvider =
+    FutureProvider.family<Map<String, dynamic>, String>((ref, placeId) async {
+  if (placeId.isEmpty) return {};
+
+  final googlePlacesService = ref.watch(googlePlacesServiceProvider);
+  return await googlePlacesService.getPlaceDetails(placeId);
+});
+
+/// Convert PlacePrediction to Place model with full details
+final placeDetailsWithCoordinatesProvider =
+    FutureProvider.family<Place?, String>(
+  (ref, placeId) async {
+    if (placeId.isEmpty) return null;
+
+    try {
+      final details = await ref.watch(placeDetailsProvider(placeId).future);
+      final geometry = details['geometry'] as Map<String, dynamic>?;
+      final location = geometry?['location'] as Map<String, dynamic>?;
+
+      return Place(
+        id: placeId,
+        name: details['name'] as String? ??
+            details['formatted_address'] as String? ??
+            '',
+        address: details['formatted_address'] as String? ?? '',
+        latitude: (location?['lat'] as num?)?.toDouble() ?? 0.0,
+        longitude: (location?['lng'] as num?)?.toDouble() ?? 0.0,
+        type: PlaceType.RECENT,
+      );
+    } catch (e) {
+      return null;
+    }
+  },
+);
+
+/// Selected destination place provider
+final selectedDropoffPlaceProvider = StateProvider<Place?>((ref) => null);
+
+/// Selected pickup place provider
+final selectedPickupPlaceProvider = StateProvider<Place?>((ref) => null);
+
+/// Google Places Autocomplete provider (alias for place search)
+final serpapiPlacesAutocompleteProvider =
+    FutureProvider.family<List<PlacePrediction>, String>((ref, query) async {
+  if (query.isEmpty) return [];
+
+  final googlePlacesService = ref.watch(googlePlacesServiceProvider);
+  return await googlePlacesService.autocompleteSearch(query);
+});
+
+// ==================== RECENT PLACES (from search history) ====================
+const String _recentPlacesStorageKey = 'ride_share_recent_places';
+const int _maxRecentPlaces = 15;
+
+final recentPlacesProvider = StateProvider<List<Place>>((ref) => []);
+
+class RecentPlacesManager {
+  /// Load recent places from SharedPreferences and update provider
+  static Future<void> loadAndSet(dynamic ref) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonList = prefs.getStringList(_recentPlacesStorageKey);
+      if (jsonList == null || jsonList.isEmpty) {
+        return;
+      }
+      final places = <Place>[];
+      for (final jsonStr in jsonList) {
+        try {
+          final map = jsonDecode(jsonStr) as Map<String, dynamic>;
+          places.add(Place.fromJson(map));
+        } catch (_) {
+          // Skip invalid entries
+        }
+      }
+      ref.read(recentPlacesProvider.notifier).state = places;
+    } catch (e) {
+      // Ignore load errors
+    }
+  }
+
+  /// Clear all recent places from memory and storage.
+  static Future<void> clearAll(dynamic ref) async {
+    ref.read(recentPlacesProvider.notifier).state = [];
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_recentPlacesStorageKey);
+    } catch (_) {}
+  }
+
+  /// Add a place to recent (e.g. when user selects a destination). Dedupes by id, keeps latest first, caps at [_maxRecentPlaces].
+  static Future<void> addPlace(dynamic ref, Place place) async {
+    final list = ref.read(recentPlacesProvider);
+    final updated = [
+      place.copyWith(type: PlaceType.RECENT),
+      ...list.where((p) => p.id != place.id),
+    ].take(_maxRecentPlaces).toList();
+    ref.read(recentPlacesProvider.notifier).state = updated;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonList =
+          updated.map((p) => jsonEncode(p.toJson())).toList();
+      await prefs.setStringList(_recentPlacesStorageKey, jsonList);
+    } catch (_) {}
+  }
+}
+
+// ==================== BOOKMARKED PLACES ====================
+const String _bookmarkedPlacesStorageKey = 'ride_share_bookmarked_places';
+
+final bookmarkedPlacesProvider = StateProvider<List<Place>>((ref) => []);
+
+class BookmarkedPlacesManager {
+  static Future<void> loadAndSet(dynamic ref) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonList = prefs.getStringList(_bookmarkedPlacesStorageKey);
+      if (jsonList == null || jsonList.isEmpty) return;
+      final places = <Place>[];
+      for (final jsonStr in jsonList) {
+        try {
+          places.add(Place.fromJson(jsonDecode(jsonStr) as Map<String, dynamic>));
+        } catch (_) {}
+      }
+      ref.read(bookmarkedPlacesProvider.notifier).state = places;
+    } catch (_) {}
+  }
+
+  static Future<void> _persist(dynamic ref, List<Place> places) async {
+    ref.read(bookmarkedPlacesProvider.notifier).state = places;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+        _bookmarkedPlacesStorageKey,
+        places.map((p) => jsonEncode(p.toJson())).toList(),
+      );
+    } catch (_) {}
+  }
+
+  /// Save a favourite (or Home/Work). Replaces existing Home/Work of same type.
+  static Future<void> addPlace(dynamic ref, Place place) async {
+    final typed = place.copyWith(
+      isBookmarked: true,
+      savedAt: DateTime.now(),
+      type: place.type == PlaceType.RECENT ? PlaceType.FAVORITE : place.type,
+    );
+    final existing = ref.read(bookmarkedPlacesProvider);
+    List<Place> updated;
+    if (typed.type == PlaceType.HOME || typed.type == PlaceType.WORK) {
+      updated = [
+        typed,
+        ...existing.where((p) => p.type != typed.type && p.id != typed.id),
+      ];
+    } else {
+      updated = [
+        typed,
+        ...existing.where((p) => p.id != typed.id),
+      ];
+    }
+    await _persist(ref, updated);
+    await _syncRecentBookmarkFlag(ref, typed.id, true);
+  }
+
+  static Future<void> removePlace(dynamic ref, String placeId) async {
+    final places = ref.read(bookmarkedPlacesProvider);
+    await _persist(ref, places.where((p) => p.id != placeId).toList());
+    await _syncRecentBookmarkFlag(ref, placeId, false);
+  }
+
+  static Future<void> setHomeOrWork(
+    dynamic ref,
+    Place place,
+    PlaceType type,
+  ) async {
+    assert(type == PlaceType.HOME || type == PlaceType.WORK);
+    await addPlace(
+      ref,
+      place.copyWith(
+        type: type,
+        name: type == PlaceType.HOME ? 'Home' : 'Work',
+        isBookmarked: true,
+      ),
+    );
+  }
+
+  /// Toggle favourite bookmark for a place (not Home/Work slots).
+  static Future<void> toggleFavorite(dynamic ref, Place place) async {
+    final places = ref.read(bookmarkedPlacesProvider);
+    final existing = places.where((p) => p.id == place.id).toList();
+    if (existing.isNotEmpty) {
+      await removePlace(ref, place.id);
+    } else {
+      await addPlace(
+        ref,
+        place.copyWith(type: PlaceType.FAVORITE, isBookmarked: true),
+      );
+    }
+  }
+
+  static bool isSaved(dynamic ref, String placeId) {
+    return ref
+        .read(bookmarkedPlacesProvider)
+        .any((p) => p.id == placeId);
+  }
+
+  static Future<void> _syncRecentBookmarkFlag(
+    dynamic ref,
+    String placeId,
+    bool isBookmarked,
+  ) async {
+    final recent = ref.read(recentPlacesProvider);
+    final updated = recent
+        .map((p) => p.id == placeId ? p.copyWith(isBookmarked: isBookmarked) : p)
+        .toList();
+    if (updated.length != recent.length) return;
+    final changed = recent.any(
+      (p) => p.id == placeId && p.isBookmarked != isBookmarked,
+    );
+    if (!changed) return;
+    ref.read(recentPlacesProvider.notifier).state = updated;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+        _recentPlacesStorageKey,
+        updated.map((p) => jsonEncode(p.toJson())).toList(),
+      );
+    } catch (_) {}
+  }
+}
+
+// ==================== RIDE REQUEST ====================
+final rideRequestProvider =
+    FutureProvider.family<Map<String, dynamic>, RideRequestParams>(
+        (ref, params) async {
+  final rideService = ref.watch(rideShareServiceProvider);
+
+  return await rideService.requestRide(
+    pickupLatitude: params.pickupLatitude,
+    pickupLongitude: params.pickupLongitude,
+    dropoffLatitude: params.dropoffLatitude,
+    dropoffLongitude: params.dropoffLongitude,
+    vehicleClass: params.vehicleClass,
+    pickupAddress: params.pickupAddress,
+    dropoffAddress: params.dropoffAddress,
+    notes: params.notes,
+  );
+});
+
+class RideRequestParams {
+  final double pickupLatitude;
+  final double pickupLongitude;
+  final double dropoffLatitude;
+  final double dropoffLongitude;
+  final String vehicleClass;
+  final String? pickupAddress;
+  final String? dropoffAddress;
+  final String? notes;
+
+  RideRequestParams({
+    required this.pickupLatitude,
+    required this.pickupLongitude,
+    required this.dropoffLatitude,
+    required this.dropoffLongitude,
+    required this.vehicleClass,
+    this.pickupAddress,
+    this.dropoffAddress,
+    this.notes,
+  });
+}
+
+// ==================== FARE ESTIMATION ====================
+final fareEstimateProvider =
+    FutureProvider.family<Map<String, dynamic>, FareEstimateParams>(
+        (ref, params) async {
+  final rideService = ref.watch(rideShareServiceProvider);
+
+  return await rideService.estimateFare(
+    pickupLatitude: params.pickupLatitude,
+    pickupLongitude: params.pickupLongitude,
+    dropoffLatitude: params.dropoffLatitude,
+    dropoffLongitude: params.dropoffLongitude,
+    vehicleClass: params.vehicleClass,
+  );
+});
+
+class FareEstimateParams {
+  final double pickupLatitude;
+  final double pickupLongitude;
+  final double dropoffLatitude;
+  final double dropoffLongitude;
+  final String vehicleClass;
+
+  FareEstimateParams({
+    required this.pickupLatitude,
+    required this.pickupLongitude,
+    required this.dropoffLatitude,
+    required this.dropoffLongitude,
+    required this.vehicleClass,
+  });
+}
+
+// ==================== VEHICLE SELECTION ====================
+final selectedVehicleClassProvider = StateProvider<String?>(
+  (ref) => null,
+);
+
+// ==================== DISTANCE CALCULATION ====================
+final distanceCalculationProvider =
+    Provider.family<double, (double, double, double, double)>((ref, params) {
+  final placeService = ref.watch(placeServiceProvider);
+  final (lat1, lng1, lat2, lng2) = params;
+  return placeService.calculateDistance(lat1, lng1, lat2, lng2);
+});
+
+// ==================== ROUTE & POLYLINE ====================
+/// Get route details between pickup and dropoff using Google Directions API
+final routeProvider =
+    FutureProvider.family<Map<String, dynamic>, (Place, Place)>(
+  (ref, places) async {
+    final (pickupPlace, dropoffPlace) = places;
+    final directionsService = ref.watch(googleDirectionsServiceProvider);
+
+    try {
+      final routeInfo = await directionsService.getRouteInfo(
+        originLat: pickupPlace.latitude,
+        originLng: pickupPlace.longitude,
+        destLat: dropoffPlace.latitude,
+        destLng: dropoffPlace.longitude,
+      );
+
+      return {
+        'distanceKm': routeInfo.distanceKm,
+        'durationMinutes': routeInfo.durationMinutes,
+        'polyline': routeInfo.polyline,
+      };
+    } catch (e) {
+      return {
+        'distanceKm': 0.0,
+        'durationMinutes': 0,
+        'polyline': '',
+        'error': e.toString(),
+      };
+    }
+  },
+);
+
+/// Get accurate distance in kilometers between pickup and dropoff
+final distanceKmProvider =
+    FutureProvider.family<double, (Place, Place)>((ref, places) async {
+  final (pickupPlace, dropoffPlace) = places;
+  final directionsService = ref.watch(googleDirectionsServiceProvider);
+
+  try {
+    final routeInfo = await directionsService.getRouteInfo(
+      originLat: pickupPlace.latitude,
+      originLng: pickupPlace.longitude,
+      destLat: dropoffPlace.latitude,
+      destLng: dropoffPlace.longitude,
+    );
+    return routeInfo.distanceKm;
+  } catch (e) {
+    return 0.0;
+  }
+});
+
+/// Get estimated duration in minutes between pickup and dropoff
+final durationMinutesProvider =
+    FutureProvider.family<int, (Place, Place)>((ref, places) async {
+  final (pickupPlace, dropoffPlace) = places;
+  final directionsService = ref.watch(googleDirectionsServiceProvider);
+
+  try {
+    final routeInfo = await directionsService.getRouteInfo(
+      originLat: pickupPlace.latitude,
+      originLng: pickupPlace.longitude,
+      destLat: dropoffPlace.latitude,
+      destLng: dropoffPlace.longitude,
+    );
+    return routeInfo.durationMinutes;
+  } catch (e) {
+    return 0;
+  }
+});
+
+// ==================== CACHED ROUTE POLYLINE ====================
+/// Stores the last computed polyline coordinates so the tracking screen can
+/// reuse them without making another Google API call.
+final cachedRoutePolylineProvider = StateProvider<List<LatLng>>((ref) => []);

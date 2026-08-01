@@ -1,0 +1,811 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:ui' as ui;
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
+
+import '../../Home/homepage.dart';
+import '../Marketplace/presentation/pages/main_marketPlace.dart';
+import '../Cart/CartPresentaztion/pages/cartpage.dart';
+import 'package:vero360_app/GernalScreens/chat_list_page.dart';
+import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
+
+import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
+import 'package:vero360_app/Home/CustomersProfilepage.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+
+// Merchant dashboards
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
+
+// ─────────────────────────────────────────────
+// DESIGN TOKENS
+// ─────────────────────────────────────────────
+const _kOrange      = Color(0xFFFF8A00);
+const _kOrangeDark  = Color(0xFFE07000);
+const _kOrangeLight = Color(0xFFFFF0D9);
+const _kIconOff     = Color(0xFFAAAAAA);
+
+class Bottomnavbar extends StatefulWidget {
+  const Bottomnavbar({
+    super.key,
+    required this.email,
+    this.initialIndex = 0,
+  });
+  final String email;
+  /// Tab to show first (0–4). Use `4` to open merchant dashboard for food merchants.
+  final int initialIndex;
+
+  @override
+  State<Bottomnavbar> createState() => _BottomnavbarState();
+}
+
+class _BottomnavbarState extends State<Bottomnavbar>
+    with WidgetsBindingObserver {
+  late int _selectedIndex;
+
+  bool _isMerchant = false;
+  bool _isDriver = false;
+  bool _isLoggedIn = false;
+
+  late List<Widget> _pages;
+  bool _pagesReady = false;
+
+  final cartService = CartServiceProvider.getInstance();
+  StreamSubscription<User?>? _authSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedIndex = widget.initialIndex.clamp(0, 4);
+    // Paint the shell immediately — no second splash after role redirect.
+    _pages = _defaultPages();
+    _pagesReady = true;
+    WidgetsBinding.instance.addObserver(this);
+    _authSub =
+        FirebaseAuth.instance.authStateChanges().listen((_) => _refreshAuthState());
+    _initialize();
+  }
+
+  List<Widget> _defaultPages() => [
+        Vero360Homepage(email: widget.email, isDriverHome: false),
+        MarketPage(
+          key: const ValueKey('main_market_tab'),
+          cartService: cartService,
+          onBackToHome: () => setState(() => _selectedIndex = 0),
+        ),
+        const AuthGuard(
+          featureName: 'Messages',
+          showChildBehindDialog: true,
+          child: ChatListPage(),
+        ),
+        AuthGuard(
+          featureName: 'Cart',
+          showChildBehindDialog: true,
+          child: CartPage(cartService: cartService),
+        ),
+        const AuthGuard(
+          featureName: 'Profile',
+          showChildBehindDialog: true,
+          child: ProfilePage(),
+        ),
+      ];
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      LocationPermissionHelper.onAppResumed();
+    }
+  }
+
+  bool _tabIsProtected(int index) => index >= 2;
+
+  Future<void> _initialize() async {
+    try {
+      // Show home ASAP from cached role — do not await network here.
+      await _checkUserRoleAndSetup();
+    } catch (e, st) {
+      assert(() {
+        debugPrint('BottomNavbar._initialize: $e\n$st');
+        return true;
+      }());
+      if (!_pagesReady) {
+        _pages = _defaultPages();
+        _pagesReady = true;
+      }
+    } finally {
+      if (mounted) {
+        setState(() {});
+        if (_isDriver) {
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            if (!mounted) return;
+            if (LocationPermissionHelper.isKnownGranted) return;
+            await LocationPermissionHelper.ensureLocationAccess(context);
+          });
+        }
+      }
+    }
+
+    // Auth refresh + messaging warm in background (must not block home).
+    unawaited(_refreshAuthState());
+  }
+
+  Future<void> _refreshAuthState() async {
+    final loggedIn = await AuthHandler.isAuthenticated();
+    if (!mounted) return;
+    setState(() => _isLoggedIn = loggedIn);
+    if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
+      setState(() => _selectedIndex = 0);
+    }
+    if (loggedIn) {
+      unawaited(_fetchAndUpdateRoleFromServer());
+      unawaited(_bootstrapMessaging());
+    }
+  }
+
+  /// Keep WebSocket + thread cache warm so unread badges and push paths work.
+  Future<void> _bootstrapMessaging() async {
+    if (!_isLoggedIn) return;
+    try {
+      await BackendMessagingCache.initialize();
+      await BackendChatService.ensureAuth();
+      BackendChatService.refreshThreads();
+      await BackendMessagingSocket.connect();
+    } catch (_) {}
+  }
+
+  Future<void> _fetchAndUpdateRoleFromServer() async {
+    final token = await AuthHandler.getTokenForApi();
+    if (token == null || token.isEmpty) return;
+    try {
+      final resp = await http.get(
+        ApiConfig.endpoint('/users/me'),
+        headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+      ).timeout(const Duration(seconds: 3));
+      if (resp.statusCode != 200) return;
+      final decoded = json.decode(resp.body);
+      final user = (decoded is Map && decoded['data'] is Map)
+          ? Map<String, dynamic>.from(decoded['data'])
+          : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
+      final prefs = await SharedPreferences.getInstance();
+      final backendRole = (user['role'] ?? '').toString().toLowerCase();
+      final cachedRole = (prefs.getString('user_role') ?? '').toLowerCase();
+      if (cachedRole.isNotEmpty && cachedRole != 'customer' && backendRole == 'customer') {
+        await _putRoleToBackend(token, cachedRole); return;
+      }
+      if (backendRole == 'customer') {
+        final firestoreRole = await _getRoleFromFirestore();
+        if (firestoreRole != null && firestoreRole != 'customer' && firestoreRole != backendRole) {
+          await prefs.setString('user_role', firestoreRole);
+          await prefs.setString('role', firestoreRole);
+          await _putRoleToBackend(token, firestoreRole);
+          if (mounted) { await _checkUserRoleAndSetup(); setState(() {}); }
+          return;
+        }
+      }
+      final isMerchant = RoleHelper.isMerchant(user);
+      final isDriver = !isMerchant && RoleHelper.isDriver(user);
+      var newRole = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
+      // Keep merchant when backend still reports customer (PUT may have failed).
+      if (newRole == 'customer' && cachedRole == 'merchant') {
+        newRole = 'merchant';
+      }
+      // Do not keep stale "driver" when server says customer — a driver DB row ≠ driver session.
+      if (newRole == 'customer' && cachedRole == 'driver') {
+        newRole = 'customer';
+      }
+      if (cachedRole != newRole) {
+        await prefs.setString('user_role', newRole);
+        await prefs.setString('role', newRole);
+      }
+      await loadDriverStatusFromPrefs();
+      if (mounted && (_isMerchant != isMerchant || _isDriver != isDriver)) { await _checkUserRoleAndSetup(); if (mounted) setState(() {}); }
+    } catch (_) {}
+  }
+
+  Future<void> _putRoleToBackend(String token, String role) async {
+    try { await http.put(ApiConfig.endpoint('/users/me'), headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json', 'Content-Type': 'application/json'}, body: json.encode({'role': role})).timeout(const Duration(seconds: 6)); } catch (_) {}
+  }
+
+  Future<String?> _getRoleFromFirestore() async {
+    try {
+      final fbUser = FirebaseAuth.instance.currentUser;
+      if (fbUser == null) return null;
+      final doc = await FirebaseFirestore.instance.collection('users').doc(fbUser.uid).get();
+      if (doc.exists && doc.data() != null) return (doc.data()!['role'] ?? '').toString().toLowerCase();
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _checkUserRoleAndSetup() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = (prefs.getString('user_role') ?? prefs.getString('role') ?? '').toLowerCase().trim();
+    final nextMerchant = raw == 'merchant';
+    final nextDriver = raw == 'driver';
+
+    // Keep the current tab. Only rebuild page widgets when role flags change
+    // (or on first setup) — rebuilding every auth/role refresh remounts Market
+    // and feels like a jump back to Home.
+    final roleChanged =
+        !_pagesReady || _isMerchant != nextMerchant || _isDriver != nextDriver;
+    _isMerchant = nextMerchant;
+    _isDriver = nextDriver;
+    if (!roleChanged) return;
+
+    final homePage = Vero360Homepage(
+      key: ValueKey(
+        'home_${FirebaseAuth.instance.currentUser?.uid ?? widget.email}',
+      ),
+      email: widget.email,
+      isDriverHome: _isDriver,
+    );
+
+    _pages = [
+      homePage,
+      MarketPage(
+        key: const ValueKey('main_market_tab'),
+        cartService: cartService,
+        onBackToHome: () => setState(() => _selectedIndex = 0),
+      ),
+      const AuthGuard(featureName: 'Messages', showChildBehindDialog: true, child: ChatListPage()),
+      AuthGuard(featureName: 'Cart', showChildBehindDialog: true, child: CartPage(cartService: cartService)),
+      AuthGuard(
+        featureName: _isMerchant ? 'Dashboard' : 'Profile',
+        showChildBehindDialog: true,
+        child: _isMerchant ? _merchantProfileTab(prefs) : const ProfilePage(),
+      ),
+    ];
+    _pagesReady = true;
+    // Merchants stay in this shell (Dashboard = tab 4). Do not pushAndRemoveUntil
+    // to a fresh merchant dashboard — that resets nav to Home and disposes the
+    // current tab mid-load (see setState-after-dispose dashboard logs).
+  }
+
+  Widget _merchantProfileTab(SharedPreferences prefs) {
+    final email = prefs.getString('email') ?? widget.email;
+    final key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ?? 'marketplace';
+    return switch (key) {
+      'food' => FoodMerchantDashboard(email: email, embeddedInMainNav: true),
+      'accommodation' => AccommodationMerchantDashboard(email: email),
+      'courier' => CourierMerchantDashboard(email: email),
+      _ => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () => setState(() => _selectedIndex = 0), embeddedInMainNav: true),
+    };
+  }
+
+  void _onItemTapped(int index) {
+    if (!_isLoggedIn && _tabIsProtected(index)) {
+      _showAuthDialog();
+      _refreshAuthState();
+      return;
+    }
+    HapticFeedback.lightImpact();
+    setState(() => _selectedIndex = index);
+    _refreshAuthState();
+  }
+
+  Widget _buildBody() {
+    // Keep off-tab pages alive so auth/role refreshes don't remount Marketplace.
+    return IndexedStack(
+      index: _selectedIndex,
+      children: _pages,
+    );
+  }
+
+  void _showAuthDialog() {
+    final theme = Theme.of(context);
+    final onSurface = theme.colorScheme.onSurface;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (dialogContext) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(28),
+          ),
+          clipBehavior: Clip.antiAlias,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          _kOrange.withValues(alpha: 0.18),
+                          _kOrangeLight.withValues(alpha: 0.65),
+                        ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _kOrange.withValues(alpha: 0.22),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      Icons.lock_person_rounded,
+                      size: 36,
+                      color: _kOrangeDark,
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  Text(
+                    'Sign in required',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.5,
+                          color: onSurface,
+                          height: 1.15,
+                        ) ??
+                        TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: onSurface,
+                        ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Sign in to use Messages, Cart, and your profile. '
+                    'It only takes a moment.',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                          height: 1.45,
+                          color: onSurface.withValues(alpha: 0.72),
+                          fontWeight: FontWeight.w500,
+                        ) ??
+                        TextStyle(
+                          fontSize: 15,
+                          height: 1.45,
+                          color: onSurface.withValues(alpha: 0.72),
+                          fontWeight: FontWeight.w500,
+                        ),
+                  ),
+                  const SizedBox(height: 28),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () =>
+                              Navigator.of(dialogContext).pop(),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: onSurface.withValues(alpha: 0.85),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            side: BorderSide(
+                              color: onSurface.withValues(alpha: 0.18),
+                            ),
+                          ),
+                          child: const Text(
+                            'Not now',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () {
+                            Navigator.of(dialogContext).pop();
+                            Navigator.pushNamed(context, '/login');
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _kOrange,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor:
+                                _kOrange.withValues(alpha: 0.38),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          child: const Text(
+                            'Sign in',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Scaffold(
+      extendBody: true,                    // body goes under the nav for depth
+      body: _buildBody(),
+      bottomNavigationBar: StreamBuilder<int>(
+        stream: BackendChatService.watchTotalUnreadCount(),
+        initialData: BackendChatService.totalUnreadMessageCount,
+        builder: (context, snap) {
+          return VeroMainNavigationBar(
+            selectedIndex: _selectedIndex,
+            onTap: _onItemTapped,
+            isDark: isDark,
+            isMerchant: _isMerchant,
+            messagesBadgeCount: snap.data ?? 0,
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// NAV ITEM DATA (shared with FoodPage / shells)
+// ─────────────────────────────────────────────
+class VeroNavItemData {
+  final IconData icon;
+  final String label;
+  const VeroNavItemData({required this.icon, required this.label});
+}
+
+List<VeroNavItemData> veroMainNavItems({required bool isMerchant}) => [
+      const VeroNavItemData(icon: Icons.home_rounded, label: 'Home'),
+      const VeroNavItemData(icon: Icons.store_rounded, label: 'Market'),
+      const VeroNavItemData(icon: Icons.chat_bubble_rounded, label: 'Messages'),
+      const VeroNavItemData(icon: Icons.shopping_bag_rounded, label: 'Cart'),
+      VeroNavItemData(
+        icon: isMerchant ? Icons.dashboard_rounded : Icons.person_rounded,
+        label: isMerchant ? 'Dashboard' : 'Profile',
+      ),
+    ];
+
+/// Bottom inset so scrollable content clears the floating [VeroMainNavigationBar]
+/// when the shell uses `extendBody: true` (bar overlays the body).
+double veroFloatingNavClearance(BuildContext context, {double extra = 16}) {
+  final safeBottom = MediaQuery.paddingOf(context).bottom;
+  // Safe area + nav pad (10) + bar height (70) + breathing room.
+  return safeBottom + 10 + 70 + extra;
+}
+
+/// Opens the main app shell ([Bottomnavbar]) on a given tab (0–4).
+void openVeroMainShell(BuildContext context, {required String email, int tabIndex = 0}) {
+  Navigator.of(context).pushAndRemoveUntil(
+    MaterialPageRoute(
+      builder: (_) => Bottomnavbar(
+        email: email,
+        initialIndex: tabIndex.clamp(0, 4),
+      ),
+    ),
+    (route) => false,
+  );
+}
+
+// ─────────────────────────────────────────────
+// VERO NAV BAR  — floating frosted pill
+// ─────────────────────────────────────────────
+class VeroMainNavigationBar extends StatelessWidget {
+  const VeroMainNavigationBar({
+    super.key,
+    required this.selectedIndex,
+    required this.onTap,
+    required this.isDark,
+    required this.isMerchant,
+    this.messagesBadgeCount = 0,
+  });
+
+  /// Highlighted tab; pass `null` when no tab applies (e.g. standalone Food screen).
+  final int? selectedIndex;
+  final ValueChanged<int> onTap;
+  final bool isDark;
+  final bool isMerchant;
+  final int messagesBadgeCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = veroMainNavItems(isMerchant: isMerchant);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+            child: Container(
+              height: 70,
+              decoration: BoxDecoration(
+                color: isDark
+                    ? Colors.black.withOpacity(0.72)
+                    : Colors.white.withOpacity(0.88),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.white.withOpacity(0.08)
+                      : Colors.black.withOpacity(0.06),
+                  width: 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: _kOrange.withOpacity(0.12),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.10),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  for (int i = 0; i < items.length; i++)
+                    Expanded(
+                      child: _VeroNavButton(
+                        item: items[i],
+                        selected:
+                            selectedIndex != null && i == selectedIndex,
+                        isDark: isDark,
+                        badgeCount: i == 2 ? messagesBadgeCount : 0,
+                        onTap: () => onTap(i),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// INDIVIDUAL NAV BUTTON  — morph + ripple + label
+// ─────────────────────────────────────────────
+class _VeroNavButton extends StatefulWidget {
+  const _VeroNavButton({
+    required this.item,
+    required this.selected,
+    required this.isDark,
+    required this.onTap,
+    this.badgeCount = 0,
+  });
+
+  final VeroNavItemData item;
+  final bool selected;
+  final bool isDark;
+  final VoidCallback onTap;
+  final int badgeCount;
+
+  @override
+  State<_VeroNavButton> createState() => _VeroNavButtonState();
+}
+
+class _VeroNavButtonState extends State<_VeroNavButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+
+  // Selection animations
+  late Animation<double>  _pillScale;
+  late Animation<double>  _pillOpacity;
+  late Animation<double>  _labelFade;
+  late Animation<Offset>  _labelSlide;
+  late Animation<double>  _iconShift;   // icon moves up when selected
+  late Animation<Color?>  _iconColor;
+
+  bool _pressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    _buildAnimations();
+    if (widget.selected) _ctrl.value = 1.0;
+  }
+
+  void _buildAnimations() {
+    _pillScale = Tween<double>(begin: 0.6, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: const Interval(0.0, 0.7, curve: Curves.elasticOut)),
+    );
+    _pillOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: const Interval(0.0, 0.4, curve: Curves.easeOut)),
+    );
+    _labelFade = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: const Interval(0.35, 0.85, curve: Curves.easeOut)),
+    );
+    _labelSlide = Tween<Offset>(begin: const Offset(0, 0.4), end: Offset.zero).animate(
+      CurvedAnimation(parent: _ctrl, curve: const Interval(0.3, 0.9, curve: Curves.easeOutCubic)),
+    );
+    _iconShift = Tween<double>(begin: 0.0, end: -3.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: const Interval(0.0, 0.6, curve: Curves.easeOutCubic)),
+    );
+    _iconColor = ColorTween(begin: _kIconOff, end: Colors.white).animate(
+      CurvedAnimation(parent: _ctrl, curve: const Interval(0.1, 0.6, curve: Curves.easeOut)),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _VeroNavButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selected != oldWidget.selected) {
+      if (widget.selected) {
+        _ctrl.forward();
+      } else {
+        _ctrl.reverse();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) { setState(() => _pressed = false); widget.onTap(); },
+      onTapCancel: () => setState(() => _pressed = false),
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (ctx, _) {
+          final iconColor = _iconColor.value ?? _kIconOff;
+          final labelColor = widget.isDark ? Colors.white : Colors.white;
+          final unselIconColor = widget.isDark ? Colors.white60 : _kIconOff;
+
+          return AnimatedScale(
+            scale: _pressed ? 0.90 : 1.0,
+            duration: const Duration(milliseconds: 100),
+            child: SizedBox(
+              height: 70,
+              child: Stack(alignment: Alignment.center, children: [
+                // ── AMBER PILL BACKGROUND ──
+                ScaleTransition(
+                  scale: _pillScale,
+                  child: FadeTransition(
+                    opacity: _pillOpacity,
+                    child: Container(
+                      height: 50,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [_kOrange, _kOrangeDark],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _kOrange.withOpacity(0.45),
+                            blurRadius: 14,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                // ── ICON + LABEL STACK ──
+                Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  // Icon + optional unread badge
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Transform.translate(
+                        offset: Offset(0, _iconShift.value),
+                        child: Icon(
+                          widget.item.icon,
+                          size: 24,
+                          color: widget.selected ? iconColor : unselIconColor,
+                        ),
+                      ),
+                      if (widget.badgeCount > 0)
+                        Positioned(
+                          right: -8,
+                          top: -4 + _iconShift.value,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 2,
+                            ),
+                            constraints: const BoxConstraints(minWidth: 18),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEF4444),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.white, width: 1.5),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              widget.badgeCount > 99
+                                  ? '99+'
+                                  : '${widget.badgeCount}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                height: 1.1,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+
+                  // Label (slides up + fades in when selected)
+                  if (widget.selected)
+                    SlideTransition(
+                      position: _labelSlide,
+                      child: FadeTransition(
+                        opacity: _labelFade,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 3),
+                          child: Text(
+                            widget.item.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: labelColor,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    const SizedBox(height: 3 + 13), // preserve height to prevent layout shift
+                ]),
+              ]),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}

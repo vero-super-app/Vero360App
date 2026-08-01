@@ -1,0 +1,2226 @@
+// lib/Pages/PostMarketplace.dart
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart' show FirebaseException;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:mime/mime.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
+
+import 'package:vero360_app/features/Marketplace/presentation/pages/myshop.dart';
+import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
+
+import '../../../../utils/toasthelper.dart';
+import 'marketplace_edit_page.dart';
+
+class LocalMedia {
+  final Uint8List bytes;
+  final String filename;
+  final String? mime;
+  final bool isVideo;
+  const LocalMedia({
+    required this.bytes,
+    required this.filename,
+    this.mime,
+    this.isVideo = false,
+  });
+}
+
+class MarketplaceCrudPage extends StatefulWidget {
+  const MarketplaceCrudPage({super.key, this.initialCategory});
+
+  /// When set (e.g. `food` from [FoodMerchantDashboard]), pre-selects listing category.
+  final String? initialCategory;
+
+  @override
+  State<MarketplaceCrudPage> createState() => _MarketplaceCrudPageState();
+}
+
+class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
+    with SingleTickerProviderStateMixin {
+  final _picker = ImagePicker();
+  late final TabController _tabs;
+
+  final _form = GlobalKey<FormState>();
+  final _name = TextEditingController();
+  final _price = TextEditingController();
+  final _location = TextEditingController();
+  final _desc = TextEditingController();
+  final _stock = TextEditingController(text: '1');
+
+  bool _isActive = true;
+  bool _submitting = false;
+  int _stockQty = 1;
+
+  static const List<String> _kCategories = <String>[
+    'food',
+    'drinks',
+    'electronics',
+    'clothes',
+    'shoes',
+    'other',
+  ];
+  late String? _category;
+
+  // media (create tab)
+  LocalMedia? _cover;
+  final List<LocalMedia> _gallery = <LocalMedia>[];
+  final List<LocalMedia> _videos = <LocalMedia>[];
+
+  // Photo carousel auto-slide (1 sec)
+  late final PageController _photoPc;
+  Timer? _photoTimer;
+  int _photoPage = 0;
+
+  // manage tab
+  List<Map<String, dynamic>> _items = [];
+  bool _loadingItems = true;
+  bool _busyRow = false; // disables per-card buttons when true
+
+  // shop check
+  bool _checkingShop = true;
+  bool _hasShop = false;
+  Map<String, dynamic>? _myShop; // NEW: Store shop details
+
+  /// GPS for listing (required for food — used by API + Firestore).
+  double? _listingLat;
+  double? _listingLng;
+
+  // Firestore only (no Firebase Auth, no Storage)
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  // NestJS service provider client
+  final _spService = ServiceproviderService();
+
+  /// Food listings skip "open shop" — merchant is identified by Firebase account + prefs.
+  bool get _postsFoodWithoutShop =>
+      (_category ?? '').toLowerCase() == 'food';
+
+  // --- Brand look to match Airport/Vero Courier ---
+  static const Color _brandOrange = Color(0xFFFF8A00);
+  static const Color _brandSoft = Color(0xFFFFE8CC);
+
+  @override
+  void initState() {
+    super.initState();
+    final ic = widget.initialCategory?.trim().toLowerCase();
+    _category = (ic != null && ic.isNotEmpty && _kCategories.contains(ic))
+        ? ic
+        : 'other';
+    _tabs = TabController(length: 2, vsync: this);
+    _photoPc = PageController();
+    _initData();
+  }
+
+  void _startPhotoAutoSlide() {
+    _photoTimer?.cancel();
+    final count = (_cover != null ? 1 : 0) + _gallery.length;
+    if (count < 2) return;
+    _photoTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_photoPc.hasClients) return;
+      final next = (_photoPage + 1) % count;
+      _photoPc.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  Future<void> _initData() async {
+    await _checkShop();
+    await _loadItems();
+  }
+
+  @override
+  void dispose() {
+    _photoTimer?.cancel();
+    _photoPc.dispose();
+    _tabs.dispose();
+    _name.dispose();
+    _price.dispose();
+    _location.dispose();
+    _desc.dispose();
+    _stock.dispose();
+    super.dispose();
+  }
+
+  // ---------------- NESTJS AUTH (JWT) ----------------
+
+  /// Try to read JWT from SharedPreferences, decode payload and return userId as string.
+  /// We do NOT block if this fails – posting still works.
+  Future<String?> _firebaseUid() async {
+    final u = FirebaseAuth.instance.currentUser?.uid;
+    if (u != null && u.isNotEmpty) return u;
+    final sp = await SharedPreferences.getInstance();
+    final p = sp.getString('uid');
+    if (p != null && p.isNotEmpty) return p;
+    return null;
+  }
+
+  Future<String?> _getNestUserId() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final token = sp.getString('jwt_token') ??
+          sp.getString('jwt') ??
+          sp.getString('token');
+      if (token == null || token.isEmpty) return null;
+
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+
+      final payloadJson = utf8.decode(
+        base64Url.decode(base64Url.normalize(parts[1])),
+      );
+      final payload =
+          jsonDecode(payloadJson) as Map<String, dynamic>;
+
+      final dynamic rawId =
+          payload['sub'] ?? payload['id'] ?? payload['userId'];
+      if (rawId == null) return null;
+      return rawId.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ---------------- shop check ----------------
+  Future<void> _checkShop() async {
+    setState(() => _checkingShop = true);
+    try {
+      if (_postsFoodWithoutShop) {
+        final uid = await _firebaseUid();
+        if (uid == null || uid.isEmpty) {
+          _hasShop = false;
+          _myShop = null;
+        } else {
+          final prefs = await SharedPreferences.getInstance();
+          final biz = prefs.getString('business_name')?.trim();
+          final dn = FirebaseAuth.instance.currentUser?.displayName?.trim();
+          final name = (biz != null && biz.isNotEmpty)
+              ? biz
+              : ((dn != null && dn.isNotEmpty) ? dn : 'Food seller');
+          _hasShop = true;
+          _myShop = {'id': uid, 'businessName': name};
+        }
+        return;
+      }
+
+      final sp = await _spService.getMerchantInfo();
+      if (sp != null) {
+        _hasShop = true;
+        _myShop = sp;
+      } else {
+        _hasShop = false;
+        _myShop = null;
+      }
+    } catch (e) {
+      _hasShop = false;
+      _myShop = null;
+      debugPrint('Error fetching shop: $e');
+    } finally {
+      if (mounted) setState(() => _checkingShop = false);
+    }
+  }
+
+  // ---------------- data ----------------
+  Future<void> _loadItems() async {
+    setState(() => _loadingItems = true);
+    try {
+      final sellerId = await _getNestUserId();
+      final fbUid = await _firebaseUid();
+
+      // Must match _create(): merchantId is saved as Firebase UID when signed in.
+      Query<Map<String, dynamic>> query =
+          _db.collection('marketplace_items');
+
+      if (_postsFoodWithoutShop && fbUid != null && fbUid.isNotEmpty) {
+        query = query.where('merchantId', isEqualTo: fbUid);
+      } else if (fbUid != null && fbUid.isNotEmpty) {
+        query = query.where('merchantId', isEqualTo: fbUid);
+      } else if (sellerId != null && sellerId.isNotEmpty) {
+        query = query.where('sellerUserId', isEqualTo: sellerId);
+      }
+
+      // Prefer server so we do not show cache-only posts that vanish after logout.
+      QuerySnapshot<Map<String, dynamic>> snap;
+      try {
+        snap = await query.get(const GetOptions(source: Source.server));
+      } catch (_) {
+        snap = await query.get();
+      }
+
+      _items =
+          snap.docs.map((doc) => {...doc.data(), 'id': doc.id}).toList();
+    } catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Load failed: $e',
+        isSuccess: false,
+        errorMessage: 'Load failed',
+      );
+      _items = [];
+    } finally {
+      if (mounted) setState(() => _loadingItems = false);
+    }
+  }
+
+  Future<void> _deleteItem(Map<String, dynamic> item) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete item'),
+        content: Text('Delete "${item['name']}"? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    setState(() => _busyRow = true);
+    try {
+      final id = item['id'] as String;
+      await _db.collection('marketplace_items').doc(id).delete();
+      // All media is inside Firestore as base64; nothing in Storage to delete.
+      _items.removeWhere((e) => e['id'] == id);
+      setState(() {});
+      ToastHelper.showCustomToast(
+        context,
+        'Deleted • ${item['name']}',
+        isSuccess: true,
+        errorMessage: 'Deleted',
+      );
+    } catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Delete failed: $e',
+        isSuccess: false,
+        errorMessage: 'Delete failed',
+      );
+    } finally {
+      if (mounted) setState(() => _busyRow = false);
+    }
+  }
+
+  Future<void> _editItem(Map<String, dynamic> item) async {
+    final marketplaceItem = _createMarketplaceDetailModel(item);
+
+    final changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MarketplaceEditPage(
+          item: marketplaceItem,
+          firestoreId: item['id']?.toString(),
+        ),
+      ),
+    );
+    if (changed == true) {
+      await _loadItems();
+    }
+  }
+
+  String _coverImageFromItem(Map<String, dynamic> item) {
+    String? take(dynamic v) {
+      final t = (v ?? '').toString().trim();
+      return t.isEmpty ? null : t;
+    }
+    return take(item['imageUrl']) ??
+        take(item['image']) ??
+        take(item['photo']) ??
+        '';
+  }
+
+  List<String> _galleryFromItem(Map<String, dynamic> item) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final field in [item['galleryUrls'], item['gallery']]) {
+      if (field is! List) continue;
+      for (final e in field) {
+        final s = e.toString().trim();
+        if (s.isEmpty || seen.contains(s)) continue;
+        seen.add(s);
+        out.add(s);
+      }
+    }
+    return out;
+  }
+
+  int _stableIdFromFirestore(String s) {
+    if (s.isEmpty) return 0;
+    var hash = 0;
+    for (final code in s.codeUnits) {
+      hash = (hash * 31 + code) & 0x7fffffff;
+    }
+    return hash == 0 ? 1 : hash;
+  }
+
+  // Helper to create MarketplaceDetailModel from Map
+  MarketplaceDetailModel _createMarketplaceDetailModel(
+      Map<String, dynamic> item) {
+    final docId = item['id']?.toString() ?? '';
+    return MarketplaceDetailModel(
+      id: _stableIdFromFirestore(docId),
+      name: item['name'] as String? ?? '',
+      image: _coverImageFromItem(item),
+      price: (item['price'] as num?)?.toDouble() ?? 0.0,
+      description: item['description'] as String? ?? '',
+      location: item['location'] as String? ?? '',
+      category: (item['category'] as String?) ?? 'other',
+      gallery: _galleryFromItem(item),
+      videos: (item['videos'] as List<dynamic>?)?.cast<String>() ??
+          const [],
+      sellerUserId: item['sellerUserId'] as String?,
+      merchantId: item['merchantId'] as String?,
+      merchantName: item['merchantName'] as String?,
+      serviceType: (item['serviceType'] as String?) ?? 'marketplace',
+    );
+  }
+
+  // ---------------- pickers (bytes) ----------------
+  Future<void> _pickCover(ImageSource src) async {
+    final x = await _picker.pickImage(
+      source: src,
+      // Smaller images = much faster uploads on mobile data.
+      imageQuality: 72,
+      maxWidth: 1280,
+    );
+    if (x == null) return;
+    final bytes = await x.readAsBytes();
+    setState(() {
+      _cover = LocalMedia(
+        bytes: bytes,
+        filename: x.name,
+        mime: lookupMimeType(x.name, headerBytes: bytes) ?? 'image/jpeg',
+      );
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
+  }
+
+  Future<void> _pickGalleryMulti() async {
+    final xs = await _picker.pickMultiImage(
+      imageQuality: 72,
+      maxWidth: 1280,
+    );
+    for (final x in xs) {
+      final bytes = await x.readAsBytes();
+      _gallery.add(
+        LocalMedia(
+          bytes: bytes,
+          filename: x.name,
+          mime: lookupMimeType(x.name, headerBytes: bytes) ?? 'image/jpeg',
+        ),
+      );
+    }
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
+  }
+
+  Future<void> _pickVideo() async {
+    final x = await _picker.pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(minutes: 2),
+    );
+    if (x == null) return;
+    final bytes = await x.readAsBytes();
+    _videos.add(
+      LocalMedia(
+        bytes: bytes,
+        filename: x.name,
+        mime: lookupMimeType(x.name, headerBytes: bytes),
+        isVideo: true,
+      ),
+    );
+    setState(() {});
+  }
+
+  void _removeGalleryAt(int i) {
+    _gallery.removeAt(i);
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
+  }
+
+  void _removeVideoAt(int i) {
+    _videos.removeAt(i);
+    setState(() {});
+  }
+
+  void _clearCover() {
+    _cover = null;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
+  }
+
+  // ---------------- BASE64 "COMPRESSION" (NO STORAGE) ----------------
+  Future<Uint8List> _compressImage(Uint8List imageBytes) async {
+    try {
+      return imageBytes;
+    } catch (_) {
+      return imageBytes;
+    }
+  }
+
+  Future<String> _encodeMediaAsBase64(LocalMedia media) async {
+    try {
+      Uint8List bytesToEncode = media.bytes;
+
+      if (!media.isVideo) {
+        bytesToEncode = await _compressImage(bytesToEncode);
+      }
+
+      return base64Encode(bytesToEncode);
+    } catch (e) {
+      throw ApiException(message: 'Encode failed: $e');
+    }
+  }
+
+  Future<List<String>> _encodeAll(List<LocalMedia> items) async {
+    final out = <String>[];
+    for (final m in items) {
+      out.add(await _encodeMediaAsBase64(m));
+    }
+    return out;
+  }
+
+  void _resetAfterCreate() {
+    _form.currentState?.reset();
+    _name.clear();
+    _price.clear();
+    _location.clear();
+    _desc.clear();
+    _stock.text = '1';
+    _stockQty = 1;
+    _cover = null;
+    _gallery.clear();
+    _videos.clear();
+    _isActive = true;
+    final ic = widget.initialCategory?.trim().toLowerCase();
+    _category = (ic != null && ic.isNotEmpty && _kCategories.contains(ic))
+        ? ic
+        : 'other';
+    _listingLat = null;
+    _listingLng = null;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startPhotoAutoSlide());
+  }
+
+  String _firestoreWriteErrorMessage(Object e) {
+    if (e is FirebaseException) {
+      switch (e.code) {
+        case 'permission-denied':
+          return 'You don’t have permission to post this listing. Please sign in again and try once more.';
+        case 'unauthenticated':
+          return 'Please sign in to post on Marketplace.';
+        case 'unavailable':
+        case 'deadline-exceeded':
+          return 'We’re having trouble connecting. Check your internet and try again.';
+        case 'resource-exhausted':
+          return 'Too many requests right now. Please wait a moment and try again.';
+        default:
+          return 'Couldn’t post your listing. Please try again.';
+      }
+    }
+    if (e is StateError) {
+      final msg = e.message.trim();
+      if (msg.isNotEmpty &&
+          !msg.toLowerCase().contains('firestore') &&
+          !msg.toLowerCase().contains('firebase')) {
+        return msg;
+      }
+    }
+    return 'Couldn’t post your listing. Please try again.';
+  }
+
+  // ---------------- create ----------------
+  Future<void> _create() async {
+    // Sync lock BEFORE any await/setState so double-taps cannot start two posts.
+    if (_submitting) return;
+    _submitting = true;
+    if (mounted) setState(() {});
+
+    try {
+      if (!_form.currentState!.validate()) return;
+      if (_cover == null) {
+        ToastHelper.showCustomToast(
+          context,
+          'Please pick a cover photo',
+          isSuccess: false,
+          errorMessage: 'Photo required',
+        );
+        return;
+      }
+
+      if (_postsFoodWithoutShop) {
+        if (_myShop == null || _myShop!['id'] == null) {
+          ToastHelper.showCustomToast(
+            context,
+            'Please sign in to post food.',
+            isSuccess: false,
+            errorMessage: 'Not signed in',
+          );
+          return;
+        }
+        if (_listingLat == null || _listingLng == null) {
+          ToastHelper.showCustomToast(
+            context,
+            'Food listings need your current GPS location. Tap the pin icon on the location field.',
+            isSuccess: false,
+            errorMessage: 'Location required',
+          );
+          return;
+        }
+      } else {
+        if (!_hasShop) {
+          ToastHelper.showCustomToast(
+            context,
+            'You need to open a shop before posting on Marketplace.',
+            isSuccess: false,
+            errorMessage: 'No shop',
+          );
+          return;
+        }
+        if (_myShop == null ||
+            _myShop!['id'] == null ||
+            _myShop!['businessName'] == null) {
+          ToastHelper.showCustomToast(
+            context,
+            'Unable to identify merchant information. Please check your shop profile.',
+            isSuccess: false,
+            errorMessage: 'Missing merchant info',
+          );
+          return;
+        }
+      }
+
+      if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
+        ToastHelper.showCustomToast(
+          context,
+          'Please fill all required fields',
+          isSuccess: false,
+          errorMessage: 'Validation',
+        );
+        return;
+      }
+
+      final blockReason = MarketplaceModeration.clientBlockReason(
+        title: _name.text,
+        description: _desc.text,
+      );
+      if (blockReason != null) {
+        ToastHelper.showCustomToast(
+          context,
+          blockReason,
+          isSuccess: false,
+          errorMessage: 'Not allowed',
+        );
+        return;
+      }
+
+      final stock = int.tryParse(_stock.text.trim());
+      if (_stock.text.trim().isEmpty || stock == null || stock < 1) {
+        ToastHelper.showCustomToast(
+          context,
+          'Enter how many items you have in stock (at least 1)',
+          isSuccess: false,
+          errorMessage: 'Validation',
+        );
+        return;
+      }
+      _stockQty = stock;
+
+      final firebaseUser = FirebaseAuth.instance.currentUser;
+      if (firebaseUser == null) {
+        ToastHelper.showCustomToast(
+          context,
+          'You must be signed in with Firebase to post. Use the same login '
+          '(email/Google) you use for the app, then try again.',
+          isSuccess: false,
+          errorMessage: 'Not signed in',
+        );
+        return;
+      }
+
+      // Don't block the post on token refresh — run in background.
+      unawaited(AuthHandler.refreshFirebaseTokenIfSignedIn());
+
+      final sellerId = await _getNestUserId(); // local JWT decode only
+      final firebaseUid = firebaseUser.uid.isNotEmpty
+          ? firebaseUser.uid
+          : ((await SharedPreferences.getInstance()).getString('uid') ??
+              merchantIdFromShop());
+      final merchantId = _myShop!['id'].toString();
+      final merchantName =
+          (_myShop!['businessName'] ?? 'Food seller').toString();
+      final effectiveSellerId = _postsFoodWithoutShop
+          ? (firebaseUid.isNotEmpty ? firebaseUid : (sellerId ?? merchantId))
+          : (sellerId ?? firebaseUid);
+      const serviceType = 'marketplace';
+
+      final svc = MarketplaceService();
+      String? coverUrl;
+      String? coverBase64;
+      final galleryUrls = <String>[];
+      final galleryBase64 = <String>[];
+      final videoUrls = <String>[];
+      var videosSkipped = false;
+
+      // Cap gallery for fast posts (still enough for a listing).
+      final galleryToUpload = _gallery.take(4).toList();
+      final videosToUpload = _videos.take(2).where((v) {
+        if (v.bytes.length > 15 * 1024 * 1024) {
+          videosSkipped = true;
+          return false;
+        }
+        return true;
+      }).toList();
+
+      // One token for all uploads (avoids repeated SharedPreferences reads).
+      final prefs = await SharedPreferences.getInstance();
+      final uploadToken = prefs.getString('jwt_token') ??
+          prefs.getString('token') ??
+          prefs.getString('jwt');
+
+      try {
+        final uploadFutures = <Future<String>>[
+          svc.uploadBytes(
+            _cover!.bytes,
+            filename: _cover!.filename,
+            mimeType: _cover!.mime ?? 'image/jpeg',
+            token: uploadToken,
+          ),
+          ...galleryToUpload.map(
+            (g) => svc.uploadBytes(
+              g.bytes,
+              filename: g.filename,
+              mimeType: g.mime ?? 'image/jpeg',
+              token: uploadToken,
+            ),
+          ),
+          ...videosToUpload.map(
+            (v) => svc.uploadBytes(
+              v.bytes,
+              filename: v.filename,
+              mimeType: v.mime,
+              token: uploadToken,
+            ),
+          ),
+        ];
+        final uploaded = await Future.wait(uploadFutures);
+        coverUrl = uploaded.first;
+        if (galleryToUpload.isNotEmpty) {
+          galleryUrls.addAll(
+            uploaded.sublist(1, 1 + galleryToUpload.length),
+          );
+        }
+        if (videosToUpload.isNotEmpty) {
+          videoUrls.addAll(
+            uploaded.sublist(1 + galleryToUpload.length),
+          );
+        }
+      } catch (uploadErr) {
+        debugPrint(
+          'Upload failed, using compact Firestore fallback: $uploadErr',
+        );
+        if (_cover!.bytes.length > 450000) {
+          throw StateError(
+            'Image upload failed and the photo is too large to save offline. '
+            'Check your internet connection and that the server at ${await ApiConfig.readBase()} is running.',
+          );
+        }
+        coverBase64 = base64Encode(_cover!.bytes);
+        for (final g in galleryToUpload.take(3)) {
+          if (g.bytes.length > 200000) continue;
+          galleryBase64.add(base64Encode(g.bytes));
+        }
+        if (_videos.isNotEmpty) videosSkipped = true;
+      }
+
+      // Post as pending — Cloud Function auto-moderates before going live.
+      final data = <String, dynamic>{
+        'name': _name.text.trim(),
+        'price': double.tryParse(_price.text.trim()) ?? 0,
+        if (coverUrl != null) 'imageUrl': coverUrl,
+        if (coverBase64 != null) 'image': coverBase64,
+        if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
+        if (galleryBase64.isNotEmpty) 'gallery': galleryBase64,
+        if (videoUrls.isNotEmpty) 'videos': videoUrls,
+        'description':
+            _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+        'location': _location.text.trim(),
+        'isActive': false,
+        'reviewStatus': 'pending',
+        'category': _category ?? 'other',
+        'stockQuantity': _stockQty,
+        'quantity': _stockQty,
+        'createdAt': FieldValue.serverTimestamp(),
+        'sellerUserId': effectiveSellerId,
+        'merchantId': firebaseUid.isNotEmpty ? firebaseUid : merchantId,
+        if (firebaseUid.isNotEmpty) 'firebaseUid': firebaseUid,
+        'merchantName': merchantName,
+        'serviceType': serviceType,
+        if (_listingLat != null) 'latitude': _listingLat,
+        if (_listingLng != null) 'longitude': _listingLng,
+      };
+
+      debugPrint('Writing marketplace_items to Firestore (pending review)…');
+      final docRef = await _db.collection('marketplace_items').add(data);
+      debugPrint('Firestore write OK: ${docRef.id}');
+
+      // Attach hashes in the background (duplicate detection) — never blocks UI.
+      final coverBytesForHash = _cover!.bytes;
+      final galleryForHash = List<LocalMedia>.from(galleryToUpload);
+      unawaited(() async {
+        try {
+          final coverHash = await svc.computeVisualHash(coverBytesForHash);
+          final gHashes = <String>[];
+          for (final g in galleryForHash) {
+            final h = await svc.computeVisualHash(g.bytes);
+            if (h != null) gHashes.add(h);
+          }
+          final imageHashes = <String>{
+            if (coverHash != null) coverHash,
+            ...gHashes,
+          }.toList();
+          if (imageHashes.isEmpty) return;
+          await docRef.set({
+            if (coverHash != null) 'imageHash': coverHash,
+            if (gHashes.isNotEmpty) 'galleryHashes': gHashes,
+            'imageHashes': imageHashes,
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      }());
+
+      if (!mounted) return;
+      var successMsg =
+          'Submitted for review. We’ll notify you when it’s live on Vero Marketplace.';
+      if (videosSkipped) {
+        successMsg +=
+            '\nVideos were not saved. Post photos first or retry when online.';
+      }
+      ToastHelper.showCustomToast(
+        context,
+        successMsg,
+        isSuccess: true,
+        errorMessage: 'Submitted',
+      );
+
+      _resetAfterCreate();
+      _tabs.animateTo(1);
+      // Refresh manage list in background — don't hold the submit spinner.
+      unawaited(_loadItems());
+    } on FirebaseException catch (e) {
+      debugPrint('Firestore error: ${e.code} ${e.message}');
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        _firestoreWriteErrorMessage(e),
+        isSuccess: false,
+        errorMessage: 'Create failed',
+      );
+    } catch (e) {
+      debugPrint('Create failed: $e');
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        _firestoreWriteErrorMessage(e),
+        isSuccess: false,
+        errorMessage: 'Create failed',
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  String merchantIdFromShop() {
+    final id = _myShop?['id'];
+    return id?.toString() ?? '';
+  }
+
+  // ---------------- location helpers ----------------
+  Future<void> _getCurrentLocation() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        ToastHelper.showCustomToast(
+          context,
+          'Location services are disabled. Please enable them.',
+          isSuccess: false,
+          errorMessage: 'Location disabled',
+        );
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          ToastHelper.showCustomToast(
+            context,
+            'Location permissions are denied.',
+            isSuccess: false,
+            errorMessage: 'Permission denied',
+          );
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        ToastHelper.showCustomToast(
+          context,
+          'Location permissions are permanently denied. Please enable in settings.',
+          isSuccess: false,
+          errorMessage: 'Permission denied',
+        );
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      final placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+      if (placemarks.isEmpty) {
+        ToastHelper.showCustomToast(
+          context,
+          'Could not fetch address.',
+          isSuccess: false,
+          errorMessage: 'Address fetch failed',
+        );
+        return;
+      }
+      final place = placemarks[0];
+      final address = [
+        place.name,
+        place.street,
+        place.locality,
+        place.administrativeArea,
+        place.country,
+      ].where((e) => e != null && e.isNotEmpty).join(', ');
+      setState(() {
+        _location.text = address;
+        _listingLat = position.latitude;
+        _listingLng = position.longitude;
+      });
+    } catch (e) {
+      ToastHelper.showCustomToast(
+        context,
+        'Failed to get location: $e',
+        isSuccess: false,
+        errorMessage: 'Location failed',
+      );
+    }
+  }
+
+  Future<void> _openGoogleMap() async {
+    if (_location.text.trim().isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Enter a location first.',
+        isSuccess: false,
+        errorMessage: 'No location',
+      );
+      return;
+    }
+    final query = Uri.encodeComponent(_location.text.trim());
+    final uri =
+        Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      ToastHelper.showCustomToast(
+        context,
+        'Could not open Google Maps.',
+        isSuccess: false,
+        errorMessage: 'Map failed',
+      );
+    }
+  }
+
+  // ---------------- time ago ----------------
+  String _timeAgo(DateTime? date) {
+    if (date == null) return 'Unknown';
+    final now = DateTime.now();
+    final diff = now.difference(date);
+    if (diff.inDays > 365) {
+      return '${(diff.inDays / 365).floor()}y ago';
+    } else if (diff.inDays > 30) {
+      return '${(diff.inDays / 30).floor()}m ago';
+    } else if (diff.inDays > 0) {
+      return '${diff.inDays}d ago';
+    } else if (diff.inHours > 0) {
+      return '${diff.inHours}h ago';
+    } else if (diff.inMinutes > 0) {
+      return '${diff.inMinutes}min ago';
+    } else {
+      return '${diff.inSeconds}s ago';
+    }
+  }
+
+  // ---------------- UI helpers (brand look) ----------------
+  InputDecoration _inputDecoration({
+    String? label,
+    String? hint,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      filled: true,
+      fillColor: const Color(0xFFF7F8FA),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      border: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: _brandOrange, width: 1.6),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.red.shade300),
+        borderRadius: BorderRadius.circular(14),
+      ),
+    );
+  }
+
+  Widget _sectionCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE8EAEF)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: _brandSoft,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: _brandOrange, size: 22),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _stockStepper() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'Quantity in stock',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+            ),
+          ),
+          IconButton.filledTonal(
+            onPressed: _stockQty <= 1
+                ? null
+                : () {
+                    setState(() {
+                      _stockQty = (_stockQty - 1).clamp(1, 99999);
+                      _stock.text = '$_stockQty';
+                    });
+                  },
+            icon: const Icon(Icons.remove_rounded),
+          ),
+          SizedBox(
+            width: 56,
+            child: TextField(
+              controller: _stock,
+              textAlign: TextAlign.center,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+              ),
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+              ),
+              onChanged: (v) {
+                final n = int.tryParse(v) ?? 1;
+                setState(() => _stockQty = n.clamp(1, 99999));
+              },
+            ),
+          ),
+          IconButton.filled(
+            style: IconButton.styleFrom(backgroundColor: _brandOrange),
+            onPressed: () {
+              setState(() {
+                _stockQty = (_stockQty + 1).clamp(1, 99999);
+                _stock.text = '$_stockQty';
+              });
+            },
+            icon: const Icon(Icons.add_rounded, color: Colors.white),
+          ),
+        ],
+      ),
+    );
+  }
+
+  ButtonStyle _filledBtnStyle({double padV = 14}) =>
+      FilledButton.styleFrom(
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        padding: EdgeInsets.symmetric(vertical: padV, horizontal: 14),
+        textStyle: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+        ),
+      );
+
+  // ---------------- UI ----------------
+  @override
+  Widget build(BuildContext context) {
+    final canCreate = !_submitting && _cover != null && _hasShop && _myShop != null;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Marketplace'),
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        bottom: TabBar(
+          controller: _tabs,
+          indicatorColor: Colors.white,
+          indicatorWeight: 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          tabs: const [
+            Tab(text: 'Add Item'),
+            Tab(text: 'Manage My Items'),
+          ],
+        ),
+      ),
+      body: SafeArea(
+        child: TabBarView(
+          controller: _tabs,
+          children: [
+            _buildAddTab(canCreate),
+            _buildManageTab(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddTab(bool canCreate) {
+    // While checking shop, show loader
+    if (_checkingShop) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (!_hasShop) {
+      if (_postsFoodWithoutShop) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Card(
+            elevation: 8,
+            shadowColor: Colors.black12,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20)),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _brandSoft,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _brandOrange.withOpacity(0.35),
+                      ),
+                    ),
+                    child: const Text(
+                      'Sign in with your food merchant account to post dishes. '
+                      'No separate shop setup is required.',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Icon(
+                    Icons.restaurant_rounded,
+                    size: 80,
+                    color: Colors.black38,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Card(
+          elevation: 8,
+          shadowColor: Colors.black12,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _brandSoft,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _brandOrange.withOpacity(0.35),
+                    ),
+                  ),
+                  child: const Text(
+                    'To post on Marketplace you must first open your shop. '
+                    'Create your shop profile with a logo and opening hours, then come back here.',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Icon(
+                  Icons.storefront_outlined,
+                  size: 80,
+                  color: Colors.black38,
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  style: _filledBtnStyle(),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const ServiceProviderCrudPage(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.store),
+                  label: const Text('Open My Shop'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // NEW: Show merchant info banner
+    final merchantInfo = _myShop != null
+        ? Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.green[50],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.green),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.account_circle, color: Colors.green),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _postsFoodWithoutShop
+                            ? 'Posting as: ${_myShop!['businessName']}'
+                            : 'Merchant: ${_myShop!['businessName']}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green[800],
+                        ),
+                      ),
+                      Text(
+                        _postsFoodWithoutShop
+                            ? 'Food listing (your account)'
+                            : 'Service: Marketplace',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.green[600],
+                        ),
+                      ),
+                      if (_myShop?['id'] != null && !_postsFoodWithoutShop)
+                        Text(
+                          'ID: ${_myShop!['id']}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.check_circle, color: Colors.green),
+              ],
+            ),
+          )
+        : Container();
+
+    // Normal form when a shop exists
+    return ColoredBox(
+      color: const Color(0xFFF3F4F7),
+      child: SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
+      child: Form(
+            key: _form,
+            child: AbsorbPointer(
+              absorbing: _submitting,
+              child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Merchant info banner
+                merchantInfo,
+
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFF4E5), Color(0xFFFFE8CC)],
+                    ),
+                    border: Border.all(color: _brandOrange.withValues(alpha: 0.28)),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(
+                        Icons.auto_awesome_rounded,
+                        color: _brandOrange,
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Clear photos, accurate stock, and a fair price help buyers trust your listing. Payments go to your merchant wallet.',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            height: 1.35,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                const Text(
+                  'Add product',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'List an item with photos, price, and available quantity',
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                Container(
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFE8EAEF)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                Builder(
+                  builder: (context) {
+                    final photos = <Uint8List>[
+                      if (_cover != null) _cover!.bytes,
+                      ..._gallery.map((m) => m.bytes),
+                    ];
+                    if (photos.isEmpty) {
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          height: 220,
+                          color: Colors.grey.shade100,
+                          child: const Center(
+                            child: Icon(
+                              Icons.image,
+                              size: 64,
+                              color: Colors.black38,
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                    if (photos.length == 1) {
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Image.memory(
+                          photos.first,
+                          height: 220,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
+                      );
+                    }
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: SizedBox(
+                        height: 220,
+                        child: PageView.builder(
+                          controller: _photoPc,
+                          itemCount: photos.length,
+                          onPageChanged: (i) => setState(() => _photoPage = i),
+                          itemBuilder: (context, i) => Image.memory(
+                            photos[i],
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    FilledButton.icon(
+                      style: _filledBtnStyle(padV: 12),
+                      onPressed: () => _pickCover(ImageSource.gallery),
+                      icon: const Icon(Icons.photo_library),
+                      label: const Text('Gallery'),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.black87,
+                        side: const BorderSide(
+                          color: Colors.black,
+                          width: 1,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      onPressed: () => _pickCover(ImageSource.camera),
+                      icon: const Icon(Icons.photo_camera),
+                      label: const Text('Camera'),
+                    ),
+                    const Spacer(),
+                    if (_cover != null)
+                      TextButton.icon(
+                        onPressed: _clearCover,
+                        icon: const Icon(Icons.close),
+                        label: const Text('Clear'),
+                      ),
+                  ],
+                ),
+
+                const SizedBox(height: 16),
+                const Text(
+                  'More photos (optional)',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                _mediaStripImages(),
+
+                const SizedBox(height: 12),
+                const Text(
+                  'Videos (optional)',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                _mediaStripVideos(),
+
+                const SizedBox(height: 16),
+
+                TextFormField(
+                  controller: _name,
+                  decoration: _inputDecoration(label: 'Name'),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty)
+                          ? 'Name is required'
+                          : null,
+                ),
+                const SizedBox(height: 12),
+
+                TextFormField(
+                  controller: _price,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(
+                    decimal: false,
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                  ],
+                  decoration: _inputDecoration(label: 'Price (MWK)'),
+                  validator: (v) {
+                    final pv = double.tryParse(v?.trim() ?? '');
+                    if (pv == null || pv <= 0) {
+                      return 'Enter a valid price';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                _stockStepper(),
+                const SizedBox(height: 12),
+
+                TextFormField(
+                  controller: _location,
+                  decoration:
+                      _inputDecoration(label: 'Location').copyWith(
+                    suffixIcon: Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.my_location),
+                            tooltip: 'Use current location',
+                            onPressed: _getCurrentLocation,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.map),
+                            tooltip: 'View on Google Maps',
+                            onPressed: _openGoogleMap,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty)
+                          ? 'Location is required'
+                          : null,
+                ),
+                const SizedBox(height: 12),
+
+                DropdownButtonFormField<String>(
+                  initialValue: _category,
+                  items: _kCategories
+                      .map(
+                        (c) => DropdownMenuItem<String>(
+                          value: c,
+                          child: Text(_titleCase(c)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (v) {
+                    setState(() => _category = v);
+                    unawaited(_checkShop());
+                  },
+                  decoration: _inputDecoration(label: 'Category'),
+                  validator: (v) =>
+                      (v == null || v.isEmpty)
+                          ? 'Please select a category'
+                          : null,
+                ),
+                if ((_category ?? '') == 'food') ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _brandSoft,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _brandOrange.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.place_rounded,
+                            color: _brandOrange, size: 22),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Food listings require your current location. '
+                            'Tap the pin on the location field — coordinates are sent with your listing so nearby customers can find you.',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              height: 1.35,
+                              color: Colors.grey.shade800,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+
+                TextFormField(
+                  controller: _desc,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: _inputDecoration(
+                    label: 'Description (optional)',
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF4E5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFFD59A)),
+                  ),
+                  child: const Text(
+                    'New listings are reviewed automatically before going live. '
+                    'You’ll get a notification when yours is approved.',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // NEW: Payment info note
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade100),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.account_balance_wallet, 
+                          size: 20, color: Colors.blue[700]),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Payments for this item will be credited to your merchant wallet automatically.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.blue[800],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                FilledButton.icon(
+                  style: _filledBtnStyle(),
+                  onPressed: canCreate ? _create : null,
+                  icon: _submitting
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.save),
+                  label: Text(_submitting ? 'Posting…' : 'Post on Marketplace'),
+                ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            ),
+          ),
+      ),
+    );
+  }
+
+  Widget _mediaStripImages() {
+    return SizedBox(
+      height: 96,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _gallery.length + 1,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          if (i == _gallery.length) {
+            return OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.black87,
+                side: const BorderSide(
+                  color: Colors.black,
+                  width: 1,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                textStyle: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              onPressed: _pickGalleryMulti,
+              icon: const Icon(Icons.add_photo_alternate),
+              label: const Text('Add'),
+            );
+          }
+          final m = _gallery[i];
+          return Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.memory(
+                  m.bytes,
+                  width: 128,
+                  height: 96,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              Positioned(
+                right: 4,
+                top: 4,
+                child: InkWell(
+                  onTap: () => _removeGalleryAt(i),
+                  child: const CircleAvatar(
+                    radius: 12,
+                    backgroundColor: Colors.black54,
+                    child: Icon(
+                      Icons.close,
+                      size: 14,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _mediaStripVideos() {
+    return SizedBox(
+      height: 72,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _videos.length + 1,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          if (i == _videos.length) {
+            return OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.black87,
+                side: const BorderSide(
+                  color: Colors.black,
+                  width: 1,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                textStyle: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              onPressed: _pickVideo,
+              icon: const Icon(Icons.video_library),
+              label: const Text('Add video'),
+            );
+          }
+          return Stack(
+            children: [
+              Container(
+                width: 160,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Center(
+                  child: Icon(Icons.play_arrow_rounded),
+                ),
+              ),
+              Positioned(
+                right: 4,
+                top: 4,
+                child: InkWell(
+                  onTap: () => _removeVideoAt(i),
+                  child: const CircleAvatar(
+                    radius: 12,
+                    backgroundColor: Colors.black54,
+                    child: Icon(
+                      Icons.close,
+                      size: 14,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildManageTab() {
+    if (_loadingItems) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_items.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _loadItems,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: const [
+            SizedBox(height: 120),
+            Center(
+              child: Text(
+                'No items yet. Add your first product!',
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadItems,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          int crossAxisCount = 2;
+          if (constraints.maxWidth >= 1200) {
+            crossAxisCount = 4;
+          } else if (constraints.maxWidth >= 700) {
+            crossAxisCount = 3;
+          }
+
+          final aspect =
+              (constraints.maxWidth >= 700) ? 0.90 : 0.88;
+
+          return GridView.builder(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+            gridDelegate:
+                SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: aspect,
+            ),
+            itemCount: _items.length,
+            itemBuilder: (context, i) {
+              final it = _items[i];
+              return _ManageCard(
+                item: it,
+                busy: _busyRow,
+                onEdit: () => _editItem(it),
+                onDelete: () => _deleteItem(it),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  String _titleCase(String s) =>
+      s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
+}
+
+/* ---------- Manage card ---------- */
+
+class _ManageCard extends StatelessWidget {
+  const _ManageCard({
+    required this.item,
+    required this.onEdit,
+    required this.onDelete,
+    required this.busy,
+  });
+
+  final Map<String, dynamic> item;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    const brandOrange = Color(0xFFFF8A00);
+    const brandSoft = Color(0xFFFFE8CC);
+
+    final price =
+        (item['price'] as num?)?.toDouble() ?? 0;
+
+    return Card(
+      elevation: 6,
+      shadowColor: Colors.black12,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.stretch,
+        children: [
+          Stack(
+            children: [
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: _buildImage(),
+              ),
+              Positioned(
+                right: 6,
+                top: 6,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _roundIcon(
+                      icon: Icons.edit_outlined,
+                      tooltip: 'Edit',
+                      onTap: busy ? null : onEdit,
+                    ),
+                    const SizedBox(width: 6),
+                    _roundIcon(
+                      icon: Icons.delete_outline,
+                      tooltip: 'Delete',
+                      color: Colors.red,
+                      onTap: busy ? null : onDelete,
+                    ),
+                  ],
+                ),
+              ),
+              // NEW: Merchant badge
+              if (item['merchantName'] != null)
+                Positioned(
+                  left: 6,
+                  bottom: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      item['merchantName'].toString(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              12,
+              10,
+              12,
+              2,
+            ),
+            child: Text(
+              item['name'] as String? ?? '',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              12,
+              0,
+              12,
+              10,
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: brandSoft,
+                    borderRadius:
+                        BorderRadius.circular(20),
+                    border: Border.all(
+                      color: brandOrange,
+                      width: 1,
+                    ),
+                  ),
+                  child: Text(
+                    'MWK ${price.toStringAsFixed(0)}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  _timeAgo(
+                    (item['createdAt'] as Timestamp?)
+                        ?.toDate(),
+                  ),
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // NEW: Merchant info footer
+          if (item['merchantId'] != null)
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 6,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                border: Border(
+                  top: BorderSide(
+                    color: Colors.grey[200]!,
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.account_balance_wallet,
+                    size: 12,
+                    color: Colors.green[700],
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Merchant Item',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.green[700],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImage() {
+    String? take(dynamic v) {
+      final t = (v ?? '').toString().trim();
+      return t.isEmpty ? null : t;
+    }
+
+    final raw = take(item['imageUrl']) ?? take(item['image']);
+
+    Widget placeholder() {
+      return Container(
+        color: Colors.grey.shade200,
+        child: const Center(
+          child: Icon(
+            Icons.image_not_supported_outlined,
+            color: Colors.black38,
+          ),
+        ),
+      );
+    }
+
+    if (raw == null) {
+      return placeholder();
+    }
+
+    if (raw.startsWith('http')) {
+      return Image.network(
+        raw,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => placeholder(),
+      );
+    }
+
+    try {
+      final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+      final bytes = base64Decode(base64Part);
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => placeholder(),
+      );
+    } catch (_) {
+      return placeholder();
+    }
+  }
+
+  Widget _roundIcon({
+    required IconData icon,
+    String? tooltip,
+    Color? color,
+    VoidCallback? onTap,
+  }) {
+    final btn = Material(
+      color: Colors.white.withValues(alpha: 0.90),
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(
+            icon,
+            size: 18,
+            color: color ?? Colors.black87,
+          ),
+        ),
+      ),
+    );
+    return tooltip == null
+        ? btn
+        : Tooltip(message: tooltip, child: btn);
+  }
+
+  String _timeAgo(DateTime? date) {
+    if (date == null) return 'Unknown';
+    final now = DateTime.now();
+    final diff = now.difference(date);
+    if (diff.inDays > 365) {
+      return '${(diff.inDays / 365).floor()}y ago';
+    } else if (diff.inDays > 30) {
+      return '${(diff.inDays / 30).floor()}m ago';
+    } else if (diff.inDays > 0) {
+      return '${diff.inDays}d ago';
+    } else if (diff.inHours > 0) {
+      return '${diff.inHours}h ago';
+    } else if (diff.inMinutes > 0) {
+      return '${diff.inMinutes}min ago';
+    } else {
+      return '${diff.inSeconds}s ago';
+    }
+  }
+}

@@ -6,6 +6,7 @@ import 'package:vero360_app/features/ride_share/presentation/pages/create_taxi_s
 import 'package:vero360_app/features/ride_share/presentation/pages/edit_driver_details_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/edit_taxi_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
 
@@ -506,6 +507,11 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     final isAvailable = _bool(taxi['isAvailable']);
     final isVerified = _bool(taxi['isVerified']);
     final taxiId = int.tryParse('${taxi['id']}');
+    final session = ref.watch(driverOnlineSessionProvider);
+    // Prefer live session so this switch stays in sync with the dashboard toggle.
+    final switchOnline = taxiId != null && session.taxiId == taxiId
+        ? session.isOnline
+        : isAvailable;
 
     return Container(
       decoration: BoxDecoration(
@@ -597,7 +603,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                       ),
                       const SizedBox(width: 8),
                       Switch(
-                        value: isAvailable,
+                        value: switchOnline,
                         activeThumbColor: _brandOrange,
                         onChanged: taxiId == null
                             ? null
@@ -816,7 +822,12 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
 
   Future<void> _toggleAvailability(int taxiId, bool available) async {
     try {
-      await _driverService.setTaxiAvailability(taxiId, available);
+      final session = ref.read(driverOnlineSessionProvider.notifier);
+      if (available) {
+        await session.goOnline(taxiId: taxiId);
+      } else {
+        await session.goOffline();
+      }
       _reload();
       if (!mounted) return;
       ToastHelper.showCustomToast(

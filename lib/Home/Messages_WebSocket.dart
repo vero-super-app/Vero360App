@@ -15,6 +15,7 @@ import 'package:vero360_app/GernalServices/chat_service.dart';
 import 'package:vero360_app/GernalServices/hybrid_chat_service.dart';
 import 'package:vero360_app/GeneralModels/messaging_models.dart';
 import 'package:vero360_app/Gernalproviders/messaging/messaging_provider.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 /// Legacy hybrid Firebase/WebSocket message screen.
 ///
@@ -418,7 +419,7 @@ class _MessagePageWebSocketState extends ConsumerState<MessagePageWebSocket> {
           },
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (err, st) => Center(
-            child: Text('Error: $err'),
+            child: Text(UserFacingError.from(err)),
           ),
         );
       },

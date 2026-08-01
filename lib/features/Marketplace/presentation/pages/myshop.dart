@@ -11,6 +11,7 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class ServiceProviderCrudPage extends StatefulWidget {
   const ServiceProviderCrudPage({super.key});
@@ -91,8 +92,11 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
       setState(() {});
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showCustomToast(context, 'Load failed: $e',
-          isSuccess: false, errorMessage: 'Load failed');
+      ToastHelper.showCustomToast(
+          context,
+          UserFacingError.from(e, fallback: 'Load failed'),
+          isSuccess: false,
+          errorMessage: 'Load failed');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -200,8 +204,11 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
       setState(() {});
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showCustomToast(context, 'Save failed: $e',
-          isSuccess: false, errorMessage: 'Save failed');
+      ToastHelper.showCustomToast(
+          context,
+          UserFacingError.from(e, fallback: 'Save failed'),
+          isSuccess: false,
+          errorMessage: 'Save failed');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -239,8 +246,11 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
       setState(() {});
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showCustomToast(context, 'Delete failed: $e',
-          isSuccess: false, errorMessage: 'Delete failed');
+      ToastHelper.showCustomToast(
+          context,
+          UserFacingError.from(e, fallback: 'Delete failed'),
+          isSuccess: false,
+          errorMessage: 'Delete failed');
     } finally {
       if (mounted) setState(() => _deleting = false);
     }

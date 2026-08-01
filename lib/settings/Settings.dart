@@ -12,17 +12,21 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import 'package:local_auth/local_auth.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/account_data_purge.dart';
+import 'package:vero360_app/utils/session_local_cache.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/display_name_sync.dart';
+import 'package:vero360_app/utils/app_update_checker.dart';
+import 'package:vero360_app/utils/app_version_info.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 
 // REQUIRED PAGES
@@ -94,7 +98,6 @@ class _SettingsPageState extends State<SettingsPage> {
   static const String _supportPhone = '+265992695612';
   static const String _supportWhatsApp = '+265992695612';
   static const String _supportEmail = 'info@vero360.app';
-  static const String _playStoreId = 'com.vero.vero360';
 
   /// Display phone; filters out Firebase identifiers so we never show +firebase_xxx.
   String get _displayPhone {
@@ -182,11 +185,8 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _loadAppInfo() async {
-    try {
-      final info = await PackageInfo.fromPlatform();
-      _appVersion = info.version;
-      _buildNumber = info.buildNumber;
-    } catch (_) {}
+    _appVersion = AppVersionInfo.version;
+    _buildNumber = AppVersionInfo.buildNumber;
   }
 
   Future<void> _loadPersonalizationPrefs() async {
@@ -562,24 +562,46 @@ class _SettingsPageState extends State<SettingsPage> {
 
     setState(() => _refreshing = true);
     try {
-      await _firestore.collection('users').doc(u.uid).set(
-        {
-          'name': newName.isEmpty ? _name : newName,
-          'phone': newPhone.isEmpty ? _phone : newPhone,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
+      final display = newName.isEmpty ? _name.trim() : newName;
+      final phoneVal = newPhone.isEmpty ? _phone : newPhone;
 
-      if (newName.isNotEmpty) {
-        await u.updateDisplayName(newName);
-        _name = newName;
+      // Propagate name to Auth, prefs, merchant docs, items, and stories.
+      if (display.isNotEmpty) {
+        await DisplayNameSync.syncEverywhere(uid: u.uid, name: display);
+        _name = display;
+      } else {
+        await _firestore.collection('users').doc(u.uid).set(
+          {
+            'phone': phoneVal,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
       }
-      if (newPhone.isNotEmpty) _phone = newPhone;
+
+      if (newPhone.isNotEmpty || phoneVal.isNotEmpty) {
+        await _firestore.collection('users').doc(u.uid).set(
+          {
+            'phone': phoneVal,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+        // Keep merchant shop phone in sync when present.
+        await _firestore.collection('marketplace_merchants').doc(u.uid).set(
+          {
+            'phone': phoneVal,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+        _phone = phoneVal;
+      }
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('fullName', _name);
       await prefs.setString('name', _name);
+      await prefs.setString('business_name', _name);
       await prefs.setString('phone', _phone);
 
       if (mounted) setState(() {});
@@ -1340,23 +1362,128 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _rateApp() async {
     _maybeHaptic();
     try {
-      final uri = Uri.parse(
-        'https://play.google.com/store/apps/details?id=$_playStoreId',
-      );
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (mounted) {
-          ToastHelper.showCustomToast(
-            context,
-            _t('Could not open store', 'Sidathe kutsegula sitolo'),
-            isSuccess: false,
-            errorMessage: '',
-          );
-        }
+      final result = await AppUpdateChecker.check();
+      final opened = await AppUpdateChecker.openStore(result.storeUrl);
+      if (!opened && mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Could not open store', 'Sidathe kutsegula sitolo'),
+          isSuccess: false,
+          errorMessage: '',
+        );
       }
     } catch (_) {
       if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          _t('Could not open store', 'Sidathe kutsegula sitolo'),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+    }
+  }
+
+  /// Tap App version → compare with Play Store / App Store and offer update.
+  Future<void> _checkForAppUpdates() async {
+    _maybeHaptic();
+    if (!mounted) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    AppUpdateCheckResult result;
+    try {
+      result = await AppUpdateChecker.check();
+    } catch (_) {
+      result = AppUpdateCheckResult(
+        installedVersion: _appVersion,
+        storeVersion: null,
+        storeUrl: AppUpdateChecker.playStoreUrl(AppUpdateChecker.playStoreId),
+        updateAvailable: false,
+        errorMessage: 'check_failed',
+      );
+    }
+
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    if (!result.ok) {
+      ToastHelper.showCustomToast(
+        context,
+        _t(
+          'Could not check for updates. Try again later.',
+          'Sidathe kuyang\'ana zatsopano. Yesaninso pambuyo pake.',
+        ),
+        isSuccess: false,
+        errorMessage: result.errorMessage ?? '',
+      );
+      return;
+    }
+
+    if (!result.updateAvailable) {
+      ToastHelper.showCustomToast(
+        context,
+        _t(
+          'You are on the latest version (v${result.installedVersion}).',
+          'Muli pa mtundu watsopano (v${result.installedVersion}).',
+        ),
+        isSuccess: true,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    final storeVer = result.storeVersion ?? '';
+    final goUpdate = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          _t('Update available', 'Kusintha kulipo'),
+          style: const TextStyle(fontWeight: FontWeight.w900),
+        ),
+        content: Text(
+          _t(
+            'A newer version is available on the store.\n\n'
+            'Installed: v${result.installedVersion}\n'
+            'Store: v$storeVer',
+            'Mtundu watsopano ulipo pa sitolo.\n\n'
+            'Womwe muli nawo: v${result.installedVersion}\n'
+            'Pa sitolo: v$storeVer',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(_t('Later', 'Pambuyo')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: kBrandOrange),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(_t('Update', 'Sinthani')),
+          ),
+        ],
+      ),
+    );
+
+    if (goUpdate == true) {
+      final opened = await AppUpdateChecker.openStore(result.storeUrl);
+      if (!opened && mounted) {
         ToastHelper.showCustomToast(
           context,
           _t('Could not open store', 'Sidathe kutsegula sitolo'),
@@ -1532,10 +1659,9 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() => _refreshing = false);
 
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-        (route) => route.isFirst,
-      );
+      // Clear the whole stack so IndexedStack AuthGuards from the previous
+      // session cannot keep prompting over Home after logout.
+      openVeroMainShell(context, email: '', tabIndex: 0);
     }
   }
 
@@ -1968,8 +2094,20 @@ class _SettingsPageState extends State<SettingsPage> {
     _maybeHaptic();
     final ok = await _confirm(
       title: _t('Delete account', 'Chotsani akaunti'),
-      message:
-          _t('This will permanently delete your account.\n\nThis cannot be undone.', 'Izi zidzachotsa akaunti yanu mwamuyaya.\n\nSizingabwererenso.'),
+      message: _t(
+        'This permanently deletes your account and all related data:\n'
+        '• Profile & login\n'
+        '• Marketplace items & shop\n'
+        '• Cart, promos, stories & wallets\n'
+        '• Merchant / customer records\n\n'
+        'This cannot be undone.',
+        'Izi zidzachotsa akaunti yanu ndi zinthu zonse:\n'
+        '• Profile ndi login\n'
+        '• Zogulitsa pa Marketplace ndi shop\n'
+        '• Cart, promos, stories ndi wallets\n'
+        '• Zolemba za merchant / customer\n\n'
+        'Sizingabwererenso.',
+      ),
       confirmText: _t('Delete', 'Chotsani'),
       confirmColor: Colors.red,
     );
@@ -1992,40 +2130,12 @@ class _SettingsPageState extends State<SettingsPage> {
       final verified = await _promptDeleteAuthMethod(currentUser);
       if (!verified) return;
 
-      // 1) Delete on Nest backend (best effort)
-      final token = await _getAuthToken();
-      if (token.isNotEmpty) {
-        try {
-          final base = await ApiConfig.readBase();
-          await http.delete(
-            Uri.parse('$base/users/me'),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Accept': 'application/json'
-            },
-          ).timeout(const Duration(seconds: 8));
-        } catch (_) {}
-      }
+      // 1) Wipe customer + merchant data (Firestore, Storage, API) while still signed in.
+      await AccountDataPurge.purgeCurrentUser();
 
-      // 2) Delete Firestore profile + service collection (best effort)
+      // 2) Delete Firebase Auth user (with re-auth if required)
       final u = _auth.currentUser;
       if (u != null) {
-        try {
-          final doc = await _firestore.collection('users').doc(u.uid).get();
-          final data = doc.data() ?? {};
-          final serviceKey = (data['merchantService'] ?? '').toString();
-
-          await _firestore.collection('users').doc(u.uid).delete();
-
-          if (serviceKey.trim().isNotEmpty) {
-            await _firestore
-                .collection('${serviceKey}_merchants')
-                .doc(u.uid)
-                .delete();
-          }
-        } catch (_) {}
-
-        // 3) Delete Firebase Auth user (with re-auth if required)
         final deleted = await _deleteFirebaseUserWithReauth(u);
         if (!deleted) {
           if (mounted) {
@@ -2037,25 +2147,15 @@ class _SettingsPageState extends State<SettingsPage> {
         }
       }
 
-      // 4) Clear local prefs and logout
-      final prefs = await SharedPreferences.getInstance();
-      for (final k in [
-        'fullName', 'name', 'email', 'phone', 'address', 'profilepicture',
-        'uid', 'role', 'user_role', 'merchant_service', 'business_name',
-        'business_address', 'jwt_token', 'token', 'authToken', 'jwt',
-      ]) {
-        await prefs.remove(k);
-      }
+      // 3) Clear leftover local session (purge already cleared marketplace caches)
+      await SessionLocalCache.clearOnLogout();
       await AuthService().logout(context: context);
 
       ToastHelper.showCustomToast(context, _t('Account deleted', 'Akaunti yachotsedwa'),
           isSuccess: true, errorMessage: '');
       if (!mounted) return;
 
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-        (route) => route.isFirst,
-      );
+      openVeroMainShell(context, email: '', tabIndex: 0);
     } catch (_) {
       ToastHelper.showCustomToast(context, _t('Delete failed', 'Kuchotsa kwakanika'),
           isSuccess: false, errorMessage: '');
@@ -2257,9 +2357,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   compact: _compactMode,
                   icon: Icons.apps_outlined,
                   title: _t('App version', 'Mtundu wa pulogalamu'),
-                  subtitle: 'v$_appVersion ($_buildNumber)',
-                  onTap: () => _maybeHaptic(),
-                  trailing: const SizedBox.shrink(),
+                  subtitle: _t(
+                    'v$_appVersion ($_buildNumber) · Tap to check for updates',
+                    'v$_appVersion ($_buildNumber) · Dinani kuyang\'ana zatsopano',
+                  ),
+                  onTap: _checkForAppUpdates,
                 ),
               ]),
               const SizedBox(height: 14),

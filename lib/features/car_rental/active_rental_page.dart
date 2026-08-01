@@ -6,6 +6,7 @@ import 'package:vero360_app/GeneralModels/car_model.dart';
 import 'package:vero360_app/GeneralModels/car_booking_model.dart';
 import 'package:vero360_app/GeneralModels/trip_log_model.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'rental_complete_page.dart';
 
 class ActiveRentalPage extends StatefulWidget {
@@ -144,11 +145,12 @@ class _ActiveRentalPageState extends State<ActiveRentalPage> {
       }
     } catch (e) {
       if (mounted) {
+        final msg = UserFacingError.from(e);
         ToastHelper.showCustomToast(
           context,
-          'Error: $e',
+          msg,
           isSuccess: false,
-          errorMessage: 'Error: $e',
+          errorMessage: msg,
         );
         setState(() => _ending = false);
       }

@@ -18,6 +18,7 @@ import 'package:vero360_app/GernalServices/location_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_details.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
@@ -821,7 +822,7 @@ class _FoodPageState extends State<FoodPage> {
                   }
                   // Error
                   if (snapshot.hasError) {
-                    return _buildError(snapshot.error.toString());
+                    return _buildError(UserFacingError.from(snapshot.error));
                   }
                   final items = snapshot.data ?? const <FoodModel>[];
                   if (items.isEmpty) return _buildEmpty();

@@ -4,6 +4,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:vero360_app/GeneralModels/car_model.dart';
 import 'package:vero360_app/GernalServices/car_map_service.dart';
 import 'package:vero360_app/GernalServices/car_websocket_service.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'car_detail_page.dart';
 
 // App Colors (matching homepage design)
@@ -77,7 +78,7 @@ class _CarRentalPageState extends State<CarRentalPage> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'Error loading map: $e';
+          _error = UserFacingError.from(e, fallback: 'Error loading map');
           _loading = false;
         });
       }

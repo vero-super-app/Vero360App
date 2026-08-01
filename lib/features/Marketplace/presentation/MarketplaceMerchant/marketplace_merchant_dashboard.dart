@@ -156,6 +156,11 @@ class MarketplaceMerchantDashboard extends StatefulWidget {
     this.embeddedInMainNav = false,
   });
 
+  /// Drop My Items memory on logout / account switch.
+  static void clearSessionCaches() {
+    _MarketplaceMerchantDashboardState.clearSessionCaches();
+  }
+
   @override
   State<MarketplaceMerchantDashboard> createState() =>
       _MarketplaceMerchantDashboardState();
@@ -211,6 +216,10 @@ class _MarketplaceMerchantDashboardState
   /// Instant My Items cache (survives tab switches / reopen in-session).
   static final Map<String, List<Map<String, dynamic>>> _itemsMemoryByUid =
       <String, List<Map<String, dynamic>>>{};
+
+  static void clearSessionCaches() {
+    _itemsMemoryByUid.clear();
+  }
 
   static const String _prefsItemsCachePrefix = 'merchant_my_items_cache_v1_';
 
@@ -961,11 +970,21 @@ class _MarketplaceMerchantDashboardState
       setState(() {
         if (email.isNotEmpty) _merchantEmail = email;
         if (phone.isNotEmpty) _merchantPhone = phone;
-        if (photo.isNotEmpty) _merchantProfileUrl = photo;
+        if (photo.isNotEmpty) {
+          _merchantProfileUrl = photo;
+        } else {
+          // Avoid keeping a previous account's avatar while prefs/Firestore load.
+          _localPhotoPath = null;
+        }
       });
     }
     if (photo.isNotEmpty) {
       unawaited(_warmProfilePhotoCache(photo));
+    } else {
+      // Drop disk avatar if Auth has no photo for this user yet.
+      unawaited(ProfilePhotoCache.peekLocalPath().then((path) async {
+        if (path != null) await ProfilePhotoCache.clear();
+      }));
     }
   }
 
@@ -1301,24 +1320,38 @@ class _MarketplaceMerchantDashboardState
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
 
+    final currentUid = (_auth.currentUser?.uid ?? _uid).trim();
     final phone = _sanitizePhone(
       prefs.getString('merchant_profile_phone') ?? prefs.getString('phone') ?? '',
     );
     final pic =
-        prefs.getString('profilepicture') ?? _merchantProfileUrl;
+        (prefs.getString('profilepicture') ?? '').trim();
     final desc = (prefs.getString(_kBusinessDescPrefKey) ?? '').trim();
     final hours = (prefs.getString(_kShopHoursPrefKey) ?? '').trim();
     final daysRaw = (prefs.getString(_kShopDaysPrefKey) ?? '').trim();
-    final localPath = await ProfilePhotoCache.peekLocalPath();
+
+    // Only use on-disk avatar when it matches this account + URL.
+    final localPath = pic.isEmpty
+        ? null
+        : await ProfilePhotoCache.peekLocalPath(forRemoteUrl: pic);
+
     if (!mounted) return;
+
+    // Prefer live Firebase Auth photo over a stale prefs URL from another session.
+    final authPhoto = (_auth.currentUser?.photoURL ?? '').trim();
+    final nextPic = pic.isNotEmpty
+        ? pic
+        : (authPhoto.isNotEmpty ? authPhoto : _merchantProfileUrl);
+
     setState(() {
+      if (currentUid.isNotEmpty) _uid = currentUid;
       _merchantEmail = prefs.getString('email') ?? _merchantEmail;
       if (phone.isNotEmpty) _merchantPhone = phone;
-      _merchantProfileUrl = pic;
+      _merchantProfileUrl = nextPic;
+      _localPhotoPath = localPath;
       if (desc.isNotEmpty) _businessDescription = desc;
       if (hours.isNotEmpty) _applyOpeningHoursString(hours);
       if (daysRaw.isNotEmpty) _applyOpeningDays(daysRaw);
-      _localPhotoPath = localPath;
     });
     // Warm/refresh disk cache in background so next open is instant.
     if (_merchantProfileUrl.trim().isNotEmpty) {

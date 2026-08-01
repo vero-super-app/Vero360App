@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:share_plus/share_plus.dart';
@@ -1107,14 +1107,10 @@ class _DetailsPageState extends State<DetailsPage> {
   void _openMerchantProducts(
       {required String merchantId,
       required String merchantName}) {
-    Navigator.push(
+    openMerchantOrDriverProfile(
       context,
-      MaterialPageRoute(
-        builder: (_) => MerchantProductsPage(
-          merchantId: merchantId,
-          merchantName: merchantName,
-        ),
-      ),
+      profileId: merchantId,
+      displayName: merchantName,
     );
   }
 

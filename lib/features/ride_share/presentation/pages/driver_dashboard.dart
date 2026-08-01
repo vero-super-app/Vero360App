@@ -15,6 +15,7 @@ import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/notification_badge.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/driver_dashboard_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_history_ui.dart';
@@ -566,7 +567,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Could not go online: $e'),
+          content: Text(UserFacingError.from(e, fallback: 'Could not go online')),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red.shade600,
         ),
@@ -1224,7 +1225,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error verifying profile: $e'),
+            content: Text(UserFacingError.from(e, fallback: 'Error verifying profile')),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -1303,7 +1304,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error toggling availability: $e'),
+            content: Text(UserFacingError.from(e, fallback: 'Error toggling availability')),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -1374,7 +1375,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error loading driver data: ${e.toString()}'),
+            content: Text(UserFacingError.from(e, fallback: 'Error loading driver data')),
             backgroundColor: Colors.red.shade600,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),

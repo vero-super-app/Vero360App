@@ -34,6 +34,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.mod
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
@@ -43,7 +44,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovid
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
-import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -291,7 +292,7 @@ class MarketplaceDetailModel {
 
   /// Max units a buyer can order (Taobao-style stock cap).
   int get maxOrderQty {
-    if (stockQuantity == null) return 99;
+    if (stockQuantity == null) return 99999;
     return stockQuantity!.clamp(0, 99999);
   }
 
@@ -972,7 +973,13 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       return converted;
     } catch (e, st) {
       if (kDebugMode) debugPrint('Photo search error: $e\n$st');
-      if (mounted) { final msg = e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '').split('\n').first; final err = e.toString().toLowerCase(); final isNetErr = err.contains('socket') || err.contains('network') || err.contains('failed host') || err.contains('connection') || err.contains('timeout') || err.contains('unavailable') || err.contains('offline'); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(isNetErr ? 'Cannot reach Firebase now.' : 'Photo search failed: ${msg.length > 60 ? '${msg.substring(0, 60)}...' : msg}'), backgroundColor: Colors.red, duration: const Duration(seconds: 5))); }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(UserFacingError.from(e, fallback: 'Photo search failed')),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ));
+      }
       return _loadAll(category: null);
     } finally { if (mounted) setState(() => _loading = false); }
   }
@@ -1150,7 +1157,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         dismissDialog();
         ToastHelper.showCustomToast(
           context,
-          'Failed to add item: $e',
+          UserFacingError.from(e, fallback: 'Failed to add item'),
           isSuccess: false,
           errorMessage: 'Add to cart failed',
         );
@@ -1179,16 +1186,12 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     } catch (e) {
       if (kDebugMode) debugPrint('[_openChatWithMerchant] Error: $e');
       if (mounted) {
-        final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
-        final message = raw.contains('own listing') ||
-                raw.contains('cannot chat with yourself😂😂')
-            ? raw
-            : 'Error opening chat';
+        final message = UserFacingError.from(e, fallback: 'Error opening chat');
         ToastHelper.showCustomToast(
           context,
           message,
           isSuccess: false,
-          errorMessage: raw,
+          errorMessage: message,
         );
       }
     }
@@ -1696,7 +1699,11 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                                   label: 'More from $displayMerchantName',
                                   onTap: () {
                                     Navigator.pop(sheetCtx);
-                                    Navigator.push(context, MaterialPageRoute(builder: (_) => MerchantProductsPage(merchantId: item.merchantId!.trim(), merchantName: displayMerchantName)));
+                                    openMerchantOrDriverProfile(
+                                      context,
+                                      profileId: item.merchantId!.trim(),
+                                      displayName: displayMerchantName,
+                                    );
                                   },
                                 )),
                               const SizedBox(height: 16),
@@ -1891,7 +1898,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                     if (snapshot.hasError) {
                       return ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
                         SizedBox(height: MediaQuery.of(context).size.height * 0.2),
-                        Center(child: Padding(padding: const EdgeInsets.all(24), child: Text('Error: ${snapshot.error}', textAlign: TextAlign.center, style: const TextStyle(color: _kInkLight)))),
+                        Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(UserFacingError.from(snapshot.error), textAlign: TextAlign.center, style: const TextStyle(color: _kInkLight)))),
                       ]);
                     }
                     final items = snapshot.data ?? [];

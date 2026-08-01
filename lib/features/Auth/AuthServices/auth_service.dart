@@ -19,6 +19,7 @@ import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
@@ -26,6 +27,8 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/password_reset_verification_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/registration_verification_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/utils/session_local_cache.dart';
+import 'package:vero360_app/features/Auth/AuthServices/account_data_purge.dart';
 
 enum DeleteAccountStatus { success, requiresRecentLogin, failed }
 
@@ -1203,35 +1206,15 @@ class AuthService {
 
   Future<DeleteAccountStatus> deleteAccountEverywhere(
       BuildContext context) async {
-    final token = await _readAnyToken();
-
-    bool backendDeleted = false;
-    if (token != null && token.trim().isNotEmpty) {
-      try {
-        // ✅ Use ApiConfig for production-ready endpoint
-        final resp = await http.delete(
-          ApiConfig.endpoint('/users/me'),
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Accept': 'application/json',
-          },
-        );
-        backendDeleted = _is2xx(resp.statusCode);
-      } catch (_) {
-        backendDeleted = false;
-      }
-    } else {
-      backendDeleted = true;
-    }
+    try {
+      // Wipe Firestore/API marketplace + profile data while still authenticated.
+      await AccountDataPurge.purgeCurrentUser();
+    } catch (_) {}
 
     bool firebaseDeleted = true;
     final u = _firebaseAuth.currentUser;
 
     if (u != null) {
-      try {
-        await _firestore.collection('users').doc(u.uid).delete();
-      } catch (_) {}
-
       try {
         await u.delete();
       } on FirebaseAuthException catch (e) {
@@ -1249,7 +1232,7 @@ class AuthService {
 
     await logout(context: context);
 
-    if (backendDeleted && firebaseDeleted) {
+    if (firebaseDeleted) {
       _toast(context, 'Account deleted', ok: true);
       return DeleteAccountStatus.success;
     }
@@ -1315,9 +1298,10 @@ class AuthService {
       await NotificationStore.instance.clearAll();
     } catch (_) {}
 
-    // Step 5b: Clear in-memory messaging state (deleted-chat prefs stay on disk).
+    // Step 5b: Clear in-memory messaging state + socket (deleted-chat prefs stay on disk).
     try {
       BackendChatService.clearAuthCache();
+      await BackendMessagingSocket.disconnect();
     } catch (_) {}
 
     // Step 6: Clear local session
@@ -1360,6 +1344,8 @@ class AuthService {
         await sp.remove(k);
       }
       resetDriverSessionCache();
+      // Marketplace / cart device caches must not follow the next account.
+      await SessionLocalCache.clearOnLogout();
       return true;
     } catch (_) {
       return false;

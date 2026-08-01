@@ -20,11 +20,12 @@ import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
-
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
+import 'package:vero360_app/utils/session_local_cache.dart';
 
 // Merchant dashboards
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
@@ -61,6 +62,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
   bool _isMerchant = false;
   bool _isDriver = false;
   bool _isLoggedIn = false;
+  /// Tracks Firebase uid so Market/Cart remount when the account changes.
+  String _shellUid = '';
 
   late List<Widget> _pages;
   bool _pagesReady = false;
@@ -72,6 +75,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex.clamp(0, 4);
+    // Optimistic: avoid flashing “Sign in required” before async refresh.
+    _isLoggedIn = FirebaseAuth.instance.currentUser != null;
     // Paint the shell immediately — no second splash after role redirect.
     _pages = _defaultPages();
     _pagesReady = true;
@@ -81,29 +86,36 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _initialize();
   }
 
-  List<Widget> _defaultPages() => [
-        Vero360Homepage(email: widget.email, isDriverHome: false),
-        MarketPage(
-          key: const ValueKey('main_market_tab'),
+  List<Widget> _defaultPages() {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest';
+    _shellUid = uid;
+    return [
+      Vero360Homepage(email: widget.email, isDriverHome: false),
+      MarketPage(
+        key: ValueKey('main_market_tab_$uid'),
+        cartService: cartService,
+        onBackToHome: () => setState(() => _selectedIndex = 0),
+      ),
+      AuthGuard(
+        featureName: 'Messages',
+        showChildBehindDialog: true,
+        child: ChatListPage(key: ValueKey('chat_list_$uid')),
+      ),
+      AuthGuard(
+        featureName: 'Cart',
+        showChildBehindDialog: true,
+        child: CartPage(
+          key: ValueKey('cart_tab_$uid'),
           cartService: cartService,
-          onBackToHome: () => setState(() => _selectedIndex = 0),
         ),
-        const AuthGuard(
-          featureName: 'Messages',
-          showChildBehindDialog: true,
-          child: ChatListPage(),
-        ),
-        AuthGuard(
-          featureName: 'Cart',
-          showChildBehindDialog: true,
-          child: CartPage(cartService: cartService),
-        ),
-        const AuthGuard(
-          featureName: 'Profile',
-          showChildBehindDialog: true,
-          child: ProfilePage(),
-        ),
-      ];
+      ),
+      const AuthGuard(
+        featureName: 'Profile',
+        showChildBehindDialog: true,
+        child: ProfilePage(),
+      ),
+    ];
+  }
 
   @override
   void dispose() {
@@ -153,10 +165,32 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   Future<void> _refreshAuthState() async {
     final loggedIn = await AuthHandler.isAuthenticated();
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest';
     if (!mounted) return;
+
+    final uidChanged = uid != _shellUid;
+    if (uidChanged) {
+      final previousUid = _shellUid;
+      _shellUid = uid;
+      // Never keep previous account cart/market/chat memory across sign-in/out.
+      CartService.clearSessionCache();
+      BackendChatService.clearAuthCache();
+      try {
+        await BackendMessagingSocket.disconnect();
+      } catch (_) {}
+      // Full prefs wipe only when leaving a real account (not guest→login).
+      if (previousUid.isNotEmpty && previousUid != 'guest') {
+        await SessionLocalCache.clearOnLogout();
+      }
+    }
+
     setState(() => _isLoggedIn = loggedIn);
     if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
       setState(() => _selectedIndex = 0);
+    }
+    if (uidChanged) {
+      await _checkUserRoleAndSetup(forcePagesRebuild: true);
+      if (mounted) setState(() {});
     }
     if (loggedIn) {
       unawaited(_fetchAndUpdateRoleFromServer());
@@ -238,20 +272,23 @@ class _BottomnavbarState extends State<Bottomnavbar>
     return null;
   }
 
-  Future<void> _checkUserRoleAndSetup() async {
+  Future<void> _checkUserRoleAndSetup({bool forcePagesRebuild = false}) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = (prefs.getString('user_role') ?? prefs.getString('role') ?? '').toLowerCase().trim();
     final nextMerchant = raw == 'merchant';
     final nextDriver = raw == 'driver';
 
-    // Keep the current tab. Only rebuild page widgets when role flags change
-    // (or on first setup) — rebuilding every auth/role refresh remounts Market
-    // and feels like a jump back to Home.
+    // Keep the current tab. Only rebuild page widgets when role flags change,
+    // account (uid) changes, or on first setup — rebuilding every auth/role
+    // refresh remounts Market and feels like a jump back to Home.
     final roleChanged =
         !_pagesReady || _isMerchant != nextMerchant || _isDriver != nextDriver;
     _isMerchant = nextMerchant;
     _isDriver = nextDriver;
-    if (!roleChanged) return;
+    if (!roleChanged && !forcePagesRebuild) return;
+
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest';
+    _shellUid = uid;
 
     final homePage = Vero360Homepage(
       key: ValueKey(
@@ -264,12 +301,23 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _pages = [
       homePage,
       MarketPage(
-        key: const ValueKey('main_market_tab'),
+        key: ValueKey('main_market_tab_$uid'),
         cartService: cartService,
         onBackToHome: () => setState(() => _selectedIndex = 0),
       ),
-      const AuthGuard(featureName: 'Messages', showChildBehindDialog: true, child: ChatListPage()),
-      AuthGuard(featureName: 'Cart', showChildBehindDialog: true, child: CartPage(cartService: cartService)),
+      AuthGuard(
+        featureName: 'Messages',
+        showChildBehindDialog: true,
+        child: ChatListPage(key: ValueKey('chat_list_$uid')),
+      ),
+      AuthGuard(
+        featureName: 'Cart',
+        showChildBehindDialog: true,
+        child: CartPage(
+          key: ValueKey('cart_tab_$uid'),
+          cartService: cartService,
+        ),
+      ),
       AuthGuard(
         featureName: _isMerchant ? 'Dashboard' : 'Profile',
         showChildBehindDialog: true,
@@ -293,15 +341,22 @@ class _BottomnavbarState extends State<Bottomnavbar>
     };
   }
 
-  void _onItemTapped(int index) {
-    if (!_isLoggedIn && _tabIsProtected(index)) {
-      _showAuthDialog();
-      _refreshAuthState();
-      return;
+  Future<void> _onItemTapped(int index) async {
+    if (_tabIsProtected(index)) {
+      // Re-check immediately — do not trust a stale false from before token sync.
+      final loggedIn = await AuthHandler.isAuthenticated();
+      if (!mounted) return;
+      if (_isLoggedIn != loggedIn) {
+        setState(() => _isLoggedIn = loggedIn);
+      }
+      if (!loggedIn) {
+        _showAuthDialog();
+        return;
+      }
     }
     HapticFeedback.lightImpact();
     setState(() => _selectedIndex = index);
-    _refreshAuthState();
+    unawaited(_refreshAuthState());
   }
 
   Widget _buildBody() {

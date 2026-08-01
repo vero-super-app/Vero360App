@@ -61,12 +61,36 @@ class CartService {
   /// Last known cart for instant UI (shared across CartService instances).
   static List<CartModel> _memoryCache = <CartModel>[];
 
+  /// Owner of [_memoryCache] — discard if account switches on the same device.
+  static String? _memoryCacheUid;
+
+  /// Wipe in-memory cart so a new account never inherits the previous cart.
+  static void clearSessionCache() {
+    _memoryCache = <CartModel>[];
+    _pendingDeletedKeys.clear();
+    _cartEpoch++;
+    _memoryCacheUid = null;
+    _warmedUp = false;
+    _lastWarmupAttempt = null;
+  }
+
+  static void _ensureCacheMatchesCurrentUser() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (_memoryCacheUid == null) return;
+    if (uid == null || uid != _memoryCacheUid) {
+      clearSessionCache();
+    }
+  }
+
   /// Instant snapshot — no I/O. May be empty on cold start.
-  List<CartModel> get cachedItems =>
-      List<CartModel>.unmodifiable(_withoutPendingDeletes(_memoryCache));
+  List<CartModel> get cachedItems {
+    _ensureCacheMatchesCurrentUser();
+    return List<CartModel>.unmodifiable(_withoutPendingDeletes(_memoryCache));
+  }
 
   void _setMemoryCache(List<CartModel> items) {
     _memoryCache = List<CartModel>.from(_withoutPendingDeletes(items));
+    _memoryCacheUid = FirebaseAuth.instance.currentUser?.uid;
   }
 
   // ---------------------------------------------------------------------------

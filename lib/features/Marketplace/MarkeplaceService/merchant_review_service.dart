@@ -48,6 +48,8 @@ class MerchantReviewService {
 
   static void invalidateCache(int merchantId) => _cache.remove(merchantId);
 
+  static void clearAllCache() => _cache.clear();
+
   Future<MerchantReviewSummary> getMerchantSummary(int merchantId) async {
     final res = await ApiClient.get(
       '/reviews/merchant/$merchantId/summary',

@@ -8,6 +8,7 @@ import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_history_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 enum RideHistoryMode { passenger, driver }
 
@@ -119,17 +120,18 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
                   }
 
                   if (snapshot.hasError) {
-                    final msg = snapshot.error.toString();
-                    final needAuth = msg.contains('401') ||
-                        msg.contains('Unauthorized') ||
-                        msg.contains('No auth');
+                    final safe = UserFacingError.from(
+                      snapshot.error,
+                      fallback: 'Could not load trip history',
+                    );
+                    final needAuth = safe == UserFacingError.unauthorized;
                     return _errorState(
                       needAuth
                           ? 'Sign in to see your trip history'
                           : 'Could not load trip history',
                       needAuth
                           ? 'Your completed rides appear here after each trip.'
-                          : msg.replaceFirst('Exception: ', ''),
+                          : safe,
                       showSignIn: needAuth,
                     );
                   }

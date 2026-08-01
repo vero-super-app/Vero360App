@@ -31,6 +31,7 @@ import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/vero_ride_driver_profile_page.dart';
 
 int? _stayListingApiId(Map<String, dynamic> d) {
   final direct = d['apiAccommodationId'];
@@ -46,6 +47,7 @@ int? _stayListingApiId(Map<String, dynamic> d) {
 }
 
 class _MerchantShopHeaderCache {
+  final String? displayName;
   final String? profileUrl;
   final String? email;
   final String? phone;
@@ -60,6 +62,7 @@ class _MerchantShopHeaderCache {
   final List<MerchantReview> recentReviews;
 
   const _MerchantShopHeaderCache({
+    this.displayName,
     required this.profileUrl,
     required this.email,
     required this.phone,
@@ -85,6 +88,11 @@ class MerchantProductsPage extends StatefulWidget {
     required this.merchantName,
   });
 
+  /// Drop shop mem caches on logout / account switch.
+  static void clearSessionCaches() {
+    _MerchantProductsPageState.clearSessionCaches();
+  }
+
   @override
   State<MerchantProductsPage> createState() => _MerchantProductsPageState();
 }
@@ -99,6 +107,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
   /// null while detecting — show products immediately (common case).
   bool? _isAccommodationHost;
+  /// Driver accounts must not show a merchant shop.
+  bool _redirectingToDriver = false;
 
   double? _merchantRating;
   int _merchantReviewCount = 0;
@@ -115,6 +125,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   String? _merchantBusinessDescription;
   String? _merchantEmail;
   String? _merchantPhone;
+  /// Live name from merchant/users docs (overrides constructor when set).
+  String _resolvedMerchantName = '';
   bool _loadingHeader = true;
   bool _following = false;
   int _followerCount = 0;
@@ -132,6 +144,12 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   static final Map<String, bool> _accommodationMemCache = {};
   static final Map<String, _MerchantShopHeaderCache> _headerMemCache = {};
 
+  static void clearSessionCaches() {
+    _itemsMemCache.clear();
+    _accommodationMemCache.clear();
+    _headerMemCache.clear();
+  }
+
   // Small cache for Firebase download URLs (gs:// or storage paths)
   final Map<String, Future<String?>> _dlUrlCache = {};
 
@@ -139,6 +157,27 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
   bool _isHttp(String s) => s.startsWith('http://') || s.startsWith('https://');
   bool _isGs(String s) => s.startsWith('gs://');
+
+  String get _shopDisplayName {
+    final resolved = _resolvedMerchantName.trim();
+    if (resolved.isNotEmpty) return resolved;
+    final passed = widget.merchantName.trim();
+    return passed.isEmpty ? 'Merchant' : passed;
+  }
+
+  String? _nameFromMerchantMap(Map<String, dynamic> data) {
+    for (final key in const [
+      'businessName',
+      'merchantName',
+      'displayName',
+      'fullName',
+      'name',
+    ]) {
+      final v = (data[key] ?? '').toString().trim();
+      if (v.isNotEmpty) return v;
+    }
+    return null;
+  }
 
   /// Prefer local cache so first paint is not blocked on network.
   Future<QuerySnapshot<Map<String, dynamic>>> _queryFast(
@@ -496,13 +535,14 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_maybeRedirectDriverProfile());
     final id = widget.merchantId.trim();
     final memItems = _itemsMemCache[id];
     if (memItems != null) {
       _future = Future.value(memItems);
       // Refresh quietly in background.
       unawaited(_loadMerchantItems().then((fresh) {
-        if (!mounted) return;
+        if (!mounted || _redirectingToDriver) return;
         setState(() => _future = Future.value(fresh));
       }));
     } else {
@@ -516,6 +556,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
     final memHeader = _headerMemCache[id];
     if (memHeader != null) {
+      _resolvedMerchantName = (memHeader.displayName ?? '').trim();
       _merchantProfileUrl = memHeader.profileUrl;
       _merchantEmail = memHeader.email;
       _merchantPhone = memHeader.phone;
@@ -566,6 +607,23 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     });
   }
 
+  /// Drivers must see Vero Ride profile (ratings + taxi), not a merchant shop.
+  Future<void> _maybeRedirectDriverProfile() async {
+    final id = widget.merchantId.trim();
+    if (id.isEmpty) return;
+    final isDriver = await VeroRideDriverProfilePage.isDriverAccount(id);
+    if (!mounted || !isDriver) return;
+    setState(() => _redirectingToDriver = true);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => VeroRideDriverProfilePage(
+          firebaseUid: id,
+          displayName: _shopDisplayName,
+        ),
+      ),
+    );
+  }
+
   Future<void> _prefetchOpeningHoursFast(String merchantId) async {
     final hours = await MerchantSellerLoader.prefetchOpeningHours(merchantId);
     if (!mounted || hours == null || hours.isEmpty) return;
@@ -575,6 +633,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
   void _persistHeaderCache() {
     _headerMemCache[widget.merchantId.trim()] = _MerchantShopHeaderCache(
+      displayName: _resolvedMerchantName.trim().isEmpty
+          ? null
+          : _resolvedMerchantName.trim(),
       profileUrl: _merchantProfileUrl,
       email: _merchantEmail,
       phone: _merchantPhone,
@@ -675,7 +736,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   Future<List<MarketplaceDetailModel>> _loadMerchantItems() async {
     try {
       final String id = widget.merchantId.trim();
-      final String name = widget.merchantName.trim();
+      final String name = _shopDisplayName;
 
       // 1) Try match by merchantId (cache-first)
       final idSnap = await _queryFast(
@@ -988,7 +1049,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       description: item.description ?? '',
       comment: null,
       merchantId: widget.merchantId,
-      merchantName: widget.merchantName,
+      merchantName: _shopDisplayName,
       serviceType: 'marketplace',
       availableStock: item.stockQuantity,
     );
@@ -1132,7 +1193,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       'https://vero360.app/merchant/${widget.merchantId.trim()}';
 
   String get _shareMessage =>
-      'Check out this merchant on Vero360 - ${widget.merchantName}\n$_merchantShopUrl';
+      'Check out this merchant on Vero360 - ${_shopDisplayName}\n$_merchantShopUrl';
 
   void _copyMerchantLink() {
     Clipboard.setData(ClipboardData(text: _merchantShopUrl));
@@ -1432,7 +1493,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              widget.merchantName.trim(),
+                              _shopDisplayName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -1724,7 +1785,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
       await _firestore.collection('merchant_reports').add({
         'merchantId': widget.merchantId.trim(),
-        'merchantName': widget.merchantName.trim(),
+        'merchantName': _shopDisplayName,
         'reporterUid': user.uid,
         'reporterEmail': user.email,
         'message': message,
@@ -1795,6 +1856,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         final bizDesc = (data['businessDescription'] ?? data['description'] ?? data['about'] ?? '')
             .toString()
             .trim();
+        final liveName = _nameFromMerchantMap(data);
         backendId = _parseBackendIdFromMap(data) ?? backendId;
         storedFollowerCount = data['followerCount'] ?? data['followersCount'];
         if (storedFollowerCount is num) {
@@ -1804,6 +1866,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         if (mounted) {
           setState(() {
             _applyRatingFieldsFromMap(data);
+            if (liveName != null) _resolvedMerchantName = liveName;
             if (status != null) _merchantStatus = status;
             if (openingHours != null) {
               _merchantOpeningHours = openingHours;
@@ -1843,9 +1906,13 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             .trim();
         final uHours = (u['openingHours'] ?? '').toString().trim();
         final uDays = _parseOpeningDays(u['openingDays']);
+        final uName = _nameFromMerchantMap(u);
         backendId ??= _parseBackendIdFromMap(u);
         if (mounted) {
           setState(() {
+            if (_resolvedMerchantName.trim().isEmpty && uName != null) {
+              _resolvedMerchantName = uName;
+            }
             if ((_merchantProfileUrl?.trim().isEmpty ?? true) &&
                 uProfile.isNotEmpty) {
               _merchantProfileUrl = uProfile;
@@ -2224,7 +2291,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       MaterialPageRoute(
         builder: (_) => MerchantReviewsPage(
           merchantId: widget.merchantId,
-          merchantName: widget.merchantName,
+          merchantName: _shopDisplayName,
           logoUrl: _merchantProfileUrl,
           rating: _merchantRating ?? summary.average,
           merchantBackendId: backendId,
@@ -2358,6 +2425,12 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_redirectingToDriver) {
+      return const Scaffold(
+        backgroundColor: _pageBg,
+        body: AppSkeletonListPlaceholder(items: 8),
+      );
+    }
     return Scaffold(
       backgroundColor: _pageBg,
       appBar: AppBar(
@@ -2382,9 +2455,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
               child: Builder(
                 builder: (context) {
                   final isAccommodation = _isAccommodationHost == true;
-                  final baseName = widget.merchantName.trim().isEmpty
-                      ? 'Merchant'
-                      : widget.merchantName.trim();
+                  final baseName = _shopDisplayName;
                   final title =
                       isAccommodation ? baseName : '$baseName Store';
                   return Text(
@@ -2419,7 +2490,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         children: [
           _MerchantProfileCard(
             merchantId: widget.merchantId,
-            name: widget.merchantName,
+            name: _shopDisplayName,
             rating: _merchantRating,
             reviewCount: _merchantReviewCount,
             openingHours: _merchantOpeningHours,
@@ -2449,7 +2520,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                         child: _buildModernSearchBar(
-                          'Search ${widget.merchantName.trim().isEmpty ? 'this host' : widget.merchantName.trim()}…',
+                          'Search ${_shopDisplayName == 'Merchant' ? 'this host' : _shopDisplayName}…',
                         ),
                       ),
                       Expanded(
@@ -2481,7 +2552,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                           ),
                           const SizedBox(height: 8),
                           _buildModernSearchBar(
-                            'Search products from ${widget.merchantName}...',
+                            'Search products from $_shopDisplayName...',
                           ),
                         ],
                       ),
@@ -2646,7 +2717,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                                           serviceProviderId: null,
                                           sellerUserId: null,
                                           merchantId: widget.merchantId,
-                                          merchantName: widget.merchantName,
+                                          merchantName: _shopDisplayName,
                                           serviceType: 'marketplace',
                                           createdAt: it.createdAt,
                                           stockQuantity: it.stockQuantity,

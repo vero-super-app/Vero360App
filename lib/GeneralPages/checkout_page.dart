@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -49,6 +50,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   DeliveryType _deliveryType = DeliveryType.speed;
 
   int _qty = 1;
+  late final TextEditingController _qtyCtrl;
   bool _submitting = false;
 
   int get _maxQty => widget.item.maxOrderQty;
@@ -88,6 +90,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   void initState() {
     super.initState();
+    _qtyCtrl = TextEditingController(text: '$_qty');
     _prepareItemImage();
     // Sync memory hit so the first frame already has an address.
     final mem = AddressService.peekDefaultAddress();
@@ -274,7 +277,48 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   @override
   void dispose() {
+    _qtyCtrl.dispose();
     super.dispose();
+  }
+
+  void _applyQty(int value, {bool showStockToast = true}) {
+    if (_outOfStock) return;
+    final maxQ = _maxQty;
+    var next = value;
+    if (next < 1) next = 1;
+    if (next > maxQ) {
+      if (showStockToast) {
+        ToastHelper.showCustomToast(
+          context,
+          'Only $maxQ available',
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      next = maxQ.clamp(1, 99999);
+    }
+    if (_qty == next && _qtyCtrl.text == '$next') return;
+    setState(() => _qty = next);
+    if (_qtyCtrl.text != '$next') {
+      _qtyCtrl.value = TextEditingValue(
+        text: '$next',
+        selection: TextSelection.collapsed(offset: '$next'.length),
+      );
+    }
+  }
+
+  void _onQtyFieldChanged(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return; // allow empty while typing
+    final n = int.tryParse(digits);
+    if (n == null) return;
+    _applyQty(n);
+  }
+
+  void _commitQtyField() {
+    final digits = _qtyCtrl.text.replaceAll(RegExp(r'\D'), '');
+    final n = int.tryParse(digits);
+    _applyQty(n ?? _qty);
   }
 
   // ── UI helpers ──────────────────────────────────────────────────────────
@@ -912,31 +956,67 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                 Row(
                                   children: [
                                     _qtyBtn(Icons.remove_rounded, () {
-                                      if (_qty > 1) setState(() => _qty--);
+                                      _applyQty(_qty - 1, showStockToast: false);
                                     }),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 14),
-                                      child: Text(
-                                        '$_qty',
+                                    const SizedBox(width: 8),
+                                    SizedBox(
+                                      width: 72,
+                                      child: TextField(
+                                        controller: _qtyCtrl,
+                                        keyboardType: TextInputType.number,
+                                        textAlign: TextAlign.center,
+                                        inputFormatters: [
+                                          FilteringTextInputFormatter.digitsOnly,
+                                          LengthLimitingTextInputFormatter(5),
+                                        ],
                                         style: const TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w900,
                                           color: _brandNavy,
                                         ),
+                                        decoration: InputDecoration(
+                                          isDense: true,
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 10,
+                                          ),
+                                          filled: true,
+                                          fillColor: const Color(0xFFF4F6FA),
+                                          hintText: 'Qty',
+                                          border: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            borderSide: BorderSide(
+                                              color: Colors.black
+                                                  .withValues(alpha: 0.08),
+                                            ),
+                                          ),
+                                          enabledBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            borderSide: BorderSide(
+                                              color: Colors.black
+                                                  .withValues(alpha: 0.08),
+                                            ),
+                                          ),
+                                          focusedBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            borderSide: const BorderSide(
+                                              color: _brandOrange,
+                                              width: 1.4,
+                                            ),
+                                          ),
+                                        ),
+                                        onChanged: _onQtyFieldChanged,
+                                        onEditingComplete: _commitQtyField,
+                                        onSubmitted: (_) => _commitQtyField(),
                                       ),
                                     ),
+                                    const SizedBox(width: 8),
                                     _qtyBtn(Icons.add_rounded, () {
-                                      if (_qty >= _maxQty) {
-                                        ToastHelper.showCustomToast(
-                                          context,
-                                          'Only $_maxQty available',
-                                          isSuccess: false,
-                                          errorMessage: '',
-                                        );
-                                        return;
-                                      }
-                                      setState(() => _qty++);
+                                      _applyQty(_qty + 1);
                                     }),
                                   ],
                                 ),

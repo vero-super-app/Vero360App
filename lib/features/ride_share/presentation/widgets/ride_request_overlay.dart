@@ -11,6 +11,7 @@ import 'package:vero360_app/features/ride_share/presentation/pages/driver_ride_e
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/GernalServices/driver_messaging_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class RideRequestOverlay extends ConsumerStatefulWidget {
   final Widget child;
@@ -246,7 +247,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       if (navigatorContext.mounted) {
         ScaffoldMessenger.of(navigatorContext).showSnackBar(
           SnackBar(
-            content: Text('Failed to accept ride: $e'),
+            content: Text(UserFacingError.from(e, fallback: 'Failed to accept ride')),
             backgroundColor: Colors.red.shade600,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),

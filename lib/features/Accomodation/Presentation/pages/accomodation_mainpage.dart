@@ -14,6 +14,7 @@ import 'package:vero360_app/features/Accomodation/Presentation/pages/accommodati
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_listing_image.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
 class AccommodationMainPage extends StatefulWidget {
@@ -680,7 +681,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
                 if (snapshot.hasError) {
                   return _buildErrorState(
                     context,
-                    snapshot.error.toString(),
+                    UserFacingError.from(snapshot.error),
                     isDark,
                   );
                 }

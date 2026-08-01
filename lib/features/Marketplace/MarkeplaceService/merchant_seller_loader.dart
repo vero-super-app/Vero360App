@@ -59,6 +59,11 @@ class MerchantSellerLoader {
   /// merchantId → weekday ints (1=Mon … 7=Sun). Empty/missing = every day.
   static final Map<String, List<int>> _openingDaysByMerchantId = {};
 
+  static void clearSessionCaches() {
+    _openingHoursByMerchantId.clear();
+    _openingDaysByMerchantId.clear();
+  }
+
   static String? peekOpeningHours(String? merchantId) {
     final id = (merchantId ?? '').trim();
     if (id.isEmpty) return null;

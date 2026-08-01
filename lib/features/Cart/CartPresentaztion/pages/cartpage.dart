@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart'; // ✅ ADD (commas formatter)
 
@@ -668,6 +669,7 @@ class _CartPageState extends State<CartPage> {
                               _changeQty(item, item.quantity + 1),
                           onDec: (item) =>
                               _changeQty(item, item.quantity - 1),
+                          onSetQty: (item, qty) => _changeQty(item, qty),
                           onRemove: _remove,
                         ),
                     ],
@@ -696,6 +698,7 @@ class _MerchantGroupSection extends StatelessWidget {
   final List<CartModel> items;
   final Function(CartModel) onInc;
   final Function(CartModel) onDec;
+  final void Function(CartModel item, int qty) onSetQty;
   final Function(CartModel) onRemove;
 
   const _MerchantGroupSection({
@@ -703,6 +706,7 @@ class _MerchantGroupSection extends StatelessWidget {
     required this.items,
     required this.onInc,
     required this.onDec,
+    required this.onSetQty,
     required this.onRemove,
   });
 
@@ -747,6 +751,7 @@ class _MerchantGroupSection extends StatelessWidget {
               item: item,
               onInc: () => onInc(item),
               onDec: () => onDec(item),
+              onSetQty: (qty) => onSetQty(item, qty),
               onRemove: () => onRemove(item),
             )),
 
@@ -756,20 +761,63 @@ class _MerchantGroupSection extends StatelessWidget {
   }
 }
 
-class _CartItemTile extends StatelessWidget {
+class _CartItemTile extends StatefulWidget {
   const _CartItemTile({
     required this.item,
     required this.onInc,
     required this.onDec,
+    required this.onSetQty,
     required this.onRemove,
   });
 
   final CartModel item;
   final VoidCallback onInc;
   final VoidCallback onDec;
+  final ValueChanged<int> onSetQty;
   final VoidCallback onRemove;
 
+  @override
+  State<_CartItemTile> createState() => _CartItemTileState();
+}
+
+class _CartItemTileState extends State<_CartItemTile> {
+  late final TextEditingController _qtyCtrl;
+
+  CartModel get item => widget.item;
+
   static final Map<String, Uint8List> _base64Cache = <String, Uint8List>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _qtyCtrl = TextEditingController(text: '${item.quantity}');
+  }
+
+  @override
+  void didUpdateWidget(covariant _CartItemTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.quantity != widget.item.quantity &&
+        _qtyCtrl.text != '${widget.item.quantity}') {
+      _qtyCtrl.value = TextEditingValue(
+        text: '${widget.item.quantity}',
+        selection: TextSelection.collapsed(
+          offset: '${widget.item.quantity}'.length,
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _qtyCtrl.dispose();
+    super.dispose();
+  }
+
+  void _commit() {
+    final digits = _qtyCtrl.text.replaceAll(RegExp(r'\D'), '');
+    final n = int.tryParse(digits);
+    widget.onSetQty(n ?? item.quantity);
+  }
 
   Uint8List? _decodeBase64Image(String v) {
     if (v.isEmpty) return null;
@@ -879,7 +927,6 @@ class _CartItemTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                // ✅ COMMAS
                 Text(
                   mwk(item.price),
                   style: const TextStyle(
@@ -890,21 +937,45 @@ class _CartItemTile extends StatelessWidget {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    _IconBtn(icon: Icons.remove, onTap: onDec),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: Text(
-                        '${item.quantity}',
+                    _IconBtn(icon: Icons.remove, onTap: widget.onDec),
+                    const SizedBox(width: 6),
+                    SizedBox(
+                      width: 64,
+                      child: TextField(
+                        controller: _qtyCtrl,
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(5),
+                        ],
                         style: const TextStyle(
                           fontSize: 15,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w700,
                         ),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 8,
+                          ),
+                          filled: true,
+                          fillColor: Colors.black.withValues(alpha: 0.04),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                        onEditingComplete: _commit,
+                        onSubmitted: (_) => _commit(),
+                        onTapOutside: (_) => _commit(),
                       ),
                     ),
-                    _IconBtn(icon: Icons.add, onTap: onInc),
+                    const SizedBox(width: 6),
+                    _IconBtn(icon: Icons.add, onTap: widget.onInc),
                     const Spacer(),
                     IconButton(
-                      onPressed: onRemove,
+                      onPressed: widget.onRemove,
                       icon: const Icon(Icons.delete_outline, color: Colors.red),
                       tooltip: 'Remove',
                     ),

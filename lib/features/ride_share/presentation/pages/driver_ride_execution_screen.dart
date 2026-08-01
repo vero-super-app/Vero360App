@@ -10,6 +10,7 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_wi
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_in_ride_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_messaging_sheet.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class DriverRideExecutionScreen extends ConsumerStatefulWidget {
   final int rideId;
@@ -110,7 +111,7 @@ class _DriverRideExecutionScreenState
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+        SnackBar(content: Text(UserFacingError.from(e))),
       );
     }
   }
@@ -146,7 +147,7 @@ class _DriverRideExecutionScreenState
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Failed to cancel: $e'),
+              content: Text(UserFacingError.from(e, fallback: 'Failed to cancel')),
               backgroundColor: Colors.red,
             ),
           );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/GernalServices/driver_messaging_service.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class DriverMessagingScreen extends StatefulWidget {
   final String rideId;
@@ -73,7 +74,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to send: $e'),
+            content: Text(UserFacingError.from(e, fallback: 'Failed to send')),
             backgroundColor: Colors.red.shade600,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -112,7 +113,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error making call: $e'),
+            content: Text(UserFacingError.from(e, fallback: 'Error making call')),
             backgroundColor: Colors.red.shade600,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -269,7 +270,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Error: ${snapshot.error}',
+                  UserFacingError.from(snapshot.error),
                   style: const TextStyle(
                     fontSize: 14,
                     color: Colors.black87,

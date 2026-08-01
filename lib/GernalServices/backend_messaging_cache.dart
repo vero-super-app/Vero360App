@@ -298,6 +298,20 @@ class BackendMessagingCache {
     }
   }
 
+  /// Clear threads that no longer belong to [userId] after an account switch.
+  /// Keeps deleted-thread markers so same-user re-login still hides deletes.
+  static Future<void> clearThreadsForUser(int userId) async {
+    await initialize();
+    if (_box == null) return;
+    try {
+      await _box!.delete(_threadsKey(userId));
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[BackendMessagingCache] clearThreadsForUser: $e');
+      }
+    }
+  }
+
   static Future<void> clearUser(int userId) async {
     await initialize();
     if (_box == null) return;

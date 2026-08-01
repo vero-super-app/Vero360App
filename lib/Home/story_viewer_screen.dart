@@ -10,7 +10,7 @@ import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/Home/story_service.dart';
 import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
-import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
@@ -297,13 +297,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           const SizedBox(width: 8),
           GestureDetector(
             onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => MerchantProductsPage(
-                    merchantId: _currentGroup.merchantId,
-                    merchantName: _currentGroup.merchantName,
-                  ),
-                ),
+              openMerchantOrDriverProfile(
+                context,
+                profileId: _currentGroup.merchantId,
+                displayName: _currentGroup.merchantName,
               );
             },
             child: Container(

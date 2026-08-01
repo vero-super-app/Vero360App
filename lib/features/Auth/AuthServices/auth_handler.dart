@@ -64,26 +64,22 @@ class AuthHandler {
     }
   }
 
-  /// Single source of truth: logged in if Firebase has a user (and we can get a token).
-  /// Offline-safe: if the host is unreachable, uses cached ID token when possible;
-  /// if refresh fails but [currentUser] still exists, treats the session as valid so
-  /// the shell (home, etc.) can render like other offline-first apps.
+  /// Single source of truth for “are we signed in?” — must match [getTokenForApi].
+  ///
+  /// Fast + offline-safe:
+  /// - Firebase [currentUser] alone means logged in (do not await ID token here;
+  ///   waiting caused BottomNavbar to treat the user as logged out for seconds
+  ///   while Home/cart still worked).
+  /// - Else any non-empty SharedPreferences API token (same keys as [getTokenForApi]).
   static Future<bool> isAuthenticated() async {
-    final user = _firebaseAuth.currentUser;
-    if (user == null) return false;
-    try {
-      final token = await user.getIdToken(false).timeout(_cachedTokenTimeout);
-      if (token != null && token.isNotEmpty) return true;
-      final refreshed = await user.getIdToken(true).timeout(_refreshTokenTimeout);
-      return refreshed != null && refreshed.isNotEmpty;
-    } catch (_) {
-      final sp = await SharedPreferences.getInstance();
-      for (final k in _spTokenKeys) {
-        final v = sp.getString(k);
-        if (v != null && v.isNotEmpty) return true;
-      }
-      return true;
+    if (_firebaseAuth.currentUser != null) return true;
+
+    final sp = await SharedPreferences.getInstance();
+    for (final k in _spTokenKeys) {
+      final v = sp.getString(k);
+      if (v != null && v.isNotEmpty) return true;
     }
+    return false;
   }
 
   static Future<void> logout() async {

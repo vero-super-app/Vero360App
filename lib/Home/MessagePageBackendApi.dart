@@ -23,13 +23,16 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 import 'package:vero360_app/widgets/voice_note_bubble.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/chat_offplatform_detector.dart';
+import 'package:vero360_app/widgets/chat_offplatform_warning.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as core;
-import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/features/Marketplace/presentation/widgets/merchant_review_prompt.dart';
 
 class MessagePageBackendApi extends StatefulWidget {
@@ -259,14 +262,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       return true;
     } catch (e) {
       if (!mounted) return false;
-      final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+      final msg = UserFacingError.from(e, fallback: 'Could not open chat');
       setState(() {
         _resolvingChat = false;
         _loading = false;
-        _loadError = raw;
+        _loadError = msg;
         _bootComplete = false;
       });
-      _toast(raw);
+      _toast(msg);
       return false;
     }
   }
@@ -424,17 +427,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   }
 
   String _friendlyError(Object e) {
-    final raw = e.toString().toLowerCase();
-    if (raw.contains('401') || raw.contains('unauthorized')) {
-      return 'Session expired. Please log in again.';
-    }
-    if (raw.contains('403') || raw.contains('forbidden') || raw.contains('participant')) {
-      return 'You do not have access to this chat.';
-    }
-    if (raw.contains('socket') || raw.contains('network') || raw.contains('timeout')) {
-      return 'Connection problem. Check your internet and try again.';
-    }
-    return 'Could not load messages. Pull to retry.';
+    return UserFacingError.from(
+      e,
+      fallback: 'Could not load messages. Pull to retry.',
+    );
   }
 
   Future<void> _loadMessages({bool silent = false}) async {
@@ -661,7 +657,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
             _messages.where((m) => m.clientMessageId != clientMessageId).toList();
         _input.text = content;
       });
-      _toast('Failed to send message: $e');
+      _toast(UserFacingError.from(e, fallback: 'Failed to send message'));
     }
   }
 
@@ -731,14 +727,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   }
 
   String _friendlyImageError(Object e) {
-    final raw = e.toString().toLowerCase();
-    if (raw.contains('upload failed')) {
-      return 'Could not upload photo. Check your connection.';
-    }
-    if (raw.contains('400')) {
-      return 'Server rejected the image. Trying again may help.';
-    }
-    return 'Failed to send image. Please try again.';
+    return UserFacingError.from(
+      e,
+      fallback: 'Failed to send image. Please try again.',
+    );
   }
 
   Future<String> _uploadImageBytes(_PendingImage image) async {
@@ -1160,7 +1152,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       });
       BackendChatService.refreshThreads();
     } catch (e) {
-      _toast('Could not delete message: $e');
+      _toast(UserFacingError.from(e, fallback: 'Could not delete message'));
     }
   }
 
@@ -1182,7 +1174,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       setState(() => _upsertMessage(saved));
       BackendChatService.refreshThreads();
     } catch (e) {
-      _toast('Could not edit message: $e');
+      _toast(UserFacingError.from(e, fallback: 'Could not edit message'));
     }
   }
 
@@ -1244,7 +1236,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       BackendChatService.refreshThreads();
       _toast('Chat cleared');
     } catch (e) {
-      _toast('Could not clear chat: $e');
+      _toast(UserFacingError.from(e, fallback: 'Could not clear chat'));
     }
   }
 
@@ -1438,18 +1430,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       }
     }
     if (merchantId == null || merchantId.isEmpty) {
-      _toast('Seller shop is not available for this chat.');
+      _toast('Profile is not available for this chat.');
       return;
     }
     if (!mounted) return;
-    Navigator.push(
+    await openMerchantOrDriverProfile(
       context,
-      MaterialPageRoute(
-        builder: (_) => MerchantProductsPage(
-          merchantId: merchantId!,
-          merchantName: widget.peerName,
-        ),
-      ),
+      profileId: merchantId,
+      displayName: widget.peerName,
     );
   }
 
@@ -1830,6 +1818,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final voiceDuration = _voiceDurationFor(msg, audio);
     final canAct = isMine && _within5Min(msg) && !isPending;
     final isLastOutgoing = isMine && index == _lastOutgoingMessageIndex();
+    final scanText = [
+      caption,
+      msg.content,
+    ].whereType<String>().join('\n');
+    final showOffPlatformWarning =
+        ChatOffPlatformDetector.containsSensitiveDetails(scanText);
 
     final bubble = Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -2016,6 +2010,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           onLongPress: canAct ? () => _showMsgActions(msg) : null,
           child: bubble,
         ),
+        if (showOffPlatformWarning) const ChatOffPlatformWarning(),
       ],
     );
   }

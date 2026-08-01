@@ -3,6 +3,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 class PromotionsPage extends StatefulWidget {
@@ -68,7 +69,11 @@ class _PromotionsPageState extends State<PromotionsPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        // Never surface hosts, IPs, ports, or raw ClientException text.
+        _error = UserFacingError.from(
+          e,
+          fallback: UserFacingError.offline,
+        );
         _loading = false;
       });
     }
@@ -771,7 +776,10 @@ class _ErrorState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              message,
+              UserFacingError.sanitize(
+                message,
+                fallback: 'Check your connection and try again.',
+              ),
               textAlign: TextAlign.center,
               style: const TextStyle(color: Color(0xFF6B7280)),
             ),

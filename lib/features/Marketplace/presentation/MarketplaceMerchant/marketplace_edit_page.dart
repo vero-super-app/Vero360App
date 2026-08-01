@@ -9,7 +9,8 @@ import 'package:image_picker/image_picker.dart';
 import '../../MarkeplaceModel/marketplace.model.dart';
 import '../../MarkeplaceService/marketplace.service.dart';
 import '../../MarkeplaceService/marketplace_moderation.dart';
-import '../../../../utils/toasthelper.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class _LocalMedia {
   final Uint8List bytes;
@@ -223,7 +224,7 @@ class _MarketplaceEditPageState extends State<MarketplaceEditPage> {
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Save failed: $e',
+        UserFacingError.from(e, fallback: 'Save failed'),
         isSuccess: false,
         errorMessage: 'Save failed',
       );

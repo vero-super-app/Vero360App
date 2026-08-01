@@ -3,23 +3,24 @@ import 'package:vero360_app/GernalServices/car_rental_service.dart';
 import 'package:vero360_app/GernalServices/payment_service.dart';
 import 'package:vero360_app/GernalServices/merchant_service.dart';
 import 'package:vero360_app/GernalServices/analytics_service.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class CarHireErrorHandler {
-  static String getErrorMessage(Exception e) {
+  static String getErrorMessage(Object e) {
     if (e is CarRentalException) {
-      return e.message;
+      return UserFacingError.sanitize(e.message);
     } else if (e is PaymentException) {
-      return e.message;
+      return UserFacingError.sanitize(e.message);
     } else if (e is MerchantException) {
-      return e.message;
+      return UserFacingError.sanitize(e.message);
     } else if (e is AnalyticsException) {
-      return e.message;
+      return UserFacingError.sanitize(e.message);
     } else {
-      return e.toString();
+      return UserFacingError.from(e);
     }
   }
 
-  static void showErrorDialog(BuildContext context, Exception e) {
+  static void showErrorDialog(BuildContext context, Object e) {
     final message = getErrorMessage(e);
     showDialog(
       context: context,
@@ -36,7 +37,7 @@ class CarHireErrorHandler {
     );
   }
 
-  static void showErrorSnackbar(BuildContext context, Exception e) {
+  static void showErrorSnackbar(BuildContext context, Object e) {
     final message = getErrorMessage(e);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

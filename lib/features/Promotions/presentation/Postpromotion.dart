@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import '../../../utils/toasthelper.dart';
 
 class PromotionsCrudPage extends StatefulWidget {
@@ -72,7 +73,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Failed to load promos: $e',
+        UserFacingError.from(e, fallback: 'Failed to load promos'),
         isSuccess: false,
         errorMessage: 'Load failed',
       );
@@ -264,7 +265,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
     } catch (e) {
       ToastHelper.showCustomToast(
         context,
-        'Create failed: $e',
+        UserFacingError.from(e, fallback: 'Create failed'),
         isSuccess: false,
         errorMessage: 'Create failed',
       );
@@ -308,7 +309,10 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       await _loadMine();
     } catch (e) {
       ToastHelper.showCustomToast(
-          context, 'Subscribe failed: $e', isSuccess: false, errorMessage: 'Subscribe failed');
+          context,
+          UserFacingError.from(e, fallback: 'Subscribe failed'),
+          isSuccess: false,
+          errorMessage: 'Subscribe failed');
     } finally {
       if (mounted) setState(() => _busyRow = false);
     }
@@ -323,7 +327,10 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       await _loadMine();
     } catch (e) {
       ToastHelper.showCustomToast(
-          context, 'Deactivate failed: $e', isSuccess: false, errorMessage: 'Deactivate failed');
+          context,
+          UserFacingError.from(e, fallback: 'Deactivate failed'),
+          isSuccess: false,
+          errorMessage: 'Deactivate failed');
     } finally {
       if (mounted) setState(() => _busyRow = false);
     }
@@ -357,7 +364,10 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       setState(() {});
     } catch (e) {
       ToastHelper.showCustomToast(
-          context, 'Delete failed: $e', isSuccess: false, errorMessage: 'Delete failed');
+          context,
+          UserFacingError.from(e, fallback: 'Delete failed'),
+          isSuccess: false,
+          errorMessage: 'Delete failed');
     } finally {
       if (mounted) setState(() => _busyRow = false);
     }

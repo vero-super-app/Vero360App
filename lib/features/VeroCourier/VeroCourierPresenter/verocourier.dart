@@ -14,6 +14,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_onboarding_page.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_widgets.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/vero_courier_service.dart';
 
 class VerocourierPage extends StatefulWidget {
@@ -67,6 +68,8 @@ class _VerocourierPageState extends State<VerocourierPage> {
   bool _detectingCity = true;
   bool _citySupported = true;
   String _detectedCity = '';
+  CourierServiceCity? _serviceCity;
+  String _cityGateMessage = '';
   bool _loadingParcelForm = false;
   bool _submitting = false;
   bool _loadingList = false;
@@ -170,12 +173,91 @@ class _VerocourierPageState extends State<VerocourierPage> {
 
   String? _tabAccessMessage(int index) {
     if (!_citySupported) {
-      return 'Vero Courier is not available in your city yet.';
+      return _cityGateMessage.isNotEmpty
+          ? _cityGateMessage
+          : 'Vero Courier is not available in your city yet.';
     }
     if (index == 1 && (!_sendingDetailsComplete || !_hasValidSendingDetails())) {
       return 'Complete sending details first, then tap Next.';
     }
     return null;
+  }
+
+  String get _serviceCityLabel =>
+      _serviceCity != null
+          ? CourierCityHelper.displayName(_serviceCity!)
+          : (_detectedCity.isNotEmpty ? _detectedCity : 'your city');
+
+  String get _serviceCityCode =>
+      _serviceCity != null ? CourierCityHelper.shortCode(_serviceCity!) : '—';
+
+  /// Blocks inter-city addresses (e.g. Zomba → Lilongwe).
+  String? _cityConflictFor(String? text, String fieldLabel) {
+    final city = _serviceCity;
+    if (city == null) return null;
+    return CourierCityHelper.conflictMessage(
+      text: text,
+      requiredCity: city,
+      fieldLabel: fieldLabel,
+    );
+  }
+
+  /// Sender location (profile / address) must match GPS-detected city.
+  String? _senderLocationMismatch({String? addressOverride}) {
+    final detected = _serviceCity;
+    if (detected == null) return null;
+
+    final addressText = addressOverride ?? _senderAddressCtrl.text;
+    final addressCity = CourierCityHelper.resolve(addressText);
+
+    // Address explicitly naming another city is not allowed.
+    if (addressCity != null && addressCity != detected) {
+      return 'Detected area (${CourierCityHelper.displayName(detected)}) must '
+          'match your sender location '
+          '(${CourierCityHelper.displayName(addressCity)}). '
+          'Vero Courier only picks up within ${_serviceCityLabel}.';
+    }
+    return _cityConflictFor(addressText, 'Sender pickup address');
+  }
+
+  String? _validateIntraCityBooking() {
+    if (_serviceCity == null) {
+      return _cityGateMessage.isNotEmpty
+          ? _cityGateMessage
+          : 'Could not confirm your city. Enable location and try again.';
+    }
+
+    final senderMismatch = _senderLocationMismatch();
+    if (senderMismatch != null) return senderMismatch;
+
+    final recipientConflict = _cityConflictFor(
+      _recipientAddressCtrl.text,
+      'Recipient delivery address',
+    );
+    if (recipientConflict != null) return recipientConflict;
+
+    final pickupConflict = _cityConflictFor(
+      _pickupCtrl.text,
+      'Pickup location',
+    );
+    if (pickupConflict != null) return pickupConflict;
+
+    final dropoffConflict = _cityConflictFor(
+      _dropoffCtrl.text,
+      'Drop-off location',
+    );
+    if (dropoffConflict != null) return dropoffConflict;
+
+    return null;
+  }
+
+  void _syncParcelLocationsFromSendingDetails() {
+    if (_pickupCtrl.text.trim().isEmpty) {
+      _pickupCtrl.text = _senderAddressCtrl.text.trim();
+    }
+    if (_dropoffCtrl.text.trim().isEmpty) {
+      _dropoffCtrl.text = _recipientAddressCtrl.text.trim();
+    }
   }
 
   Future<void> _onServiceTabChanged(int index) async {
@@ -307,7 +389,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
   }
 
   Future<void> _detectAndValidateCity() async {
-    setState(() => _detectingCity = true);
+    setState(() {
+      _detectingCity = true;
+      _cityGateMessage = '';
+    });
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
@@ -315,7 +400,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
         setState(() {
           _detectingCity = false;
           _citySupported = false;
+          _serviceCity = null;
           _detectedCity = 'Unknown';
+          _cityGateMessage =
+              'Turn on location so we can confirm your city for same-city courier.';
         });
         return;
       }
@@ -330,7 +418,11 @@ class _VerocourierPageState extends State<VerocourierPage> {
         setState(() {
           _detectingCity = false;
           _citySupported = false;
+          _serviceCity = null;
           _detectedCity = 'Unknown';
+          _cityGateMessage =
+              'Allow location access so Vero Courier can match your city '
+              '(Lilongwe, Blantyre, or Zomba).';
         });
         return;
       }
@@ -352,30 +444,61 @@ class _VerocourierPageState extends State<VerocourierPage> {
                   : (place?.administrativeArea ?? 'Unknown')))
           .trim();
 
-      final normalized = rawCity.toLowerCase();
-      final supported = normalized.contains('lilongwe') ||
-          normalized.contains('blantyre') ||
-          normalized.contains('zomba');
+      final detected = CourierCityHelper.resolve(rawCity);
 
       if (!mounted) return;
+
+      if (detected == null) {
+        setState(() {
+          _detectingCity = false;
+          _citySupported = false;
+          _serviceCity = null;
+          _detectedCity = rawCity.isEmpty ? 'Unknown' : rawCity;
+          _cityGateMessage =
+              'Vero Courier is only available in Lilongwe (LLZ), '
+              'Blantyre (BTZ), and Zomba — within the same city only.';
+        });
+        return;
+      }
+
+      final canonical = CourierCityHelper.displayName(detected);
+      final code = CourierCityHelper.shortCode(detected);
+      final addr = _senderAddressCtrl.text.trim();
+      final addrCity = CourierCityHelper.resolve(addr);
+      final cityOnlyMismatch = addrCity != null &&
+          addrCity != detected &&
+          addr.toLowerCase() ==
+              CourierCityHelper.displayName(addrCity).toLowerCase();
+
+      // Replace bare wrong-city drafts (e.g. "Lilongwe") with detected city.
+      final effectiveAddress =
+          (addr.isEmpty || cityOnlyMismatch) ? canonical : addr;
+      final addressMismatch = CourierCityHelper.conflictMessage(
+        text: effectiveAddress,
+        requiredCity: detected,
+        fieldLabel: 'Sender pickup address',
+      );
+
       setState(() {
         _detectingCity = false;
-        _citySupported = supported;
-        _detectedCity = rawCity;
-        if (rawCity.isNotEmpty && rawCity != 'Unknown') {
-          _senderCity = rawCity;
-          // Don't wipe a saved street address with city-only geolocation.
-          if (_senderAddressCtrl.text.trim().isEmpty) {
-            _senderAddressCtrl.text = rawCity;
-          }
-        }
+        _serviceCity = detected;
+        _detectedCity = canonical;
+        _senderCity = canonical;
+        _senderAddressCtrl.text = effectiveAddress;
+        _citySupported = addressMismatch == null;
+        _cityGateMessage = addressMismatch ??
+            'Within $canonical only ($code → $code). '
+                'Pickup and delivery must stay in the same city ';
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _detectingCity = false;
         _citySupported = false;
+        _serviceCity = null;
         _detectedCity = 'Unknown';
+        _cityGateMessage =
+            'Could not detect your city. Check GPS and try again.';
       });
     }
   }
@@ -486,9 +609,11 @@ class _VerocourierPageState extends State<VerocourierPage> {
   }
 
   Future<void> _submit() async {
-    if (!_citySupported) {
+    if (!_citySupported || _serviceCity == null) {
       _toast(
-        'Sorry, Vero Courier is not available in your city. We are expanding soon.',
+        _cityGateMessage.isNotEmpty
+            ? _cityGateMessage
+            : 'Sorry, Vero Courier is not available in your city. We are expanding soon.',
         isError: true,
       );
       return;
@@ -506,6 +631,12 @@ class _VerocourierPageState extends State<VerocourierPage> {
     }
     if (!_formKey.currentState!.validate()) return;
 
+    final intraCityError = _validateIntraCityBooking();
+    if (intraCityError != null) {
+      _toast(intraCityError, isError: true);
+      return;
+    }
+
     final phone = _sanitizePhone(_senderPhoneCtrl.text);
     if (phone.isEmpty) {
       _toast('Enter a valid sender phone number (not an account ID).', isError: true);
@@ -518,9 +649,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
 
     _senderName = _senderNameCtrl.text.trim();
     _senderPhone = phone;
-    _senderCity = _senderAddressCtrl.text.trim().isEmpty
-        ? _senderCity
-        : _senderAddressCtrl.text.trim();
+    _senderCity = _serviceCityLabel;
 
     setState(() => _submitting = true);
     final mergedAdditionalInfo = [
@@ -533,6 +662,8 @@ class _VerocourierPageState extends State<VerocourierPage> {
         'Recipient Phone: ${_sanitizePhone(_recipientPhoneCtrl.text)}',
       if (_recipientAddressCtrl.text.trim().isNotEmpty)
         'Recipient Address: ${_recipientAddressCtrl.text.trim()}',
+      'ServiceCity: $_senderCity',
+      'IntraCityOnly: yes',
     ].where((e) => e.isNotEmpty).join(' | ');
 
     final email = _senderEmail.trim().isNotEmpty
@@ -578,9 +709,11 @@ class _VerocourierPageState extends State<VerocourierPage> {
   }
 
   Future<void> _advanceSendingStep() async {
-    if (!_citySupported) {
+    if (!_citySupported || _serviceCity == null) {
       _toast(
-        'Sorry, Vero Courier is not available in your city. We are expanding soon.',
+        _cityGateMessage.isNotEmpty
+            ? _cityGateMessage
+            : 'Sorry, Vero Courier is not available in your city. We are expanding soon.',
         isError: true,
       );
       return;
@@ -600,7 +733,17 @@ class _VerocourierPageState extends State<VerocourierPage> {
         _toast('Complete sender details: ${missing.join(', ')}', isError: true);
         return;
       }
-      setState(() => _sendingStep = 1);
+
+      final senderMismatch = _senderLocationMismatch();
+      if (senderMismatch != null) {
+        _toast(senderMismatch, isError: true);
+        return;
+      }
+
+      setState(() {
+        _sendingStep = 1;
+        _senderCity = _serviceCityLabel;
+      });
       await _persistSendingDraft(complete: false);
       return;
     }
@@ -609,9 +752,11 @@ class _VerocourierPageState extends State<VerocourierPage> {
   }
 
   Future<void> _saveSendingDetails() async {
-    if (!_citySupported) {
+    if (!_citySupported || _serviceCity == null) {
       _toast(
-        'Sorry, Vero Courier is not available in your city. We are expanding soon.',
+        _cityGateMessage.isNotEmpty
+            ? _cityGateMessage
+            : 'Sorry, Vero Courier is not available in your city. We are expanding soon.',
         isError: true,
       );
       return;
@@ -638,14 +783,19 @@ class _VerocourierPageState extends State<VerocourierPage> {
       return;
     }
 
+    final intraCityError = _validateIntraCityBooking();
+    if (intraCityError != null) {
+      _toast(intraCityError, isError: true);
+      return;
+    }
+
     setState(() {
       _senderName = _senderNameCtrl.text.trim();
       _senderPhone = phone;
-      _senderCity = _senderAddressCtrl.text.trim().isEmpty
-          ? _senderCity
-          : _senderAddressCtrl.text.trim();
+      _senderCity = _serviceCityLabel;
       _sendingDetailsComplete = true;
       _sendingStep = 1;
+      _syncParcelLocationsFromSendingDetails();
     });
     await _persistSendingDraft(complete: true);
     await _onServiceTabChanged(1);
@@ -922,9 +1072,13 @@ class _VerocourierPageState extends State<VerocourierPage> {
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Text(
-                _citySupported
-                    ? 'Vero Courier is available in your city: $_detectedCity'
-                    : 'Sorry, Vero Courier is not available in your city. We are expanding soon.',
+                _cityGateMessage.isNotEmpty
+                    ? _cityGateMessage
+                    : (_citySupported
+                        ? 'Vero Courier is available in $_detectedCity '
+                            '(same-city only).'
+                        : 'Sorry, Vero Courier is not available in your city. '
+                            'We are expanding soon.'),
                 style: TextStyle(
                   color: _citySupported
                       ? const Color(0xFF1E7A38)
@@ -953,7 +1107,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
       accent: _skyBlue,
       icon: PhosphorIconsBold.userCircle,
       title: 'From you',
-      subtitle: 'Who is sending the parcel?',
+      subtitle: 'Pickup in $_serviceCityLabel only ($_serviceCityCode)',
       child: Column(
         children: [
           _field(
@@ -970,7 +1124,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
           _field(
             _senderAddressCtrl,
             'Pickup address',
-            hint: 'Street, area, landmark',
+            hint: 'Street / area in $_serviceCityLabel',
           ),
         ],
       ),
@@ -983,7 +1137,8 @@ class _VerocourierPageState extends State<VerocourierPage> {
       accent: _mintGreen,
       icon: PhosphorIconsBold.mapPin,
       title: 'To recipient',
-      subtitle: 'Where should we deliver?',
+      subtitle:
+          'Must be in $_serviceCityLabel ($_serviceCityCode → $_serviceCityCode)',
       child: Column(
         children: [
           _field(_recipientNameCtrl, 'Full Name', hint: 'Recipient name'),
@@ -996,7 +1151,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
           _field(
             _recipientAddressCtrl,
             'Delivery address',
-            hint: 'Street, area, landmark',
+            hint: 'Street / area in $_serviceCityLabel — not another city',
             maxLines: 2,
           ),
         ],
@@ -1154,9 +1309,11 @@ class _VerocourierPageState extends State<VerocourierPage> {
         return [
           _sectionTitle('Sending Details'),
           const SizedBox(height: 6),
-          const Text(
-            'One card at a time — sender first, then recipient.',
-            style: TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+          Text(
+            'Same-city courier only in $_serviceCityLabel '
+            '($_serviceCityCode → $_serviceCityCode). '
+            'Not intercity.',
+            style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13),
           ),
           const SizedBox(height: 14),
           _sendingStepIndicator(),
@@ -1266,8 +1423,16 @@ class _VerocourierPageState extends State<VerocourierPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _field(_pickupCtrl, 'pickupLocation', hint: 'Area 18, House 123'),
-                      _field(_dropoffCtrl, 'dropoffLocation', hint: 'City Centre, Shop 45'),
+                      _field(
+                        _pickupCtrl,
+                        'pickupLocation',
+                        hint: 'Area in $_serviceCityLabel',
+                      ),
+                      _field(
+                        _dropoffCtrl,
+                        'dropoffLocation',
+                        hint: 'Also in $_serviceCityLabel (same city)',
+                      ),
                       Padding(
                         padding: const EdgeInsets.only(bottom: 10),
                         child: DropdownButtonFormField<String>(

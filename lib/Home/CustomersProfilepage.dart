@@ -18,7 +18,6 @@ import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 import 'package:vero360_app/Home/myorders.dart';
-import 'package:vero360_app/GeneralPages/CustomerQRcode.dart';
 
 /* Inline pages displayed in bottom sheets (stay on same Profile screen) */
 import 'package:vero360_app/GeneralPages/ToRefund.dart';
@@ -33,6 +32,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 
 import 'package:vero360_app/Home/homepage.dart' show LatestArrivalsSection;
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/display_name_sync.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -103,7 +103,6 @@ class _ProfilePageState extends State<ProfilePage> {
     String loadedPhone = prefs.getString('phone') ?? 'No Phone';
     final address = prefs.getString('address') ?? 'No Address';
     String loadedProfileUrl = prefs.getString('profilepicture') ?? '';
-    final localPath = await ProfilePhotoCache.peekLocalPath();
     // Fallback to Firebase Auth so name/email/phone/photo show after password change or when API hasn't synced
     final firebaseUser = FirebaseAuth.instance.currentUser;
     if (firebaseUser != null) {
@@ -131,6 +130,9 @@ class _ProfilePageState extends State<ProfilePage> {
         await prefs.setString('profilepicture', loadedProfileUrl);
       }
     }
+    final localPath = loadedProfileUrl.isEmpty
+        ? null
+        : await ProfilePhotoCache.peekLocalPath(forRemoteUrl: loadedProfileUrl);
     if (_isFirebaseInternalPhone(loadedPhone)) loadedPhone = 'No Phone';
     if (mounted) {
       setState(() {
@@ -543,6 +545,10 @@ class _ProfilePageState extends State<ProfilePage> {
         await prefs.setString('email', email);
         await prefs.setString('phone', phone);
         await prefs.setString('address', address);
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        if (uid != null && name.trim().isNotEmpty) {
+          await DisplayNameSync.syncEverywhere(uid: uid, name: name.trim());
+        }
         if (!mounted) return;
         ToastHelper.showCustomToast(context, 'Profile updated',
             isSuccess: true, errorMessage: '');
@@ -1379,12 +1385,6 @@ class _ProfilePageState extends State<ProfilePage> {
               Icons.manage_accounts_rounded,
               _openDriverCenter,
             ),
-           _orderAction('My Food', Icons.restaurant, () {
-            //_openBottomSheet(const MyBookingsPage());
-          }),
-           _orderAction('VeroCourier', Icons.local_shipping_rounded, () {
-            //_openBottomSheet(const MyBookingsPage());
-          }),
       ]),
     );
   }
@@ -1495,14 +1495,6 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _otherDetailsGrid() {
     final items = <_DetailItem>[
-      _DetailItem('My QR Code', Icons.qr_code_2, () {
-        _openBottomSheet(ProfileQrPage(
-          name: name,
-          email: email,
-          phone: phone,
-          profilePictureUrl: profileUrl,
-        ));
-      }),
       _DetailItem(
         _isDriver ? 'Trip History' : 'Ride History',
         Icons.history_rounded,

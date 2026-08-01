@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/car_rental_service.dart';
 import 'package:vero360_app/GeneralModels/car_booking_model.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class RentalHistoryPage extends StatefulWidget {
   const RentalHistoryPage({super.key});
@@ -43,7 +44,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'Error loading bookings: $e';
+          _error = UserFacingError.from(e, fallback: 'Error loading bookings');
           _loading = false;
         });
       }

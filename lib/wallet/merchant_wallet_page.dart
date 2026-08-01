@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class MerchantWalletPage extends StatefulWidget {
   final String merchantId;
@@ -573,7 +574,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
       _clearControllers();
       
     } catch (e) {
-      _showError('Failed to process payout: $e');
+      _showError(UserFacingError.from(e, fallback: 'Failed to process payout'));
     } finally {
       if (mounted) {
         setState(() => _isProcessingPayout = false);

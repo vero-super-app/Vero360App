@@ -39,6 +39,7 @@ class CartServiceProvider {
 
   /// Clear the singleton instance (useful for testing)
   static void clear() {
+    CartService.clearSessionCache();
     _instance = null;
   }
 

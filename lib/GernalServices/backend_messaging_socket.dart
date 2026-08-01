@@ -10,7 +10,7 @@ class BackendMessagingSocket {
 
   static WebSocketMessagingService? _ws;
   static StreamSubscription<ws.Message>? _subscription;
-  static bool _connectionListenerAttached = false;
+  static StreamSubscription<String>? _connectionSubscription;
   static final StreamController<BackendChatMessage> _messageController =
       StreamController<BackendChatMessage>.broadcast();
   static final StreamController<bool> _connectionController =
@@ -32,6 +32,8 @@ class BackendMessagingSocket {
 
     await _subscription?.cancel();
     _subscription = null;
+    await _connectionSubscription?.cancel();
+    _connectionSubscription = null;
     if (_ws != null) {
       await _ws!.dispose();
       _ws = null;
@@ -46,9 +48,6 @@ class BackendMessagingSocket {
       userId: userId.toString(),
     );
 
-    await _subscription?.cancel();
-    _subscription = null;
-
     await _ws!.connect();
 
     _subscription = _ws!.messageStream.listen(
@@ -60,14 +59,11 @@ class BackendMessagingSocket {
       onError: (_) {},
     );
 
-    if (!_connectionListenerAttached) {
-      _connectionListenerAttached = true;
-      _ws!.connectionStatusStream.listen((status) {
-        final connected = status == 'connected';
-        _connectionController.add(connected);
-        BackendChatService.notifyWsConnected(connected);
-      });
-    }
+    _connectionSubscription = _ws!.connectionStatusStream.listen((status) {
+      final connected = status == 'connected';
+      _connectionController.add(connected);
+      BackendChatService.notifyWsConnected(connected);
+    });
   }
 
   static Future<void> joinChat(String chatId) async {
@@ -103,6 +99,8 @@ class BackendMessagingSocket {
   static Future<void> disconnect() async {
     await _subscription?.cancel();
     _subscription = null;
+    await _connectionSubscription?.cancel();
+    _connectionSubscription = null;
     await _ws?.dispose();
     _ws = null;
     _connectionController.add(false);

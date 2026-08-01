@@ -21,11 +21,14 @@ import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
+import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/account_data_purge.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/password_reset_verification_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/registration_verification_service.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 
 enum DeleteAccountStatus { success, requiresRecentLogin, failed }
@@ -87,8 +90,6 @@ class AuthService {
     );
   }
 
-  bool _is2xx(int code) => code >= 200 && code < 300;
-
   bool _looksLikeServerDown(Object e) {
     final msg = e.toString().toLowerCase();
     return msg.contains('service unavailable') ||
@@ -109,18 +110,6 @@ class AuthService {
     await _google.initialize();
 
     _googleInitialized = true;
-  }
-
-  Future<String?> _readAnyToken() async {
-    try {
-      final sp = await SharedPreferences.getInstance();
-      return sp.getString('jwt_token') ??
-          sp.getString('token') ??
-          sp.getString('authToken') ??
-          sp.getString('jwt');
-    } catch (_) {
-      return null;
-    }
   }
 
   Map<String, dynamic> _normalizeBackendAuthResponse(
@@ -1050,7 +1039,6 @@ class AuthService {
       }
 
       final GoogleSignInAccount account = await _google.authenticate();
-      if (account == null) return null;
 
       // Prefer server auth code for backend exchange
       GoogleSignInServerAuthorization? serverAuth;
@@ -1262,10 +1250,13 @@ class AuthService {
     try {
       final driverService = DriverService();
       final driver = await driverService.getMyDriverProfile();
-      if (driver != null && driver['taxis'] != null && driver['taxis'].isNotEmpty) {
-        for (final taxi in driver['taxis']) {
+      final taxis = driver['taxis'];
+      if (taxis is List && taxis.isNotEmpty) {
+        for (final taxi in taxis) {
           try {
-            await driverService.setTaxiAvailability(taxi['id'], false);
+            final id = taxi is Map ? taxi['id'] : null;
+            if (id == null) continue;
+            await driverService.setTaxiAvailability(id as int, false);
           } catch (e) {
             if (kDebugMode) debugPrint('Error setting taxi unavailable: $e');
           }

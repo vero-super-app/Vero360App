@@ -54,12 +54,6 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
       icon: Icons.directions_car,
     ),
     _VehicleOption(
-      class_: VehicleClass.bike,
-      name: 'Bike',
-      description: 'Fast & economical',
-      icon: Icons.two_wheeler,
-    ),
-    _VehicleOption(
       class_: VehicleClass.executive,
       name: 'Premium',
       description: 'Luxury experience',
@@ -305,7 +299,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
 
   String _fareLabel(String vehicleClass) {
     final fareData = _estimatedFares[vehicleClass];
-    if (fareData == null) return '...';
+    if (fareData == null) return '…';
     final fareValue = fareData['estimatedFare'];
     double? fare;
     if (fareValue is num) {
@@ -313,7 +307,15 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
     } else if (fareValue is String) {
       fare = double.tryParse(fareValue);
     }
-    return fare != null ? 'MK ${fare.toStringAsFixed(0)}' : '...';
+    if (fare == null) return '…';
+    final digits = fare.round().toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      final fromEnd = digits.length - i;
+      if (i > 0 && fromEnd % 3 == 0) buffer.write(',');
+      buffer.write(digits[i]);
+    }
+    return 'MK $buffer';
   }
 
   @override
@@ -357,36 +359,25 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (hasDropoff) ...[
-                        Row(
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
+                            const Text(
                               'Choose a ride',
-                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                    color: RideShareColors.titleText,
-                                  ),
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: RideShareColors.primaryContainer,
+                              ),
                             ),
-                            if (_distance > 0) ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: RideShareColors.primarySoft,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  '${_distance.toStringAsFixed(1)} km',
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: RideShareColors.primaryDeep,
-                                  ),
+                            if (_distance > 0)
+                              Text(
+                                '${_distance.toStringAsFixed(1)} km trip',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: RideShareColors.onSurfaceVariant,
                                 ),
                               ),
-                            ],
                           ],
                         ),
                         const SizedBox(height: 12),
@@ -402,21 +393,29 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                             ),
                           )
                         else
-                          ..._vehicleTypes.map(
-                            (v) => Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: _VehicleCard(
-                                option: v,
-                                price: _fareLabel(v.class_),
-                                durationMin: _duration,
-                                isSelected: _selectedVehicleClass == v.class_,
-                                onTap: () => setState(() {
-                                  _selectedVehicleClass = v.class_;
-                                  _errorTitle = null;
-                                  _errorMessage = null;
-                                  _unpaidRide = null;
-                                }),
-                              ),
+                          SizedBox(
+                            height: 164,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: _vehicleTypes.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(width: 12),
+                              itemBuilder: (context, index) {
+                                final v = _vehicleTypes[index];
+                                return _VehicleCard(
+                                  option: v,
+                                  price: _fareLabel(v.class_),
+                                  durationMin: _duration,
+                                  isSelected:
+                                      _selectedVehicleClass == v.class_,
+                                  onTap: () => setState(() {
+                                    _selectedVehicleClass = v.class_;
+                                    _errorTitle = null;
+                                    _errorMessage = null;
+                                    _unpaidRide = null;
+                                  }),
+                                );
+                              },
                             ),
                           ),
                         const SizedBox(height: 8),
@@ -450,7 +449,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                               disabledBackgroundColor: RideShareColors.primary
                                   .withValues(alpha: 0.5),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(28),
+                                borderRadius: BorderRadius.circular(16),
                               ),
                               elevation: 4,
                               shadowColor:
@@ -724,111 +723,91 @@ class _VehicleCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final eta = durationMin > 0 ? '$durationMin min' : '…';
+
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.all(16),
+        width: 156,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
-          color: isSelected
-              ? RideShareColors.primaryContainer
-              : RideShareColors.surface.withValues(alpha: 0.7),
+          color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isSelected
                 ? RideShareColors.primary
-                : Colors.transparent,
+                : RideShareColors.outlineVariant.withValues(alpha: 0.25),
             width: isSelected ? 2 : 1,
           ),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: RideShareColors.primary.withValues(alpha: 0.2),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : null,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isSelected ? 0.1 : 0.04),
+              blurRadius: isSelected ? 12 : 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
-        child: Row(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 56,
-              height: 56,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 color: isSelected
-                    ? Colors.white.withValues(alpha: 0.12)
-                    : RideShareColors.surfaceContainer,
+                    ? RideShareColors.primary.withValues(alpha: 0.1)
+                    : RideShareColors.surfaceContainerLow,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
                 option.icon,
-                size: 28,
+                size: 22,
                 color: isSelected
-                    ? Colors.white
-                    : RideShareColors.primaryContainer,
+                    ? RideShareColors.primaryDeep
+                    : RideShareColors.titleText,
               ),
             ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        option.name,
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          color: isSelected
-                              ? Colors.white
-                              : RideShareColors.titleText,
-                        ),
-                      ),
-                      if (option.badge != null) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: RideShareColors.primary,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            option.badge!.toUpperCase(),
-                            style: const TextStyle(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${option.description} • ${durationMin > 0 ? '$durationMin min' : '...'}',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: isSelected
-                          ? Colors.white.withValues(alpha: 0.75)
-                          : RideShareColors.bodyText,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            const SizedBox(height: 8),
             Text(
-              price,
-              style: TextStyle(
-                fontSize: 16,
+              option.name,
+              style: const TextStyle(
+                fontSize: 15,
                 fontWeight: FontWeight.w700,
-                color: isSelected ? Colors.white : RideShareColors.titleText,
+                color: RideShareColors.titleText,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              eta,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: RideShareColors.onSurfaceVariant,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                price,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.2,
+                  height: 1.1,
+                  color: isSelected
+                      ? RideShareColors.primaryDeep
+                      : RideShareColors.titleText,
+                ),
+                maxLines: 1,
+                textAlign: TextAlign.center,
               ),
             ),
           ],
@@ -842,23 +821,30 @@ class _PaymentRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       child: Row(
         children: [
-          Icon(Icons.payments_outlined,
-              size: 20, color: RideShareColors.onSurfaceVariant),
+          const Icon(
+            Icons.payments_outlined,
+            size: 20,
+            color: RideShareColors.onSurfaceVariant,
+          ),
           const SizedBox(width: 8),
-          Text(
-            'Cash • Pay on arrival',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: RideShareColors.onSurfaceVariant,
+          const Expanded(
+            child: Text(
+              'Cash • Pay on arrival',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: RideShareColors.primaryContainer,
+              ),
             ),
           ),
-          const Spacer(),
-          Icon(Icons.chevron_right,
-              size: 20, color: RideShareColors.onSurfaceVariant),
+          const Icon(
+            Icons.chevron_right,
+            size: 20,
+            color: RideShareColors.onSurfaceVariant,
+          ),
         ],
       ),
     );

@@ -191,6 +191,10 @@ Future<bool> _ensureFirebaseHealthy({
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Cap decoded-image cache — Redmi 8A / 2GB devices OOM or SIGSEGV under Impeller.
+  PaintingBinding.instance.imageCache.maximumSize = 60;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 40 << 20; // 40 MB
+
   // Start Firebase self-heal immediately, but do not block first paint.
   unawaited(_ensureFirebaseHealthy(quiet: true));
 

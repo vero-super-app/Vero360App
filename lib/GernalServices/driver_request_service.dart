@@ -327,9 +327,26 @@ class DriverRequestService {
     }
   }
 
-  /// There is no backend "reject" route; dismissing is a local UI action only.
+  /// Decline a pending offer for this driver (ride stays open for others).
   static Future<void> rejectRideRequest(String rideId) async {
-    return;
+    try {
+      final headers = await _authorizedJsonHeaders();
+      final response = await http.patch(
+        ApiConfig.endpoint('$_baseUrl/rides/$rideId/decline'),
+        headers: headers,
+      );
+
+      if (response.statusCode != 200 &&
+          response.statusCode != 201 &&
+          response.statusCode != 204) {
+        throw Exception(
+          'Failed to decline ride: ${response.statusCode} ${response.body}',
+        );
+      }
+    } catch (e) {
+      print('Error declining ride request: $e');
+      rethrow;
+    }
   }
 
   /// Update ride status using the backend's real ride lifecycle routes.

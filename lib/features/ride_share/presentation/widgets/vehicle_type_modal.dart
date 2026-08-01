@@ -7,6 +7,7 @@ import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class VehicleTypeOption {
@@ -109,9 +110,9 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         _duration = routeInfo.durationMinutes;
       });
 
-      // Fetch all fares in parallel for better performance
+      // Fetch fares only for vehicles shown in choose-ride
       final rideShareService = ref.read(rideShareServiceProvider);
-      final fareRequests = _baseVehicleTypes.map(
+      final fareRequests = _filteredVehicles.map(
         (vehicleType) => rideShareService
             .estimateFare(
               pickupLatitude: widget.userLat,
@@ -159,7 +160,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       name: 'Standard',
       description: 'Comfortable & reliable',
       icon: Icons.directions_car,
-      color: const Color(0xFF3B82F6),
+      color: const Color(0xFFFF8A00),
       estimatedPrice: 'Calculating...',
       subtext: 'Standard car',
       capacity: 4,
@@ -169,7 +170,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       name: 'Executive',
       description: 'Premium experience',
       icon: Icons.directions_car_filled,
-      color: const Color(0xFFFF8A00),
+      color: const Color(0xFFD94F00),
       estimatedPrice: 'Calculating...',
       subtext: 'Premium car',
       capacity: 5,
@@ -179,7 +180,10 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
   List<VehicleTypeOption> get _filteredVehicles {
     final allowed = widget.allowedVehicleClasses;
     if (allowed == null || allowed.isEmpty) {
-      return _baseVehicleTypes;
+      // Default choose-ride: Standard + Executive only (no Bike).
+      return _baseVehicleTypes
+          .where((v) => v.class_ != VehicleClass.bike)
+          .toList();
     }
 
     final allowedSet = allowed.toSet();
@@ -484,14 +488,14 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       );
     }
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (int i = 0; i < vehicles.length; i++) ...[
-          _buildVehicleCard(vehicles[i]),
-          if (i < vehicles.length - 1) const SizedBox(height: 8),
-        ],
-      ],
+    return SizedBox(
+      height: 164,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: vehicles.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) => _buildVehicleCard(vehicles[index]),
+      ),
     );
   }
 
@@ -499,7 +503,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     final isSelected = _selectedVehicleClass == vehicleType.class_;
     final fareData = _estimatedFares[vehicleType.class_];
 
-    String displayPrice = '...';
+    String displayPrice = '…';
     if (fareData != null) {
       final fareValue = fareData['estimatedFare'];
       double? estimatedFare;
@@ -511,133 +515,112 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       }
 
       if (estimatedFare != null) {
-        displayPrice = 'MK ${estimatedFare.toStringAsFixed(0)}';
+        displayPrice = _formatMkFare(estimatedFare);
       }
     }
+
+    final eta = _duration > 0 ? '$_duration min' : '…';
 
     return GestureDetector(
       onTap: () => _handleVehicleSelected(vehicleType.class_),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        duration: const Duration(milliseconds: 200),
+        width: 156,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected ? vehicleType.color : Colors.grey[200]!,
+            color: isSelected
+                ? const Color(0xFFFF8A00)
+                : const Color(0xFFC4C6CF).withValues(alpha: 0.25),
             width: isSelected ? 2 : 1,
           ),
-          borderRadius: BorderRadius.circular(14),
-          color:
-              isSelected ? vehicleType.color.withOpacity(0.06) : Colors.white,
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: vehicleType.color.withOpacity(0.15),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 6,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-        ),
-        child: Row(
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: vehicleType.color.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    vehicleType.icon,
-                    color: vehicleType.color,
-                    size: 24,
-                  ),
-                ),
-                if (isSelected)
-                  Positioned(
-                    right: -4,
-                    top: -4,
-                    child: Container(
-                      width: 18,
-                      height: 18,
-                      decoration: BoxDecoration(
-                        color: vehicleType.color,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2),
-                      ),
-                      child: const Icon(
-                        Icons.check,
-                        size: 10,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-              ],
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isSelected ? 0.1 : 0.04),
+              blurRadius: isSelected ? 12 : 6,
+              offset: const Offset(0, 2),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          vehicleType.name,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '· ${vehicleType.capacity} seat${vehicleType.capacity > 1 ? 's' : ''}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[500],
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    vehicleType.description,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[500],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? const Color(0xFFFF8A00).withValues(alpha: 0.1)
+                    : const Color(0xFFF6F3F2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                vehicleType.icon,
+                size: 22,
+                color: isSelected
+                    ? const Color(0xFFD94F00)
+                    : RideShareColors.titleText,
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(height: 8),
             Text(
-              displayPrice,
-              style: TextStyle(
-                fontSize: 14,
+              vehicleType.name,
+              style: const TextStyle(
+                fontSize: 15,
                 fontWeight: FontWeight.w700,
-                color: vehicleType.color,
+                color: RideShareColors.titleText,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              eta,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: RideShareColors.onSurfaceVariant,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                displayPrice,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.2,
+                  height: 1.1,
+                  color: isSelected
+                      ? RideShareColors.primaryDeep
+                      : RideShareColors.titleText,
+                ),
+                maxLines: 1,
+                textAlign: TextAlign.center,
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  String _formatMkFare(double fare) {
+    final digits = fare.round().toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      final fromEnd = digits.length - i;
+      if (i > 0 && fromEnd % 3 == 0) buffer.write(',');
+      buffer.write(digits[i]);
+    }
+    return 'MK $buffer';
   }
 
   Widget _buildSearchingState() {

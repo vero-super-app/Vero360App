@@ -79,7 +79,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       await LocationPermissionHelper.ensureLocationAccess(context);
       if (!mounted) return;
       _ensureDriverActive();
-      _startLocationBroadcasting();
+      // Do not auto-go online — require explicit toggle with taxi + verification gates.
       _startMapCentering();
     });
   }
@@ -122,8 +122,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
     }
   }
 
-  /// Ensure driver is marked as active in the backend while the app is open
-  /// This keeps the driver active for receiving ride requests regardless of online/offline state
+  /// Ensure driver is marked as active in the backend while the app is open.
+  /// Availability for matching still requires the online toggle.
   Future<void> _ensureDriverActive() async {
     try {
       final driverProfile = await ref.read(myDriverProfileProvider.future);

@@ -167,33 +167,24 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
 
     try {
       await DriverRequestService.rejectRideRequest(widget.request.id);
-
-      if (mounted) {
-        Navigator.of(context).pop(false);
-        widget.onRejected?.call();
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Ride request declined'),
-            backgroundColor: Colors.orange.shade600,
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
-          ),
-        );
-      }
     } catch (e) {
-      if (mounted) {
-        setState(() => _isRejecting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to decline ride: ${e.toString()}'),
-            backgroundColor: Colors.red.shade600,
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
-          ),
-        );
-      }
+      // Still dismiss locally — offer is suppressed client-side even if
+      // the decline call fails (e.g. offline).
+      debugPrint('Decline request failed (dismissing anyway): $e');
     }
+
+    if (!mounted) return;
+    Navigator.of(context).pop(false);
+    widget.onRejected?.call();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Ride request declined'),
+        backgroundColor: Colors.orange.shade600,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
+      ),
+    );
   }
 
   @override

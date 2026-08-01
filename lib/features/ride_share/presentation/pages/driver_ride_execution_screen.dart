@@ -261,7 +261,9 @@ class _DriverRideExecutionScreenState
             : null,
         bottomSheet: switch (lifecycleState) {
           RideActive() => _buildSheet(lifecycleState),
-          RideIdle() || RideRequesting() => const RideNavySheet(
+          RideIdle() || RideRequesting() => const RideLightSheet(
+              floating: true,
+              showHandle: false,
               child: Padding(
                 padding: EdgeInsets.symmetric(vertical: 28),
                 child: Column(
@@ -274,7 +276,7 @@ class _DriverRideExecutionScreenState
                     Text(
                       'Loading ride details…',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: RideShareColors.titleText,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -297,162 +299,144 @@ class _DriverRideExecutionScreenState
         ? ride.passengerName!
         : 'Passenger';
 
-    return RideNavySheet(
+    final destinationLabel = state.isAccepted
+        ? (ride.pickupAddress?.trim().isNotEmpty == true
+            ? ride.pickupAddress!
+            : 'Pickup location')
+        : (ride.dropoffAddress?.trim().isNotEmpty == true
+            ? ride.dropoffAddress!
+            : 'Dropoff location');
+
+    final destinationEyebrow =
+        state.isAccepted || state.isDriverArrived ? 'Pickup' : 'Destination';
+
+    return RideLightSheet(
+      floating: true,
+      showHandle: false,
+      contentPadding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'DESTINATION',
-                      style: TextStyle(
-                        fontSize: 11,
-                        letterSpacing: 1,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white.withValues(alpha: 0.55),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            destinationEyebrow.toUpperCase(),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              letterSpacing: 1.2,
+                              fontWeight: FontWeight.w600,
+                              color: RideShareColors.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            state.isAccepted
+                                ? 'Heading to pickup'
+                                : state.isDriverArrived
+                                    ? 'Waiting at pickup'
+                                    : 'Heading to $destinationLabel',
+                            style: const TextStyle(
+                              color: RideShareColors.titleText,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '$distance remaining · $fare',
+                            style: const TextStyle(
+                              color: RideShareColors.onSurfaceVariant,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      ride.dropoffAddress?.trim().isNotEmpty == true
-                          ? ride.dropoffAddress!
-                          : 'Dropoff location',
+                    const SizedBox(width: 10),
+                    RidePassengerMiniCard(name: passengerName),
+                  ],
+                ),
+                if (ride.passengerNotes != null &&
+                    ride.passengerNotes!.trim().isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: RideShareColors.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: RideShareColors.outlineVariant
+                            .withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Text(
+                      'Note: ${ride.passengerNotes}',
                       style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '$distance • $fare',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
+                        color: RideShareColors.onSurfaceVariant,
                         fontSize: 13,
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.1),
                   ),
-                ),
-                child: Column(
-                  children: [
-                    CircleAvatar(
-                      radius: 22,
-                      backgroundColor:
-                          RideShareColors.primary.withValues(alpha: 0.3),
-                      child: Text(
-                        passengerName[0].toUpperCase(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    SizedBox(
-                      width: 72,
-                      child: Text(
-                        passengerName,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+                ],
+                const SizedBox(height: 16),
+                if (state.isAccepted) ...[
+                  RidePrimaryCta(
+                    label: 'Mark as Arrived',
+                    icon: Icons.check_circle,
+                    isLoading: state.isLoading,
+                    onPressed: () =>
+                        ref.read(rideLifecycleProvider.notifier).markArrived(),
+                  ),
+                  const SizedBox(height: 10),
+                  RideSecondaryCta(
+                    label: 'Cancel Ride',
+                    icon: Icons.close,
+                    onPressed: state.isLoading ? null : _handleCancelRide,
+                  ),
+                ] else if (state.isDriverArrived) ...[
+                  RidePrimaryCta(
+                    label: 'Start Ride',
+                    icon: Icons.play_arrow,
+                    isLoading: state.isLoading,
+                    onPressed: () =>
+                        ref.read(rideLifecycleProvider.notifier).startRide(),
+                  ),
+                  const SizedBox(height: 10),
+                  RideSecondaryCta(
+                    label: 'Cancel Ride',
+                    icon: Icons.close,
+                    onPressed: state.isLoading ? null : _handleCancelRide,
+                  ),
+                ] else if (state.isInProgress) ...[
+                  RideSwipeToComplete(
+                    label: 'Swipe to Complete Ride',
+                    enabled: !state.isLoading,
+                    onCompleted: () {
+                      ref.read(rideLifecycleProvider.notifier).completeRide();
+                    },
+                  ),
+                ],
+                const SizedBox(height: 8),
+              ],
+            ),
           ),
-          const SizedBox(height: 14),
-          RideTripProgressBar(
-            progress: rideStatusProgress(ride.status),
-            leftLabel: 'Pickup',
-            rightLabel: 'Dropoff',
-          ),
-          if (ride.passengerNotes != null &&
-              ride.passengerNotes!.trim().isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                'Note: ${ride.passengerNotes}',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.8),
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 16),
-          if (state.isAccepted) ...[
-            RidePrimaryCta(
-              label: 'Mark as Arrived',
-              icon: Icons.check_circle,
-              isLoading: state.isLoading,
-              onPressed: () =>
-                  ref.read(rideLifecycleProvider.notifier).markArrived(),
-            ),
-            const SizedBox(height: 10),
-            RideSecondaryCta(
-              label: 'Cancel Ride',
-              icon: Icons.close,
-              onPressed: state.isLoading ? null : _handleCancelRide,
-            ),
-          ] else if (state.isDriverArrived) ...[
-            RidePrimaryCta(
-              label: 'Start Ride',
-              icon: Icons.play_arrow,
-              isLoading: state.isLoading,
-              onPressed: () =>
-                  ref.read(rideLifecycleProvider.notifier).startRide(),
-            ),
-            const SizedBox(height: 10),
-            RideSecondaryCta(
-              label: 'Cancel Ride',
-              icon: Icons.close,
-              onPressed: state.isLoading ? null : _handleCancelRide,
-            ),
-          ] else if (state.isInProgress) ...[
-            RideSwipeToComplete(
-              label: 'Swipe to Complete Ride',
-              enabled: !state.isLoading,
-              onCompleted: () {
-                ref.read(rideLifecycleProvider.notifier).completeRide();
-              },
-            ),
-          ],
-          const SizedBox(height: 8),
           RideQuickActionsRow(
             onMessage: () => _openMessaging(state),
             onSafety: () => showRideSafetySheet(context),
-            onCall: null, // passenger phone not available on ride model
+            onCall: null,
           ),
         ],
       ),

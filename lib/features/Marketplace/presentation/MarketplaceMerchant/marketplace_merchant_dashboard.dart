@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File;
 import 'dart:math';
@@ -63,9 +63,9 @@ import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 
-import 'package:intl/intl.dart'; // ✅ NEW
+import 'package:intl/intl.dart'; // Γ£à NEW
 
-// ----------------- ✅ PRICE FORMAT HELPERS (MWK with commas) -----------------
+// ----------------- Γ£à PRICE FORMAT HELPERS (MWK with commas) -----------------
 final NumberFormat _mwk0Fmt =
     NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
 final NumberFormat _mwk2Fmt =
@@ -82,7 +82,7 @@ String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
 String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
 // ---------------------------------------------------------------------------
 
-/// “Your Items” / “My Items” grids: taller cells on narrow screens + large text scale
+/// ΓÇ£Your ItemsΓÇ¥ / ΓÇ£My ItemsΓÇ¥ grids: taller cells on narrow screens + large text scale
 /// so [_ModernItemMiniCard] / [_ItemCard] never bottom-overflow inside the cell.
 SliverGridDelegate _merchantItemsGridDelegate(BuildContext context) {
   final w = MediaQuery.sizeOf(context).width;
@@ -169,7 +169,7 @@ class _MarketplaceMerchantDashboardState
   final MerchantServiceHelper _helper = MerchantServiceHelper();
   final OrderService _orderService = OrderService();
 
-  // ✅ Use CartService singleton from provider
+  // Γ£à Use CartService singleton from provider
   final CartService _cartService = CartServiceProvider.getInstance();
 
   final _picker = ImagePicker();
@@ -190,7 +190,7 @@ class _MarketplaceMerchantDashboardState
 
   LocalMedia? _cover;
 
-  // ✅ multi-photos for posting
+  // Γ£à multi-photos for posting
   static const int _maxGalleryPhotos = 5;
   final List<LocalMedia> _gallery = <LocalMedia>[];
 
@@ -255,7 +255,7 @@ class _MarketplaceMerchantDashboardState
 
   TimeOfDay? _openTime;
   TimeOfDay? _closeTime;
-  /// Dart [DateTime.weekday] values: 1 = Mon … 7 = Sun. Empty = every day.
+  /// Dart [DateTime.weekday] values: 1 = Mon ΓÇª 7 = Sun. Empty = every day.
   Set<int> _openDays = {};
 
   bool _loadingMe = false;
@@ -263,7 +263,7 @@ class _MarketplaceMerchantDashboardState
 
   Timer? _ticker;
 
-  // ✅ prevent periodic refresh while an edit sheet is open (stops random crashes)
+  // Γ£à prevent periodic refresh while an edit sheet is open (stops random crashes)
   bool _sheetOpen = false;
 
   // First-time merchant guide (show once after login, then persist as done)
@@ -528,7 +528,7 @@ class _MarketplaceMerchantDashboardState
             header: _walletPinDialogHeader(
               icon: Icons.account_balance_wallet_rounded,
               title: 'Unlock wallet',
-              subtitle: 'Enter your 4–6 digit PIN.',
+              subtitle: 'Enter your 4ΓÇô6 digit PIN.',
             ),
             body: Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -552,7 +552,7 @@ class _MarketplaceMerchantDashboardState
                       fontWeight: FontWeight.w700,
                       letterSpacing: 2,
                     ),
-                    decoration: _walletPinFieldDecoration('Wallet PIN (4–6 digits)'),
+                    decoration: _walletPinFieldDecoration('Wallet PIN (4ΓÇô6 digits)'),
                   ),
                   if (shortPinHint != null) ...[
                     const SizedBox(height: 8),
@@ -648,7 +648,7 @@ class _MarketplaceMerchantDashboardState
             header: _walletPinDialogHeader(
               icon: Icons.pin_rounded,
               title: 'Set wallet PIN',
-              subtitle: 'Create a 4–6 digit PIN.',
+              subtitle: 'Create a 4ΓÇô6 digit PIN.',
             ),
             body: Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -672,7 +672,7 @@ class _MarketplaceMerchantDashboardState
                       fontWeight: FontWeight.w700,
                       letterSpacing: 2,
                     ),
-                    decoration: _walletPinFieldDecoration('New PIN (4–6 digits)'),
+                    decoration: _walletPinFieldDecoration('New PIN (4ΓÇô6 digits)'),
                   ),
                   const SizedBox(height: 10),
                   TextField(
@@ -808,7 +808,7 @@ class _MarketplaceMerchantDashboardState
     unawaited(_loadItems(showLoading: _items.isEmpty));
     unawaited(_loadWalletBalance());
 
-    // 3) Heavier network work after first frame — don't block skeleton exit.
+    // 3) Heavier network work after first frame ΓÇö don't block skeleton exit.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_loadMerchantData());
@@ -816,7 +816,7 @@ class _MarketplaceMerchantDashboardState
       unawaited(_pullPhoneAndProfileFromFirestore());
       unawaited(_loadKycStatus());
       unawaited(_ensureBusinessName());
-      // Backfill can rewrite many docs — defer so dashboard opens fast.
+      // Backfill can rewrite many docs ΓÇö defer so dashboard opens fast.
       Future<void>.delayed(const Duration(seconds: 2), () {
         if (!mounted) return;
         unawaited(_syncBackendUserIdToFirestore());
@@ -829,7 +829,7 @@ class _MarketplaceMerchantDashboardState
   /// Prefs + clear loading shell without waiting on APIs.
   Future<void> _bootstrapFast() async {
     await _loadMerchantProfileFromPrefs();
-    // Disk cache may be ready after prefs — apply if memory was empty.
+    // Disk cache may be ready after prefs ΓÇö apply if memory was empty.
     if (_items.isEmpty) {
       await _hydrateItemsFromPrefsCache();
     }
@@ -887,7 +887,7 @@ class _MarketplaceMerchantDashboardState
     final copy = items.map((e) => Map<String, dynamic>.from(e)).toList();
     _itemsMemoryByUid[uid] = copy;
     try {
-      // Keep prefs payload small — drop huge base64 blobs from disk cache.
+      // Keep prefs payload small ΓÇö drop huge base64 blobs from disk cache.
       final slim = copy.map((e) {
         final m = Map<String, dynamic>.from(e);
         final img = (m['image'] ?? '').toString();
@@ -952,7 +952,7 @@ class _MarketplaceMerchantDashboardState
     });
   }
 
-  // ----------------- Business name FIX (Auth → Firestore → API → Prefs) -----------------
+  // ----------------- Business name FIX (Auth ΓåÆ Firestore ΓåÆ API ΓåÆ Prefs) -----------------
   void _hydrateFromFirebaseAuth() {
     final u = _auth.currentUser;
     if (u == null) return;
@@ -1422,7 +1422,7 @@ class _MarketplaceMerchantDashboardState
       _closeTime = null;
       return;
     }
-    final parts = s.replaceAll('–', '-').replaceAll('—', '-').split('-');
+    final parts = s.replaceAll('ΓÇô', '-').replaceAll('ΓÇö', '-').split('-');
     if (parts.length != 2) return;
     final open = _parseShopTime(parts[0]);
     final close = _parseShopTime(parts[1]);
@@ -1452,7 +1452,7 @@ class _MarketplaceMerchantDashboardState
   String _formatOpenDaysLabel(Set<int> days) {
     if (days.isEmpty || days.length == 7) return 'Every day';
     final sorted = days.toList()..sort();
-    // Contiguous ranges → Mon–Fri style
+    // Contiguous ranges ΓåÆ MonΓÇôFri style
     final ranges = <String>[];
     int start = sorted.first;
     int prev = sorted.first;
@@ -1464,27 +1464,27 @@ class _MarketplaceMerchantDashboardState
       }
       ranges.add(start == prev
           ? _kDayLabels[start - 1]
-          : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
+          : '${_kDayLabels[start - 1]}ΓÇô${_kDayLabels[prev - 1]}');
       start = prev = d;
     }
     ranges.add(start == prev
         ? _kDayLabels[start - 1]
-        : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
+        : '${_kDayLabels[start - 1]}ΓÇô${_kDayLabels[prev - 1]}');
     return ranges.join(', ');
   }
 
   String get _shopHoursSummary {
     if (_openTime == null || _closeTime == null) return 'Set shop hours';
     final times =
-        '${_formatShopTime(_openTime!)}–${_formatShopTime(_closeTime!)}';
-    return '${_formatOpenDaysLabel(_openDays)} · $times';
+        '${_formatShopTime(_openTime!)}ΓÇô${_formatShopTime(_closeTime!)}';
+    return '${_formatOpenDaysLabel(_openDays)} ┬╖ $times';
   }
 
   bool get _isShopOpenNow {
     final open = _openTime;
     final close = _closeTime;
     if (open == null || close == null) return false;
-    final today = DateTime.now().weekday; // 1=Mon … 7=Sun
+    final today = DateTime.now().weekday; // 1=Mon ΓÇª 7=Sun
     if (_openDays.isNotEmpty && !_openDays.contains(today)) return false;
     final now = TimeOfDay.now();
     final nowM = now.hour * 60 + now.minute;
@@ -1530,7 +1530,7 @@ class _MarketplaceMerchantDashboardState
       _toastErr('Please sign in again.');
       return;
     }
-    final hours = '${_formatShopTime(open)}–${_formatShopTime(close)}';
+    final hours = '${_formatShopTime(open)}ΓÇô${_formatShopTime(close)}';
     final dayList = (days.isEmpty || days.length == 7)
         ? <int>[1, 2, 3, 4, 5, 6, 7]
         : (days.toList()..sort());
@@ -1569,7 +1569,7 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  // ✅ /users/me for email/phone/pic/rating
+  // Γ£à /users/me for email/phone/pic/rating
   Future<void> _fetchCurrentUserMe() async {
     if (!mounted) return;
 
@@ -1855,7 +1855,7 @@ class _MarketplaceMerchantDashboardState
   /// When [showLoading] is false, keeps the current grid visible while refreshing
   /// in the background (used by periodic updates so the UI stays stable).
   Future<void> _loadItems({bool showLoading = true}) async {
-    // Prefer showing cached items — never blank the grid while refreshing.
+    // Prefer showing cached items ΓÇö never blank the grid while refreshing.
     if (_items.isEmpty) {
       _hydrateItemsFromLocalCache();
       if (_items.isEmpty) await _hydrateItemsFromPrefsCache();
@@ -2493,7 +2493,7 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  // ----------------- ✅ More photos helpers -----------------
+  // ----------------- Γ£à More photos helpers -----------------
   Future<void> _pickMorePhotos() async {
     try {
       final files = await _picker.pickMultiImage(
@@ -2539,16 +2539,16 @@ class _MarketplaceMerchantDashboardState
     if (e is FirebaseException) {
       switch (e.code) {
         case 'permission-denied':
-          return 'You don’t have permission to post this listing. Please sign in again and try once more.';
+          return 'You donΓÇÖt have permission to post this listing. Please sign in again and try once more.';
         case 'unauthenticated':
           return 'Please sign in to post on Marketplace.';
         case 'unavailable':
         case 'deadline-exceeded':
-          return 'We’re having trouble connecting. Check your internet and try again.';
+          return 'WeΓÇÖre having trouble connecting. Check your internet and try again.';
         case 'resource-exhausted':
           return 'Too many requests right now. Please wait a moment and try again.';
         default:
-          return 'Couldn’t post your listing. Please try again.';
+          return 'CouldnΓÇÖt post your listing. Please try again.';
       }
     }
     if (e is StateError) {
@@ -2559,7 +2559,7 @@ class _MarketplaceMerchantDashboardState
         return msg;
       }
     }
-    return 'Couldn’t post your listing. Please try again.';
+    return 'CouldnΓÇÖt post your listing. Please try again.';
   }
 
   // ----------------- CREATE item -----------------
@@ -2601,7 +2601,7 @@ class _MarketplaceMerchantDashboardState
 
       final firebaseUid = user?.uid ?? _uid;
       if (firebaseUid.trim().isEmpty) {
-        _toastErr('Missing user id — sign in and try again.');
+        _toastErr('Missing user id ΓÇö sign in and try again.');
         return;
       }
       final sellerId = await _getNestUserId();
@@ -2689,10 +2689,10 @@ class _MarketplaceMerchantDashboardState
       };
 
       await _firestore.collection('marketplace_items').add(data);
-      debugPrint('Firestore write OK → marketplace_items (pending review)');
+      debugPrint('Firestore write OK ΓåÆ marketplace_items (pending review)');
 
       if (!mounted) return;
-      _toastOk('Submitted for review. We’ll notify you when it’s live.');
+      _toastOk('Submitted for review. WeΓÇÖll notify you when itΓÇÖs live.');
 
       _name.clear();
       _price.clear();
@@ -2748,7 +2748,7 @@ class _MarketplaceMerchantDashboardState
       unawaited(_persistItemsCache(_items));
 
       if (!mounted) return;
-      _toastOk('Deleted • ${item['name']}');
+      _toastOk('Deleted ΓÇó ${item['name']}');
 
       setState(() {
         _totalItems = _items.length;
@@ -2763,7 +2763,7 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  // ✅ FIXED: no parent setState while sheet is closing + no crash after save
+  // Γ£à FIXED: no parent setState while sheet is closing + no crash after save
   Future<void> _openEditItemSheet(Map<String, dynamic> item) async {
     final id = (item['id'] ?? '').toString().trim();
     if (id.isEmpty) return;
@@ -3018,7 +3018,7 @@ class _MarketplaceMerchantDashboardState
                     patch['imageHashes'] = FieldValue.arrayUnion([coverHash]);
                   }
                   if (prevReview == 'approved') {
-                    // New cover on live item → re-review.
+                    // New cover on live item ΓåÆ re-review.
                     patch['isActive'] = false;
                     patch['reviewStatus'] = 'pending';
                   }
@@ -3217,7 +3217,7 @@ class _MarketplaceMerchantDashboardState
                     ],
                     if (_itemReviewStatus(item) == 'pending') ...[
                       const Text(
-                        'Under review — edits will keep this listing pending until approved.',
+                        'Under review ΓÇö edits will keep this listing pending until approved.',
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 13,
@@ -3276,7 +3276,7 @@ class _MarketplaceMerchantDashboardState
       },
     );
 
-    // ✅ allow sheet route to fully finish closing animation before disposing
+    // Γ£à allow sheet route to fully finish closing animation before disposing
     await Future.delayed(const Duration(milliseconds: 350));
     nameCtrl.dispose();
     priceCtrl.dispose();
@@ -3622,7 +3622,7 @@ class _MarketplaceMerchantDashboardState
         _showMerchantGuide = true;
         _merchantGuideStep = 0;
       });
-      // Match the first card (Add Item) to the Add Item tab — not the previous tab.
+      // Match the first card (Add Item) to the Add Item tab ΓÇö not the previous tab.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_showMerchantGuide) return;
         _syncMerchantGuideTab(_merchantGuideStep);
@@ -3630,7 +3630,7 @@ class _MarketplaceMerchantDashboardState
     } catch (_) {}
   }
 
-  /// Tabs: 0 Dashboard, 1 Add Item, 2 My Items — align with [_merchantGuideSteps] copy.
+  /// Tabs: 0 Dashboard, 1 Add Item, 2 My Items ΓÇö align with [_merchantGuideSteps] copy.
   void _syncMerchantGuideTab(int step) {
     if (step < 0 || step >= _merchantGuideSteps.length) return;
     final int tab = switch (step) {
@@ -3808,7 +3808,7 @@ class _MarketplaceMerchantDashboardState
       WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowMerchantGuide());
     }
 
-    // ✅ removed DefaultTabController (it can trigger dependents assertion in some setups)
+    // Γ£à removed DefaultTabController (it can trigger dependents assertion in some setups)
     return Stack(
       children: [
         Column(
@@ -4323,7 +4323,7 @@ class _MarketplaceMerchantDashboardState
               default:
                 return _compactStatTile(
                   title: 'Earnings',
-                  value: mwk0(_totalEarnings), // ✅ commas
+                  value: mwk0(_totalEarnings), // Γ£à commas
                   icon: Icons.payments_rounded,
                   color: Colors.green,
                 );
@@ -4476,7 +4476,7 @@ class _MarketplaceMerchantDashboardState
                     style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 6),
                 Text(
-                  unlocked ? mwk2(_walletBalance) : 'MWK ••••', // ✅ commas
+                  unlocked ? mwk2(_walletBalance) : 'MWK ΓÇóΓÇóΓÇóΓÇó', // Γ£à commas
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
@@ -4487,7 +4487,7 @@ class _MarketplaceMerchantDashboardState
                   const Padding(
                     padding: EdgeInsets.only(top: 4),
                     child: Text(
-                      'Locked — tap Open to unlock',
+                      'Locked ΓÇö tap Open to unlock',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -4609,7 +4609,7 @@ class _MarketplaceMerchantDashboardState
           ...displayList.map((o) {
             final dateStr = o.orderDate != null
                 ? _recentSaleDateFmt.format(o.orderDate!.toLocal())
-                : '—';
+                : 'ΓÇö';
             return Container(
               margin: const EdgeInsets.only(bottom: 10),
               decoration: BoxDecoration(
@@ -4652,7 +4652,7 @@ class _MarketplaceMerchantDashboardState
                           ),
                         ],
                       ),
-                      Text('${mwk0(o.total)}  ·  $dateStr'),
+                      Text('${mwk0(o.total)}  ┬╖  $dateStr'),
                     ],
                   ),
                 ),
@@ -4675,7 +4675,7 @@ class _MarketplaceMerchantDashboardState
   }
 
 
-  // ----------------- “Top items” replaced: list ALL merchant items -----------------
+  // ----------------- ΓÇ£Top itemsΓÇ¥ replaced: list ALL merchant items -----------------
   Widget _buildAllClientItemsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4707,7 +4707,7 @@ class _MarketplaceMerchantDashboardState
     );
   }
 
-  // ----------------- ✅ Add Item Tab (with multi-photos) -----------------
+  // ----------------- Γ£à Add Item Tab (with multi-photos) -----------------
   Widget _buildAddItemTab() {
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
@@ -4785,7 +4785,7 @@ class _MarketplaceMerchantDashboardState
               ),
               const SizedBox(height: 14),
 
-              // ✅ More Photos
+              // Γ£à More Photos
               Row(
                 children: [
                   const Expanded(
@@ -4975,7 +4975,7 @@ class _MarketplaceMerchantDashboardState
                 ),
                 child: const Text(
                   'New listings are reviewed automatically before going live. '
-                  'You’ll get a notification when yours is approved.',
+                  'YouΓÇÖll get a notification when yours is approved.',
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 13,
@@ -4997,7 +4997,7 @@ class _MarketplaceMerchantDashboardState
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.upload_rounded),
                   label: Text(
-                    _submitting ? 'Posting…' : 'Post on Marketplace',
+                    _submitting ? 'PostingΓÇª' : 'Post on Marketplace',
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                 ),
@@ -5486,7 +5486,7 @@ class _MarketplaceMerchantDashboardState
       ),
     );
   }
-} // ✅ END of _MarketplaceMerchantDashboardState
+} // Γ£à END of _MarketplaceMerchantDashboardState
 
 // ----------------- Quick action tile -----------------
 class _QuickActionTile extends StatelessWidget {
@@ -5679,7 +5679,7 @@ class _ItemsGridSkeleton extends StatelessWidget {
 // ----------------- Cards -----------------
 
 /// Firestore `marketplace_items` may use `image` (base64), `imageUrl` (upload flow),
-/// or only `gallery` / `galleryUrls` — same as [main_marketPlace] / MerchantProductsPage.
+/// or only `gallery` / `galleryUrls` ΓÇö same as [main_marketPlace] / MerchantProductsPage.
 String? _coverImageSourceFromItem(Map<String, dynamic> item) {
   String? take(dynamic v) {
     final t = (v ?? '').toString().trim();

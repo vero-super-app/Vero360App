@@ -96,14 +96,15 @@ class DriverEarningsSummaryCard extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            RideShareColors.primaryContainer,
-            Color(0xFF0E1A33),
+            RideShareColors.primary,
+            RideShareColors.primaryDeep,
+            RideShareColors.primaryDark,
           ],
         ),
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-            color: RideShareColors.primaryContainer.withValues(alpha: 0.28),
+            color: RideShareColors.primary.withValues(alpha: 0.28),
             blurRadius: 20,
             offset: const Offset(0, 8),
           ),

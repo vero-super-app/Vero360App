@@ -247,7 +247,6 @@ class _MarketplaceMerchantDashboardState
 
   // Brand
   static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _brandNavy = Color(0xFF16284C);
 
   // ----------------- Wallet lock (PIN) -----------------
   DateTime? _walletUnlockedUntil;
@@ -2199,7 +2198,7 @@ class _MarketplaceMerchantDashboardState
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w900,
-                              color: _brandNavy,
+                              color: _brandOrange,
                             ),
                           ),
                           TextButton(
@@ -2392,7 +2391,7 @@ class _MarketplaceMerchantDashboardState
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         gradient: LinearGradient(
-          colors: [_brandNavy, _brandNavy.withOpacity(0.86)],
+          colors: [_brandOrange, _brandOrange.withOpacity(0.86)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -2583,7 +2582,7 @@ class _MarketplaceMerchantDashboardState
                   title: 'Sold Items',
                   value: '$_soldItems',
                   icon: Icons.shopping_bag_rounded,
-                  color: Colors.blue,
+                  color: const Color(0xFFFF8A00),
                 );
               default:
                 return _compactStatTile(
@@ -2626,7 +2625,7 @@ class _MarketplaceMerchantDashboardState
             _QuickActionTile(
               title: 'My Items',
               icon: Icons.inventory_2_outlined,
-              color: _brandNavy,
+              color: _brandOrange,
               onTap: () => _marketplaceTabs.animateTo(2),
             ),
             _QuickActionTile(
@@ -2653,7 +2652,7 @@ class _MarketplaceMerchantDashboardState
             _QuickActionTile(
               title: 'Received',
               icon: Icons.move_to_inbox_outlined,
-              color: Colors.blue,
+              color: const Color(0xFFFF8A00),
               badgeRoute: NotificationStore.kBadgeReceived,
               onTap: () => _openBottomSheet(const DeliveredOrdersPage()),
             ),
@@ -3940,7 +3939,7 @@ class _ItemCard extends StatelessWidget {
                     children: [
                       _iconBtn(
                         icon: Icons.edit,
-                        color: const Color(0xFF16284C),
+                        color: const Color(0xFFD94F00),
                         onTap: onEdit,
                       ),
                       const SizedBox(width: 8),

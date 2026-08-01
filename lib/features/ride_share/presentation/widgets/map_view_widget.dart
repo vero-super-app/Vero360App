@@ -26,6 +26,9 @@ class MapViewWidget extends ConsumerStatefulWidget {
   /// When true, nearby-vehicle fetching is skipped (used on tracking screens).
   final bool trackingMode;
 
+  /// Passenger demand map only — drivers should not see nearby taxis (including their own).
+  final bool showNearbyVehicles;
+
   const MapViewWidget({
     required this.onMapCreated,
     this.initialPosition,
@@ -34,6 +37,7 @@ class MapViewWidget extends ConsumerStatefulWidget {
     this.driverLocation,
     this.driverLabel,
     this.trackingMode = false,
+    this.showNearbyVehicles = true,
     super.key,
   });
 
@@ -50,6 +54,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   String? _mapStyleJson;
   late BitmapDescriptor _taxiMarkerIcon;
 
+  bool get _nearbyEnabled => !widget.trackingMode && widget.showNearbyVehicles;
+
   @override
   void initState() {
     super.initState();
@@ -59,7 +65,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
     _loadMapStyle();
 
-    if (!widget.trackingMode) {
+    if (_nearbyEnabled) {
       _loadTaxiMarkerIcon();
     }
 
@@ -74,7 +80,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         _updateDriverMarker();
       }
 
-      if (!widget.trackingMode && widget.initialPosition != null) {
+      if (_nearbyEnabled && widget.initialPosition != null) {
         ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
               latitude: widget.initialPosition!.latitude,
               longitude: widget.initialPosition!.longitude,
@@ -146,7 +152,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         if (!mounted) return;
         animateToPosition(newPos.latitude, newPos.longitude);
         _updateUserMarker(newPos);
-        if (!widget.trackingMode) {
+        if (_nearbyEnabled) {
           ref.read(nearbyVehiclesProvider.notifier).fetchAndSubscribe(
                 latitude: newPos.latitude,
                 longitude: newPos.longitude,
@@ -164,7 +170,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         markerId: const MarkerId('user_location'),
         position: LatLng(position.latitude, position.longitude),
         infoWindow: const InfoWindow(title: 'Your Location'),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
       ),
     );
     if (mounted) setState(() {});
@@ -218,7 +224,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
             title: 'Your Location',
           ),
           icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueBlue,
+            BitmapDescriptor.hueOrange,
           ),
         ),
       );
@@ -467,7 +473,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.trackingMode) {
+    if (_nearbyEnabled) {
       final nearbyTaxisState = ref.watch(nearbyVehiclesProvider);
 
       ref.listen(nearbyVehiclesProvider, (prev, next) {

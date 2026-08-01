@@ -537,7 +537,7 @@ class _DriverMessagingScreenState extends State<DriverMessagingScreen> {
   Color _getStatusColor(String status) {
     switch (status) {
       case 'accepted':
-        return Colors.blue;
+        return const Color(0xFFFF8A00);
       case 'arrived':
         return Colors.orange;
       case 'in_progress':

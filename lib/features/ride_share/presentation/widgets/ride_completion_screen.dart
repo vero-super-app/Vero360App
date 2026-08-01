@@ -13,6 +13,7 @@ import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 class RideCompletionScreen extends StatefulWidget {
@@ -419,19 +420,27 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.blue[50],
+                    color: RideShareColors.primarySoft,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.blue[200]!),
+                    border: Border.all(
+                      color: RideShareColors.primary.withValues(alpha: 0.35),
+                    ),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.security, color: Colors.blue[700], size: 20),
+                      const Icon(
+                        Icons.security,
+                        color: RideShareColors.primaryDeep,
+                        size: 20,
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           'Secure payment via Airtel Money, TNM Mpamba, or card',
                           style: TextStyle(
-                              fontSize: 13, color: Colors.blue[700]),
+                            fontSize: 13,
+                            color: RideShareColors.primaryDeep,
+                          ),
                         ),
                       ),
                     ],

@@ -27,8 +27,6 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/password_reset_verification_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/registration_verification_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
-import 'package:vero360_app/utils/session_local_cache.dart';
-import 'package:vero360_app/features/Auth/AuthServices/account_data_purge.dart';
 
 enum DeleteAccountStatus { success, requiresRecentLogin, failed }
 
@@ -1253,7 +1251,14 @@ class AuthService {
           sp.getString('jwt');
     } catch (_) {}
 
-    // Step 1: Set all driver taxis to unavailable before logout
+    // Step 1: Stop local online session + set all driver taxis unavailable
+    try {
+      await DriverOnlineSessionNotifier.forceOfflineGlobally();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('Error stopping driver online session on logout: $e');
+      }
+    }
     try {
       final driverService = DriverService();
       final driver = await driverService.getMyDriverProfile();

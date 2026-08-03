@@ -3208,13 +3208,24 @@ class _MarketplaceMerchantDashboardState
                         ),
                         child: Text(
                           (item['rejectedReason'] ??
-                                  'This listing was not approved. Edit and save to resubmit for review.')
+                                  'This listing was not approved. Edit the photo/text and save to resubmit for review.')
                               .toString(),
                           style: const TextStyle(
                             fontWeight: FontWeight.w700,
                             fontSize: 13,
                             height: 1.35,
+                            color: Color(0xFFB71C1C),
                           ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Tip: use a clear product photo on a plain background — avoid people, selfies, or suggestive poses.',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                          height: 1.3,
+                          color: Color(0xFF6B778C),
                         ),
                       ),
                       const SizedBox(height: 10),

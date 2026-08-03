@@ -20,6 +20,8 @@ const ENGAGEMENT_TOPIC = 'vero360_engagement';
 const ORDER_PARTY_ALERTS = 'order_party_alerts';
 const MAX_GALLERY_IMAGES = 5;
 const SAFESEARCH_BLOCK = new Set(['LIKELY', 'VERY_LIKELY']);
+/** Clothing photos are often marked RACY=LIKELY by Vision — only block the strong signal. */
+const SAFESEARCH_RACY_BLOCK = new Set(['VERY_LIKELY']);
 // App Engine default SA has Firestore access on Firebase projects; Compute default often does not.
 const FUNCTIONS_SERVICE_ACCOUNT =
   'vero360app-ca423@appspot.gserviceaccount.com';
@@ -119,13 +121,34 @@ async function checkImagesSafeSearch(sources) {
         spoof: ann.spoof || 'UNKNOWN',
       };
 
-      if (
+      let safeBlocked =
         SAFESEARCH_BLOCK.has(scores[key].adult) ||
         SAFESEARCH_BLOCK.has(scores[key].violence) ||
-        SAFESEARCH_BLOCK.has(scores[key].racy)
-      ) {
-        blocked = true;
+        SAFESEARCH_RACY_BLOCK.has(scores[key].racy);
+
+      // Apparel false-positive guard: clothing photos often get RACY alone.
+      const clothingLabels = (result.labelAnnotations || [])
+        .concat(
+          (result.localizedObjectAnnotations || []).map((o) => ({
+            description: o.name,
+            score: o.score,
+          })),
+        )
+        .map((l) => String(l.description || l.name || '').toLowerCase());
+      const looksLikeApparel = clothingLabels.some((l) =>
+        /t[\s-]?shirt|shirt|clothing|apparel|garment|sleeve|jersey|hoodie|sweater|polo/.test(
+          l,
+        ),
+      );
+      const onlyRacy =
+        SAFESEARCH_RACY_BLOCK.has(scores[key].racy) &&
+        !SAFESEARCH_BLOCK.has(scores[key].adult) &&
+        !SAFESEARCH_BLOCK.has(scores[key].violence);
+      if (onlyRacy && looksLikeApparel) {
+        safeBlocked = false;
+        scores[key].apparelOverride = true;
       }
+      if (safeBlocked) blocked = true;
 
       const web = result.webDetection || {};
       const webEntities = (web.webEntities || []).map((e) => ({
@@ -415,6 +438,28 @@ async function moderateMarketplaceListing(snap) {
       } else {
         rejectedReason =
           'Listing images include content that is not allowed on Vero Marketplace.';
+      }
+    } else if (imageResult.blocked) {
+      // SafeSearch-only reject — explain which signal fired.
+      const flags = [];
+      for (const s of Object.values(imageResult.scores || {})) {
+        if (!s || typeof s !== 'object') continue;
+        if (SAFESEARCH_BLOCK.has(s.adult)) flags.push('adult content');
+        if (SAFESEARCH_BLOCK.has(s.violence)) flags.push('violence');
+        if (SAFESEARCH_RACY_BLOCK.has(s.racy)) {
+          flags.push('sensitive / revealing imagery');
+        }
+      }
+      const uniq = [...new Set(flags)];
+      if (uniq.length) {
+        rejectedReason =
+          `Photo safety check flagged: ${uniq.join(', ')}. ` +
+          'Use a clear product photo on a plain background (no people, no suggestive poses). ' +
+          'Then edit and save to resubmit.';
+      } else {
+        rejectedReason =
+          'Photo safety check did not approve this image. ' +
+          'Use a clear product-only photo on a plain background, then edit and save to resubmit.';
       }
     }
     await snap.ref.set(

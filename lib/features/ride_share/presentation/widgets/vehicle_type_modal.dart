@@ -7,6 +7,7 @@ import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
@@ -63,6 +64,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
   String? _selectedVehicleClass;
   bool _isSearching = false;
   String? _errorMessage;
+  Ride? _unpaidRide;
   double _distance = 0.0;
   int _duration = 0; // Duration in minutes
   Map<String, dynamic> _estimatedFares = {};
@@ -256,27 +258,58 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
         final cleaned = message
             .replaceFirst(RegExp(r'^Exception:\s*'), '')
             .trim();
-        final isUnpaid = cleaned.toLowerCase().contains('complete payment') ||
-            cleaned.toLowerCase().contains('previous trip');
+        final isUnpaid = _isUnpaidPaymentError(cleaned);
+        final unpaid = isUnpaid
+            ? await ref
+                .read(rideShareHttpServiceProvider)
+                .findUnpaidCompletedRide()
+            : null;
+        if (!mounted) return;
+        final detail = isUnpaid
+            ? 'Please complete payment for your previous trip before booking a new ride.'
+            : cleaned;
         ToastHelper.showCustomToast(
           context,
           isUnpaid ? 'Payment required' : 'Failed to request ride',
           isSuccess: false,
-          errorMessage: isUnpaid
-              ? 'Please complete payment for your previous trip before booking a new ride.'
-              : cleaned,
+          errorMessage: detail,
         );
         setState(() {
           _isSearching = false;
-          _errorMessage = isUnpaid
-              ? 'Please complete payment for your previous trip before booking a new ride.'
-              : cleaned;
+          _errorMessage = detail;
+          _unpaidRide = unpaid;
         });
         ref.read(rideLifecycleProvider.notifier).reset();
 
       default:
         setState(() => _isSearching = false);
     }
+  }
+
+  bool _isUnpaidPaymentError(String message) {
+    final lower = message.toLowerCase();
+    return lower.contains('complete payment') ||
+        lower.contains('previous trip') ||
+        lower.contains('unpaid');
+  }
+
+  Future<void> _openUnpaidPayment() async {
+    final unpaid = _unpaidRide ??
+        await ref.read(rideShareHttpServiceProvider).findUnpaidCompletedRide();
+    if (!mounted || unpaid == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RideCompletionScreen(
+          ride: unpaid,
+          onDone: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _errorMessage = null;
+      _unpaidRide = null;
+    });
   }
 
   @override
@@ -351,23 +384,67 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 16, vertical: 10),
                             child: Container(
-                              padding: const EdgeInsets.all(10),
+                              padding: const EdgeInsets.fromLTRB(10, 10, 4, 10),
                               decoration: BoxDecoration(
                                 color: Colors.red[50],
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(color: Colors.red[200]!),
                               ),
                               child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Icon(Icons.error_outline,
                                       color: Colors.red[600], size: 18),
                                   const SizedBox(width: 8),
                                   Expanded(
-                                    child: Text(
-                                      _errorMessage ?? '',
-                                      style: TextStyle(
-                                          color: Colors.red[700], fontSize: 12),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _errorMessage ?? '',
+                                          style: TextStyle(
+                                              color: Colors.red[700],
+                                              fontSize: 12),
+                                        ),
+                                        if (_unpaidRide != null) ...[
+                                          const SizedBox(height: 10),
+                                          SizedBox(
+                                            height: 36,
+                                            child: ElevatedButton(
+                                              onPressed: _openUnpaidPayment,
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor:
+                                                    const Color(0xFFFF8A00),
+                                                foregroundColor: Colors.white,
+                                                elevation: 0,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 14),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(18),
+                                                ),
+                                              ),
+                                              child: const Text(
+                                                'Pay Now',
+                                                style: TextStyle(
+                                                    fontWeight: FontWeight.w800),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
                                     ),
+                                  ),
+                                  IconButton(
+                                    onPressed: () => setState(() {
+                                      _errorMessage = null;
+                                      _unpaidRide = null;
+                                    }),
+                                    icon: const Icon(Icons.close, size: 18),
+                                    color: Colors.red[600],
+                                    visualDensity: VisualDensity.compact,
                                   ),
                                 ],
                               ),

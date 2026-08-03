@@ -28,9 +28,21 @@ class Place {
     latitude: (json['latitude'] as num?)?.toDouble() ?? 0.0,
     longitude: (json['longitude'] as num?)?.toDouble() ?? 0.0,
     isBookmarked: json['isBookmarked'] as bool? ?? false,
-    savedAt: json['savedAt'] != null ? DateTime.tryParse(json['savedAt'] as String? ?? '') : null,
-    type: PlaceType.values.byName(json['type'] as String? ?? 'FAVORITE'),
+    savedAt: json['savedAt'] != null
+        ? DateTime.tryParse(json['savedAt'] as String? ?? '')
+        : null,
+    type: _parsePlaceType(json['type']),
   );
+
+  static PlaceType _parsePlaceType(dynamic value) {
+    final raw = value?.toString().trim();
+    if (raw == null || raw.isEmpty) return PlaceType.FAVORITE;
+    final upper = raw.toUpperCase();
+    for (final type in PlaceType.values) {
+      if (type.name.toUpperCase() == upper) return type;
+    }
+    return PlaceType.FAVORITE;
+  }
 
   Map<String, dynamic> toJson() => {
     'id': id,

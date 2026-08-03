@@ -29,7 +29,6 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
   GoogleMapController? mapController;
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
-  bool _showBookmarkedPlaces = false;
   bool _isLoadingRide = false;
   Place? _cachedPickupPlace;
   late AnimationController _bottomSheetAnimationController;
@@ -42,9 +41,7 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
   }
 
   void _toggleBookmarkedPlacesModal() {
-    setState(() {
-      _showBookmarkedPlaces = !_showBookmarkedPlaces;
-    });
+    BookmarkedPlacesModal.show(context);
   }
 
   void _focusSearchBar() {
@@ -301,104 +298,52 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
                               top: false,
                               child: Container(
                                 color: Colors.white,
-                                child: Stack(
-                                  children: [
-                                    SingleChildScrollView(
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                                left: 16,
-                                                right: 16,
-                                                top: 20,
-                                                bottom: 12),
-                                            child: Column(
-                                              children: [
-                                                _buildPickupLocationCard(),
-                                                const SizedBox(height: 14),
-                                                if (selectedDropoffPlace ==
-                                                    null)
-                                                  PlaceSearchWidget(
-                                                    searchController:
-                                                        _searchController,
-                                                    focusNode: _searchFocusNode,
-                                                    onToggleBookmarkedPlaces:
-                                                        _toggleBookmarkedPlacesModal,
-                                                    readOnly: true,
-                                                    onTap: () {
-                                                      Navigator.push(
-                                                        context,
-                                                        MaterialPageRoute(
-                                                          builder: (context) =>
-                                                              const DestinationSearchScreen(),
-                                                        ),
-                                                      );
-                                                    },
-                                                  )
-                                                else
-                                                  _buildDropoffLocationCard(
-                                                      selectedDropoffPlace),
-                                              ],
-                                            ),
-                                          ),
-                                          Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 16, vertical: 12),
-                                            child: _buildActionButton(
-                                                selectedDropoffPlace),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    if (_showBookmarkedPlaces)
-                                      Positioned(
-                                        bottom: 0,
-                                        left: 0,
-                                        right: 0,
-                                        top: 0,
-                                        child: AnimatedContainer(
-                                          duration:
-                                              const Duration(milliseconds: 300),
-                                          decoration: BoxDecoration(
-                                            color: Colors.black
-                                                .withValues(alpha: 0.2),
-                                          ),
-                                          child: Center(
-                                            child: Container(
-                                              width: double.infinity,
-                                              margin:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 12,
-                                                      vertical: 40),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                borderRadius:
-                                                    BorderRadius.circular(16),
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: Colors.black
-                                                        .withValues(
-                                                            alpha: 0.12),
-                                                    blurRadius: 24,
-                                                    offset: const Offset(0, 8),
-                                                    spreadRadius: 2,
-                                                  ),
-                                                ],
-                                              ),
-                                              child: ClipRRect(
-                                                borderRadius:
-                                                    BorderRadius.circular(16),
-                                                child: BookmarkedPlacesModal(
-                                                  onClose:
-                                                      _toggleBookmarkedPlacesModal,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
+                                child: SingleChildScrollView(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                            left: 16,
+                                            right: 16,
+                                            top: 20,
+                                            bottom: 12),
+                                        child: Column(
+                                          children: [
+                                            _buildPickupLocationCard(),
+                                            const SizedBox(height: 14),
+                                            if (selectedDropoffPlace == null)
+                                              PlaceSearchWidget(
+                                                searchController:
+                                                    _searchController,
+                                                focusNode: _searchFocusNode,
+                                                onToggleBookmarkedPlaces:
+                                                    _toggleBookmarkedPlacesModal,
+                                                readOnly: true,
+                                                onTap: () {
+                                                  Navigator.push(
+                                                    context,
+                                                    MaterialPageRoute(
+                                                      builder: (context) =>
+                                                          const DestinationSearchScreen(),
+                                                    ),
+                                                  );
+                                                },
+                                              )
+                                            else
+                                              _buildDropoffLocationCard(
+                                                  selectedDropoffPlace),
+                                          ],
                                         ),
                                       ),
-                                  ],
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 12),
+                                        child: _buildActionButton(
+                                            selectedDropoffPlace),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),

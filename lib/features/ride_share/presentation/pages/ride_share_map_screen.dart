@@ -9,7 +9,6 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/bookmarked_
 import 'package:vero360_app/features/ride_share/presentation/widgets/vehicle_type_modal.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/destination_search_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/passenger_ride_tracking_screen.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/map_location_picker_screen.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
@@ -30,7 +29,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   GoogleMapController? mapController;
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
-  bool _showBookmarkedPlaces = false;
   bool _isLoadingRide = false;
   Place? _cachedPickupPlace;
   late AnimationController _fadeAnimationController;
@@ -44,7 +42,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   }
 
   void _toggleBookmarkedPlacesModal() {
-    setState(() => _showBookmarkedPlaces = !_showBookmarkedPlaces);
+    BookmarkedPlacesModal.show(context);
   }
 
   void _focusSearchBar() {
@@ -59,15 +57,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
     if (_searchFocusNode.hasFocus) {
       _searchFocusNode.unfocus();
     }
-  }
-
-  Future<void> _openMapPicker() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const MapLocationPickerScreen(),
-      ),
-    );
   }
 
   void _clearDropoff() {
@@ -355,122 +344,52 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
             top: false,
             child: Container(
               color: Colors.white,
-              child: Stack(
-                children: [
-                  SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(
-                            left: 16,
-                            right: 16,
-                            top: 20,
-                            bottom: 12,
-                          ),
-                          child: Column(
-                            children: [
-                              _buildPickupLocationCard(),
-                              const SizedBox(height: 14),
-                              if (selectedDropoffPlace == null)
-                                PlaceSearchWidget(
-                                  searchController: _searchController,
-                                  focusNode: _searchFocusNode,
-                                  onToggleBookmarkedPlaces:
-                                      _toggleBookmarkedPlacesModal,
-                                  readOnly: true,
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const DestinationSearchScreen(),
-                                      ),
-                                    );
-                                  },
-                                )
-                              else
-                                _buildDropoffLocationCard(
-                                    selectedDropoffPlace),
-                              if (selectedDropoffPlace == null) ...[
-                                const SizedBox(height: 14),
-                                _buildQuickShortcuts(),
-                              ],
-                            ],
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 12),
-                          child: _buildActionButton(selectedDropoffPlace),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_showBookmarkedPlaces)
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      top: 0,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.2),
-                        ),
-                        child: Center(
-                          child: Container(
-                            width: double.infinity,
-                            margin: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 40),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
-                              boxShadow: [
-                                BoxShadow(
-                                  color:
-                                      Colors.black.withValues(alpha: 0.12),
-                                  blurRadius: 24,
-                                  offset: const Offset(0, 8),
-                                  spreadRadius: 2,
-                                ),
-                              ],
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: BookmarkedPlacesModal(
-                                onClose: _toggleBookmarkedPlacesModal,
-                              ),
-                            ),
-                          ),
-                        ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        left: 16,
+                        right: 16,
+                        top: 20,
+                        bottom: 12,
+                      ),
+                      child: Column(
+                        children: [
+                          _buildPickupLocationCard(),
+                          const SizedBox(height: 14),
+                          if (selectedDropoffPlace == null)
+                            PlaceSearchWidget(
+                              searchController: _searchController,
+                              focusNode: _searchFocusNode,
+                              onToggleBookmarkedPlaces:
+                                  _toggleBookmarkedPlacesModal,
+                              readOnly: true,
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const DestinationSearchScreen(),
+                                  ),
+                                );
+                              },
+                            )
+                          else
+                            _buildDropoffLocationCard(selectedDropoffPlace),
+                        ],
                       ),
                     ),
-                ],
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      child: _buildActionButton(selectedDropoffPlace),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuickShortcuts() {
-    return Row(
-      children: [
-        Expanded(
-          child: _QuickShortcutChip(
-            icon: Icons.map_outlined,
-            label: 'Set on map',
-            onTap: _openMapPicker,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _QuickShortcutChip(
-            icon: Icons.bookmark_outline,
-            label: 'Saved places',
-            onTap: _toggleBookmarkedPlacesModal,
           ),
         ),
       ],
@@ -483,17 +402,14 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       data: (pickup) => _buildPickupCardContent(
         userName: pickup.userName,
         address: pickup.address,
-        profilePictureUrl: pickup.profilePictureUrl,
       ),
       loading: () => _buildPickupCardContent(
         userName: 'Your Location',
         address: 'Detecting your location...',
-        profilePictureUrl: '',
       ),
       error: (_, __) => _buildPickupCardContent(
         userName: 'Your Location',
         address: 'Current Location',
-        profilePictureUrl: '',
       ),
     );
   }
@@ -501,7 +417,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   Widget _buildPickupCardContent({
     required String userName,
     required String address,
-    String profilePictureUrl = '',
   }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -515,21 +430,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 22,
-            backgroundColor: const Color(0xFFFF8A00).withValues(alpha: 0.12),
-            backgroundImage: profilePictureUrl.isNotEmpty
-                ? NetworkImage(profilePictureUrl)
-                : null,
-            child: profilePictureUrl.isEmpty
-                ? const Icon(
-                    Icons.person_rounded,
-                    color: Color(0xFFFF8A00),
-                    size: 24,
-                  )
-                : null,
-          ),
-          const SizedBox(width: 12),
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
@@ -719,27 +619,24 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   }
 
   Widget _buildModernActionButton() {
-    return GestureDetector(
-      onTap: _toggleBookmarkedPlacesModal,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: const Color(0xFFFF8A00),
-          borderRadius: BorderRadius.circular(10),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFFFF8A00).withValues(alpha: 0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: const Icon(
-          Icons.local_taxi_outlined,
-          color: Colors.white,
-          size: 20,
-        ),
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF8A00),
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFFF8A00).withValues(alpha: 0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: const Icon(
+        Icons.local_taxi_outlined,
+        color: Colors.white,
+        size: 20,
       ),
     );
   }
@@ -917,55 +814,6 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
             fontWeight: FontWeight.w600,
             color: Colors.white,
             letterSpacing: 0.3,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickShortcutChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  const _QuickShortcutChip({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.grey[50],
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, size: 18, color: const Color(0xFFFF8A00)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
           ),
         ),
       ),

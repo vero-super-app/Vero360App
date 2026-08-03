@@ -355,7 +355,12 @@ class _BottomnavbarState extends State<Bottomnavbar>
       }
     }
     HapticFeedback.lightImpact();
+    final leaving = _selectedIndex;
     setState(() => _selectedIndex = index);
+    // Drop unused decoded images when switching tabs (helps 2–3GB phones).
+    if (leaving != index) {
+      PaintingBinding.instance.imageCache.clearLiveImages();
+    }
     unawaited(_refreshAuthState());
   }
 

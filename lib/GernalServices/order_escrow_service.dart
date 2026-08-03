@@ -30,16 +30,44 @@ class AccommodationEscrowParams {
 /// Firestore: `order_escrow/{orderId}` — holds marketplace (and accommodation) funds
 /// until release rules apply.
 ///
-/// **Security:** Release is enforced in app logic; production should use Cloud Functions
-/// + Firestore rules so funds cannot be released twice or by the wrong user.
+/// **Release paths:**
+/// - Buyer confirms receipt in the app → credits wallet + merchant notification
+/// - App open / wallet refresh after `releaseDueAt` → auto-release
+/// - Cloud Function `releaseDueEscrowHolds` (hourly) → auto-release even if nobody
+///   opens the app; `onEscrowReleased` sends FCM for app-side releases
+///
+/// **Security:** Prefer Cloud Functions for production crediting; app paths remain
+/// as a fallback. Firestore rules should prevent arbitrary client credit of wallets.
 class OrderEscrowService {
   OrderEscrowService._();
 
   static final FirebaseFirestore _db = FirebaseFirestore.instance;
   static const String _collection = 'order_escrow';
 
-  /// Days after [markDelivered] when funds auto-release to the merchant if not confirmed.
+  /// Set `true` only while testing auto-release. Flip back to `false` for production (7 days).
+  static const bool escrowTestMode = false;
+
+  /// Production hold window after shipment.
   static const int escrowAutoReleaseDays = 7;
+
+  /// Test hold window after shipment (used when [escrowTestMode] is true).
+  static const Duration escrowTestReleaseAfter = Duration(minutes: 2);
+
+  /// Effective auto-release delay after [markDelivered].
+  static Duration get escrowAutoReleaseAfter =>
+      escrowTestMode ? escrowTestReleaseAfter : const Duration(days: escrowAutoReleaseDays);
+
+  /// Short label for UI ("2 min" / "7 days").
+  static String get escrowAutoReleaseLabel {
+    if (!escrowTestMode) {
+      return '$escrowAutoReleaseDays days';
+    }
+    final m = escrowTestReleaseAfter.inMinutes;
+    if (m > 0 && escrowTestReleaseAfter.inSeconds == m * 60) {
+      return '$m min';
+    }
+    return '${escrowTestReleaseAfter.inSeconds}s';
+  }
 
   static DocumentReference<Map<String, dynamic>> _doc(String orderId) =>
       _db.collection(_collection).doc(orderId);
@@ -68,6 +96,8 @@ class OrderEscrowService {
       final merchantAmount = gross * (1.0 - feeRate);
       final feeAmount = gross * feeRate;
 
+      // Always clear delivery fields so a reused/merged doc cannot keep an old
+      // shipped date (e.g. "Shipped Jul 27" on a purchase made today).
       batch.set(
         _doc(r.orderId),
         {
@@ -80,8 +110,8 @@ class OrderEscrowService {
           'orderNumber': r.orderNumber,
           'itemName': r.item.name,
           'status': 'held',
-          'deliveredAt': null,
-          'releaseDueAt': null,
+          'deliveredAt': FieldValue.delete(),
+          'releaseDueAt': FieldValue.delete(),
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         },
@@ -138,13 +168,94 @@ class OrderEscrowService {
         'itemName': params.propertyName,
         'status': 'held',
         'serviceType': 'accommodation',
-        'deliveredAt': null,
-        'releaseDueAt': null,
+        'deliveredAt': FieldValue.delete(),
+        'releaseDueAt': FieldValue.delete(),
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       },
       SetOptions(merge: true),
     );
+  }
+
+  /// Payment tx_ref stored on the escrow hold (used for PayChangu refunds).
+  static Future<String?> fetchTxRefForOrder(String orderId) async {
+    final escrowDocId = await _resolveEscrowDocIdAny(orderId);
+    if (escrowDocId == null) return null;
+    final snap = await _doc(escrowDocId).get();
+    if (!snap.exists) return null;
+    final ref = (snap.data()?['txRef'] ?? snap.data()?['tx_ref'] ?? '')
+        .toString()
+        .trim();
+    return ref.isEmpty ? null : ref;
+  }
+
+  /// Stops merchant payout when a refund is requested / approved.
+  ///
+  /// - `held` → `refunded` (funds never release to merchant)
+  /// - already released → marks `refundRequested` so ops can claw back
+  static Future<void> cancelHoldForRefund({
+    required String orderId,
+    required String reason,
+    required String refundType,
+  }) async {
+    final escrowDocId = await _resolveEscrowDocIdAny(orderId);
+    if (escrowDocId == null) return;
+
+    final snap = await _doc(escrowDocId).get();
+    if (!snap.exists) return;
+    final data = snap.data();
+    if (data == null) return;
+
+    final status = (data['status'] ?? '').toString();
+    final patch = <String, dynamic>{
+      'refundReason': reason.trim(),
+      'refundType': refundType,
+      'refundRequestedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    if (status == 'held') {
+      patch['status'] = 'refunded';
+      patch['releasedAt'] = FieldValue.serverTimestamp();
+      patch['releaseDueAt'] = FieldValue.delete();
+    } else if (status == 'released' || status == 'auto_released') {
+      patch['refundAfterRelease'] = true;
+    } else if (status == 'refunded') {
+      // Already voided for refund.
+      await _doc(escrowDocId).update(patch);
+      return;
+    }
+
+    await _doc(escrowDocId).update(patch);
+  }
+
+  /// Resolve escrow doc for any status (held, released, refunded, …).
+  static Future<String?> _resolveEscrowDocIdAny(String orderId) async {
+    final id = orderId.trim();
+    if (id.isEmpty) return null;
+
+    final direct = await _doc(id).get();
+    if (direct.exists) return id;
+
+    final qs = await _db
+        .collection(_collection)
+        .where('orderNumber', isEqualTo: id)
+        .limit(1)
+        .get();
+    if (qs.docs.isNotEmpty) return qs.docs.first.id;
+
+    for (final variant in orderNumberLookupVariants(id)) {
+      if (variant == id) continue;
+      final vq = await _db
+          .collection(_collection)
+          .where('orderNumber', isEqualTo: variant)
+          .limit(1)
+          .get();
+      if (vq.docs.isNotEmpty) return vq.docs.first.id;
+    }
+
+    // Fall back to held-only resolver (order id may differ from doc id).
+    return _resolveEscrowDocId(orderId);
   }
 
   /// Call when the merchant marks the order as delivered (starts the escrow window).
@@ -172,7 +283,7 @@ class OrderEscrowService {
     }
 
     final shipped = deliveredAt ?? DateTime.now();
-    final due = shipped.add(const Duration(days: escrowAutoReleaseDays));
+    final due = shipped.add(escrowAutoReleaseAfter);
 
     await _doc(escrowDocId).update({
       'deliveredAt': Timestamp.fromDate(shipped),
@@ -220,8 +331,17 @@ class OrderEscrowService {
     await markDelivered(docId, deliveredAt: deliveredAt);
   }
 
-  /// Best-effort shipment time for escrow repair (proof upload time, else order date).
+  /// Best-effort shipment time for escrow repair.
+  /// Only accepts proof uploaded *after* this hold was created — older proofs
+  /// belong to a previous order that shared an id / were wrongly attached.
   static Future<DateTime?> _resolveShippedAtForOrder(OrderItem o) async {
+    DateTime? holdCreatedAt;
+    try {
+      final escSnap = await _doc(o.id).get();
+      final c = escSnap.data()?['createdAt'];
+      if (c is Timestamp) holdCreatedAt = c.toDate();
+    } catch (_) {}
+
     try {
       final proofSnap = await _db
           .collection(DeliveryProofService.collection)
@@ -229,12 +349,31 @@ class OrderEscrowService {
           .get();
       if (proofSnap.exists) {
         final u = proofSnap.data()?['updatedAt'];
-        if (u is Timestamp) return u.toDate();
+        if (u is Timestamp) {
+          final proofAt = u.toDate();
+          if (holdCreatedAt == null ||
+              !proofAt.isBefore(holdCreatedAt.subtract(const Duration(minutes: 5)))) {
+            return proofAt;
+          }
+          debugPrint(
+            '[OrderEscrow] Ignoring stale proof for ${o.id}: '
+            'proof=$proofAt holdCreated=$holdCreatedAt',
+          );
+        }
       }
     } catch (e) {
       debugPrint('[OrderEscrow] proof read ${o.id}: $e');
     }
-    return o.orderDate;
+
+    // Never backdate to an orderDate older than the hold (causes "shipped Jul 27"
+    // on a purchase made today). If the API says delivered, start the window now.
+    final orderDate = o.orderDate;
+    if (orderDate != null &&
+        (holdCreatedAt == null ||
+            !orderDate.isBefore(holdCreatedAt.subtract(const Duration(minutes: 5))))) {
+      return orderDate;
+    }
+    return DateTime.now();
   }
 
   /// If the order is delivered in the API but escrow still has no [deliveredAt], repair.
@@ -243,32 +382,76 @@ class OrderEscrowService {
     final esc = await fetchEscrowResolvingOrderId(o);
     if (esc == null || !esc.isHeld) return;
 
-    if (esc.deliveredAt != null) {
-      await _ensureReleaseDueAt(esc.orderId, esc.deliveredAt!);
+    await _clearBogusDeliveryTimestamps(esc.orderId);
+
+    final refreshed = await fetchEscrow(esc.orderId);
+    if (refreshed == null || !refreshed.isHeld) return;
+
+    if (refreshed.deliveredAt != null) {
+      await _ensureReleaseDueAt(refreshed.orderId, refreshed.deliveredAt!);
       return;
     }
 
     final shippedAt = await _resolveShippedAtForOrder(o);
-    await markDelivered(esc.orderId, deliveredAt: shippedAt);
+    await markDelivered(refreshed.orderId, deliveredAt: shippedAt);
+  }
+
+  /// Clears [deliveredAt] when it predates the hold (stale merge / wrong proof).
+  static Future<bool> _clearBogusDeliveryTimestamps(String escrowDocId) async {
+    final snap = await _doc(escrowDocId).get();
+    if (!snap.exists) return false;
+    final data = snap.data();
+    if (data == null || data['status'] != 'held') return false;
+
+    final deliveredRaw = data['deliveredAt'];
+    if (deliveredRaw is! Timestamp) return false;
+    final deliveredAt = deliveredRaw.toDate();
+
+    final createdRaw = data['createdAt'];
+    DateTime? createdAt;
+    if (createdRaw is Timestamp) createdAt = createdRaw.toDate();
+
+    // Shipped before the payment hold existed → leftover from an old order.
+    if (createdAt != null &&
+        deliveredAt.isBefore(createdAt.subtract(const Duration(minutes: 5)))) {
+      debugPrint(
+        '[OrderEscrow] Clearing bogus deliveredAt on $escrowDocId '
+        '(delivered=$deliveredAt created=$createdAt)',
+      );
+      await _doc(escrowDocId).update({
+        'deliveredAt': FieldValue.delete(),
+        'releaseDueAt': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return true;
+    }
+    return false;
   }
 
   /// Backfill [releaseDueAt] from [deliveredAt] when missing or shorter than policy.
+  ///
+  /// Always upgrades short windows (e.g. old 5-day holds) to the full
+  /// [escrowAutoReleaseDays] while status is still `held` — even if the old
+  /// due date has already passed — so funds are never auto-released early.
   static Future<void> _ensureReleaseDueAt(
     String escrowDocId,
-    DateTime deliveredAt,
-  ) async {
-    final snap = await _doc(escrowDocId).get();
-    if (!snap.exists) return;
-    final data = snap.data();
+    DateTime deliveredAt, {
+    Map<String, dynamic>? knownData,
+  }) async {
+    Map<String, dynamic>? data = knownData;
+    if (data == null) {
+      final snap = await _doc(escrowDocId).get();
+      if (!snap.exists) return;
+      data = snap.data();
+    }
     if (data == null || data['status'] != 'held') return;
 
-    final correctDue =
-        deliveredAt.add(const Duration(days: escrowAutoReleaseDays));
+    final correctDue = deliveredAt.add(escrowAutoReleaseAfter);
     final existing = data['releaseDueAt'];
     if (existing is Timestamp) {
       final existingDue = existing.toDate();
+      // Already at or beyond the current policy window.
       if (!existingDue.isBefore(correctDue)) return;
-      if (!DateTime.now().isBefore(existingDue)) return;
     }
 
     await _doc(escrowDocId).update({
@@ -279,6 +462,9 @@ class OrderEscrowService {
 
   /// Repair a held escrow row using delivery proof when API order context is unavailable.
   static Future<void> repairHeldEscrowDeliveryTimestamp(String escrowDocId) async {
+    // Fix "bought today / shipped last week" leftovers first.
+    if (await _clearBogusDeliveryTimestamps(escrowDocId)) return;
+
     final snap = await _doc(escrowDocId).get();
     if (!snap.exists) return;
     final data = snap.data();
@@ -286,9 +472,17 @@ class OrderEscrowService {
 
     final deliveredRaw = data['deliveredAt'];
     if (deliveredRaw is Timestamp) {
-      await _ensureReleaseDueAt(escrowDocId, deliveredRaw.toDate());
+      await _ensureReleaseDueAt(
+        escrowDocId,
+        deliveredRaw.toDate(),
+        knownData: data,
+      );
       return;
     }
+
+    DateTime? holdCreatedAt;
+    final createdRaw = data['createdAt'];
+    if (createdRaw is Timestamp) holdCreatedAt = createdRaw.toDate();
 
     DateTime? shippedAt;
     try {
@@ -298,7 +492,18 @@ class OrderEscrowService {
           .get();
       if (proofSnap.exists) {
         final u = proofSnap.data()?['updatedAt'];
-        if (u is Timestamp) shippedAt = u.toDate();
+        if (u is Timestamp) {
+          final proofAt = u.toDate();
+          if (holdCreatedAt == null ||
+              !proofAt.isBefore(holdCreatedAt.subtract(const Duration(minutes: 5)))) {
+            shippedAt = proofAt;
+          } else {
+            debugPrint(
+              '[OrderEscrow] Ignoring stale proof on $escrowDocId: '
+              'proof=$proofAt holdCreated=$holdCreatedAt',
+            );
+          }
+        }
       }
     } catch (e) {
       debugPrint('[OrderEscrow] proof read $escrowDocId: $e');
@@ -468,6 +673,10 @@ class OrderEscrowService {
   }
 
   /// Values to match Firestore field [orderNumber] when the escrow doc id ≠ API [OrderItem.id].
+  ///
+  /// Intentionally does **not** match bare digit fragments (e.g. `"123"` from
+  /// `"VERO-12345"`) — that caused wrong escrow docs (and old ship dates) to be
+  /// attached to newer orders.
   static List<String> orderNumberLookupVariants(String raw) {
     final s = raw.trim();
     final out = <String>{};
@@ -483,8 +692,6 @@ class OrderEscrowService {
     if (veroIdx >= 0 && veroIdx + 4 < s.length) {
       add(s.substring(veroIdx + 4).trim());
     }
-    final digits = RegExp(r'\d{3,}').firstMatch(s)?.group(0);
-    if (digits != null) add(digits);
     return out.toList();
   }
 
@@ -533,7 +740,8 @@ class OrderEscrowService {
         final data = doc.data();
         final bu = (data['buyerUid'] ?? '').toString().trim();
         final st = (data['status'] ?? '').toString();
-        if (st != 'held' && st != 'released' && st != 'auto_released') continue;
+        // Only migrate still-held docs — never attach an old released sale.
+        if (st != 'held') continue;
         if (bu.isNotEmpty && bu != myUid) continue;
         match = doc;
         break;
@@ -638,7 +846,7 @@ class OrderEscrowService {
       amount: merchantAmount,
       description: buyerConfirmed
           ? 'Marketplace sale — buyer confirmed receipt'
-          : 'Marketplace sale — auto-released after $escrowAutoReleaseDays days',
+          : 'Marketplace sale — auto-released after $escrowAutoReleaseLabel',
       reference: txRef,
       type: 'sale_escrow',
     );
@@ -651,10 +859,12 @@ class OrderEscrowService {
       'status': buyerConfirmed ? 'released' : 'auto_released',
       'releasedAt': FieldValue.serverTimestamp(),
       'releaseKind': buyerConfirmed ? 'buyer_confirm' : 'auto_7d',
+      'releaseSource': 'app',
+      'merchantNotifiedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
 
-    if (buyerConfirmed && merchantUid.isNotEmpty) {
+    if (merchantUid.isNotEmpty) {
       final orderNo = (data['orderNumber'] ?? '').toString();
       final itemNm = (data['itemName'] ?? '').toString();
       await OrderPartyNotificationService.publishFundsReleasedToMerchant(
@@ -662,6 +872,8 @@ class OrderEscrowService {
         orderNumber: orderNo,
         itemName: itemNm,
         orderId: orderId,
+        buyerConfirmed: buyerConfirmed,
+        autoReleaseLabel: escrowAutoReleaseLabel,
       );
     }
   }

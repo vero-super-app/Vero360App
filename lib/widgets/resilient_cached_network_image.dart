@@ -2,8 +2,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 /// HTTP(S) images with disk cache ([CachedNetworkImage]). On failure, retries the
-/// other scheme (http ↔ https). Pass [memCacheWidth]/[memCacheHeight] for
-/// thumbnails so Flutter does not decode full-resolution bitmaps.
+/// other scheme (http ↔ https). Pass [memCacheWidth] **or** [memCacheHeight]
+/// (prefer one) for thumbnails so Flutter does not decode full-resolution bitmaps.
 class ResilientCachedNetworkImage extends StatefulWidget {
   const ResilientCachedNetworkImage({
     required this.url,
@@ -64,6 +64,24 @@ class _ResilientCachedNetworkImageState
     final u = _currentUrl;
     final placeholderBg =
         widget.placeholderColor ?? Colors.grey.shade100;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+
+    // Prefer caller values. Only auto-size from *finite* layout size, and only
+    // set ONE mem dimension so aspect ratio stays correct (avoids "shrunk" tiles).
+    int? memW = widget.memCacheWidth;
+    int? memH = widget.memCacheHeight;
+    if (memW == null && memH == null) {
+      if (widget.width != null && widget.width!.isFinite && widget.width! > 0) {
+        memW = (widget.width! * dpr).round().clamp(128, 1200);
+      } else if (widget.height != null &&
+          widget.height!.isFinite &&
+          widget.height! > 0) {
+        memH = (widget.height! * dpr).round().clamp(128, 1200);
+      }
+      // Unconstrained (marketplace grids that expand): leave null so quality
+      // stays sharp; global imageCache limits still protect low-RAM phones.
+    }
+
     Widget placeholder() => Container(
           width: widget.width,
           height: widget.height,
@@ -83,8 +101,8 @@ class _ResilientCachedNetworkImageState
       fit: widget.fit,
       width: widget.width,
       height: widget.height,
-      memCacheWidth: widget.memCacheWidth,
-      memCacheHeight: widget.memCacheHeight,
+      memCacheWidth: memW,
+      memCacheHeight: memH,
       fadeInDuration: Duration.zero,
       fadeOutDuration: Duration.zero,
       placeholder: (context, _) => placeholder(),

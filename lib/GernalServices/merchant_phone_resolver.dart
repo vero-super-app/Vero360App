@@ -45,22 +45,21 @@ class MerchantPhoneResolver {
       uidsToFetch.add(mUid);
     }
 
-    for (final uid in uidsToFetch) {
+    await Future.wait(uidsToFetch.map((uid) async {
       try {
-        final doc =
-            await firestore.collection('users').doc(uid).get();
-        if (!doc.exists) continue;
+        final doc = await firestore.collection('users').doc(uid).get();
+        if (!doc.exists) return;
         final data = doc.data();
         final raw = (data?['phone'] ?? '').toString().trim();
         final phone = _sanitizePhone(raw);
-        if (phone.isEmpty) continue;
+        if (phone.isEmpty) return;
         for (final o in orders) {
           if ((o.merchantUid ?? '').trim() == uid) {
             out[o.id] = phone;
           }
         }
       } catch (_) {}
-    }
+    }));
 
     return out;
   }

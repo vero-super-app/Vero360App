@@ -19,41 +19,41 @@ class FirebaseWalletService {
     required String merchantName,
   }) async {
     try {
-      // Check if wallet exists
-      final walletQuery = await _firestore
+      final query = _firestore
           .collection('wallets')
           .where('userId', isEqualTo: merchantId)
-          .limit(1)
-          .get();
+          .limit(1);
+
+      // Cache-first so the merchant wallet screen paints quickly on repeat opens.
+      QuerySnapshot<Map<String, dynamic>>? walletQuery;
+      try {
+        final cached = await query.get(const GetOptions(source: Source.cache));
+        if (cached.docs.isNotEmpty) walletQuery = cached;
+      } catch (_) {}
+      walletQuery ??= await query.get();
 
       if (walletQuery.docs.isNotEmpty) {
-        // Return existing wallet
         final walletDoc = walletQuery.docs.first;
         return WalletModel.fromMap({
           ...walletDoc.data(),
           'walletId': walletDoc.id,
         });
-      } else {
-        // Create new wallet
-        final walletId = await _generateWalletId();
-        final newWallet = WalletModel(
-          walletId: walletId,
-          userId: merchantId,
-          merchantName: merchantName,
-          balance: 0.0,
-          pendingBalance: 0.0,
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-          transactions: [],
-        );
-
-        await _firestore
-            .collection('wallets')
-            .doc(walletId)
-            .set(newWallet.toMap());
-
-        return newWallet;
       }
+
+      final walletId = await _generateWalletId();
+      final newWallet = WalletModel(
+        walletId: walletId,
+        userId: merchantId,
+        merchantName: merchantName,
+        balance: 0.0,
+        pendingBalance: 0.0,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+        transactions: [],
+      );
+
+      await _firestore.collection('wallets').doc(walletId).set(newWallet.toMap());
+      return newWallet;
     } catch (e) {
       print('Error getting/creating wallet: $e');
       rethrow;

@@ -212,6 +212,7 @@ class BackendChatMessage {
   final List<Map<String, dynamic>>? tags;
   final Map<String, dynamic>? sender;
   final String? clientMessageId;
+  final Map<String, dynamic>? metadata;
 
   BackendChatMessage({
     required this.id,
@@ -227,11 +228,24 @@ class BackendChatMessage {
     this.tags,
     this.sender,
     this.clientMessageId,
+    this.metadata,
   });
 
   bool isMine(int myUserId) => senderId == myUserId;
 
+  Map<String, dynamic>? get replyTo {
+    final raw = metadata?['replyTo'] ?? metadata?['reply_to'];
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return null;
+  }
+
   factory BackendChatMessage.fromJson(Map<String, dynamic> json) {
+    Map<String, dynamic>? meta;
+    final rawMeta = json['metadata'] ?? json['meta'];
+    if (rawMeta is Map) {
+      meta = Map<String, dynamic>.from(rawMeta);
+    }
+
     return BackendChatMessage(
       id: json['id']?.toString() ?? '',
       chatId: json['chatId']?.toString() ?? '',
@@ -266,6 +280,7 @@ class BackendChatMessage {
           ? Map<String, dynamic>.from(json['sender'] as Map)
           : null,
       clientMessageId: json['clientMessageId']?.toString(),
+      metadata: meta,
     );
   }
 
@@ -284,6 +299,7 @@ class BackendChatMessage {
       'tags': tags,
       'sender': sender,
       'clientMessageId': clientMessageId,
+      if (metadata != null) 'metadata': metadata,
     };
   }
 }
@@ -2293,6 +2309,7 @@ class BackendChatService {
     String caption = '',
     String? clientMessageId,
     String? mimeType,
+    Map<String, dynamic>? metadata,
   }) async {
     await ensureAuth();
 
@@ -2330,6 +2347,13 @@ class BackendChatService {
         final payload = Map<String, dynamic>.from(attempt);
         if (clientMessageId != null && clientMessageId.isNotEmpty) {
           payload['clientMessageId'] = clientMessageId;
+        }
+        if (metadata != null && metadata.isNotEmpty) {
+          final existing = payload['metadata'];
+          payload['metadata'] = {
+            if (existing is Map) ...Map<String, dynamic>.from(existing),
+            ...metadata,
+          };
         }
 
         final response = await http
@@ -2381,22 +2405,28 @@ class BackendChatService {
     required int durationMs,
     String? clientMessageId,
     String? mimeType,
+    Map<String, dynamic>? metadata,
   }) async {
     await ensureAuth();
 
     final mime = mimeType ?? 'audio/mp4';
     final duration = durationMs.clamp(0, 600000);
+    final mergedMeta = <String, dynamic>{
+      'durationMs': duration,
+      if (metadata != null) ...metadata,
+    };
 
     final attempts = <Map<String, dynamic>>[
       {
         'content': '$_legacyAudPrefix$audioUrl|$duration',
         'type': 'text',
+        'metadata': mergedMeta,
       },
       {
         'content': audioUrl,
         'type': 'audio',
         'attachmentUrls': [audioUrl],
-        'metadata': {'durationMs': duration},
+        'metadata': mergedMeta,
       },
       {
         'content': audioUrl,
@@ -2409,6 +2439,7 @@ class BackendChatService {
             'durationMs': duration,
           },
         ],
+        'metadata': mergedMeta,
       },
     ];
 

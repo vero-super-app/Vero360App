@@ -191,6 +191,11 @@ Future<bool> _ensureFirebaseHealthy({
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Low-RAM phones: cap decoded image memory so product grids don't OOM.
+  // Default Flutter cache can hold ~100MB+ of full-res bitmaps.
+  PaintingBinding.instance.imageCache.maximumSize = 60;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 40 << 20; // 40 MB
+
   // Start Firebase self-heal immediately, but do not block first paint.
   unawaited(_ensureFirebaseHealthy(quiet: true));
 
@@ -468,6 +473,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _lastLifecycleState = state;
 
     if (state == AppLifecycleState.paused) {
+      // Free decoded bitmaps while backgrounded — big win on 2–3GB phones.
+      PaintingBinding.instance.imageCache.clear();
       // System PIN/biometric UI also pauses the activity. Do not treat that as
       // "user left the app" or the next resume will lock again after unlock.
       if (!_biometricAuthInProgress && !_showBiometricLock) {
@@ -482,6 +489,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       unawaited(OrderEscrowService.processDueAutoReleasesForSignedInUser());
       unawaited(EngagementNotificationService.instance.maybeSendDailyDigest());
     }
+  }
+
+  @override
+  void didHaveMemoryPressure() {
+    // OS asked us to free RAM — drop image cache immediately.
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
   }
 
   Future<void> _checkBiometricLockOnResume() async {

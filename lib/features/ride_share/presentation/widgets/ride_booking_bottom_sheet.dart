@@ -343,7 +343,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                   borderRadius: BorderRadius.circular(3),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _SearchBar(
@@ -354,7 +354,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
               ),
               Flexible(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -489,17 +489,17 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                         ),
                       ] else ...[
                         _QuickShortcut(
-                          icon: Icons.map,
-                          iconBg: RideShareColors.primaryContainer,
+                          icon: Icons.map_rounded,
+                          iconBg: RideShareColors.primary,
                           title: 'Set on map',
                           subtitle: 'Pick a location visually',
                           onTap: widget.onSetOnMap ?? () {},
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 6),
                         _QuickShortcut(
-                          icon: Icons.bookmark_outline,
+                          icon: Icons.bookmark_rounded,
                           iconBg: RideShareColors.primarySoft,
-                          iconColor: RideShareColors.primary,
+                          iconColor: RideShareColors.primaryDeep,
                           title: 'Saved places',
                           subtitle: 'Home, work & favourites',
                           onTap: widget.onOpenSavedPlaces ?? _openSearch,
@@ -623,32 +623,32 @@ class _SearchBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: RideShareColors.surface,
-      borderRadius: BorderRadius.circular(16),
-      elevation: 1,
-      shadowColor: Colors.black.withValues(alpha: 0.06),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      elevation: 0,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
-          height: 56,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: RideShareColors.outlineVariant.withValues(alpha: 0.5),
+              color: RideShareColors.primary.withValues(alpha: 0.22),
             ),
+            color: RideShareColors.primary.withValues(alpha: 0.04),
           ),
           child: Row(
             children: [
-              const Icon(Icons.search, color: RideShareColors.primary, size: 22),
-              const SizedBox(width: 12),
+              const Icon(Icons.search, color: RideShareColors.primary, size: 20),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   dropoffPlace?.name ?? 'Where to?',
                   style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
                     color: dropoffPlace != null
                         ? RideShareColors.titleText
                         : RideShareColors.onSurfaceVariant,
@@ -662,24 +662,24 @@ class _SearchBar extends StatelessWidget {
                   onTap: onClear,
                   child: const Icon(
                     Icons.close,
-                    size: 20,
+                    size: 18,
                     color: RideShareColors.onSurfaceVariant,
                   ),
                 ),
               Container(
-                height: 24,
+                height: 20,
                 width: 1,
-                margin: const EdgeInsets.symmetric(horizontal: 12),
+                margin: const EdgeInsets.symmetric(horizontal: 10),
                 color: RideShareColors.outlineVariant,
               ),
-              const Icon(Icons.schedule, size: 20, color: RideShareColors.titleText),
+              const Icon(Icons.schedule, size: 18, color: RideShareColors.primaryDeep),
               const SizedBox(width: 4),
               const Text(
                 'Now',
                 style: TextStyle(
                   fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: RideShareColors.titleText,
+                  fontWeight: FontWeight.w700,
+                  color: RideShareColors.primaryDeep,
                 ),
               ),
             ],
@@ -871,33 +871,36 @@ class _QuickShortcut extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: RideShareColors.surface,
-      borderRadius: BorderRadius.circular(16),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: RideShareColors.outlineVariant),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: RideShareColors.primary.withValues(alpha: 0.18),
+            ),
+            color: RideShareColors.primary.withValues(alpha: 0.03),
           ),
           child: Row(
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 32,
+                height: 32,
                 decoration: BoxDecoration(
                   color: iconBg,
-                  shape: BoxShape.circle,
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
                   icon,
                   color: iconColor ?? Colors.white,
-                  size: 22,
+                  size: 16,
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -905,24 +908,26 @@ class _QuickShortcut extends StatelessWidget {
                     Text(
                       title,
                       style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
                         color: RideShareColors.titleText,
                       ),
                     ),
                     Text(
                       subtitle,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: RideShareColors.onSurfaceVariant,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade600,
                       ),
                     ),
                   ],
                 ),
               ),
-              const Icon(
-                Icons.chevron_right,
-                color: RideShareColors.outline,
+              Icon(
+                Icons.chevron_right_rounded,
+                color: RideShareColors.primary.withValues(alpha: 0.55),
+                size: 20,
               ),
             ],
           ),

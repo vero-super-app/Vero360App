@@ -245,6 +245,16 @@ async function notifyMerchant(merchantUid, title, body, payload) {
   }
 
   // 2) Real FCM push (works in background / killed)
+  await sendFcmToUser(uid, title, body, dataPayload);
+}
+
+/**
+ * FCM-only push to a user's registered device tokens.
+ */
+async function sendFcmToUser(merchantUid, title, body, dataPayload) {
+  const uid = String(merchantUid || '').trim();
+  if (!uid) return;
+
   try {
     const userSnap = await admin.firestore().collection('users').doc(uid).get();
     const udata = userSnap.data() || {};
@@ -260,7 +270,7 @@ async function notifyMerchant(merchantUid, title, body, payload) {
     }
 
     if (!tokens.size) {
-      console.warn(`No FCM tokens on users/${uid} — push skipped (in-app alert still queued)`);
+      console.warn(`No FCM tokens on users/${uid} — push skipped`);
       return;
     }
 
@@ -270,7 +280,7 @@ async function notifyMerchant(merchantUid, title, body, payload) {
         await admin.messaging().send({
           token,
           notification: { title, body },
-          data: dataPayload,
+          data: dataPayload || {},
           android: {
             priority: 'high',
             notification: {
@@ -285,10 +295,10 @@ async function notifyMerchant(merchantUid, title, body, payload) {
             },
           },
         });
-        console.log(`FCM moderation push sent to ${uid}`);
+        console.log(`FCM push sent to ${uid}`);
       } catch (err) {
         const code = err && err.code ? String(err.code) : '';
-        console.error(`FCM moderation push failed for ${uid}`, code || err);
+        console.error(`FCM push failed for ${uid}`, code || err);
         if (
           code.includes('registration-token-not-registered') ||
           code.includes('invalid-registration-token') ||
@@ -314,7 +324,7 @@ async function notifyMerchant(merchantUid, title, body, payload) {
         );
     }
   } catch (err) {
-    console.error('Merchant moderation FCM path failed', err);
+    console.error('sendFcmToUser failed', err);
   }
 }
 
@@ -1020,6 +1030,367 @@ exports.scanMarketplacePhoto = onCall(
         .slice(0, 5)
         .map((g) => String(g.label || '')),
     };
+  },
+);
+
+const ESCROW_COLLECTION = 'order_escrow';
+/** TEMP testing: 2-minute hold. Set false for production (7 days). */
+const ESCROW_TEST_MODE = false;
+const ESCROW_AUTO_RELEASE_DAYS = 7;
+const ESCROW_TEST_RELEASE_MS = 2 * 60 * 1000;
+const ESCROW_AUTO_RELEASE_LABEL = ESCROW_TEST_MODE ? '2 min' : `${ESCROW_AUTO_RELEASE_DAYS} days`;
+
+function veroOrderNo(raw) {
+  const clean = String(raw || '').trim();
+  if (!clean) return '';
+  if (clean.toLowerCase().startsWith('vero')) return clean;
+  return `Vero${clean}`;
+}
+
+/**
+ * In-app alert + FCM push when marketplace escrow is released to a merchant.
+ */
+async function notifyEscrowReleasedToMerchant({
+  merchantUid,
+  orderId,
+  orderNumber,
+  itemName,
+  buyerConfirmed,
+  amountMwk,
+}) {
+  const uid = String(merchantUid || '').trim();
+  if (!uid) return;
+
+  const on = veroOrderNo(orderNumber);
+  const item = String(itemName || '').trim();
+  const itemSeg = item ? ` — ${item}` : '';
+  const orderSeg = on ? `Order ${on}` : 'The order';
+  const amount =
+    typeof amountMwk === 'number' && Number.isFinite(amountMwk) && amountMwk > 0
+      ? ` MWK ${Math.round(amountMwk).toLocaleString('en-US')}`
+      : '';
+
+  const title = buyerConfirmed
+    ? 'Buyer confirmed receipt'
+    : 'Escrow funds released';
+  const body = buyerConfirmed
+    ? `${orderSeg}${itemSeg} has been received. Funds${amount} have been transferred to your wallet.`
+    : `${orderSeg}${itemSeg} — ${ESCROW_AUTO_RELEASE_LABEL} escrow ended. Funds${amount} have been transferred to your wallet.`;
+
+  await notifyMerchant(uid, title, body, {
+    type: 'order_escrow_released',
+    releaseKind: buyerConfirmed ? 'buyer_confirm' : 'auto_7d',
+    orderId: String(orderId || ''),
+    orderNumber: on,
+  });
+}
+
+/**
+ * Credits merchant wallet (same shape as Flutter FirebaseWalletService.creditWallet).
+ */
+async function creditMerchantWalletFromEscrow({
+  merchantUid,
+  merchantName,
+  amount,
+  description,
+  reference,
+}) {
+  const uid = String(merchantUid || '').trim();
+  const amt = typeof amount === 'number' ? amount : Number(amount);
+  if (!uid || !Number.isFinite(amt) || amt <= 0) {
+    throw new Error('Invalid wallet credit params');
+  }
+
+  const db = admin.firestore();
+  const walletQuery = await db
+    .collection('wallets')
+    .where('userId', '==', uid)
+    .limit(1)
+    .get();
+
+  let walletRef;
+  if (walletQuery.empty) {
+    walletRef = db.collection('wallets').doc();
+    await walletRef.set({
+      walletId: walletRef.id,
+      userId: uid,
+      merchantName: String(merchantName || 'Merchant'),
+      balance: 0,
+      pendingBalance: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      transactions: [],
+    });
+  } else {
+    walletRef = walletQuery.docs[0].ref;
+  }
+
+  const transactionId = `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
+  const txPayload = {
+    transactionId,
+    walletId: walletRef.id,
+    type: 'sale_escrow',
+    amount: amt,
+    status: 'completed',
+    description: String(description || 'Marketplace escrow release'),
+    reference: String(reference || ''),
+    createdAt: admin.firestore.Timestamp.now(),
+  };
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(walletRef);
+    if (!snap.exists) throw new Error('Wallet missing during credit');
+    const data = snap.data() || {};
+    const newBalance = Number(data.balance || 0) + amt;
+    const transactions = Array.isArray(data.transactions)
+      ? [...data.transactions]
+      : [];
+    transactions.push(txPayload);
+    tx.update(walletRef, {
+      balance: newBalance,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      transactions,
+    });
+  });
+
+  await db.collection('wallet_transactions').doc(transactionId).set({
+    ...txPayload,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return transactionId;
+}
+
+/**
+ * Atomically release one held escrow doc if still held and due (or force for buyer path via onUpdate notify only).
+ * Returns true if this invocation credited the wallet.
+ */
+async function releaseHeldEscrowDoc(docSnap, { source }) {
+  const db = admin.firestore();
+  const ref = docSnap.ref;
+  const before = docSnap.data() || {};
+  if (String(before.status || '') !== 'held') return false;
+
+  const due = before.releaseDueAt;
+  if (!due || typeof due.toDate !== 'function') return false;
+  if (due.toDate().getTime() > Date.now()) return false;
+
+  const merchantUid = String(before.merchantUid || '').trim();
+  const merchantName = String(before.merchantName || 'Merchant');
+  const amountRaw = before.merchantAmount;
+  const merchantAmount =
+    typeof amountRaw === 'number' ? amountRaw : Number(amountRaw);
+  const txRef = String(before.txRef || docSnap.id);
+
+  if (!merchantUid || !Number.isFinite(merchantAmount) || merchantAmount <= 0) {
+    console.warn(`Escrow ${docSnap.id}: invalid merchant/amount, skip`);
+    return false;
+  }
+
+  // Claim the hold first so concurrent app/CF runs don't double-credit.
+  const claimed = await db.runTransaction(async (tx) => {
+    const fresh = await tx.get(ref);
+    if (!fresh.exists) return false;
+    const data = fresh.data() || {};
+    if (String(data.status || '') !== 'held') return false;
+    const d = data.releaseDueAt;
+    if (!d || typeof d.toDate !== 'function' || d.toDate().getTime() > Date.now()) {
+      return false;
+    }
+    tx.update(ref, {
+      status: 'auto_released',
+      releasedAt: admin.firestore.FieldValue.serverTimestamp(),
+      releaseKind: 'auto_7d',
+      releaseSource: source || 'cloud_scheduler',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return true;
+  });
+
+  if (!claimed) return false;
+
+  try {
+    await creditMerchantWalletFromEscrow({
+      merchantUid,
+      merchantName,
+      amount: merchantAmount,
+      description: `Marketplace sale — auto-released after ${ESCROW_AUTO_RELEASE_LABEL}`,
+      reference: txRef,
+    });
+  } catch (err) {
+    console.error(`Escrow ${docSnap.id}: wallet credit failed, reverting hold`, err);
+    await ref.set(
+      {
+        status: 'held',
+        releasedAt: admin.firestore.FieldValue.delete(),
+        releaseKind: admin.firestore.FieldValue.delete(),
+        releaseSource: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        creditError: String(err && err.message ? err.message : err),
+      },
+      { merge: true },
+    );
+    return false;
+  }
+
+  await notifyEscrowReleasedToMerchant({
+    merchantUid,
+    orderId: docSnap.id,
+    orderNumber: before.orderNumber,
+    itemName: before.itemName,
+    buyerConfirmed: false,
+    amountMwk: merchantAmount,
+  });
+
+  await ref.set(
+    {
+      merchantNotifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  console.log(`Escrow auto-released ${docSnap.id} → ${merchantUid} (${merchantAmount})`);
+  return true;
+}
+
+/**
+ * Hourly: credit merchant wallets for held escrow past releaseDueAt (7 days after ship).
+ * Deploy: firebase deploy --only functions:releaseDueEscrowHolds,functions:onEscrowReleased
+ */
+exports.releaseDueEscrowHolds = onSchedule(
+  {
+    // TEMP testing: every 1 min. Production: 'every 60 minutes'
+    schedule: ESCROW_TEST_MODE ? 'every 1 minutes' : 'every 60 minutes',
+    timeZone: 'Africa/Blantyre',
+    retryCount: 1,
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async () => {
+    const db = admin.firestore();
+    const now = admin.firestore.Timestamp.now();
+
+    // Prefer indexed query; fall back to held-only scan if index is missing.
+    let docs = [];
+    try {
+      const snap = await db
+        .collection(ESCROW_COLLECTION)
+        .where('status', '==', 'held')
+        .where('releaseDueAt', '<=', now)
+        .limit(100)
+        .get();
+      docs = snap.docs;
+    } catch (err) {
+      console.warn(
+        'releaseDueEscrowHolds indexed query failed; falling back',
+        err && err.message ? err.message : err,
+      );
+      const snap = await db
+        .collection(ESCROW_COLLECTION)
+        .where('status', '==', 'held')
+        .limit(200)
+        .get();
+      docs = snap.docs.filter((d) => {
+        const due = (d.data() || {}).releaseDueAt;
+        return due && typeof due.toDate === 'function' && due.toDate().getTime() <= Date.now();
+      });
+    }
+
+    let released = 0;
+    for (const doc of docs) {
+      try {
+        if (await releaseHeldEscrowDoc(doc, { source: 'cloud_scheduler' })) {
+          released += 1;
+        }
+      } catch (err) {
+        console.error(`releaseDueEscrowHolds failed for ${doc.id}`, err);
+      }
+    }
+    console.log(`releaseDueEscrowHolds done: checked=${docs.length} released=${released}`);
+  },
+);
+
+/**
+ * Push when escrow flips held → released / auto_released from the app.
+ * Scheduler path (`releaseSource: cloud_scheduler`) notifies itself after crediting.
+ * App buyer-confirm already writes an in-app alert — this sends FCM so the merchant
+ * still gets a push when the app is backgrounded/killed.
+ */
+exports.onEscrowReleased = onDocumentUpdated(
+  {
+    document: 'order_escrow/{orderId}',
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async (event) => {
+    const before = event.data.before.data() || {};
+    const after = event.data.after.data() || {};
+    const prev = String(before.status || '');
+    const next = String(after.status || '');
+    if (prev !== 'held') return;
+    if (next !== 'released' && next !== 'auto_released') return;
+
+    // Hourly job handles alert + FCM after wallet credit.
+    if (String(after.releaseSource || '') === 'cloud_scheduler') return;
+
+    const merchantUid = String(after.merchantUid || '').trim();
+    if (!merchantUid) return;
+
+    const buyerConfirmed =
+      next === 'released' || String(after.releaseKind || '') === 'buyer_confirm';
+    const amountRaw = after.merchantAmount;
+    const amount =
+      typeof amountRaw === 'number' ? amountRaw : Number(amountRaw);
+
+    const on = veroOrderNo(after.orderNumber);
+    const item = String(after.itemName || '').trim();
+    const itemSeg = item ? ` — ${item}` : '';
+    const orderSeg = on ? `Order ${on}` : 'The order';
+    const amountLabel =
+      typeof amount === 'number' && Number.isFinite(amount) && amount > 0
+        ? ` MWK ${Math.round(amount).toLocaleString('en-US')}`
+        : '';
+    const title = buyerConfirmed
+      ? 'Buyer confirmed receipt'
+      : 'Escrow funds released';
+    const body = buyerConfirmed
+      ? `${orderSeg}${itemSeg} has been received. Funds${amountLabel} have been transferred to your wallet.`
+      : `${orderSeg}${itemSeg} — ${ESCROW_AUTO_RELEASE_LABEL} escrow ended. Funds${amountLabel} have been transferred to your wallet.`;
+
+    const dataPayload = stringifyDataPayload({
+      type: 'order_escrow_released',
+      title,
+      body,
+      releaseKind: buyerConfirmed ? 'buyer_confirm' : 'auto_7d',
+      orderId: String(event.params.orderId || ''),
+      orderNumber: on,
+    });
+
+    try {
+      // App usually already queued order_party_alerts — avoid duplicates.
+      // If it didn't (old builds / failed write), queue one now.
+      if (!after.merchantNotifiedAt) {
+        await notifyEscrowReleasedToMerchant({
+          merchantUid,
+          orderId: event.params.orderId,
+          orderNumber: after.orderNumber,
+          itemName: after.itemName,
+          buyerConfirmed,
+          amountMwk: amount,
+        });
+      } else {
+        await sendFcmToUser(merchantUid, title, body, dataPayload);
+      }
+
+      if (!after.merchantNotifiedAt) {
+        await event.data.after.ref.set(
+          {
+            merchantNotifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+    } catch (err) {
+      console.error(`onEscrowReleased notify failed for ${event.params.orderId}`, err);
+    }
   },
 );
 

@@ -57,11 +57,14 @@ class OrderPartyNotificationService {
     }
   }
 
+  /// Merchant wallet credited after buyer confirm or auto-release.
   static Future<void> publishFundsReleasedToMerchant({
     required String merchantUid,
     required String orderNumber,
     required String itemName,
     required String orderId,
+    bool buyerConfirmed = true,
+    String autoReleaseLabel = '7 days',
   }) async {
     final uid = merchantUid.trim();
     if (uid.isEmpty) return;
@@ -69,14 +72,20 @@ class OrderPartyNotificationService {
     final item = itemName.trim();
     final itemSeg = item.isEmpty ? '' : ' — $item';
     final orderSeg = on.isEmpty ? 'The order' : 'Order $on';
+    final title = buyerConfirmed
+        ? 'Buyer confirmed receipt'
+        : 'Escrow funds released';
+    final body = buyerConfirmed
+        ? '$orderSeg$itemSeg has been received. Funds have been transferred to your wallet.'
+        : '$orderSeg$itemSeg — $autoReleaseLabel escrow ended. Funds have been transferred to your wallet.';
     try {
       await FirebaseFirestore.instance.collection(collectionName).add({
         'toUid': uid,
-        'title': 'Buyer confirmed receipt',
-        'body':
-            '$orderSeg$itemSeg has been received. Funds have been transferred to your wallet.',
+        'title': title,
+        'body': body,
         'payload': {
           'type': 'order_escrow_released',
+          'releaseKind': buyerConfirmed ? 'buyer_confirm' : 'auto_7d',
           'orderId': orderId,
           'orderNumber': on,
           NotificationStore.kPayloadBadgeRoute:
@@ -87,6 +96,87 @@ class OrderPartyNotificationService {
       });
     } catch (e) {
       debugPrint('[OrderPartyNotification] publishFundsReleasedToMerchant: $e');
+    }
+  }
+
+  /// Merchant: buyer applied for a refund.
+  static Future<void> publishRefundRequestedToMerchant({
+    required String merchantUid,
+    required String orderNumber,
+    required String itemName,
+    required String orderId,
+    required String refundType,
+    required String reason,
+  }) async {
+    final uid = merchantUid.trim();
+    if (uid.isEmpty) return;
+    final on = _veroOrderNo(orderNumber);
+    final item = itemName.trim();
+    final itemSeg = item.isEmpty ? '' : ' — $item';
+    final orderSeg = on.isEmpty ? 'An order' : 'Order $on';
+    final type = refundType.trim().isEmpty ? 'Refund' : refundType.trim();
+    final why = reason.trim();
+    final body = why.isEmpty
+        ? '$orderSeg$itemSeg: $type requested. Refunds are processed within 3 days.'
+        : '$orderSeg$itemSeg: $type. Reason: $why. Refunds are processed within 3 days.';
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'Refund requested',
+        'body': body,
+        'payload': {
+          'type': 'refund_request',
+          'orderId': orderId,
+          'orderNumber': on,
+          'refundType': type,
+          NotificationStore.kPayloadBadgeRoute: NotificationStore.kBadgeRefund,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+      });
+    } catch (e) {
+      debugPrint(
+        '[OrderPartyNotification] publishRefundRequestedToMerchant: $e',
+      );
+    }
+  }
+
+  /// Buyer: seller initiated a refund / update.
+  static Future<void> publishRefundUpdateToBuyer({
+    required String buyerUid,
+    required String orderNumber,
+    required String itemName,
+    required String orderId,
+    required String refundType,
+    int processingDays = 3,
+  }) async {
+    final uid = buyerUid.trim();
+    if (uid.isEmpty) return;
+    final on = _veroOrderNo(orderNumber);
+    final item = itemName.trim();
+    final itemSeg = item.isEmpty ? '' : ' — $item';
+    final orderSeg = on.isEmpty ? 'Your order' : 'Your order $on';
+    final type = refundType.trim().isEmpty ? 'Refund' : refundType.trim();
+    final days = processingDays > 0 ? processingDays : 3;
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'Refund update',
+        'body':
+            '$orderSeg$itemSeg: $type. Your refund will be processed within $days days.',
+        'payload': {
+          'type': 'refund_update',
+          'orderId': orderId,
+          'orderNumber': on,
+          'refundType': type,
+          'processingDays': days,
+          NotificationStore.kPayloadBadgeRoute: NotificationStore.kBadgeRefund,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishRefundUpdateToBuyer: $e');
     }
   }
 

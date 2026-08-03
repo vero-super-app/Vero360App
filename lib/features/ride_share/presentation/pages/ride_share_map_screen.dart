@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -254,63 +253,121 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
       orElse: () => '',
     );
 
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Container(
-          color: RideShareColors.background.withValues(alpha: 0.85),
-          padding: EdgeInsets.fromLTRB(
-            8,
-            MediaQuery.of(context).padding.top + 4,
-            16,
-            12,
-          ),
-          child: Row(
-            children: [
-              IconButton(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.arrow_back),
-                color: RideShareColors.titleText,
-                style: IconButton.styleFrom(
-                  backgroundColor: RideShareColors.surfaceContainerLow,
-                  shape: const CircleBorder(),
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Vero Ride',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: RideShareColors.titleText,
-                ),
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: _toggleBookmarkedPlacesModal,
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: RideShareColors.outlineVariant),
-                    image: profilePictureUrl.isNotEmpty
-                        ? DecorationImage(
-                            image: NetworkImage(profilePictureUrl),
-                            fit: BoxFit.cover,
-                          )
-                        : null,
-                    color: RideShareColors.primarySoft,
-                  ),
-                  child: profilePictureUrl.isEmpty
-                      ? const Icon(Icons.person,
-                          color: RideShareColors.primary, size: 22)
-                      : null,
-                ),
-              ),
-            ],
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            RideShareColors.primary.withValues(alpha: 0.14),
+            RideShareColors.background.withValues(alpha: 0.92),
+          ],
+        ),
+        border: Border(
+          bottom: BorderSide(
+            color: RideShareColors.primary.withValues(alpha: 0.18),
           ),
         ),
+      ),
+      padding: EdgeInsets.fromLTRB(
+        12,
+        MediaQuery.of(context).padding.top + 6,
+        16,
+        12,
+      ),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: RideShareColors.primary.withValues(alpha: 0.2),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: RideShareColors.primary.withValues(alpha: 0.12),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.arrow_back_ios_new,
+                color: RideShareColors.titleText,
+                size: 18,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Book Your Vero Ride',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                    letterSpacing: -0.3,
+                    color: RideShareColors.titleText,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Container(
+                  height: 2.5,
+                  width: 88,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        RideShareColors.primary,
+                        RideShareColors.primary.withValues(alpha: 0.35),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: _toggleBookmarkedPlacesModal,
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: RideShareColors.primary,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: RideShareColors.primary.withValues(alpha: 0.35),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+                image: profilePictureUrl.isNotEmpty
+                    ? DecorationImage(
+                        image: NetworkImage(profilePictureUrl),
+                        fit: BoxFit.cover,
+                      )
+                    : null,
+              ),
+              child: profilePictureUrl.isEmpty
+                  ? const Icon(
+                      Icons.local_taxi_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    )
+                  : null,
+            ),
+          ),
+        ],
       ),
     );
   }

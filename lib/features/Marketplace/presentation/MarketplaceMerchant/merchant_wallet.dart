@@ -11,12 +11,16 @@ class _HeldEscrowRow {
   final String itemName;
   final double amount;
   final DateTime? releaseDueAt;
+  final DateTime? deliveredAt;
+  final DateTime? createdAt;
   final bool awaitingShipment;
 
   const _HeldEscrowRow({
     required this.itemName,
     required this.amount,
     this.releaseDueAt,
+    this.deliveredAt,
+    this.createdAt,
     this.awaitingShipment = false,
   });
 }
@@ -92,26 +96,32 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     _loadMerchantData();
     _setupEscrowHeldStream();
     _escrowReleaseTimer = Timer.periodic(
-      const Duration(minutes: 15),
+      OrderEscrowService.escrowTestMode
+          ? const Duration(seconds: 30)
+          : const Duration(minutes: 15),
       (_) => _processDueEscrowReleases(),
     );
   }
 
   /// Marketplace orders and paid accommodation stays both write `order_escrow`
   /// so incoming stay payments appear in escrow here.
+  ///
+  /// Merchant-only path (no `/orders/me` round-trip) so the wallet stays snappy.
   /// Credits wallet when the 7-day window passed and the buyer did not confirm.
   Future<void> _processDueEscrowReleases() async {
     try {
-      await OrderEscrowService.processDueAutoReleasesForSignedInUser();
+      await OrderEscrowService.processDueAutoReleasesForMerchant(
+        widget.merchantId,
+      );
     } catch (e) {
       debugPrint('[MerchantWallet] escrow auto-release: $e');
     }
   }
 
   String _escrowReleaseSummary() {
-    final days = OrderEscrowService.escrowAutoReleaseDays;
+    final window = OrderEscrowService.escrowAutoReleaseLabel;
     if (_heldEscrowRows.isEmpty) {
-      return 'Not withdrawable yet — waiting for buyer confirmation or $days‑day auto‑release.';
+      return 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
     }
 
     final dueNow = _heldEscrowRows.where((r) {
@@ -139,10 +149,10 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
     final awaiting = _heldEscrowRows.any((r) => r.awaitingShipment);
     if (awaiting) {
-      return 'Ship orders with proof to start the $days‑day release timer.';
+      return 'Ship orders with proof to start the $window release timer.';
     }
 
-    return 'Not withdrawable yet — waiting for buyer confirmation or $days‑day auto‑release.';
+    return 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
   }
 
   Widget _buildHeldEscrowDetails({bool onDarkBackground = false}) {
@@ -161,13 +171,19 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           final amountText = 'MWK ${_mwkFormat.format(row.amount.truncate())}';
           String statusText;
           if (row.awaitingShipment) {
-            statusText = 'Awaiting shipment';
+            statusText = row.createdAt != null
+                ? 'Bought ${_releaseDateFormat.format(row.createdAt!.toLocal())} · awaiting shipment'
+                : 'Awaiting shipment — timer starts when you ship';
           } else if (row.releaseDueAt != null &&
               !DateTime.now().isBefore(row.releaseDueAt!)) {
             statusText = 'Ready to release';
           } else if (row.releaseDueAt != null) {
-            statusText =
-                'Releases ${_releaseDateFormat.format(row.releaseDueAt!.toLocal())}';
+            final shipped = row.deliveredAt;
+            statusText = shipped != null
+                ? 'Shipped ${_releaseDateFormat.format(shipped.toLocal())} · '
+                    'releases ${_releaseDateFormat.format(row.releaseDueAt!.toLocal())}'
+                : 'Releases ${_releaseDateFormat.format(row.releaseDueAt!.toLocal())} '
+                    '(${OrderEscrowService.escrowAutoReleaseLabel} after shipment)';
           } else {
             statusText = 'Awaiting buyer confirmation';
           }
@@ -241,26 +257,50 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         final dueRaw = data['releaseDueAt'];
         if (dueRaw is Timestamp) releaseDueAt = dueRaw.toDate();
 
+        DateTime? deliveredAt;
         final deliveredRaw = data['deliveredAt'];
-        final awaitingShipment = deliveredRaw == null;
+        if (deliveredRaw is Timestamp) deliveredAt = deliveredRaw.toDate();
+
+        DateTime? createdAt;
+        final createdRaw = data['createdAt'];
+        if (createdRaw is Timestamp) createdAt = createdRaw.toDate();
+
+        // Stale ship date from a previous order (before this hold existed).
+        final bogusShip = deliveredAt != null &&
+            createdAt != null &&
+            deliveredAt.isBefore(createdAt.subtract(const Duration(minutes: 5)));
+        if (bogusShip) {
+          deliveredAt = null;
+          releaseDueAt = null;
+        }
+
+        final awaitingShipment = deliveredAt == null;
 
         rows.add(_HeldEscrowRow(
           itemName: (data['itemName'] ?? data['orderNumber'] ?? 'Sale')
               .toString(),
           amount: v,
           releaseDueAt: releaseDueAt,
+          deliveredAt: deliveredAt,
+          createdAt: createdAt,
           awaitingShipment: awaitingShipment,
         ));
       }
       rows.sort((a, b) {
         if (a.awaitingShipment != b.awaitingShipment) {
-          return a.awaitingShipment ? 1 : -1;
+          return a.awaitingShipment ? -1 : 1; // newest unpaid shipments first
+        }
+        final ac = a.createdAt;
+        final bc = b.createdAt;
+        if (ac != null && bc != null) {
+          final cmp = bc.compareTo(ac);
+          if (cmp != 0) return cmp;
         }
         final ad = a.releaseDueAt;
         final bd = b.releaseDueAt;
         if (ad == null && bd == null) return 0;
-        if (ad == null) return 1;
-        if (bd == null) return -1;
+        if (ad == null) return -1;
+        if (bd == null) return 1;
         return ad.compareTo(bd);
       });
       if (!mounted) return;
@@ -273,18 +313,25 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
   Future<void> _initializeWallet() async {
     try {
-      // Run the escrow auto-release sweep in the background: it fetches orders
-      // and walks escrow docs one by one, which is far too slow to block the
-      // first paint. The wallet/escrow streams pick up any releases it makes.
+      // Escrow repair/release in background — never block first paint.
       unawaited(_processDueEscrowReleases());
 
-      // Get or create wallet
       final wallet = await FirebaseWalletService.getOrCreateWallet(
         merchantId: widget.merchantId,
         merchantName: widget.merchantName,
       );
-      
-      // Set up real-time wallet stream
+
+      if (!mounted) return;
+
+      // Paint immediately, then attach live streams.
+      setState(() {
+        _wallet = wallet;
+        _walletBalance = wallet.balance;
+        _pendingBalance = wallet.pendingBalance;
+        _isLoading = false;
+      });
+
+      _walletSubscription?.cancel();
       _walletSubscription = FirebaseWalletService
           .getWalletStream(widget.merchantId)
           .listen((wallet) {
@@ -296,16 +343,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           });
         }
       });
-      
-      // Set up transactions stream
+
       _setupTransactionsStream(wallet.walletId);
-      
-      setState(() {
-        _wallet = wallet;
-        _walletBalance = wallet.balance;
-        _pendingBalance = wallet.pendingBalance;
-        _isLoading = false;
-      });
     } catch (e) {
       print('Wallet initialization error: $e');
       _showError('Failed to load wallet: $e');
@@ -1220,7 +1259,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           const SizedBox(height: 10),
                           Text(
                             'Marketplace sales are credited when the buyer confirms receipt, '
-                            'or automatically ${OrderEscrowService.escrowAutoReleaseDays} days after delivery.',
+                            'or automatically ${OrderEscrowService.escrowAutoReleaseLabel} after delivery.',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.white.withOpacity(0.88),

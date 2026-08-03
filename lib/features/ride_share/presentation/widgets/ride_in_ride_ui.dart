@@ -1139,7 +1139,9 @@ class RidePassengerMiniCard extends StatelessWidget {
 /// Swipe-to-complete control for driver in-progress state.
 class RideSwipeToComplete extends StatefulWidget {
   final String label;
-  final VoidCallback onCompleted;
+  /// Return `true` when the ride was completed successfully.
+  /// Returning `false` (or throwing) resets the swipe so the driver can retry.
+  final Future<bool> Function() onCompleted;
   final bool enabled;
 
   const RideSwipeToComplete({
@@ -1156,6 +1158,35 @@ class RideSwipeToComplete extends StatefulWidget {
 class _RideSwipeToCompleteState extends State<RideSwipeToComplete> {
   double _dx = 0;
   bool _done = false;
+  bool _submitting = false;
+
+  Future<void> _finish(double maxDx) async {
+    if (_submitting || _done) return;
+    setState(() {
+      _dx = maxDx;
+      _done = true;
+      _submitting = true;
+    });
+
+    var success = false;
+    try {
+      success = await widget.onCompleted();
+    } catch (_) {
+      success = false;
+    }
+
+    if (!mounted) return;
+    if (success) {
+      setState(() => _submitting = false);
+      return;
+    }
+
+    setState(() {
+      _done = false;
+      _dx = 0;
+      _submitting = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1192,9 +1223,13 @@ class _RideSwipeToCompleteState extends State<RideSwipeToComplete> {
                 ),
               Center(
                 child: Text(
-                  _done ? 'Ride Completed' : widget.label.toUpperCase(),
+                  _submitting
+                      ? 'COMPLETING…'
+                      : _done
+                          ? 'Ride Completed'
+                          : widget.label.toUpperCase(),
                   style: TextStyle(
-                    color: _done
+                    color: _done || _submitting
                         ? Colors.white
                         : RideShareColors.titleText.withValues(alpha: 0.4),
                     fontWeight: FontWeight.w800,
@@ -1203,7 +1238,7 @@ class _RideSwipeToCompleteState extends State<RideSwipeToComplete> {
                   ),
                 ),
               ),
-              if (!_done)
+              if (!_done && !_submitting)
                 Positioned(
                   left: 4 + _dx,
                   child: GestureDetector(
@@ -1213,17 +1248,15 @@ class _RideSwipeToCompleteState extends State<RideSwipeToComplete> {
                               _dx = (_dx + d.delta.dx).clamp(0.0, maxDx);
                             });
                             if (_dx >= maxDx * 0.92) {
-                              setState(() {
-                                _dx = maxDx;
-                                _done = true;
-                              });
-                              widget.onCompleted();
+                              _finish(maxDx);
                             }
                           }
                         : null,
                     onHorizontalDragEnd: widget.enabled
                         ? (_) {
-                            if (!_done) setState(() => _dx = 0);
+                            if (!_done && !_submitting) {
+                              setState(() => _dx = 0);
+                            }
                           }
                         : null,
                     child: Container(
@@ -1241,11 +1274,23 @@ class _RideSwipeToCompleteState extends State<RideSwipeToComplete> {
                           ),
                         ],
                       ),
-                      child: Icon(
-                        _done ? Icons.check : Icons.chevron_right,
+                      child: const Icon(
+                        Icons.chevron_right,
                         color: Colors.white,
                         size: 28,
                       ),
+                    ),
+                  ),
+                ),
+              if (_submitting)
+                const Positioned(
+                  right: 16,
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      valueColor: AlwaysStoppedAnimation(Colors.white),
                     ),
                   ),
                 ),

@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
+import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet_transactions_page.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class _HeldEscrowRow {
   final String itemName;
@@ -77,14 +81,19 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   ];
   
   static const List<Map<String, String>> _mobileMoneyProviders = [
-    {"id": "airtel_money", "name": "Airtel Money"},
-    {"id": "mpamba", "name": "MPamba (TNM)"},
-    {"id": "national_bank_mobile", "name": "National Bank Mobile"},
+    {
+      'id': PayChanguConfig.airtelMoneyOperatorRefId,
+      'name': 'Airtel Money',
+    },
+    {
+      'id': PayChanguConfig.tnmMpambaOperatorRefId,
+      'name': 'MPamba (TNM)',
+    },
   ];
   
   int? _selectedBankIndex;
   String _selectedPayoutMethod = 'bank';
-  String _selectedMobileProvider = 'airtel_money';
+  String _selectedMobileProvider = PayChanguConfig.airtelMoneyOperatorRefId;
   
   StreamSubscription<WalletModel?>? _walletSubscription;
   StreamSubscription<QuerySnapshot>? _transactionsSubscription;
@@ -334,6 +343,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     try {
       // Escrow repair/release in background — never block first paint.
       unawaited(_processDueEscrowReleases());
+      // Clear payouts that were stuck as pending forever.
+      unawaited(FirebaseWalletService.settleStuckPendingPayouts(widget.merchantId));
 
       final wallet = await FirebaseWalletService.getOrCreateWallet(
         merchantId: widget.merchantId,
@@ -780,11 +791,13 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           if (phone.length != 13) {
                             return 'Enter valid 13-digit number';
                           }
-                          if (_selectedMobileProvider == 'airtel_money' &&
+                          if (_selectedMobileProvider ==
+                                  PayChanguConfig.airtelMoneyOperatorRefId &&
                               !phone.startsWith('+2659')) {
                             return 'Airtel Money numbers must start with +2659…';
                           }
-                          if (_selectedMobileProvider == 'mpamba' &&
+                          if (_selectedMobileProvider ==
+                                  PayChanguConfig.tnmMpambaOperatorRefId &&
                               !phone.startsWith('+2658')) {
                             return 'TNM Mpamba numbers must start with +2658…';
                           }
@@ -835,7 +848,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           ),
                           SizedBox(height: 8),
                           Text(
-                            '• Processing time: 24-48 hours',
+                            '• Cash out is instant to your bank or mobile money',
                             style: TextStyle(fontSize: 12),
                           ),
                           Text(
@@ -847,7 +860,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                             style: TextStyle(fontSize: 12),
                           ),
                           Text(
-                            '• Funds will be sent to your registered account',
+                            '• Funds are sent immediately after you confirm',
                             style: TextStyle(fontSize: 12),
                           ),
                         ],
@@ -959,50 +972,112 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
   Future<void> _requestPayout(void Function(void Function()) setState) async {
     if (!_formKey.currentState!.validate()) return;
-    
+
     if (_selectedPayoutMethod == 'bank' && _selectedBankIndex == null) {
       _showError('Please select a bank');
       return;
     }
 
     setState(() => _isProcessingPayout = true);
-    
+
     try {
       final amount = double.parse(_amountController.text);
-      final payoutRef = 'PAYOUT-${widget.serviceType}-${DateTime.now().millisecondsSinceEpoch}';
-      
-      // 1. Debit wallet in Firestore
+      final payoutRef =
+          'PAYOUT-${widget.serviceType}-${DateTime.now().millisecondsSinceEpoch}';
+
+      // 1) Send money via PayChangu first (real cash-out).
+      await _processPayChanguPayout(amount, payoutRef);
+
+      // 2) Debit wallet as completed (instant — not stuck pending).
+      final momoName = _mobileMoneyProviders
+          .where((p) => p['id'] == _selectedMobileProvider)
+          .map((p) => p['name']!)
+          .firstOrNull;
       await FirebaseWalletService.debitWallet(
         merchantId: widget.merchantId,
         amount: amount,
-        description: _selectedPayoutMethod == 'bank' 
-            ? 'Bank Transfer Payout (${widget.serviceType})' 
-            : '${_selectedMobileProvider.toUpperCase()} Payout (${widget.serviceType})',
+        description: _selectedPayoutMethod == 'bank'
+            ? 'Bank Transfer Payout (${widget.serviceType})'
+            : '${momoName ?? 'Mobile Money'} Payout (${widget.serviceType})',
         reference: payoutRef,
       );
-      
-      // 2. Save bank details for future use
+
       if (_selectedPayoutMethod == 'bank') {
         await _saveBankDetails();
       }
 
-      // Ensure UI shows the new payout transaction immediately.
       if (mounted) _forceTransactionsReload();
-      
-      // 3. Show success and close dialog
+
       if (mounted) {
         Navigator.pop(context);
-        _showSuccess('Payout request submitted! Processing in 24-48 hours.');
+        _showSuccess('Payout sent! Cash-out completed.');
       }
       _clearControllers();
-      
     } catch (e) {
       print('Payout error: $e');
-      _showError('Failed to process payout: ${e.toString()}');
+      _showError(
+        UserFacingError.from(e, fallback: 'Failed to process payout'),
+      );
     } finally {
       if (mounted) {
         setState(() => _isProcessingPayout = false);
       }
+    }
+  }
+
+  Future<void> _processPayChanguPayout(double amount, String reference) async {
+    final chargeId = reference.replaceAll(RegExp(r'[^A-Za-z0-9\-_]'), '');
+    final amountStr = amount.round().toString();
+    final email = _emailController.text.trim();
+
+    late final Uri uri;
+    late final Map<String, dynamic> payload;
+
+    if (_selectedPayoutMethod == 'bank') {
+      uri = PayChanguConfig.bankPayoutInitializeUri();
+      payload = {
+        'payout_method': 'bank_transfer',
+        'bank_uuid': _banks[_selectedBankIndex! - 1]['uuid'],
+        'amount': amountStr,
+        'charge_id': chargeId,
+        'bank_account_name': _accountNameController.text.trim(),
+        'bank_account_number': _accountNumberController.text.trim(),
+        if (email.isNotEmpty) 'email': email,
+      };
+    } else {
+      uri = PayChanguConfig.mobileMoneyPayoutInitializeUri();
+      var mobile = _phoneController.text.trim().replaceAll(RegExp(r'\s+'), '');
+      if (mobile.startsWith('+265')) {
+        mobile = '0${mobile.substring(4)}';
+      } else if (mobile.startsWith('265')) {
+        mobile = '0${mobile.substring(3)}';
+      }
+      payload = {
+        'mobile_money_operator_ref_id': _selectedMobileProvider,
+        'mobile': mobile,
+        'amount': amountStr,
+        'charge_id': chargeId,
+        if (email.isNotEmpty) 'email': email,
+      };
+    }
+
+    final response = await http
+        .post(
+          uri,
+          headers: PayChanguConfig.authHeaders,
+          body: jsonEncode(payload),
+        )
+        .timeout(const Duration(seconds: 45));
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception('Payout failed: ${response.body}');
+    }
+
+    final responseData = jsonDecode(response.body);
+    if (responseData is Map &&
+        responseData['status'] != null &&
+        responseData['status'].toString().toLowerCase() != 'success') {
+      throw Exception(responseData['message'] ?? 'Payout failed');
     }
   }
 

@@ -59,14 +59,19 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   
   // Mobile money providers
   static const List<Map<String, String>> _mobileMoneyProviders = [
-    {"id": "airtel_money", "name": "Airtel Money"},
-    {"id": "mpamba", "name": "MPamba (TNM)"},
-    {"id": "national_bank_mobile", "name": "National Bank Mobile"},
+    {
+      'id': PayChanguConfig.airtelMoneyOperatorRefId,
+      'name': 'Airtel Money',
+    },
+    {
+      'id': PayChanguConfig.tnmMpambaOperatorRefId,
+      'name': 'MPamba (TNM)',
+    },
   ];
   
   int? _selectedBankIndex;
   String _selectedPayoutMethod = 'bank';
-  String _selectedMobileProvider = 'airtel_money';
+  String _selectedMobileProvider = PayChanguConfig.airtelMoneyOperatorRefId;
   
   // Stream subscriptions
   StreamSubscription<WalletModel?>? _walletSubscription;
@@ -96,6 +101,9 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   Future<void> _initializeWallet() async {
     try {
       // Get or create wallet
+      unawaited(
+        FirebaseWalletService.settleStuckPendingPayouts(widget.merchantId),
+      );
       final wallet = await FirebaseWalletService.getOrCreateWallet(
         merchantId: widget.merchantId,
         merchantName: widget.merchantName,
@@ -438,7 +446,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           ),
                           SizedBox(height: 8),
                           Text(
-                            '• Processing time: 24-48 hours',
+                            '• Cash out is instant to your bank or mobile money',
                             style: TextStyle(fontSize: 12),
                           ),
                           Text(
@@ -450,7 +458,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                             style: TextStyle(fontSize: 12),
                           ),
                           Text(
-                            '• Funds will be sent to your registered account',
+                            '• Funds are sent immediately after you confirm',
                             style: TextStyle(fontSize: 12),
                           ),
                         ],
@@ -570,23 +578,27 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
       final amount = double.parse(_amountController.text);
       final payoutRef = 'PAYOUT-${DateTime.now().millisecondsSinceEpoch}';
       
-      // 1. Debit wallet in Firestore
+      // 1. Send money via PayChangu (real cash-out)
+      await _processPayChanguPayout(amount, payoutRef);
+
+      // 2. Debit wallet as completed (instant)
+      final momoName = _mobileMoneyProviders
+          .where((p) => p['id'] == _selectedMobileProvider)
+          .map((p) => p['name']!)
+          .firstOrNull;
       await FirebaseWalletService.debitWallet(
         merchantId: widget.merchantId,
         amount: amount,
         description: _selectedPayoutMethod == 'bank' 
             ? 'Bank Transfer Payout' 
-            : '${_selectedMobileProvider.toUpperCase()} Payout',
+            : '${momoName ?? 'Mobile Money'} Payout',
         reference: payoutRef,
       );
-      
-      // 2. Call PayChangu Payout API
-      await _processPayChanguPayout(amount, payoutRef);
       
       // 3. Show success and close dialog
       if (mounted) {
         Navigator.pop(context);
-        _showSuccess('Payout request submitted successfully!');
+        _showSuccess('Payout sent! Cash-out completed.');
       }
       _clearControllers();
       
@@ -600,54 +612,57 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   }
 
   Future<void> _processPayChanguPayout(double amount, String reference) async {
-    // Prepare payload based on payout method
-    Map<String, dynamic> payload;
-    
+    final chargeId = reference.replaceAll(RegExp(r'[^A-Za-z0-9\-_]'), '');
+    final amountStr = amount.round().toString();
+    final email = _emailController.text.trim();
+
+    late final Uri uri;
+    late final Map<String, dynamic> payload;
+
     if (_selectedPayoutMethod == 'bank') {
+      uri = PayChanguConfig.bankPayoutInitializeUri();
       payload = {
-        'account_bank': _banks[_selectedBankIndex! - 1]['uuid'],
-        'account_number': _accountNumberController.text.trim(),
-        'account_name': _accountNameController.text.trim(),
-        'amount': amount.round().toString(),
-        'currency': 'MWK',
-        'narration': 'Merchant Payout - Vero 360',
-        'reference': reference,
-        'beneficiary_email': _emailController.text.trim(),
-        'beneficiary_name': widget.merchantName,
+        'payout_method': 'bank_transfer',
+        'bank_uuid': _banks[_selectedBankIndex! - 1]['uuid'],
+        'amount': amountStr,
+        'charge_id': chargeId,
+        'bank_account_name': _accountNameController.text.trim(),
+        'bank_account_number': _accountNumberController.text.trim(),
+        if (email.isNotEmpty) 'email': email,
       };
     } else {
-      // Mobile money payout
+      uri = PayChanguConfig.mobileMoneyPayoutInitializeUri();
+      var mobile = _phoneController.text.trim().replaceAll(RegExp(r'\s+'), '');
+      if (mobile.startsWith('+265')) {
+        mobile = '0${mobile.substring(4)}';
+      } else if (mobile.startsWith('265')) {
+        mobile = '0${mobile.substring(3)}';
+      }
       payload = {
-        'account_bank': _selectedMobileProvider,
-        'account_number': _phoneController.text.trim(),
-        'amount': amount.round().toString(),
-        'currency': 'MWK',
-        'narration': 'Merchant Payout - Vero 360',
-        'reference': reference,
-        'beneficiary_email': _emailController.text.trim(),
-        'beneficiary_name': widget.merchantName,
+        'mobile_money_operator_ref_id': _selectedMobileProvider,
+        'mobile': mobile,
+        'amount': amountStr,
+        'charge_id': chargeId,
+        if (email.isNotEmpty) 'email': email,
       };
     }
-    
-    // ✅ Call PayChangu payout API using centralized config
-    const secretKey = 'SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u';
-    
-    final response = await http.post(
-      PayChanguConfig.transferUri(),
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': 'Bearer $secretKey',
-      },
-      body: jsonEncode(payload),
-    ).timeout(const Duration(seconds: 30));
-    
+
+    final response = await http
+        .post(
+          uri,
+          headers: PayChanguConfig.authHeaders,
+          body: jsonEncode(payload),
+        )
+        .timeout(const Duration(seconds: 45));
+
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw Exception('PayChangu API error: ${response.body}');
     }
-    
+
     final responseData = jsonDecode(response.body);
-    if (responseData['status'] != 'success') {
+    if (responseData is Map &&
+        responseData['status'] != null &&
+        responseData['status'].toString().toLowerCase() != 'success') {
       throw Exception(responseData['message'] ?? 'Payout failed');
     }
   }

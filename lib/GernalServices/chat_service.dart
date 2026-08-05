@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class ChatMessage {
   final String id;
@@ -99,7 +100,7 @@ class ChatService {
 
   static const Duration _editWindow = Duration(minutes: 5);
 
-  // ------------ Friendly errors (don’t show Firebase logs in UI) ------------
+  // ------------ Friendly errors (don’t show Firebase / infra logs in UI) ------------
   static String friendlyError(Object e) {
     if (e is FirebaseException) {
       switch (e.code) {
@@ -119,11 +120,8 @@ class ChatService {
           return 'Something went wrong. Please try again.';
       }
     }
-    final s = e.toString().toLowerCase();
-    if (s.contains('network') || s.contains('offline') || s.contains('unavailable')) {
-      return 'You seem offline. Check your internet and try again.';
-    }
-    return 'Something went wrong. Please try again.';
+    // Shared sanitizer strips IPs, URLs, sockets, etc.
+    return UserFacingError.from(e);
   }
 
   static Future<void> _ensureCore() async {

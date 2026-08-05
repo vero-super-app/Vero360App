@@ -32,6 +32,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.s
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
+import 'package:vero360_app/widgets/vero_thumb_image.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 // Add login screen import (using your correct path)
@@ -42,6 +43,7 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketP
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
 
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
@@ -331,31 +333,12 @@ class _MarketplaceMerchantDashboardState
   Future<bool> _unlockWalletWithPin() async {
     if (_walletUnlockedNow) return true;
 
-    final okSetup = await _ensureAppPinExists();
-    if (!okSetup) return false;
+    final ok = await AppWalletPin.verifyWalletUnlock(context);
+    if (!ok || !mounted) return false;
 
-    final sp = await SharedPreferences.getInstance();
-    final salt = (sp.getString('app_pin_salt') ?? '').trim();
-    final hash = (sp.getString('app_pin_hash') ?? '').trim();
-    if (salt.isEmpty || hash.isEmpty) return false;
-
-    final entered = await _showEnterPinDialog();
-    if (entered == null) return false;
-
-    final enteredHash = _hashPin(entered, salt);
-    final ok = enteredHash == hash;
-
-    if (!ok) {
-      if (!mounted) return false;
-      _toastErr('Wrong password');
-      return false;
-    }
-
-    if (!mounted) return true;
     setState(() {
       _walletUnlockedUntil = DateTime.now().add(_walletUnlockDuration);
     });
-
     return true;
   }
 
@@ -3982,58 +3965,16 @@ class _ItemCard extends StatelessWidget {
   }
 }
 
-// Image widget: supports http(s), data:image, or raw base64 (same idea as MerchantProductsPage)
+// Image widget: supports http(s), data:image, or raw base64 — decode-capped for low RAM.
 class _ImageAny extends StatelessWidget {
   final dynamic imageData;
   const _ImageAny(this.imageData);
 
   @override
   Widget build(BuildContext context) {
-    if (imageData == null) return _placeholder();
-    final raw = imageData.toString().trim();
-    if (raw.isEmpty) return _placeholder();
-
-    try {
-      if (raw.startsWith('http://') || raw.startsWith('https://')) {
-        return Image.network(
-          raw,
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: double.infinity,
-          errorBuilder: (_, __, ___) => _placeholder(),
-        );
-      }
-      if (raw.startsWith('data:image')) {
-        final base64Part = raw.contains(',') ? raw.split(',').last : raw;
-        final bytes = base64Decode(base64Part);
-        return Image.memory(
-          bytes,
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: double.infinity,
-          errorBuilder: (_, __, ___) => _placeholder(),
-        );
-      }
-      final base64Part = raw.contains(',') ? raw.split(',').last : raw;
-      final bytes = base64Decode(base64Part);
-      return Image.memory(
-        bytes,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (_, __, ___) => _placeholder(),
-      );
-    } catch (_) {
-      return _placeholder();
-    }
-  }
-
-  Widget _placeholder() {
-    return Container(
-      color: const Color(0xFFF3F4F7),
-      child: const Center(
-        child: Icon(Icons.image_not_supported_rounded, color: Colors.black26),
-      ),
+    return VeroThumbImage(
+      imageData,
+      decodeLogicalPx: 360,
     );
   }
 }

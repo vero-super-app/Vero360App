@@ -19,12 +19,16 @@ import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
+import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/account_data_purge.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/password_reset_verification_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/registration_verification_service.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 
 enum DeleteAccountStatus { success, requiresRecentLogin, failed }
@@ -86,8 +90,6 @@ class AuthService {
     );
   }
 
-  bool _is2xx(int code) => code >= 200 && code < 300;
-
   bool _looksLikeServerDown(Object e) {
     final msg = e.toString().toLowerCase();
     return msg.contains('service unavailable') ||
@@ -108,18 +110,6 @@ class AuthService {
     await _google.initialize();
 
     _googleInitialized = true;
-  }
-
-  Future<String?> _readAnyToken() async {
-    try {
-      final sp = await SharedPreferences.getInstance();
-      return sp.getString('jwt_token') ??
-          sp.getString('token') ??
-          sp.getString('authToken') ??
-          sp.getString('jwt');
-    } catch (_) {
-      return null;
-    }
   }
 
   Map<String, dynamic> _normalizeBackendAuthResponse(
@@ -1049,7 +1039,6 @@ class AuthService {
       }
 
       final GoogleSignInAccount account = await _google.authenticate();
-      if (account == null) return null;
 
       // Prefer server auth code for backend exchange
       GoogleSignInServerAuthorization? serverAuth;
@@ -1203,35 +1192,15 @@ class AuthService {
 
   Future<DeleteAccountStatus> deleteAccountEverywhere(
       BuildContext context) async {
-    final token = await _readAnyToken();
-
-    bool backendDeleted = false;
-    if (token != null && token.trim().isNotEmpty) {
-      try {
-        // ✅ Use ApiConfig for production-ready endpoint
-        final resp = await http.delete(
-          ApiConfig.endpoint('/users/me'),
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Accept': 'application/json',
-          },
-        );
-        backendDeleted = _is2xx(resp.statusCode);
-      } catch (_) {
-        backendDeleted = false;
-      }
-    } else {
-      backendDeleted = true;
-    }
+    try {
+      // Wipe Firestore/API marketplace + profile data while still authenticated.
+      await AccountDataPurge.purgeCurrentUser();
+    } catch (_) {}
 
     bool firebaseDeleted = true;
     final u = _firebaseAuth.currentUser;
 
     if (u != null) {
-      try {
-        await _firestore.collection('users').doc(u.uid).delete();
-      } catch (_) {}
-
       try {
         await u.delete();
       } on FirebaseAuthException catch (e) {
@@ -1249,7 +1218,7 @@ class AuthService {
 
     await logout(context: context);
 
-    if (backendDeleted && firebaseDeleted) {
+    if (firebaseDeleted) {
       _toast(context, 'Account deleted', ok: true);
       return DeleteAccountStatus.success;
     }
@@ -1270,14 +1239,24 @@ class AuthService {
           sp.getString('jwt');
     } catch (_) {}
 
-    // Step 1: Set all driver taxis to unavailable before logout
+    // Step 1: Stop local online session + set all driver taxis unavailable
+    try {
+      await DriverOnlineSessionNotifier.forceOfflineGlobally();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('Error stopping driver online session on logout: $e');
+      }
+    }
     try {
       final driverService = DriverService();
       final driver = await driverService.getMyDriverProfile();
-      if (driver != null && driver['taxis'] != null && driver['taxis'].isNotEmpty) {
-        for (final taxi in driver['taxis']) {
+      final taxis = driver['taxis'];
+      if (taxis is List && taxis.isNotEmpty) {
+        for (final taxi in taxis) {
           try {
-            await driverService.setTaxiAvailability(taxi['id'], false);
+            final id = taxi is Map ? taxi['id'] : null;
+            if (id == null) continue;
+            await driverService.setTaxiAvailability(id as int, false);
           } catch (e) {
             if (kDebugMode) debugPrint('Error setting taxi unavailable: $e');
           }
@@ -1315,9 +1294,10 @@ class AuthService {
       await NotificationStore.instance.clearAll();
     } catch (_) {}
 
-    // Step 5b: Clear in-memory messaging state (deleted-chat prefs stay on disk).
+    // Step 5b: Clear in-memory messaging state + socket (deleted-chat prefs stay on disk).
     try {
       BackendChatService.clearAuthCache();
+      await BackendMessagingSocket.disconnect();
     } catch (_) {}
 
     // Step 6: Clear local session
@@ -1360,6 +1340,8 @@ class AuthService {
         await sp.remove(k);
       }
       resetDriverSessionCache();
+      // Marketplace / cart device caches must not follow the next account.
+      await SessionLocalCache.clearOnLogout();
       return true;
     } catch (_) {
       return false;

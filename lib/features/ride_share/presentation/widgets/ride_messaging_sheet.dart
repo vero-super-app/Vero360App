@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:intl/intl.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class RideMessagingSheet extends StatefulWidget {
   final int otherUserId;
@@ -58,7 +59,7 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'Failed to initialize chat: ${e.toString()}';
+          _error = UserFacingError.from(e, fallback: 'Failed to initialize chat');
           _isLoading = false;
         });
       }
@@ -112,7 +113,7 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
       if (mounted) {
         setState(() => _isSending = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to send: ${e.toString()}')),
+          SnackBar(content: Text(UserFacingError.from(e, fallback: 'Failed to send'))),
         );
       }
     }

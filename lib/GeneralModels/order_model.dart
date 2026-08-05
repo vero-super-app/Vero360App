@@ -66,6 +66,9 @@ class OrderItem {
   final OrderStatus status;
   final PaymentStatus paymentStatus;
 
+  /// PayChangu / payments tx_ref when the API returns it (for refunds).
+  final String? paymentTxRef;
+
   /// Optional numeric marketplace listing id (SQL id) if backend includes it,
   /// e.g. ItemId / itemId. Used to mark items as sold automatically.
   final int? itemSqlId;
@@ -102,6 +105,7 @@ class OrderItem {
     required this.status,
     required this.paymentStatus,
     required this.merchantId,
+    this.paymentTxRef,
     this.merchantUid,
     this.itemSqlId,
     this.merchantName,
@@ -146,6 +150,17 @@ class OrderItem {
       'Payment',
     ]);
     final pay   = paymentStatusFrom(rawPay?.toString());
+    final txRefRaw = _first(m, [
+      'paymentTxRef',
+      'PaymentTxRef',
+      'tx_ref',
+      'txRef',
+      'transactionRef',
+      'TransactionRef',
+      'paymentReference',
+      'PaymentReference',
+    ]);
+    final paymentTxRef = txRefRaw?.toString().trim();
 
     // Optional: marketplace listing id from backend (many API shapes)
     final rawItemId = _first(m, [
@@ -275,6 +290,8 @@ class OrderItem {
       description: desc,
       status: stat,
       paymentStatus: pay,
+      paymentTxRef:
+          (paymentTxRef == null || paymentTxRef.isEmpty) ? null : paymentTxRef,
       merchantId: merchId,
       merchantUid: merchUid?.trim().isEmpty == true ? null : merchUid?.trim(),
       itemSqlId: parsedItemId ?? listingFromDesc,

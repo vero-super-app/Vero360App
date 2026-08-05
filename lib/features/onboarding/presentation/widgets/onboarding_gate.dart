@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/onboarding/presentation/pages/app_onboarding_page.dart';
-import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 /// Full-screen onboarding before the main shell (e.g. [Bottomnavbar] from `BottomNavbar.dart`).
 ///
@@ -13,6 +12,7 @@ class OnboardingGate extends StatefulWidget {
     super.key,
     required this.child,
     this.onCompleted,
+    this.onboardingDoneHint,
   });
 
   final Widget child;
@@ -20,19 +20,29 @@ class OnboardingGate extends StatefulWidget {
   /// Called after `onboarding_completed_v1` is persisted and the gate shows [child].
   final VoidCallback? onCompleted;
 
+  /// When set by bootstrap, skip prefs I/O + branded splash (home in ~1s).
+  final bool? onboardingDoneHint;
+
   @override
   State<OnboardingGate> createState() => _OnboardingGateState();
 }
 
 class _OnboardingGateState extends State<OnboardingGate> {
-  // Optimistic: returning users skip the splash gate frame when prefs are warm.
-  bool _loading = true;
-  bool _onboardingDone = false;
+  late bool _loading;
+  late bool _onboardingDone;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    final hint = widget.onboardingDoneHint;
+    if (hint != null) {
+      _onboardingDone = hint;
+      _loading = false;
+    } else {
+      _loading = true;
+      _onboardingDone = false;
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -66,11 +76,8 @@ class _OnboardingGateState extends State<OnboardingGate> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const VeroLaunchSplash(
-        title: 'Opening…',
-        message: 'Loading your home…',
-        showSpinner: true,
-      );
+      // Plain cream — bootstrap already showed the branded splash.
+      return const ColoredBox(color: Color(0xFFFFFBF6));
     }
     if (!_onboardingDone) {
       return AppOnboardingPage(

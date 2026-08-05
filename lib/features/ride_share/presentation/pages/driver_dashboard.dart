@@ -9,12 +9,13 @@ import 'package:intl/intl.dart';
 import 'package:vero360_app/GeneralModels/ride_history_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
-import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/notification_badge.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/driver_dashboard_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_history_ui.dart';
@@ -36,22 +37,28 @@ class DriverDashboard extends ConsumerStatefulWidget {
   ConsumerState<DriverDashboard> createState() => _DriverDashboardState();
 }
 
-class _DriverDashboardState extends ConsumerState<DriverDashboard>
-    with WidgetsBindingObserver {
+class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   static const Color primaryColor = Color(0xFFFF8A00);
   GoogleMapController? mapController;
-  Timer? _locationBroadcastTimer;
   Timer? _mapCenteringTimer;
   final DriverService _driverService = DriverService();
   final RideShareHttpService _http = RideShareHttpService();
   final NumberFormat _money = NumberFormat('#,##0', 'en');
-  bool _isOnline = false;
-  Position? _lastPosition;
   Future<DriverEarningsSummary>? _earningsFuture;
   Future<List<Ride>>? _recentRidesFuture;
 
-  /// After [paused]/[detached], restore "Go Online" when user returns — not for [inactive].
-  bool _resumeLocationAfterForeground = false;
+  bool get _isOnline => ref.watch(driverOnlineSessionProvider).isOnline;
+
+  Position? get _lastPosition =>
+      ref.watch(driverOnlineSessionProvider).lastPosition;
+
+  bool get _hasActiveTrip {
+    final lifecycle = ref.read(rideLifecycleProvider);
+    return lifecycle is RideActive &&
+        (lifecycle.isAccepted ||
+            lifecycle.isDriverArrived ||
+            lifecycle.isInProgress);
+  }
 
   void _reloadDashboardData({bool notify = true}) {
     final earnings = _http.getDriverEarningsSummary();
@@ -72,58 +79,29 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _reloadDashboardData(notify: false);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       await LocationPermissionHelper.ensureLocationAccess(context);
       if (!mounted) return;
-      _ensureDriverActive();
-      // Do not auto-go online — require explicit toggle with taxi + verification gates.
+      await _ensureDriverActive();
+      await _syncOnlineSessionFromProfile();
       _startMapCentering();
     });
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    // Do NOT go offline here — leaving the page must not drop availability
+    // or stop the keepAlive [driverOnlineSessionProvider] broadcast.
     mapController?.dispose();
-    _stopLocationBroadcasting();
     _stopMapCentering();
     _http.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Do NOT stop on [inactive] — it fires during map gestures, permission sheets,
-    // and brief transitions, which incorrectly marked the taxi unavailable every few seconds.
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      if (_isOnline) {
-        _resumeLocationAfterForeground = true;
-      }
-      _pauseDashboardLocationBroadcast();
-    } else if (state == AppLifecycleState.resumed) {
-      LocationPermissionHelper.onAppResumed();
-      if (_resumeLocationAfterForeground) {
-        _resumeLocationAfterForeground = false;
-        Future.microtask(() async {
-          if (!mounted) return;
-          await LocationPermissionHelper.ensureLocationAccess(
-            context,
-            forceRefresh: true,
-          );
-          if (mounted) {
-            _startLocationBroadcasting();
-          }
-        });
-      }
-    }
-  }
-
   /// Ensure driver is marked as active in the backend while the app is open.
-  /// Availability for matching still requires the online toggle.
+  /// Availability for matching still requires the online toggle / session.
   Future<void> _ensureDriverActive() async {
     try {
       final driverProfile = await ref.read(myDriverProfileProvider.future);
@@ -141,128 +119,19 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
     }
   }
 
-  /// Start broadcasting driver location to nearby car service
-  void _startLocationBroadcasting() {
-    if (_isOnline) return; // Already broadcasting
-
-    setState(() => _isOnline = true);
-
-    // Set taxi availability when going online
-    _setTaxiAvailability(true);
-
-    // Broadcast location every 5 seconds
-    _locationBroadcastTimer =
-        Timer.periodic(const Duration(seconds: 5), (_) async {
-      try {
-        final position =
-            await LocationPermissionHelper.getCurrentPositionIfGranted(
-          timeLimit: const Duration(seconds: 5),
-        );
-        if (position == null) {
-          if (mounted) {
-            await LocationPermissionHelper.promptIfBlocked(context);
-          }
-          return;
-        }
-
-        // Update last position for map centering
-        _lastPosition = position;
-
-        // Get driver profile and ensure taxi exists
-        final driverProfile = ref.read(myDriverProfileProvider);
-
-        driverProfile.whenData((driver) async {
-          if (driver['id'] == null) {
-            if (kDebugMode)
-              print('[DriverDashboard] Driver profile incomplete');
-            return;
-          }
-
-          var taxiId = _primaryTaxiId(driver);
-
-          if (kDebugMode) {
-            print(
-                '[DriverDashboard] Driver ID: ${driver['id']}, Taxis: ${driver['taxis']}');
-            print('[DriverDashboard] Extracted taxiId: $taxiId');
-          }
-
-          // Broadcast location only if taxi exists
-          if (taxiId != null) {
-            try {
-              await _driverService.updateTaxiLocation(
-                  int.parse(taxiId.toString()),
-                  position.latitude,
-                  position.longitude);
-              if (kDebugMode) {
-                print(
-                    '[DriverDashboard] ✓ Broadcasting location to taxi $taxiId: ${position.latitude}, ${position.longitude}');
-              }
-            } catch (e) {
-              if (kDebugMode) {
-                print('[DriverDashboard] ✗ Error updating taxi location: $e');
-              }
-            }
-          }
-        });
-      } catch (e) {
-        if (kDebugMode) {
-          print('[DriverDashboard] Error getting position: $e');
-        }
-        if (mounted) {
-          await LocationPermissionHelper.promptIfBlocked(context);
-        }
-      }
-    });
-  }
-
-  /// Stop dashboard timer only — keeps taxi available during an active trip.
-  void _pauseDashboardLocationBroadcast() {
-    _locationBroadcastTimer?.cancel();
-    _locationBroadcastTimer = null;
-    if (mounted) setState(() => _isOnline = false);
-
-    final lifecycle = ref.read(rideLifecycleProvider);
-    final hasActiveTrip = lifecycle is RideActive &&
-        (lifecycle.isAccepted ||
-            lifecycle.isDriverArrived ||
-            lifecycle.isInProgress);
-    if (!hasActiveTrip) {
-      _setTaxiAvailability(false);
-    }
-  }
-
-  /// Stop broadcasting driver location and mark taxi offline.
-  void _stopLocationBroadcasting() {
-    _pauseDashboardLocationBroadcast();
-    final lifecycle = ref.read(rideLifecycleProvider);
-    final hasActiveTrip = lifecycle is RideActive &&
-        (lifecycle.isAccepted ||
-            lifecycle.isDriverArrived ||
-            lifecycle.isInProgress);
-    if (!hasActiveTrip) {
-      _setTaxiAvailability(false);
-    }
-  }
-
-  /// Helper to sync online/offline status with taxi availability
-  Future<void> _setTaxiAvailability(bool isAvailable) async {
+  Future<void> _syncOnlineSessionFromProfile() async {
     try {
-      final driverProfile = await ref.read(myDriverProfileProvider.future);
-      final taxiId = _primaryTaxiId(driverProfile);
-
-      if (taxiId != null) {
-        await _driverService.setTaxiAvailability(
-          int.parse(taxiId.toString()),
-          isAvailable,
-        );
-        if (kDebugMode) {
-          print(
-              '[DriverDashboard] ✓ Taxi availability set to $isAvailable for taxi $taxiId');
-        }
-      }
+      final driver = await ref.read(myDriverProfileProvider.future);
+      if (!mounted) return;
+      await ref
+          .read(driverOnlineSessionProvider.notifier)
+          .syncFromDriverProfile(
+            driver,
+            hasActiveTrip: _hasActiveTrip,
+          );
     } catch (e) {
       if (kDebugMode) {
-        print('[DriverDashboard] ✗ Error setting taxi availability: $e');
+        print('[DriverDashboard] ✗ Error syncing online session: $e');
       }
     }
   }
@@ -270,14 +139,12 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
   /// Start auto-centering map on driver location
   void _startMapCentering() {
     _mapCenteringTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
-      if (mapController != null && _lastPosition != null) {
+      final last = ref.read(driverOnlineSessionProvider).lastPosition;
+      if (mapController != null && last != null) {
         await mapController!.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(
-              target: LatLng(
-                _lastPosition!.latitude,
-                _lastPosition!.longitude,
-              ),
+              target: LatLng(last.latitude, last.longitude),
               zoom: 15.0,
             ),
           ),
@@ -502,6 +369,21 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       ),
       child: Row(
         children: [
+          IconButton(
+            onPressed: () {
+              final nav = Navigator.of(context);
+              if (nav.canPop()) {
+                nav.pop();
+              }
+            },
+            icon: const Icon(Icons.arrow_back),
+            color: RideShareColors.titleText,
+            tooltip: 'Back',
+            style: IconButton.styleFrom(
+              backgroundColor: RideShareColors.surfaceContainerLow,
+              shape: const CircleBorder(),
+            ),
+          ),
           const SizedBox(width: 4),
           const Expanded(
             child: Text(
@@ -525,8 +407,20 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
   }
 
   Future<void> _handleOnlineToggle() async {
-    if (_isOnline) {
-      _stopLocationBroadcasting();
+    final session = ref.read(driverOnlineSessionProvider);
+    if (session.isOnline) {
+      try {
+        await ref.read(driverOnlineSessionProvider.notifier).goOffline();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not go offline: $e'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red.shade600,
+          ),
+        );
+      }
       return;
     }
     try {
@@ -535,7 +429,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       final hasTaxi =
           driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
       final isVerified = _getBoolValue(driver['isVerified']);
-      if (!hasTaxi) {
+      final taxiId = _primaryTaxiId(driver);
+      if (!hasTaxi || taxiId == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text(
@@ -561,12 +456,17 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
         );
         return;
       }
-      _startLocationBroadcasting();
+      final granted =
+          await LocationPermissionHelper.ensureLocationAccess(context);
+      if (!mounted || !granted) return;
+      await ref.read(driverOnlineSessionProvider.notifier).goOnline(
+            taxiId: taxiId,
+          );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Could not go online: $e'),
+          content: Text(UserFacingError.from(e, fallback: 'Could not go online')),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red.shade600,
         ),
@@ -635,7 +535,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
             ),
             TextButton.icon(
               onPressed: () async {
-                final pos = _lastPosition ??
+                final pos = ref
+                        .read(driverOnlineSessionProvider)
+                        .lastPosition ??
                     await LocationPermissionHelper.getCurrentPositionIfGranted(
                       timeLimit: const Duration(seconds: 4),
                     );
@@ -681,6 +583,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
                   mapController = controller;
                 },
                 initialPosition: _lastPosition,
+                // Nearby taxis are a passenger-facing feature.
+                showNearbyVehicles: false,
               ),
               Positioned(
                 top: 14,
@@ -1128,13 +1032,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
             },
           ),
         ),
-        if (kDebugMode)
-          DriverQuickActionButton(
-            label: 'Dev: Toggle Availability',
-            icon: Icons.tune,
-            color: Colors.orange.shade800,
-            onPressed: () => _showQuickAvailabilityToggle(context),
-          ),
       ],
     );
   }
@@ -1224,7 +1121,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error verifying profile: $e'),
+            content: Text(UserFacingError.from(e, fallback: 'Error verifying profile')),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -1281,13 +1178,14 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       final taxiId = _primaryTaxiId(driverProfile);
 
       if (taxiId != null) {
-        // Call dev endpoint for manual toggle
-        await _driverService.setTaxiAvailability(
-          int.parse(taxiId.toString()),
-          isAvailable,
-        );
+        final session = ref.read(driverOnlineSessionProvider.notifier);
+        if (isAvailable) {
+          await session.goOnline(taxiId: taxiId);
+        } else {
+          await session.goOffline();
+        }
         if (mounted) {
-          ref.refresh(myDriverProfileProvider);
+          ref.invalidate(myDriverProfileProvider);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
@@ -1303,7 +1201,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error toggling availability: $e'),
+            content: Text(UserFacingError.from(e, fallback: 'Error toggling availability')),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
@@ -1374,7 +1272,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error loading driver data: ${e.toString()}'),
+            content: Text(UserFacingError.from(e, fallback: 'Error loading driver data')),
             backgroundColor: Colors.red.shade600,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),

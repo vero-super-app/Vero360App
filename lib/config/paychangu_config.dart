@@ -27,11 +27,32 @@ class PayChanguConfig {
 
   static Uri get paymentUri => Uri.parse('$baseUrl/payment');
 
-  static Uri verifyUri(String txRef) => Uri.parse('$baseUrl/transaction/verify/$txRef');
+  static Uri verifyUri(String txRef) =>
+      Uri.parse('$baseUrl/transaction/verify/$txRef');
 
-  /// Payout / transfer endpoint for sending money out to bank / mobile money.
-  /// Matches usage in merchant wallet payouts.
-  static Uri transferUri() => Uri.parse('$baseUrl/transfers');
+  /// Bank payout initialize (POST).
+  /// Docs: https://developer.paychangu.com/docs/bank-account
+  static Uri bankPayoutInitializeUri() =>
+      Uri.parse('$baseUrl/direct-charge/payouts/initialize');
+
+  /// Mobile money payout initialize (POST).
+  /// Docs: https://developer.paychangu.com/docs/mobile-money
+  static Uri mobileMoneyPayoutInitializeUri() =>
+      Uri.parse('$baseUrl/mobile-money/payouts/initialize');
+
+  /// List MoMo operators for payouts (GET).
+  static Uri mobileMoneyOperatorsUri() => Uri.parse('$baseUrl/mobile-money/');
+
+  /// Supported banks for payouts (GET).
+  static Uri supportedBanksUri({String currency = 'MWK'}) => Uri.parse(
+        '$baseUrl/direct-charge/payouts/supported-banks?currency=$currency',
+      );
+
+  /// Malawi MoMo operator ref_ids (from GET /mobile-money/).
+  static const String airtelMoneyOperatorRefId =
+      '20be6c20-adeb-4b5b-a7ba-0769820df4fb';
+  static const String tnmMpambaOperatorRefId =
+      '27494cb5-ba9e-437f-a114-4e7a7686bcca';
 
   // ───────────────────────────────────────────────
   //  Callback / return URLs (must be HTTP/HTTPS)
@@ -43,7 +64,8 @@ class PayChanguConfig {
   static String get callbackUrl =>
       ApiConfig.endpoint('/payments/callback').toString();
 
-  static String get returnUrl => ApiConfig.endpoint('/payments/return').toString();
+  static String get returnUrl =>
+      ApiConfig.endpoint('/payments/return').toString();
 
   // ───────────────────────────────────────────────
   //  Headers & Helpers
@@ -81,5 +103,6 @@ class PayChanguConfig {
     };
   }
 
-  static bool get isConfigured => authorizationToken.isNotEmpty && !authorizationToken.contains('XXX');
+  static bool get isConfigured =>
+      authorizationToken.isNotEmpty && !authorizationToken.contains('XXX');
 }

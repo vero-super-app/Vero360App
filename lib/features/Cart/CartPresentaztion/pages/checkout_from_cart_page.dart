@@ -9,6 +9,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -45,6 +46,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   bool _paying = false;
   DeliveryType _deliveryType = DeliveryType.speed;
 
+  late List<CartModel> _items;
+  final Map<String, TextEditingController> _qtyCtrls = {};
+
   final _addrSvc = AddressService();
   Address? _defaultAddr;
   bool _loadingAddr = true;
@@ -58,8 +62,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
   String _mwk(num v) => _mwkFmt.format(v);
 
+  String _qtyKey(CartModel it) => '${it.item}_${it.merchantId}';
+
   double get _subtotal =>
-      widget.items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
+      _items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
 
   double get _total => max(0.0, _subtotal);
 
@@ -276,6 +282,11 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   @override
   void initState() {
     super.initState();
+    _items = List<CartModel>.from(widget.items);
+    for (final it in _items) {
+      _qtyCtrls[_qtyKey(it)] =
+          TextEditingController(text: '${it.quantity}');
+    }
     _prepareCartImages();
     final mem = AddressService.peekDefaultAddress();
     if (mem != null) {
@@ -290,6 +301,94 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       if (!mounted) return;
       _precacheCartImages();
     });
+  }
+
+  @override
+  void dispose() {
+    for (final c in _qtyCtrls.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _setItemQty(int index, int value, {bool showStockToast = true}) {
+    if (index < 0 || index >= _items.length) return;
+    final it = _items[index];
+    final maxQ = it.maxOrderQty;
+    if (maxQ <= 0) {
+      ToastHelper.showCustomToast(
+        context,
+        'This item is out of stock',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    var next = value;
+    if (next < 1) next = 1;
+    if (next > maxQ) {
+      if (showStockToast) {
+        ToastHelper.showCustomToast(
+          context,
+          'Only $maxQ available',
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      next = maxQ;
+    }
+    if (it.quantity == next) {
+      final ctrl = _qtyCtrls[_qtyKey(it)];
+      if (ctrl != null && ctrl.text != '$next') {
+        ctrl.value = TextEditingValue(
+          text: '$next',
+          selection: TextSelection.collapsed(offset: '$next'.length),
+        );
+      }
+      return;
+    }
+    final updated = it.copyWith(quantity: next);
+    final key = _qtyKey(updated);
+    setState(() => _items[index] = updated);
+    final ctrl = _qtyCtrls[key] ?? _qtyCtrls[_qtyKey(it)];
+    if (ctrl != null && ctrl.text != '$next') {
+      ctrl.value = TextEditingValue(
+        text: '$next',
+        selection: TextSelection.collapsed(offset: '$next'.length),
+      );
+    }
+  }
+
+  void _onQtyTyped(int index, String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return;
+    final n = int.tryParse(digits);
+    if (n == null) return;
+    _setItemQty(index, n);
+  }
+
+  void _commitQtyTyped(int index) {
+    final it = _items[index];
+    final ctrl = _qtyCtrls[_qtyKey(it)];
+    final digits = (ctrl?.text ?? '').replaceAll(RegExp(r'\D'), '');
+    final n = int.tryParse(digits);
+    _setItemQty(index, n ?? it.quantity);
+  }
+
+  Widget _qtyBtn(IconData icon, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFFF4F6FA),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        padding: const EdgeInsets.all(8),
+        child: Icon(icon, size: 18, color: _brandNavy),
+      ),
+    );
   }
 
   /// Instant paint from memory/disk — never blocks on the API.
@@ -314,7 +413,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   }
 
   void _prepareCartImages() {
-    for (final item in widget.items) {
+    for (final item in _items) {
       final raw = item.image.trim();
       if (raw.isEmpty) continue;
       final lower = raw.toLowerCase();
@@ -529,7 +628,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   }
 
   Future<void> _startPayChanguPayment() async {
-    if (widget.items.isEmpty) {
+    if (_items.isEmpty) {
       ToastHelper.showCustomToast(
         context,
         'Your cart is empty.',
@@ -605,7 +704,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               totalAmount: _total,
               rootContext: context,
               clearCartOnSuccess: true,
-              cartItemsForMerchantCredit: widget.items,
+              cartItemsForMerchantCredit: _items,
               shippingAddress: _deliveryType == DeliveryType.pickup ? null : _defaultAddr,
               deliveryType: _deliveryType,
             ),
@@ -664,7 +763,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   @override
   Widget build(BuildContext context) {
     final canPay = !_paying &&
-        widget.items.isNotEmpty &&
+        _items.isNotEmpty &&
         (_deliveryType == DeliveryType.pickup || _defaultAddr != null);
 
     return Scaffold(
@@ -730,9 +829,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                 const SizedBox(height: 14),
                 _section(
                   title: 'Your items',
-                  subtitle: '${widget.items.length} item${widget.items.length == 1 ? '' : 's'} in this order',
+                  subtitle:
+                      '${_items.length} item${_items.length == 1 ? '' : 's'} in this order',
                   child: ListView.separated(
-                    itemCount: widget.items.length,
+                    itemCount: _items.length,
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     separatorBuilder: (_, __) => Padding(
@@ -740,7 +840,11 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                       child: Divider(height: 1, color: Colors.grey.shade200),
                     ),
                     itemBuilder: (_, i) {
-                      final it = widget.items[i];
+                      final it = _items[i];
+                      final qtyCtrl = _qtyCtrls.putIfAbsent(
+                        _qtyKey(it),
+                        () => TextEditingController(text: '${it.quantity}'),
+                      );
                       return Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
@@ -768,18 +872,93 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                                     height: 1.25,
                                   ),
                                 ),
-                                const SizedBox(height: 4),
+                                const SizedBox(height: 6),
                                 Text(
-                                  '${_mwk(it.price)}  ·  Qty ${it.quantity}',
+                                  _mwk(it.price),
                                   style: TextStyle(
                                     color: Colors.grey.shade600,
                                     fontWeight: FontWeight.w600,
                                     fontSize: 12.5,
                                   ),
                                 ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    _qtyBtn(Icons.remove_rounded, () {
+                                      _setItemQty(
+                                        i,
+                                        it.quantity - 1,
+                                        showStockToast: false,
+                                      );
+                                    }),
+                                    const SizedBox(width: 6),
+                                    SizedBox(
+                                      width: 64,
+                                      child: TextField(
+                                        controller: qtyCtrl,
+                                        keyboardType: TextInputType.number,
+                                        textAlign: TextAlign.center,
+                                        inputFormatters: [
+                                          FilteringTextInputFormatter
+                                              .digitsOnly,
+                                          LengthLimitingTextInputFormatter(5),
+                                        ],
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w900,
+                                          color: _brandNavy,
+                                        ),
+                                        decoration: InputDecoration(
+                                          isDense: true,
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 8,
+                                          ),
+                                          filled: true,
+                                          fillColor: const Color(0xFFF4F6FA),
+                                          border: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            borderSide: BorderSide(
+                                              color: Colors.black
+                                                  .withValues(alpha: 0.08),
+                                            ),
+                                          ),
+                                          enabledBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            borderSide: BorderSide(
+                                              color: Colors.black
+                                                  .withValues(alpha: 0.08),
+                                            ),
+                                          ),
+                                          focusedBorder: OutlineInputBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            borderSide: const BorderSide(
+                                              color: _brandOrange,
+                                              width: 1.4,
+                                            ),
+                                          ),
+                                        ),
+                                        onChanged: (v) => _onQtyTyped(i, v),
+                                        onEditingComplete: () =>
+                                            _commitQtyTyped(i),
+                                        onSubmitted: (_) =>
+                                            _commitQtyTyped(i),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    _qtyBtn(Icons.add_rounded, () {
+                                      _setItemQty(i, it.quantity + 1);
+                                    }),
+                                  ],
+                                ),
                               ],
                             ),
                           ),
+                          const SizedBox(width: 8),
                           Text(
                             _mwk(it.price * it.quantity),
                             style: const TextStyle(

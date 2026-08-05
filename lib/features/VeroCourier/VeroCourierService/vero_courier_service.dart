@@ -77,6 +77,99 @@ class CourierService {
     return CourierDelivery.fromJson(data);
   }
 
+  Future<CourierDelivery> getDeliveryByTrackingNumber(String trackingNumber) async {
+    final code = trackingNumber.trim();
+    final encoded = Uri.encodeComponent(code);
+    final res = await ApiClient.get('/verocourier/track/$encoded');
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    return CourierDelivery.fromJson(data);
+  }
+
+  static bool _matchesTrackingQuery(CourierDelivery delivery, String query) {
+    final q = query.trim();
+    if (q.isEmpty) return false;
+    final code = delivery.trackingCode.trim();
+    if (code.isNotEmpty && code.toUpperCase() == q.toUpperCase()) return true;
+    if (delivery.courierId.toString() == q) return true;
+    final bare = q.startsWith('#') ? q.substring(1) : q;
+    if (delivery.courierId.toString() == bare) return true;
+    return false;
+  }
+
+  /// Track by backend code (`VC506683`) or numeric delivery id.
+  Future<CourierDelivery> getMyDeliveryByTrackingOrId(
+    String query, {
+    required String senderPhone,
+    String? senderEmail,
+  }) async {
+    final raw = query.trim();
+    if (raw.isEmpty) {
+      throw const ApiException(message: 'Enter your tracking number (e.g. VC506683).');
+    }
+
+    try {
+      final mine = await getMyDeliveries();
+      for (final delivery in mine) {
+        if (_matchesTrackingQuery(delivery, raw)) return delivery;
+      }
+    } catch (_) {
+      // Fall through to public track / id lookup.
+    }
+
+    final looksLikeVc = RegExp(r'^VC\d+$', caseSensitive: false).hasMatch(raw);
+    if (looksLikeVc) {
+      try {
+        final delivery = await getDeliveryByTrackingNumber(raw);
+        if (!deliveryBelongsToSender(
+          delivery,
+          senderPhone: senderPhone,
+          senderEmail: senderEmail,
+        )) {
+          throw const ApiException(
+            message: 'Delivery not found. You can only track your own parcels.',
+          );
+        }
+        return delivery;
+      } on ApiException {
+        rethrow;
+      } catch (_) {
+        // Older backends may not expose /track — try all list match.
+      }
+    }
+
+    try {
+      final all = await getAllDeliveries();
+      for (final delivery in all) {
+        if (!_matchesTrackingQuery(delivery, raw)) continue;
+        if (!deliveryBelongsToSender(
+          delivery,
+          senderPhone: senderPhone,
+          senderEmail: senderEmail,
+        )) {
+          throw const ApiException(
+            message: 'Delivery not found. You can only track your own parcels.',
+          );
+        }
+        return delivery;
+      }
+    } catch (e) {
+      if (e is ApiException) rethrow;
+    }
+
+    final id = int.tryParse(raw.startsWith('#') ? raw.substring(1) : raw);
+    if (id != null) {
+      return getMyDeliveryById(
+        id,
+        senderPhone: senderPhone,
+        senderEmail: senderEmail,
+      );
+    }
+
+    throw const ApiException(
+      message: 'Delivery not found. Check your tracking number (e.g. VC506683).',
+    );
+  }
+
   /// Returns a delivery only if it belongs to the current sender.
   Future<CourierDelivery> getMyDeliveryById(
     int id, {

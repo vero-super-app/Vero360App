@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../MarkeplaceService/marketplace_moderation.dart';
+import 'marketplace_time.dart';
 
 /// --------------------
 /// Local marketplace model (Firestore)
@@ -48,7 +49,7 @@ class MarketplaceDetailModel {
   bool get isOutOfStock => stockQuantity != null && stockQuantity! <= 0;
 
   int get maxOrderQty {
-    if (stockQuantity == null) return 99;
+    if (stockQuantity == null) return 99999;
     return stockQuantity!.clamp(0, 99999);
   }
 
@@ -68,14 +69,8 @@ class MarketplaceDetailModel {
       }
     }
 
-    // createdAt: Timestamp → DateTime
-    DateTime? created;
-    final createdRaw = data['createdAt'];
-    if (createdRaw is Timestamp) {
-      created = createdRaw.toDate();
-    } else if (createdRaw is DateTime) {
-      created = createdRaw;
-    }
+    // createdAt: Timestamp / DateTime / ISO / epoch
+    final created = MarketplaceTime.parseCreatedAt(data['createdAt']);
 
     // price
     double price = 0;

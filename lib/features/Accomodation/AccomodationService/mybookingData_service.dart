@@ -183,6 +183,62 @@ class MyBookingService {
   /// Stays the user **booked as a guest** (`GET /vero/bookings/me`), even when they are
   /// also a merchant (merchant list uses `/bookings/merchant/me` elsewhere).
   Future<List<BookingItem>> getGuestStaysForDiscoverOverlay() async {
+    // Same paid+local merge as My bookings so Discover badges don't flash then vanish.
+    return getGuestMyBookings();
+  }
+
+  /// Guest “My bookings” — always `/bookings/me`, merges local paid cache, prunes when API syncs.
+  Future<List<BookingItem>> getGuestMyBookings() async {
+    List<BookingItem> apiRaw = [];
+    try {
+      apiRaw = await _fetchGuestBookingsUnfiltered();
+    } catch (_) {}
+
+    final local = await GuestBookingLocalCache.loadPaidStays();
+    final merged = <BookingItem>[];
+
+    for (final apiItem in apiRaw) {
+      BookingItem? localMatch;
+      for (final l in local) {
+        if (GuestBookingLocalCache.sameBooking(l, apiItem)) {
+          localMatch = l;
+          break;
+        }
+      }
+
+      // Keep stays that are paid on the server, or paid locally after checkout.
+      if (apiItem.includeInGuestMyBookings) {
+        merged.add(apiItem);
+      } else if (localMatch != null) {
+        merged.add(localMatch);
+      }
+    }
+
+    for (final item in local) {
+      if (!merged.any((b) => GuestBookingLocalCache.sameBooking(b, item))) {
+        merged.insert(0, item);
+      }
+    }
+
+    merged.sort((a, b) {
+      final da = a.bookingDate;
+      final db = b.bookingDate;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
+
+    // Only drop local cache once the API itself reports paid (not while still UNPAID).
+    final apiPaid =
+        apiRaw.where((b) => b.includeInGuestMyBookings).toList(growable: false);
+    if (apiPaid.isNotEmpty) {
+      unawaited(GuestBookingLocalCache.pruneIfPresentInApi(apiPaid));
+    }
+    return merged;
+  }
+
+  Future<List<BookingItem>> _fetchGuestBookingsUnfiltered() async {
     final u = await _uri('/bookings/me');
     final h = await _headers();
 
@@ -202,38 +258,7 @@ class MyBookingService {
     return list
         .whereType<Map<String, dynamic>>()
         .map(BookingItem.fromJson)
-        .where((b) => b.includeInGuestMyBookings)
         .toList();
-  }
-
-  /// Guest “My bookings” — always `/bookings/me`, merges local paid cache, prunes when API syncs.
-  Future<List<BookingItem>> getGuestMyBookings() async {
-    List<BookingItem> api = [];
-    try {
-      api = await getGuestStaysForDiscoverOverlay();
-    } catch (_) {}
-
-    final local = await GuestBookingLocalCache.loadPaidStays();
-    final merged = <BookingItem>[...api];
-    for (final item in local) {
-      if (!merged.any((b) => GuestBookingLocalCache.sameBooking(b, item))) {
-        merged.insert(0, item);
-      }
-    }
-
-    merged.sort((a, b) {
-      final da = a.bookingDate;
-      final db = b.bookingDate;
-      if (da == null && db == null) return 0;
-      if (da == null) return 1;
-      if (db == null) return -1;
-      return db.compareTo(da);
-    });
-
-    if (api.isNotEmpty) {
-      unawaited(GuestBookingLocalCache.pruneIfPresentInApi(api));
-    }
-    return merged;
   }
 
   /// Incoming stays for **this user as host** (`GET /vero/bookings/merchant/me`).
@@ -288,6 +313,32 @@ class MyBookingService {
     final h = await _headers();
     final body = jsonEncode({'status': bookingStatusToApi(next)});
     final r = await _retry(() => http.patch(u, headers: h, body: body));
+    if (r.statusCode < 200 || r.statusCode >= 300) _bad(r);
+  }
+
+  /// Marks stay as PAID on the server after PayChangu success.
+  Future<void> markBookingPaid({
+    String? bookingId,
+    String? bookingNumber,
+  }) async {
+    final id = (bookingId ?? '').trim();
+    final ref = (bookingNumber ?? '').trim();
+    final h = await _headers();
+
+    if (id.isNotEmpty && int.tryParse(id) != null) {
+      final u = await _uri('/bookings/$id/mark-paid');
+      final r = await _retry(() => http.patch(u, headers: h));
+      if (r.statusCode >= 200 && r.statusCode < 300) return;
+      // Fall through to booking-number path when id route is missing/old.
+    }
+
+    if (ref.isEmpty) {
+      throw Exception('Cannot mark paid: missing booking id/ref');
+    }
+
+    final encoded = Uri.encodeComponent(ref);
+    final u = await _uri('/bookings/ref/$encoded/mark-paid');
+    final r = await _retry(() => http.patch(u, headers: h));
     if (r.statusCode < 200 || r.statusCode >= 300) _bad(r);
   }
 

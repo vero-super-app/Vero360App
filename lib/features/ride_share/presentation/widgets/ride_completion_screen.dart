@@ -14,6 +14,7 @@ import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class RideCompletionScreen extends StatefulWidget {
   final Ride ride;
@@ -189,7 +190,7 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
       try {
         scaffold.showSnackBar(
           SnackBar(
-            content: Text('Payment failed: $e'),
+            content: Text(UserFacingError.from(e, fallback: 'Payment failed')),
             backgroundColor: Colors.red,
           ),
         );

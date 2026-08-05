@@ -307,15 +307,27 @@ class BookmarkedPlacesManager {
     try {
       final prefs = await SharedPreferences.getInstance();
       final jsonList = prefs.getStringList(_bookmarkedPlacesStorageKey);
-      if (jsonList == null || jsonList.isEmpty) return;
+      if (jsonList == null || jsonList.isEmpty) {
+        ref.read(bookmarkedPlacesProvider.notifier).state = <Place>[];
+        return;
+      }
       final places = <Place>[];
+      final seen = <String>{};
       for (final jsonStr in jsonList) {
         try {
-          places.add(Place.fromJson(jsonDecode(jsonStr) as Map<String, dynamic>));
+          final place =
+              Place.fromJson(jsonDecode(jsonStr) as Map<String, dynamic>);
+          if (place.id.isEmpty) continue;
+          // Prefer first Home/Work; skip duplicate ids.
+          if (seen.contains(place.id)) continue;
+          seen.add(place.id);
+          places.add(place);
         } catch (_) {}
       }
       ref.read(bookmarkedPlacesProvider.notifier).state = places;
-    } catch (_) {}
+    } catch (_) {
+      ref.read(bookmarkedPlacesProvider.notifier).state = <Place>[];
+    }
   }
 
   static Future<void> _persist(dynamic ref, List<Place> places) async {

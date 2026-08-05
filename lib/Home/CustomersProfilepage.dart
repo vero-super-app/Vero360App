@@ -18,7 +18,6 @@ import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 import 'package:vero360_app/Home/myorders.dart';
-import 'package:vero360_app/GeneralPages/CustomerQRcode.dart';
 
 /* Inline pages displayed in bottom sheets (stay on same Profile screen) */
 import 'package:vero360_app/GeneralPages/ToRefund.dart';
@@ -33,6 +32,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 
 import 'package:vero360_app/Home/homepage.dart' show LatestArrivalsSection;
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/display_name_sync.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -103,7 +103,6 @@ class _ProfilePageState extends State<ProfilePage> {
     String loadedPhone = prefs.getString('phone') ?? 'No Phone';
     final address = prefs.getString('address') ?? 'No Address';
     String loadedProfileUrl = prefs.getString('profilepicture') ?? '';
-    final localPath = await ProfilePhotoCache.peekLocalPath();
     // Fallback to Firebase Auth so name/email/phone/photo show after password change or when API hasn't synced
     final firebaseUser = FirebaseAuth.instance.currentUser;
     if (firebaseUser != null) {
@@ -131,6 +130,9 @@ class _ProfilePageState extends State<ProfilePage> {
         await prefs.setString('profilepicture', loadedProfileUrl);
       }
     }
+    final localPath = loadedProfileUrl.isEmpty
+        ? null
+        : await ProfilePhotoCache.peekLocalPath(forRemoteUrl: loadedProfileUrl);
     if (_isFirebaseInternalPhone(loadedPhone)) loadedPhone = 'No Phone';
     if (mounted) {
       setState(() {
@@ -543,6 +545,10 @@ class _ProfilePageState extends State<ProfilePage> {
         await prefs.setString('email', email);
         await prefs.setString('phone', phone);
         await prefs.setString('address', address);
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        if (uid != null && name.trim().isNotEmpty) {
+          await DisplayNameSync.syncEverywhere(uid: uid, name: name.trim());
+        }
         if (!mounted) return;
         ToastHelper.showCustomToast(context, 'Profile updated',
             isSuccess: true, errorMessage: '');
@@ -1244,83 +1250,6 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Widget _driverCenterSection() {
-    if (!_isDriver) return const SizedBox.shrink();
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-      child: Material(
-        color: _cardBg,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          onTap: _openDriverCenter,
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: _veroOrange.withValues(alpha: 0.25),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: _veroOrange.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Icon(
-                    Icons.local_taxi_rounded,
-                    color: _veroOrange,
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Driver Center',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 16,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        'Profile, vehicle, payout & verification',
-                        style: TextStyle(
-                          color: Colors.black54,
-                          fontSize: 12.5,
-                          height: 1.3,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: _veroOrange,
-                  size: 28,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _ordersQuickActions() {
     // Quick actions; use Wrap so "My VeroRide" can move to the next row
     // on smaller phones (e.g. S10) while still appearing in one row on
@@ -1344,48 +1273,49 @@ class _ProfilePageState extends State<ProfilePage> {
         spacing: 6,
         runSpacing: 6,
         children: [
-          _orderAction(
-            'My Orders',
-            Icons.book,
-            () => _openBottomSheet(const OrdersPage()),
-            badgeRoute: NotificationStore.kBadgeMyOrders,
-          ),
-          // _orderAction(
-          //   'Shipped',
-          //   Icons.local_shipping_outlined,
-          //   () => _openBottomSheet(const ToShipPage()),
-          //   badgeRoute: NotificationStore.kBadgeShipped,
-          // ),
-          _orderAction(
-            'Received',
-            Icons.move_to_inbox_outlined,
-            () => _openBottomSheet(const DeliveredOrdersPage()),
-            badgeRoute: NotificationStore.kBadgeReceived,
-          ),
-          _orderAction(
-            'Refund',
-            Icons.replay_circle_filled_outlined,
-            () => _openBottomSheet(const ToRefundPage()),
-            badgeRoute: NotificationStore.kBadgeRefund,
-          ),
-          _orderAction(
-            _isDriver ? 'Trip Earnings' : 'VeroRide',
-            Icons.local_taxi_rounded,
-            _openRideHistory,
-          ),
-          if (_isDriver)
+          if (_isDriver) ...[
+            _orderAction(
+              'Trip Earnings',
+              Icons.local_taxi_rounded,
+              _openRideHistory,
+            ),
             _orderAction(
               'Driver Center',
               Icons.manage_accounts_rounded,
               _openDriverCenter,
             ),
-           _orderAction('My Food', Icons.restaurant, () {
-            //_openBottomSheet(const MyBookingsPage());
-          }),
-           _orderAction('VeroCourier', Icons.local_shipping_rounded, () {
-            //_openBottomSheet(const MyBookingsPage());
-          }),
-      ]),
+            _orderAction(
+              'Trip History',
+              Icons.history_rounded,
+              _openRideHistory,
+            ),
+          ] else ...[
+            _orderAction(
+              'My Orders',
+              Icons.book,
+              () => _openBottomSheet(const OrdersPage()),
+              badgeRoute: NotificationStore.kBadgeMyOrders,
+            ),
+            _orderAction(
+              'Received',
+              Icons.move_to_inbox_outlined,
+              () => _openBottomSheet(const DeliveredOrdersPage()),
+              badgeRoute: NotificationStore.kBadgeReceived,
+            ),
+            _orderAction(
+              'Refund',
+              Icons.replay_circle_filled_outlined,
+              () => _openBottomSheet(const ToRefundPage()),
+              badgeRoute: NotificationStore.kBadgeRefund,
+            ),
+            _orderAction(
+              'VeroRide',
+              Icons.local_taxi_rounded,
+              _openRideHistory,
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -1495,23 +1425,31 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _otherDetailsGrid() {
     final items = <_DetailItem>[
-      _DetailItem('My QR Code', Icons.qr_code_2, () {
-        _openBottomSheet(ProfileQrPage(
-          name: name,
-          email: email,
-          phone: phone,
-          profilePictureUrl: profileUrl,
-        ));
-      }),
-      _DetailItem(
-        _isDriver ? 'Trip History' : 'Ride History',
-        Icons.history_rounded,
-        _openRideHistory,
-      ),
-      if (_isDriver)
-        _DetailItem('Driver Center', Icons.local_taxi_outlined, () async {
-          _openDriverCenter();
-        }),
+      if (_isDriver) ...[
+        _DetailItem(
+          'My Orders',
+          Icons.book,
+          () => _openBottomSheet(const OrdersPage()),
+          badgeRoute: NotificationStore.kBadgeMyOrders,
+        ),
+        _DetailItem(
+          'Received',
+          Icons.move_to_inbox_outlined,
+          () => _openBottomSheet(const DeliveredOrdersPage()),
+          badgeRoute: NotificationStore.kBadgeReceived,
+        ),
+        _DetailItem(
+          'Refund',
+          Icons.replay_circle_filled_outlined,
+          () => _openBottomSheet(const ToRefundPage()),
+          badgeRoute: NotificationStore.kBadgeRefund,
+        ),
+      ] else
+        _DetailItem(
+          'Ride History',
+          Icons.history_rounded,
+          _openRideHistory,
+        ),
       _DetailItem('My Address', Icons.location_on, () {
         _openBottomSheet(const AddressPage());
       }),
@@ -1521,7 +1459,9 @@ class _ProfilePageState extends State<ProfilePage> {
         _loadUserData();
         _fetchCurrentUser();
       }),
-      _DetailItem('Notification', Icons.notifications_none, () async{await _openBottomSheet(const NotificationsPage());}),
+      _DetailItem('Notification', Icons.notifications_none, () async {
+        await _openBottomSheet(const NotificationsPage());
+      }),
       _DetailItem('Settings', Icons.settings, () {
         Navigator.push(
           context,
@@ -1530,7 +1470,6 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         );
       }),
-      
     ];
 
     return Container(
@@ -1585,7 +1524,6 @@ class _ProfilePageState extends State<ProfilePage> {
           children: [
             _topProfileCard(),
             const SizedBox(height: 52), // space under the floating card
-            _driverCenterSection(),
             _ordersQuickActions(),
             _otherDetailsGrid(),
             // 👉 LATEST ARRIVALS (API)
@@ -1599,51 +1537,66 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _detailTile(_DetailItem item) {
     final isNotification = item.label == 'Notification';
-    return InkWell(
-      onTap: () async {
-        await item.onTap();
-      },
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        decoration: BoxDecoration(
-          color: _chipGrey,
+    return ListenableBuilder(
+      listenable: NotificationStore.instance,
+      builder: (context, _) {
+        final routeCount = item.badgeRoute == null
+            ? 0
+            : NotificationStore.instance
+                .unreadCountForBadgeRoute(item.badgeRoute!);
+        final notifCount =
+            isNotification ? NotificationStore.instance.unreadCount : 0;
+        final badgeCount = isNotification ? notifCount : routeCount;
+
+        return InkWell(
+          onTap: () async {
+            if (item.badgeRoute != null) {
+              unawaited(
+                NotificationStore.instance
+                    .markBadgeRouteAsRead(item.badgeRoute!),
+              );
+            }
+            await item.onTap();
+          },
           borderRadius: BorderRadius.circular(14),
-        ),
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (isNotification)
-              ListenableBuilder(
-                listenable: NotificationStore.instance,
-                builder: (_, __) {
-                  final count = NotificationStore.instance.unreadCount;
-                  return Badge(
-                    isLabelVisible: count > 0,
+          child: Container(
+            decoration: BoxDecoration(
+              color: _chipGrey,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (badgeCount > 0)
+                  Badge(
+                    isLabelVisible: true,
                     backgroundColor: Colors.red,
                     textColor: Colors.white,
                     alignment: const Alignment(1.2, -0.5),
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                     label: Text(
-                      count > 99 ? '99+' : '$count',
-                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                      badgeCount > 99 ? '99+' : '$badgeCount',
+                      style: const TextStyle(
+                          fontSize: 10, fontWeight: FontWeight.w600),
                     ),
                     child: Icon(item.icon, color: _veroOrange, size: 24),
-                  );
-                },
-              )
-            else
-              Icon(item.icon, color: _veroOrange, size: 24),
-            const SizedBox(height: 8),
-            Text(
-              item.label,
-              textAlign: TextAlign.center,
-              style:
-                  const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                  )
+                else
+                  Icon(item.icon, color: _veroOrange, size: 24),
+                const SizedBox(height: 8),
+                Text(
+                  item.label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 12.5, fontWeight: FontWeight.w600),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1653,9 +1606,14 @@ class _DetailItem {
   final String label;
   final IconData icon;
   final Future<void> Function() onTap;
+  final String? badgeRoute;
 
-  _DetailItem(this.label, this.icon, FutureOr<void> Function() handler)
-      : onTap = (() {
+  _DetailItem(
+    this.label,
+    this.icon,
+    FutureOr<void> Function() handler, {
+    this.badgeRoute,
+  }) : onTap = (() {
           final result = handler();
           if (result is Future) {
             return result;

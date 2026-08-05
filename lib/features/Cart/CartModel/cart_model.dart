@@ -109,7 +109,7 @@ class CartModel {
   }
 
   int get maxOrderQty =>
-      availableStock == null ? 99 : availableStock!.clamp(0, 99999);
+      availableStock == null ? 99999 : availableStock!.clamp(0, 99999);
 
   double get total => price * quantity;
   

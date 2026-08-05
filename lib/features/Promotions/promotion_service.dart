@@ -65,6 +65,7 @@ class PromoModel {
   final String? description;
   final double? price;
   final String? image;
+  final List<String> gallery;
   final bool isActive;
   final DateTime? freeTrialEndsAt;
   final DateTime? subscribedAt;
@@ -84,6 +85,7 @@ class PromoModel {
     this.description,
     this.price,
     this.image,
+    this.gallery = const [],
     this.freeTrialEndsAt,
     this.subscribedAt,
     this.startsAt,
@@ -153,12 +155,33 @@ class PromoModel {
   static String toApiIso(DateTime dt) => dt.toUtc().toIso8601String();
 
   String? get resolvedImageUrl {
-    final raw = image?.trim();
-    if (raw == null || raw.isEmpty) return null;
-    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    final urls = resolvedImageUrls;
+    return urls.isEmpty ? null : urls.first;
+  }
+
+  List<String> get resolvedImageUrls {
+    final out = <String>[];
+    void add(String? raw) {
+      final u = _resolveUrl(raw);
+      if (u != null && !out.contains(u)) out.add(u);
+    }
+    add(image);
+    for (final g in gallery) {
+      add(g);
+    }
+    return out;
+  }
+
+  static String? _resolveUrl(String? raw) {
+    if (raw == null) return null;
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
     final root = ApiConfig.prod.replaceAll(RegExp(r'/+$'), '');
-    if (raw.startsWith('/')) return '$root$raw';
-    return '$root/$raw';
+    if (trimmed.startsWith('/')) return '$root$trimmed';
+    return '$root/$trimmed';
   }
 
   factory PromoModel.fromJson(Map<String, dynamic> j) {
@@ -216,6 +239,7 @@ class PromoModel {
         description: j['description']?.toString(),
         price: _parsePrice(j),
         image: j['image']?.toString(),
+        gallery: _parseGallery(j['gallery']),
         isActive: j['isActive'] != false,
         freeTrialEndsAt: _parseDate(
           j['freeTrialEndsAt'] ?? j['freeTrialEndAt'],
@@ -275,6 +299,30 @@ class PromoModel {
     return double.tryParse(cleaned);
   }
 
+  static List<String> _parseGallery(dynamic raw) {
+    if (raw == null) return const [];
+    if (raw is List) {
+      return raw
+          .map((e) => e.toString().trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+    }
+    if (raw is String) {
+      final t = raw.trim();
+      if (t.isEmpty) return const [];
+      try {
+        final decoded = jsonDecode(t);
+        if (decoded is List) {
+          return decoded
+              .map((e) => e.toString().trim())
+              .where((s) => s.isNotEmpty)
+              .toList();
+        }
+      } catch (_) {}
+    }
+    return const [];
+  }
+
   Map<String, dynamic> toCreateJson() {
     final map = <String, dynamic>{
       'title': title.trim(),
@@ -282,8 +330,15 @@ class PromoModel {
     };
     final desc = description?.trim();
     if (desc != null && desc.isNotEmpty) map['description'] = desc;
-    final img = image?.trim();
-    if (img != null && img.isNotEmpty) map['image'] = img;
+    final urls = <String>[];
+    final cover = image?.trim();
+    if (cover != null && cover.isNotEmpty) urls.add(cover);
+    for (final g in gallery) {
+      final u = g.trim();
+      if (u.isNotEmpty && !urls.contains(u)) urls.add(u);
+    }
+    if (urls.isNotEmpty) map['image'] = urls.first;
+    if (urls.length > 1) map['gallery'] = urls.sublist(1);
     if (startsAt != null) map['startDate'] = toApiIso(startsAt!);
     if (endsAt != null) map['endDate'] = toApiIso(endsAt!);
     return map;

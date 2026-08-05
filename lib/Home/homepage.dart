@@ -36,11 +36,16 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketP
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/latest_Services.dart';
 
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/Home/story_section.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
+import 'package:vero360_app/features/DigitalServices/digital_product.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_services_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -108,50 +113,6 @@ const Map<String, String> kQuickServiceGuideNotes = {
   'accommodation':    'Find hotels and places to stay.',
   'customer_service': 'Chat with Vero Assist in English or Chichewa.',
 };
-
-class DigitalProduct {
-  final String key;
-  final String name;
-  final String subtitle;
-  final String price;
-  final IconData? icon;
-  final String? logoAsset;
-  const DigitalProduct({
-    required this.key,
-    required this.name,
-    required this.subtitle,
-    required this.price,
-    this.icon,
-    this.logoAsset,
-  });
-}
-
-const List<DigitalProduct> kDigitalProducts = [
-  DigitalProduct(
-    key: 'spotify', name: 'Spotify Premium',
-    subtitle: '1-month subscription', price: 'MWK 8,000',
-    logoAsset: 'assets/brands/spotify.jpg',
-    icon: Icons.music_note_rounded,
-  ),
-  DigitalProduct(
-    key: 'apple_music', name: 'Apple Music',
-    subtitle: '1-month subscription', price: 'MWK 8,000',
-    logoAsset: 'assets/brands/apple_music.png',
-    icon: Icons.music_note_rounded,
-  ),
-  DigitalProduct(
-    key: 'netflix', name: 'Netflix',
-    subtitle: '1-month subscription', price: 'MWK 15,000',
-    logoAsset: 'assets/brands/netflix.png',
-    icon: Icons.movie_creation_outlined,
-  ),
-  DigitalProduct(
-    key: 'chatgpt_plus', name: 'ChatGPT Plus',
-    subtitle: '1-month subscription', price: 'MWK 35,000',
-    logoAsset: 'assets/brands/chatgpt.png',
-    icon: Icons.chat_bubble_outline_rounded,
-  ),
-];
 
 /* ═══════════════════════════════════════════════════
    HOMEPAGE
@@ -259,7 +220,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     _resolveGreetingName();
     _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
       final uid = user?.uid;
-      if (uid != _greetingUid) {
+      if (uid != _greetingUid || user == null) {
         _resolveGreetingName(force: true);
       }
     });
@@ -285,6 +246,19 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   Future<void> _resolveGreetingName({bool force = false}) async {
     final authUser = FirebaseAuth.instance.currentUser;
     final uid = authUser?.uid;
+    final loggedIn = await AuthHandler.isAuthenticated();
+
+    // Guest / after logout: never keep a stale personal greeting.
+    if (!loggedIn) {
+      if (!mounted) return;
+      setState(() {
+        _greetingUid = null;
+        _resolvedGreetingName = null;
+        _greetingResolved = true;
+      });
+      return;
+    }
+
     if (!force &&
         uid != null &&
         uid == _greetingUid &&
@@ -480,7 +454,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
-                    child: DigitalServicesSection(onBuy: _openDigitalDetail),
+                    child: DigitalServicesSection(
+                      onBuy: _openDigitalAmount,
+                      onSeeAll: _openDigitalServices,
+                    ),
                   ),
                 ),
 
@@ -600,28 +577,110 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     return t;
   }
 
-  Future<void> _openDigitalDetail(DigitalProduct p) async {
+  Future<void> _openDigitalAmount(DigitalProduct p) async {
+    // Spotify / Apple Music / Netflix / ChatGPT: fixed MWK → checkout directly.
+    if (!p.usesAmountPicker) {
+      await _openDigitalCheckout(
+        product: p,
+        selectedUsd: 0,
+        payMethod: DigitalPayMethod.paychangu,
+      );
+      return;
+    }
+
     String? initialName;
     String? initialPhone;
-    String  initialEmail = widget.email;
+    String initialEmail = widget.email;
     try {
       final prefs = await SharedPreferences.getInstance();
-      initialName  = prefs.getString('name');
-      initialPhone = _merchantProfilePhoneOrNull(prefs.getString('merchant_profile_phone'));
-      if (initialEmail.trim().isEmpty) initialEmail = prefs.getString('email') ?? '';
+      initialName = prefs.getString('name');
+      initialPhone =
+          _merchantProfilePhoneOrNull(prefs.getString('merchant_profile_phone'));
+      if (initialEmail.trim().isEmpty) {
+        initialEmail = prefs.getString('email') ?? '';
+      }
       final suggestedName = _displayName();
       if ((initialName == null || initialName.isEmpty) &&
-          suggestedName != 'there' && suggestedName != '...') {
+          suggestedName != 'there' &&
+          suggestedName != '...') {
+        initialName = suggestedName;
+      }
+    } catch (_) {}
+    if (!mounted) return;
+
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => DigitalProductAmountPage(
+        product: p,
+        onContinue: ({
+          required product,
+          required selectedUsd,
+          required payMethod,
+        }) {
+          Navigator.of(context).pushReplacement(MaterialPageRoute(
+            builder: (_) => DigitalProductDetailPage(
+              product: product,
+              selectedUsd: selectedUsd,
+              payMethod: payMethod,
+              initialEmail: initialEmail,
+              initialPhone: initialPhone,
+              initialName: initialName,
+            ),
+          ));
+        },
+      ),
+    ));
+  }
+
+  Future<void> _openDigitalCheckout({
+    required DigitalProduct product,
+    required double selectedUsd,
+    required DigitalPayMethod payMethod,
+  }) async {
+    String? initialName;
+    String? initialPhone;
+    String initialEmail = widget.email;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      initialName = prefs.getString('name');
+      initialPhone =
+          _merchantProfilePhoneOrNull(prefs.getString('merchant_profile_phone'));
+      if (initialEmail.trim().isEmpty) {
+        initialEmail = prefs.getString('email') ?? '';
+      }
+      final suggestedName = _displayName();
+      if ((initialName == null || initialName.isEmpty) &&
+          suggestedName != 'there' &&
+          suggestedName != '...') {
         initialName = suggestedName;
       }
     } catch (_) {}
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => DigitalProductDetailPage(
-        product:      p,
+        product: product,
+        selectedUsd: selectedUsd,
+        payMethod: payMethod,
         initialEmail: initialEmail,
         initialPhone: initialPhone,
-        initialName:  initialName,
+        initialName: initialName,
+      ),
+    ));
+  }
+
+  void _openDigitalServices() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => DigitalServicesPage(
+        onContinueCheckout: ({
+          required product,
+          required selectedUsd,
+          required payMethod,
+        }) {
+          _openDigitalCheckout(
+            product: product,
+            selectedUsd: selectedUsd,
+            payMethod: payMethod,
+          );
+        },
       ),
     ));
   }
@@ -1962,7 +2021,12 @@ class _PromoBanner extends StatelessWidget {
 ═══════════════════════════════════════════════════ */
 class DigitalServicesSection extends StatelessWidget {
   final void Function(DigitalProduct) onBuy;
-  const DigitalServicesSection({super.key, required this.onBuy});
+  final VoidCallback onSeeAll;
+  const DigitalServicesSection({
+    super.key,
+    required this.onBuy,
+    required this.onSeeAll,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1973,28 +2037,36 @@ class DigitalServicesSection extends StatelessWidget {
           title:    'Digital Services',
           subtitle: 'Subscriptions & top-ups',
           action: TextButton(
-            onPressed: () => ScaffoldMessenger.of(context)
-                .showSnackBar(const SnackBar(content: Text('More digital services coming soon'))),
+            onPressed: onSeeAll,
             child: const Text('See all',
               style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800, fontSize: 13),
             ),
           ),
         ),
         const SizedBox(height: 12),
-        GridView.builder(
-          shrinkWrap: true,
-          physics:    const NeverScrollableScrollPhysics(),
-          padding:    EdgeInsets.zero,
-          itemCount:  kDigitalProducts.length,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount:   4,
-            crossAxisSpacing: 10,
-            mainAxisSpacing:  8,
-            childAspectRatio: 0.85,
-          ),
-          itemBuilder: (_, i) {
-            final p = kDigitalProducts[i];
-            return _DigitalTile(p: p, onTap: () => onBuy(p));
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final narrow = constraints.maxWidth < 340;
+            return GridView.builder(
+              shrinkWrap: true,
+              physics:    const NeverScrollableScrollPhysics(),
+              padding:    EdgeInsets.zero,
+              itemCount:  kDigitalProducts.length,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount:   4,
+                crossAxisSpacing: narrow ? 6 : 10,
+                mainAxisSpacing:  8,
+                childAspectRatio: narrow ? 0.68 : 0.78,
+              ),
+              itemBuilder: (_, i) {
+                final p = kDigitalProducts[i];
+                return _DigitalTile(
+                  p: p,
+                  compact: narrow,
+                  onTap: () => onBuy(p),
+                );
+              },
+            );
           },
         ),
       ],
@@ -2005,7 +2077,12 @@ class DigitalServicesSection extends StatelessWidget {
 class _DigitalTile extends StatefulWidget {
   final DigitalProduct p;
   final VoidCallback   onTap;
-  const _DigitalTile({required this.p, required this.onTap});
+  final bool compact;
+  const _DigitalTile({
+    required this.p,
+    required this.onTap,
+    this.compact = false,
+  });
 
   @override
   State<_DigitalTile> createState() => _DigitalTileState();
@@ -2028,6 +2105,7 @@ class _DigitalTileState extends State<_DigitalTile> with SingleTickerProviderSta
 
   @override
   Widget build(BuildContext context) {
+    final size = widget.compact ? 40.0 : 48.0;
     return GestureDetector(
       onTapDown:   (_) => _press.forward(),
       onTapUp:     (_) { _press.reverse(); widget.onTap(); },
@@ -2035,39 +2113,63 @@ class _DigitalTileState extends State<_DigitalTile> with SingleTickerProviderSta
       child: AnimatedBuilder(
         animation: _press,
         builder: (_, child) => Transform.scale(scale: 1.0 - _press.value * 0.08, child: child),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 52, height: 52,
-              decoration: BoxDecoration(
-                color:  AppColors.brandOrangePale,
-                shape:  BoxShape.circle,
-                border: Border.all(color: AppColors.brandOrangeSoft, width: 1.5),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return FittedBox(
+              fit: BoxFit.scaleDown,
+              child: SizedBox(
+                width: constraints.maxWidth,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: size,
+                      height: size,
+                      decoration: BoxDecoration(
+                        color:  AppColors.brandOrangePale,
+                        shape:  BoxShape.circle,
+                        border: Border.all(color: AppColors.brandOrangeSoft, width: 1.5),
+                      ),
+                      child: ClipOval(
+                        child: widget.p.logoAsset != null
+                            ? Image.asset(widget.p.logoAsset!, fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    Icon(widget.p.icon ?? Icons.shopping_bag,
+                                        color: AppColors.brandOrange, size: 20))
+                            : Icon(widget.p.icon ?? Icons.shopping_bag,
+                                size: 20, color: AppColors.brandOrange),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(widget.p.name,
+                      textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: widget.compact ? 9 : 10,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.title,
+                        height: 1.2,
+                      ),
+                    ),
+                    if (widget.p.fixedMwkPrice != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        widget.p.priceLabel,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: widget.compact ? 8 : 9,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.brandOrange,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
-              child: ClipOval(
-                child: widget.p.logoAsset != null
-                    ? Image.asset(widget.p.logoAsset!, fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            Icon(widget.p.icon ?? Icons.shopping_bag,
-                                color: AppColors.brandOrange, size: 22))
-                    : Icon(widget.p.icon ?? Icons.shopping_bag,
-                        size: 22, color: AppColors.brandOrange),
-              ),
-            ),
-            const SizedBox(height: 5),
-            Flexible(
-              child: Text(widget.p.name,
-                textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
-                    color: AppColors.title, height: 1.3),
-              ),
-            ),
-            Text(widget.p.price,
-              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800,
-                  color: AppColors.brandOrange),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -2290,7 +2392,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       if (!mounted) return;
       ToastHelper.showCustomToast(
           sheetCtx, 'Failed to add to cart — please log in',
-          isSuccess: false, errorMessage: e.toString());
+          isSuccess: false, errorMessage: UserFacingError.from(e));
     }
   }
 
@@ -3400,13 +3502,17 @@ class _SectionHeader extends StatelessWidget {
 ═══════════════════════════════════════════════════ */
 class DigitalProductDetailPage extends StatefulWidget {
   final DigitalProduct product;
-  final String?        initialEmail;
-  final String?        initialPhone;
-  final String?        initialName;
+  final double selectedUsd;
+  final DigitalPayMethod payMethod;
+  final String? initialEmail;
+  final String? initialPhone;
+  final String? initialName;
 
   const DigitalProductDetailPage({
     super.key,
     required this.product,
+    required this.selectedUsd,
+    this.payMethod = DigitalPayMethod.paychangu,
     this.initialEmail,
     this.initialPhone,
     this.initialName,
@@ -3422,6 +3528,11 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   late final TextEditingController _phoneCtrl;
   late final TextEditingController _emailCtrl;
   bool _submitting = false;
+
+  bool get _isFixedPrice => widget.product.fixedMwkPrice != null;
+
+  double get _mwkAmount =>
+      widget.product.fixedMwkPrice ?? usdToMwk(widget.selectedUsd);
 
   @override
   void initState() {
@@ -3444,11 +3555,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
     return RegExp(r'^0[89]\d{8}$').hasMatch(digits);
   }
 
-  static double _parsePrice(String priceStr) {
-    final digits = priceStr.replaceAll(RegExp(r'[^\d.]'), '');
-    return double.tryParse(digits) ?? 0;
-  }
-
   static String _normalizePhone(String raw) {
     final digits = raw.replaceAll(RegExp(r'\D'), '');
     if (digits.length >= 9 &&
@@ -3463,6 +3569,15 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   }
 
   Future<void> _payNow() async {
+    if (widget.payMethod == DigitalPayMethod.visa) {
+      ToastHelper.showCustomToast(
+        context,
+        'Visa payments coming soon. Use mobile money or bank for now.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
     setState(() => _submitting = true);
     try {
@@ -3472,7 +3587,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
       final parts     = name.split(' ');
       final firstName = parts.isNotEmpty ? parts.first : 'Customer';
       final lastName  = parts.length > 1  ? parts.sublist(1).join(' ') : '';
-      final amount    = _parsePrice(widget.product.price);
+      final amount    = _mwkAmount;
       if (amount <= 0) {
         ToastHelper.showCustomToast(context, 'Invalid price.', isSuccess: false, errorMessage: '');
         return;
@@ -3482,7 +3597,10 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
         throw Exception('Cannot connect to payment service. Check your internet connection.');
       }
       final txRef       = 'vero-digital-${DateTime.now().millisecondsSinceEpoch}';
-      final description = 'Digital: ${widget.product.name} • ${widget.product.subtitle}';
+      final description = _isFixedPrice
+          ? 'Digital: ${widget.product.name} • ${formatMwk(amount)}'
+          : 'Digital: ${widget.product.name} • ${formatUsd(widget.selectedUsd)} '
+              '(${formatMwk(amount)})';
       final response    = await http.post(
         PayChanguConfig.paymentUri,
         headers: PayChanguConfig.authHeaders,
@@ -3494,7 +3612,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
           'phone_number':   phone,
           'currency':       'MWK',
           'amount':         amount.round().toString(),
-          'payment_methods':['card', 'mobile_money', 'bank'],
+          // PayChangu: mobile money + bank now; Visa/card later
+          'payment_methods':['mobile_money', 'bank'],
           'callback_url':   PayChanguConfig.callbackUrl,
           'return_url':     PayChanguConfig.returnUrl,
           'customization':  {'title': 'Vero 360 Payment', 'description': description},
@@ -3530,8 +3649,11 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
       ToastHelper.showCustomToast(context, 'Connection timeout. Please try again.',
           isSuccess: false, errorMessage: 'Request timed out');
     } catch (e) {
-      ToastHelper.showCustomToast(context, 'Payment error: $e',
-          isSuccess: false, errorMessage: 'Payment failed');
+      ToastHelper.showCustomToast(
+          context,
+          UserFacingError.from(e, fallback: 'Payment failed. Please try again.'),
+          isSuccess: false,
+          errorMessage: 'Payment failed');
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -3593,12 +3715,51 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                           Text(p.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis,
                             style: const TextStyle(color: AppColors.body, fontWeight: FontWeight.w600)),
                           const SizedBox(height: 6),
-                          Text(p.price,
-                            style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w800)),
+                          Text(
+                            _isFixedPrice
+                                ? formatMwk(_mwkAmount)
+                                : '${formatUsd(widget.selectedUsd)}  ·  ${formatMwk(_mwkAmount)}',
+                            style: const TextStyle(
+                              color: AppColors.brandOrange,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          if (!_isFixedPrice) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              'Rate: 1 USD = ${kUsdToMwkRate.toStringAsFixed(0)} MWK',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.body,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
                   ],
+                ),
+              ),
+
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.brandOrangePale,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.brandOrangeSoft),
+                ),
+                child: Text(
+                  widget.payMethod == DigitalPayMethod.paychangu
+                      ? 'Paying with Mobile money & bank (MWK)'
+                      : 'Visa / card · Coming soon',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                    color: AppColors.title,
+                  ),
                 ),
               ),
 
@@ -3656,7 +3817,9 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                       ? const SizedBox(width: 16, height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.lock_outline_rounded),
-                  label: Text(_submitting ? 'Processing...' : 'Pay Now'),
+                  label: Text(_submitting
+                      ? 'Processing...'
+                      : 'Pay ${formatMwk(_mwkAmount)}'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.brandOrange,
                     foregroundColor: Colors.white,

@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:share_plus/share_plus.dart';
@@ -22,6 +22,7 @@ import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
@@ -511,33 +512,8 @@ class _DetailsPageState extends State<DetailsPage> {
     return r == whole ? r.toStringAsFixed(0) : r.toStringAsFixed(1);
   }
 
-  String _formatTimeAgo(DateTime time) {
-    final now = DateTime.now();
-    final diff = now.difference(time);
-
-    if (diff.inSeconds < 60) return 'Just now';
-    if (diff.inMinutes < 60) {
-      final m = diff.inMinutes;
-      return '$m ${m == 1 ? 'min' : 'mins'} ago';
-    }
-    if (diff.inHours < 24) {
-      final h = diff.inHours;
-      return '$h ${h == 1 ? 'hr' : 'hrs'} ago';
-    }
-    if (diff.inDays < 7) {
-      final d = diff.inDays;
-      return '$d ${d == 1 ? 'day' : 'days'} ago';
-    }
-
-    final weeks = (diff.inDays / 7).floor();
-    if (weeks < 4) return '$weeks ${weeks == 1 ? 'week' : 'weeks'} ago';
-
-    final months = (diff.inDays / 30).floor();
-    if (months < 12) return '$months ${months == 1 ? 'month' : 'months'} ago';
-
-    final years = (diff.inDays / 365).floor();
-    return '$years ${years == 1 ? 'year' : 'years'} ago';
-  }
+  String _formatTimeAgo(DateTime time) =>
+      MarketplaceTime.formatTimeAgo(time, verbose: true);
 
   Widget _ratingStars(double? rating, {bool showScore = true}) {
     final rr = ((rating ?? 0).clamp(0, 5)).toDouble();
@@ -1107,14 +1083,10 @@ class _DetailsPageState extends State<DetailsPage> {
   void _openMerchantProducts(
       {required String merchantId,
       required String merchantName}) {
-    Navigator.push(
+    openMerchantOrDriverProfile(
       context,
-      MaterialPageRoute(
-        builder: (_) => MerchantProductsPage(
-          merchantId: merchantId,
-          merchantName: merchantName,
-        ),
-      ),
+      profileId: merchantId,
+      displayName: merchantName,
     );
   }
 

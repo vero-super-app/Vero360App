@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'package:vero360_app/GeneralModels/order_list_helpers.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/GernalServices/buyer_phone_resolver.dart';
@@ -22,6 +23,7 @@ import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/order_message_buyer_button.dart';
 
 /// Simple enum for how the merchant will ship the order.
 enum ShippingMethod { cts, speed, ankolo, smart, pickup }
@@ -91,6 +93,8 @@ class _ToShipPageState extends State<ToShipPage> {
   final _money = NumberFormat.currency(symbol: 'MK ', decimalDigits: 0);
   final _date = DateFormat('dd MMM yyyy, HH:mm');
   final Color _brand = const Color(0xFFFF8A00);
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   late Future<List<OrderItem>> _ordersFuture;
   final Map<String, ShippingMethod> _shippingForOrder = {};
@@ -121,6 +125,7 @@ class _ToShipPageState extends State<ToShipPage> {
 
   Future<List<OrderItem>> _loadOrdersWithMerchantPhones() async {
     final list = await _svc.getMyOrders();
+    OrderListHelpers.sortNewestFirst(list);
     final merchantUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     if (merchantUid.isNotEmpty) {
       unawaited(OrderEscrowService.processDueAutoReleasesForMerchant(
@@ -128,20 +133,24 @@ class _ToShipPageState extends State<ToShipPage> {
         merchantOrders: list,
       ));
     }
-    try {
-      final buyerPhones = await BuyerPhoneResolver.resolveForOrders(list);
-      final phones = await MerchantPhoneResolver.resolveForOrders(list);
-      if (mounted) {
+    // Don't block first paint on phone lookups.
+    unawaited(() async {
+      try {
+        final results = await Future.wait([
+          BuyerPhoneResolver.resolveForOrders(list),
+          MerchantPhoneResolver.resolveForOrders(list),
+        ]);
+        if (!mounted) return;
         setState(() {
           _buyerPhoneByOrder
             ..clear()
-            ..addAll(buyerPhones);
+            ..addAll(results[0]);
           _merchantPhoneByOrder
             ..clear()
-            ..addAll(phones);
+            ..addAll(results[1]);
         });
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }());
     return list;
   }
 
@@ -159,6 +168,7 @@ class _ToShipPageState extends State<ToShipPage> {
 
   @override
   void dispose() {
+    _searchController.dispose();
     for (final c in _trackingCtrl.values) {
       c.dispose();
     }
@@ -866,18 +876,10 @@ class _ToShipPageState extends State<ToShipPage> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 72,
-                  height: 72,
-                  child: o.itemImage.isEmpty
-                      ? Container(
-                          color: const Color(0xFFF1F2F6),
-                          child: const Icon(Icons.image_outlined, color: Colors.grey),
-                        )
-                      : Image.network(o.itemImage, fit: BoxFit.cover),
-                ),
+              OrderThumbWithBuyerChat(
+                order: o,
+                size: 72,
+                brand: _brand,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1156,70 +1158,104 @@ class _ToShipPageState extends State<ToShipPage> {
         title: const Text('Send parcels'),
         centerTitle: true,
       ),
-      body: FutureBuilder<List<OrderItem>>(
-        future: _ordersFuture,
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Text(
-                  'Could not load orders: ${snap.error}',
-                  textAlign: TextAlign.center,
-                ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: TextField(
+              controller: _searchController,
+              onChanged: (v) => setState(() => _searchQuery = v),
+              textInputAction: TextInputAction.search,
+              decoration: OrderListHelpers.searchDecoration(
+                hint: 'Search by order number…',
+                hasQuery: _searchQuery.isNotEmpty,
+                onClear: () {
+                  _searchController.clear();
+                  setState(() => _searchQuery = '');
+                },
               ),
-            );
-          }
-
-          final all = snap.data ?? const <OrderItem>[];
-
-          // Parcels to send: only orders where current user is the seller,
-          // and the order is confirmed + paid.
-          final toShip = all.where((o) {
-            if (!_isSellerForOrder(o)) return false;
-            if (o.status == OrderStatus.delivered ||
-                o.status == OrderStatus.cancelled) {
-              return false;
-            }
-            return o.status == OrderStatus.confirmed &&
-                o.paymentStatus == PaymentStatus.paid;
-          }).toList();
-
-          return RefreshIndicator(
-            onRefresh: () async {
-              setState(() {
-                _ordersFuture = _loadOrdersWithMerchantPhones();
-              });
-              await _ordersFuture;
-            },
-            child: toShip.isEmpty
-                ? ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                    children: [
-                      _shippingInstructionsCard(),
-                      const SizedBox(height: 48),
-                      const Center(
-                        child: Text(
-                          'No confirmed, paid orders ready to ship yet',
-                          style: TextStyle(color: Colors.redAccent),
-                          textAlign: TextAlign.center,
-                        ),
+            ),
+          ),
+          Expanded(
+            child: FutureBuilder<List<OrderItem>>(
+              future: _ordersFuture,
+              builder: (context, snap) {
+                if (snap.connectionState != ConnectionState.done) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: Color(0xFFFF8A00)),
+                  );
+                }
+                if (snap.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Text(
+                        'Could not load orders: ${snap.error}',
+                        textAlign: TextAlign.center,
                       ),
-                    ],
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                    itemCount: toShip.length + 1,
-                    itemBuilder: (_, i) {
-                      if (i == 0) return _shippingInstructionsCard();
-                      return _orderCard(toShip[i - 1]);
-                    },
-                  ),
-          );
-        },
+                    ),
+                  );
+                }
+
+                final all = snap.data ?? const <OrderItem>[];
+
+                // Parcels to send: only orders where current user is the seller,
+                // and the order is confirmed + paid.
+                final toShip = all.where((o) {
+                  if (!_isSellerForOrder(o)) return false;
+                  if (o.status == OrderStatus.delivered ||
+                      o.status == OrderStatus.cancelled) {
+                    return false;
+                  }
+                  if (!(o.status == OrderStatus.confirmed &&
+                      o.paymentStatus == PaymentStatus.paid)) {
+                    return false;
+                  }
+                  return OrderListHelpers.matchesSearch(o, _searchQuery);
+                }).toList();
+                OrderListHelpers.sortNewestFirst(toShip);
+
+                return RefreshIndicator(
+                  color: _brand,
+                  onRefresh: () async {
+                    setState(() {
+                      _ordersFuture = _loadOrdersWithMerchantPhones();
+                    });
+                    await _ordersFuture;
+                  },
+                  child: toShip.isEmpty
+                      ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                          children: [
+                            _shippingInstructionsCard(),
+                            const SizedBox(height: 48),
+                            Center(
+                              child: Text(
+                                all.isEmpty || _searchQuery.trim().isEmpty
+                                    ? 'No confirmed, paid orders ready to ship yet'
+                                    : 'No orders match your search',
+                                style:
+                                    const TextStyle(color: Colors.redAccent),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ],
+                        )
+                      : ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                          itemCount: toShip.length + 1,
+                          itemBuilder: (_, i) {
+                            if (i == 0) return _shippingInstructionsCard();
+                            return _orderCard(toShip[i - 1]);
+                          },
+                        ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

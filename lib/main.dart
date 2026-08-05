@@ -56,6 +56,7 @@ import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 final GlobalKey<NavigatorState> navKey = appNavKey;
@@ -191,7 +192,7 @@ Future<bool> _ensureFirebaseHealthy({
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Cap decoded-image cache — Redmi 8A / 2GB devices OOM or SIGSEGV under Impeller.
+  // Low-RAM phones (e.g. Redmi 8A): cap decoded image memory so grids don't OOM.
   PaintingBinding.instance.imageCache.maximumSize = 60;
   PaintingBinding.instance.imageCache.maximumSizeBytes = 40 << 20; // 40 MB
 
@@ -225,11 +226,12 @@ class AppBootstrap extends StatefulWidget {
 class _AppBootstrapState extends State<AppBootstrap> {
   late Future<_BootState> _bootFuture;
   String _bootTitle = 'Starting…';
-  String _bootMessage = 'Preparing and optimizing your app.';
+  String _bootMessage = 'Opening Vero360…';
   bool _showLauncher = true;
-  bool _bootFailed = false;
+  bool _firebaseNudgeInFlight = false;
 
-  static const _minLauncher = Duration(milliseconds: 350);
+  /// Brand flash — keep short so home arrives in ~1s.
+  static const _minLauncher = Duration(milliseconds: 450);
   static const _splashBg = Color(0xFFFFFBF6);
 
   @override
@@ -254,60 +256,118 @@ class _AppBootstrapState extends State<AppBootstrap> {
   Future<_BootState> _boot() async {
     final started = DateTime.now();
 
-    // Parallel warm-ups while Firebase self-heals.
-    final prefsWarm = SharedPreferences.getInstance();
-    unawaited(Future(() async {
+    try {
+      final prefsWarm = SharedPreferences.getInstance();
+      unawaited(Future(() async {
+        try {
+          await loadDriverStatusFromPrefs();
+        } catch (_) {}
+      }));
+
+      // Cart / Auth / Firestore need the DEFAULT app. Init is local (fast) —
+      // await it here so MyApp never mounts without Firebase. No failure UI.
+      await _ensureFirebaseHealthy(quiet: true);
+      if (Firebase.apps.isEmpty) {
+        try {
+          await Firebase.initializeApp(options: _kFirebaseOptions);
+        } catch (_) {}
+      }
+
+      if (mounted) {
+        setState(() {
+          _bootTitle = 'Almost ready…';
+          _bootMessage = 'Loading your home…';
+        });
+      }
+
+      // Never block homepage on API / messaging.
+      unawaited(Future(() async {
+        try {
+          await ApiConfig.useProd();
+        } catch (_) {}
+      }));
+      unawaited(Future(() async {
+        try {
+          if (Firebase.apps.isEmpty) return;
+          if (FirebaseAuth.instance.currentUser != null) {
+            await BackendMessagingCache.initialize();
+            await BackendMessagingSocket.connect();
+          }
+        } catch (_) {}
+      }));
+
+      // Resolve shell from cache so MyApp can open home immediately.
+      String initialRole = 'customer';
+      String email = '';
+      var onboardingDone = false;
+      Widget? initialShell;
       try {
-        await loadDriverStatusFromPrefs();
-      } catch (_) {}
-    }));
+        final prefs =
+            await prefsWarm.timeout(const Duration(milliseconds: 200));
+        onboardingDone = prefs.getBool('onboarding_completed_v1') ?? false;
+        email = prefs.getString('email') ?? '';
+        final role =
+            (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
+                .toLowerCase()
+                .trim();
+        if (role == 'merchant' || role == 'driver') {
+          initialRole = role;
+        }
+        if (onboardingDone) {
+          if (initialRole == 'merchant') {
+            unawaited(hydrateMerchantServiceFromFirestore(prefs));
+            initialShell = merchantDashboardFromPrefs(email, prefs);
+          } else {
+            initialShell = Bottomnavbar(email: email);
+          }
+        }
+      } catch (_) {
+        onboardingDone = true;
+        initialShell = Bottomnavbar(email: email);
+      }
 
-    final firebaseOk = await _ensureFirebaseHealthy();
+      final elapsed = DateTime.now().difference(started);
+      if (elapsed < _minLauncher) {
+        await Future<void>.delayed(_minLauncher - elapsed);
+      }
 
-    if (!firebaseOk) {
-      throw Exception('Firebase could not start after self-heal retries');
-    }
+      // Last-resort: still no app → keep trying briefly on splash (no red screen).
+      if (Firebase.apps.isEmpty) {
+        for (var i = 0; i < 3 && Firebase.apps.isEmpty; i++) {
+          try {
+            await Firebase.initializeApp(options: _kFirebaseOptions);
+          } catch (_) {
+            await Future<void>.delayed(Duration(milliseconds: 120 * (i + 1)));
+          }
+        }
+      }
 
-    if (mounted) {
-      setState(() {
-        _bootTitle = 'Almost ready…';
-        _bootMessage = 'Opening Vero360…';
-      });
-    }
-
-    // Never block homepage on API / messaging / prefs.
-    unawaited(Future(() async {
+      return _BootState(
+        clearedOldCache: false,
+        onboardingDone: onboardingDone,
+        initialRole: initialRole,
+        email: email,
+        initialShell: initialShell,
+      );
+    } catch (_) {
+      // Still try to stand up Firebase before MyApp (avoids red [core/no-app]).
       try {
-        await ApiConfig.useProd();
-      } catch (_) {}
-    }));
-    unawaited(prefsWarm);
-    unawaited(Future(() async {
-      try {
-        if (FirebaseAuth.instance.currentUser != null) {
-          await BackendMessagingCache.initialize();
-          await BackendMessagingSocket.connect();
+        if (Firebase.apps.isEmpty) {
+          await Firebase.initializeApp(options: _kFirebaseOptions);
         }
       } catch (_) {}
-    }));
-
-    // Tiny minimum so native → Flutter handoff isn't a flash.
-    final elapsed = DateTime.now().difference(started);
-    if (elapsed < _minLauncher) {
-      await Future<void>.delayed(_minLauncher - elapsed);
+      final elapsed = DateTime.now().difference(started);
+      if (elapsed < _minLauncher) {
+        await Future<void>.delayed(_minLauncher - elapsed);
+      }
+      return const _BootState(
+        clearedOldCache: false,
+        onboardingDone: true,
+        initialRole: 'customer',
+        email: '',
+        initialShell: null,
+      );
     }
-
-    return const _BootState(firebaseOk: true, clearedOldCache: false);
-  }
-
-  void _retryBoot() {
-    setState(() {
-      _showLauncher = true;
-      _bootFailed = false;
-      _bootTitle = 'Starting…';
-      _bootMessage = 'Preparing and optimizing your app.';
-      _bootFuture = _boot();
-    });
   }
 
   @override
@@ -316,15 +376,15 @@ class _AppBootstrapState extends State<AppBootstrap> {
       future: _bootFuture,
       builder: (context, snap) {
         final booting = snap.connectionState != ConnectionState.done;
-        final failed =
-            !booting && (snap.hasError || snap.data?.firebaseOk != true);
-        final ready = !booting && !failed;
-
-        if (failed && !_bootFailed) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _bootFailed = true);
-          });
-        }
+        final boot = snap.data ??
+            const _BootState(
+              clearedOldCache: false,
+              onboardingDone: true,
+              initialShell: null,
+            );
+        // Do not open MyApp until Firebase DEFAULT exists (CartService needs it).
+        final firebaseReady = Firebase.apps.isNotEmpty;
+        final ready = !booting && firebaseReady;
 
         if (ready && _showLauncher) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -332,8 +392,19 @@ class _AppBootstrapState extends State<AppBootstrap> {
           });
         }
 
-        // Hold launcher until boot is done (and min time elapsed inside _boot).
-        if (_showLauncher || booting || failed) {
+        // Keep branded splash — never a Firebase failure / retry screen.
+        if (_showLauncher || !ready) {
+          // If boot finished but Firebase still missing, nudge init once more.
+          if (!booting && !firebaseReady && !_firebaseNudgeInFlight) {
+            _firebaseNudgeInFlight = true;
+            unawaited(() async {
+              try {
+                await Firebase.initializeApp(options: _kFirebaseOptions);
+              } catch (_) {}
+              _firebaseNudgeInFlight = false;
+              if (mounted) setState(() {});
+            }());
+          }
           return MaterialApp(
             debugShowCheckedModeBanner: false,
             color: _splashBg,
@@ -343,27 +414,38 @@ class _AppBootstrapState extends State<AppBootstrap> {
               colorSchemeSeed: const Color(0xFFFF6B00),
             ),
             home: VeroLaunchSplash(
-              title: failed ? 'Could not start' : _bootTitle,
-              message: failed
-                  ? 'We could not finish repairing Firebase. Check your connection and retry.'
-                  : _bootMessage,
-              showSpinner: !failed,
-              actionLabel: failed ? 'Retry' : null,
-              onAction: failed ? _retryBoot : null,
+              title: _bootTitle,
+              message: _bootMessage,
+              showSpinner: true,
             ),
           );
         }
 
-        return const MyApp();
+        return MyApp(
+          initialRole: boot.initialRole,
+          initialEmail: boot.email,
+          onboardingDoneHint: boot.onboardingDone,
+          initialShell: boot.initialShell ??
+              Bottomnavbar(email: boot.email),
+        );
       },
     );
   }
 }
 
 class _BootState {
-  final bool firebaseOk;
   final bool clearedOldCache;
-  const _BootState({required this.firebaseOk, required this.clearedOldCache});
+  final bool onboardingDone;
+  final String initialRole;
+  final String email;
+  final Widget? initialShell;
+  const _BootState({
+    required this.clearedOldCache,
+    this.onboardingDone = false,
+    this.initialRole = 'customer',
+    this.email = '',
+    this.initialShell,
+  });
 }
 
 /// Back-compat alias used by older call sites / mental model.
@@ -397,7 +479,22 @@ class _DriverStatusBootstrapState
 
 /// ----------------- ✅ MAIN APP (your original logic preserved) -----------------
 class MyApp extends StatefulWidget {
-  const MyApp({super.key});
+  const MyApp({
+    super.key,
+    this.initialRole = 'customer',
+    this.initialEmail = '',
+    this.onboardingDoneHint = false,
+    this.initialShell,
+  });
+
+  /// Cached role from bootstrap (`customer` / `merchant` / `driver`).
+  final String initialRole;
+  final String initialEmail;
+  /// When true, [OnboardingGate] skips its prefs round-trip + splash.
+  final bool onboardingDoneHint;
+  /// Pre-built home shell so we never show a second branded loader.
+  final Widget? initialShell;
+
   @override
   State<MyApp> createState() => _MyAppState();
 }
@@ -420,6 +517,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    // Bootstrap already mounted the right shell — skip remount flash.
+    if (widget.onboardingDoneHint && widget.initialShell != null) {
+      _currentShell = widget.initialRole == 'merchant'
+          ? 'merchant'
+          : (widget.initialRole == 'driver' ? 'driver' : 'customer');
+    }
     _onOnboardingGateCompletedHook = () {
       if (!mounted) return;
       SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -430,9 +533,17 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _initDeepLinks();
 
     SchedulerBinding.instance.addPostFrameCallback((_) async {
-      await _fastRedirectFromCache();
+      // Only push when bootstrap could not resolve a shell (e.g. first onboarding).
+      if (_currentShell.isEmpty) {
+        await _fastRedirectFromCache();
+      }
       unawaited(_verifyRoleFromServerInBg());
-      unawaited(OrderEscrowService.processDueAutoReleasesForSignedInUser());
+      unawaited(() async {
+        try {
+          if (Firebase.apps.isEmpty) return;
+          await OrderEscrowService.processDueAutoReleasesForSignedInUser();
+        } catch (_) {}
+      }());
     });
   }
 
@@ -472,6 +583,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _lastLifecycleState = state;
 
     if (state == AppLifecycleState.paused) {
+      // Free decoded bitmaps while backgrounded — big win on 2–3GB phones.
+      PaintingBinding.instance.imageCache.clear();
       // System PIN/biometric UI also pauses the activity. Do not treat that as
       // "user left the app" or the next resume will lock again after unlock.
       if (!_biometricAuthInProgress && !_showBiometricLock) {
@@ -486,6 +599,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       unawaited(OrderEscrowService.processDueAutoReleasesForSignedInUser());
       unawaited(EngagementNotificationService.instance.maybeSendDailyDigest());
     }
+  }
+
+  @override
+  void didHaveMemoryPressure() {
+    // OS asked us to free RAM — drop image cache immediately.
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
   }
 
   Future<void> _checkBiometricLockOnResume() async {
@@ -668,15 +788,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             return content;
           },
 
-          // Splash until cached-role redirect replaces this route. Do NOT mount
-          // Bottomnavbar here — merchants would flash customer Home first.
+          // Bootstrap resolves role → home. Fallback cream only if shell unknown.
           home: OnboardingGate(
+            onboardingDoneHint: widget.onboardingDoneHint,
             onCompleted: () => _onOnboardingGateCompletedHook?.call(),
-            child: const VeroLaunchSplash(
-              title: 'Opening…',
-              message: 'Loading your home…',
-              showSpinner: true,
-            ),
+            child: widget.initialShell ??
+                const ColoredBox(color: Color(0xFFFFFBF6)),
           ),
 
           // ✅ restrict named routes too
@@ -693,12 +810,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               case '/marketplace':
                 return MaterialPageRoute(
                   builder: (_) => OnboardingGate(
+                    onboardingDoneHint: true,
                     onCompleted: () => _onOnboardingGateCompletedHook?.call(),
-                    child: const VeroLaunchSplash(
-                      title: 'Opening…',
-                      message: 'Loading your home…',
-                      showSpinner: true,
-                    ),
+                    child: Bottomnavbar(email: widget.initialEmail),
                   ),
                 );
 
@@ -976,6 +1090,9 @@ class AuthFlow {
     await p.remove('role');
     await p.remove('has_driver_profile');
     resetDriverSessionCache();
+    try {
+      await SessionLocalCache.clearOnLogout();
+    } catch (_) {}
 
     try {
       await FirebaseAuth.instance.signOut();

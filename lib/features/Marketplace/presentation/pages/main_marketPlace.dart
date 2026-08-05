@@ -30,20 +30,23 @@ import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as core;
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
-import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -291,7 +294,7 @@ class MarketplaceDetailModel {
 
   /// Max units a buyer can order (Taobao-style stock cap).
   int get maxOrderQty {
-    if (stockQuantity == null) return 99;
+    if (stockQuantity == null) return 99999;
     return stockQuantity!.clamp(0, 99999);
   }
 
@@ -307,10 +310,7 @@ class MarketplaceDetailModel {
     if (rawImage.isNotEmpty && looksLikeBase64(rawImage)) {
       try { final bp = rawImage.contains(',') ? rawImage.split(',').last : rawImage; bytes = base64Decode(bp); } catch (_) { bytes = null; }
     }
-    DateTime? created;
-    final createdRaw = data['createdAt'];
-    if (createdRaw is Timestamp) created = createdRaw.toDate();
-    else if (createdRaw is DateTime) created = createdRaw;
+    DateTime? created = MarketplaceTime.parseCreatedAt(data['createdAt']);
     double price = 0;
     final p = data['price'];
     if (p is num) price = p.toDouble();
@@ -463,6 +463,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
   Timer? _debounce;
   Timer? _suggestionTimer;
+  Timer? _timeAgoTick;
   String _lastQuery = '';
   bool _loading = false;
   bool _photoMode = false;
@@ -683,6 +684,11 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     _startSuggestionTimer();
     _refreshSearchSuggestionsFromProfile();
     _startItemsListener();
+    // Keep "posted Xm ago / Xmo ago / Xy ago" labels live while browsing.
+    _timeAgoTick?.cancel();
+    _timeAgoTick = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _startItemsListener() {
@@ -706,6 +712,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   @override
   void dispose() {
     _itemsSub?.cancel();
+    _timeAgoTick?.cancel();
     _debounce?.cancel(); _suggestionTimer?.cancel();
     _searchCtrl.removeListener(_onSearchChanged);
     _searchCtrl.dispose(); _askQuestionCtrl.dispose();
@@ -796,18 +803,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     } catch (_) { return null; }
   }
 
-  String _formatTimeAgo(DateTime time) {
-    final diff = DateTime.now().difference(time);
-    if (diff.inSeconds < 60) return 'Just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-    final weeks = (diff.inDays / 7).floor();
-    if (weeks < 4) return '${weeks}w ago';
-    final months = (diff.inDays / 30).floor();
-    if (months < 12) return '${months}mo ago';
-    return '${(diff.inDays / 365).floor()}y ago';
-  }
+  String _formatTimeAgo(DateTime time) => MarketplaceTime.formatTimeAgo(time);
 
   int _stablePositiveIdFromString(String s) {
     int hash = 0;
@@ -827,10 +823,19 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
     String? category,
   }) async {
+    final blocked = await BlockedMerchantService.blockedIds();
     final all = _excludeFood(
       docs
           .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
           .where((item) => item.isActive)
+          .where(
+            (item) => !BlockedMerchantService.matchesBlocked(
+              blocked,
+              merchantId: item.merchantId,
+              sellerUserId: item.sellerUserId,
+              serviceProviderId: item.serviceProviderId,
+            ),
+          )
           .toList(),
     );
     if (category == null || category.isEmpty) {
@@ -954,7 +959,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   }
 
   MarketplaceDetailModel _fromCoreMarketplace(core.MarketplaceDetailModel c) {
-    return MarketplaceDetailModel(id: c.id.toString(), sqlItemId: c.id, name: c.name, category: (c.category ?? '').toLowerCase(), price: c.price, image: c.image, imageBytes: null, description: c.description.isEmpty ? null : c.description, location: c.location.isEmpty ? null : c.location, isActive: true, createdAt: null, gallery: c.gallery, sellerBusinessName: c.sellerBusinessName, sellerOpeningHours: c.sellerOpeningHours, sellerStatus: c.sellerStatus, sellerBusinessDescription: c.sellerBusinessDescription, sellerRating: c.sellerRating, sellerLogoUrl: c.sellerLogoUrl, serviceProviderId: c.serviceProviderId, sellerUserId: c.sellerUserId, merchantId: c.merchantId, merchantName: c.merchantName, serviceType: c.serviceType ?? 'marketplace', stockQuantity: c.stockQuantity);
+    return MarketplaceDetailModel(id: c.id.toString(), sqlItemId: c.id, name: c.name, category: (c.category ?? '').toLowerCase(), price: c.price, image: c.image, imageBytes: null, description: c.description.isEmpty ? null : c.description, location: c.location.isEmpty ? null : c.location, isActive: true, createdAt: c.createdAt, gallery: c.gallery, sellerBusinessName: c.sellerBusinessName, sellerOpeningHours: c.sellerOpeningHours, sellerStatus: c.sellerStatus, sellerBusinessDescription: c.sellerBusinessDescription, sellerRating: c.sellerRating, sellerLogoUrl: c.sellerLogoUrl, serviceProviderId: c.serviceProviderId, sellerUserId: c.sellerUserId, merchantId: c.merchantId, merchantName: c.merchantName, serviceType: c.serviceType ?? 'marketplace', stockQuantity: c.stockQuantity);
   }
 
   Future<List<MarketplaceDetailModel>> _searchByPhoto(dynamic imageSource) async {
@@ -967,13 +972,34 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       final service = MarketplaceService();
       final firebaseResults = await service.searchByPhotoBytes(bytes, filename: filename);
       final converted = _excludeFood(firebaseResults.map(_fromCoreMarketplace).toList());
-      if (mounted && converted.isNotEmpty) { _setSuggestionsFromItems(converted); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Found ${converted.length} product${converted.length == 1 ? '' : 's'} from photo.'), backgroundColor: _kSuccess, behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)))); }
-      else if (mounted && converted.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('No similar products found. Showing all.'), backgroundColor: _kAmber, behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)))); return _loadAll(category: null); }
+      if (!mounted) return converted;
+      if (converted.isNotEmpty) {
+        _setSuggestionsFromItems(converted);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Found ${converted.length} similar product${converted.length == 1 ? '' : 's'}'),
+          backgroundColor: _kSuccess,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Item not available — no matching listing for this photo'),
+          backgroundColor: _kAmber,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ));
+      }
       return converted;
     } catch (e, st) {
       if (kDebugMode) debugPrint('Photo search error: $e\n$st');
-      if (mounted) { final msg = e.toString().replaceAll(RegExp(r'^Exception:?\s*'), '').split('\n').first; final err = e.toString().toLowerCase(); final isNetErr = err.contains('socket') || err.contains('network') || err.contains('failed host') || err.contains('connection') || err.contains('timeout') || err.contains('unavailable') || err.contains('offline'); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(isNetErr ? 'Cannot reach Firebase now.' : 'Photo search failed: ${msg.length > 60 ? '${msg.substring(0, 60)}...' : msg}'), backgroundColor: Colors.red, duration: const Duration(seconds: 5))); }
-      return _loadAll(category: null);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(UserFacingError.from(e, fallback: 'Photo search failed')),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ));
+      }
+      return const <MarketplaceDetailModel>[];
     } finally { if (mounted) setState(() => _loading = false); }
   }
 
@@ -1150,7 +1176,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         dismissDialog();
         ToastHelper.showCustomToast(
           context,
-          'Failed to add item: $e',
+          UserFacingError.from(e, fallback: 'Failed to add item'),
           isSuccess: false,
           errorMessage: 'Add to cart failed',
         );
@@ -1179,16 +1205,12 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     } catch (e) {
       if (kDebugMode) debugPrint('[_openChatWithMerchant] Error: $e');
       if (mounted) {
-        final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
-        final message = raw.contains('own listing') ||
-                raw.contains('cannot chat with yourself😂😂')
-            ? raw
-            : 'Error opening chat';
+        final message = UserFacingError.from(e, fallback: 'Error opening chat');
         ToastHelper.showCustomToast(
           context,
           message,
           isSuccess: false,
-          errorMessage: raw,
+          errorMessage: message,
         );
       }
     }
@@ -1696,7 +1718,11 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                                   label: 'More from $displayMerchantName',
                                   onTap: () {
                                     Navigator.pop(sheetCtx);
-                                    Navigator.push(context, MaterialPageRoute(builder: (_) => MerchantProductsPage(merchantId: item.merchantId!.trim(), merchantName: displayMerchantName)));
+                                    openMerchantOrDriverProfile(
+                                      context,
+                                      profileId: item.merchantId!.trim(),
+                                      displayName: displayMerchantName,
+                                    );
                                   },
                                 )),
                               const SizedBox(height: 16),
@@ -1891,7 +1917,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                     if (snapshot.hasError) {
                       return ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
                         SizedBox(height: MediaQuery.of(context).size.height * 0.2),
-                        Center(child: Padding(padding: const EdgeInsets.all(24), child: Text('Error: ${snapshot.error}', textAlign: TextAlign.center, style: const TextStyle(color: _kInkLight)))),
+                        Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(UserFacingError.from(snapshot.error), textAlign: TextAlign.center, style: const TextStyle(color: _kInkLight)))),
                       ]);
                     }
                     final items = snapshot.data ?? [];
@@ -1901,9 +1927,19 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                         Center(child: Column(children: [
                           Container(width: 80, height: 80, decoration: BoxDecoration(color: _kAmberLight, shape: BoxShape.circle), child: const Icon(Icons.search_off_rounded, size: 40, color: _kAmber)),
                           const SizedBox(height: 16),
-                          Text(_photoMode ? 'No products found for this photo.' : 'No products found.', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _kInkMid), textAlign: TextAlign.center),
+                          Text(
+                            _photoMode ? 'Item not available' : 'No products found.',
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _kInkMid),
+                            textAlign: TextAlign.center,
+                          ),
                           const SizedBox(height: 8),
-                          const Text('Try a different search or category', style: TextStyle(fontSize: 13, color: _kInkLight)),
+                          Text(
+                            _photoMode
+                                ? 'We scanned the photo but found no matching listing'
+                                : 'Try a different search or category',
+                            style: const TextStyle(fontSize: 13, color: _kInkLight),
+                            textAlign: TextAlign.center,
+                          ),
                         ])),
                       ]);
                     }

@@ -284,6 +284,29 @@ class RideHistoryTripCard extends StatelessWidget {
     super.key,
   });
 
+  String _shortPlace(String? raw, String fallback) {
+    final t = (raw ?? '').trim();
+    if (t.isEmpty) return fallback;
+    final first = t.split(',').first.trim();
+    return first.isEmpty ? fallback : first;
+  }
+
+  String _plainStatus(Ride ride, {required bool pending}) {
+    if (ride.isCancelled) return 'Cancelled';
+    if (pending) return 'Pay now';
+    if (ride.isCompleted) return 'Completed';
+    final s = ride.status.replaceAll('_', ' ').toLowerCase();
+    if (s.isEmpty) return 'Trip';
+    return s[0].toUpperCase() + s.substring(1);
+  }
+
+  Color _statusColor(Ride ride, {required bool pending}) {
+    if (ride.isCancelled) return const Color(0xFFC62828);
+    if (pending) return RideShareColors.primaryDeep;
+    if (ride.isCompleted) return const Color(0xFF2E7D32);
+    return RideShareColors.onSurfaceVariant;
+  }
+
   @override
   Widget build(BuildContext context) {
     final summary = ride.tripSummary;
@@ -295,11 +318,245 @@ class RideHistoryTripCard extends StatelessWidget {
     final when = ride.endTime ?? ride.createdAt;
     final pending = ridePaymentPending(ride);
     final counterpart = rideCounterpartName(ride, isDriver: isDriver);
-    final vehicle = rideVehicleLabel(ride);
     final pickup = summary?.pickup ?? ride.pickupAddress ?? 'Pickup';
     final dropoff = summary?.dropoff ?? ride.dropoffAddress ?? 'Dropoff';
-    final highlightUnpaid = !isDriver && pending;
 
+    if (!isDriver) {
+      return _passengerCard(
+        amount: amount,
+        when: when,
+        pending: pending,
+        counterpart: counterpart,
+        pickup: pickup,
+        dropoff: dropoff,
+      );
+    }
+
+    return _driverCard(
+      amount: amount,
+      when: when,
+      pending: pending,
+      counterpart: counterpart,
+      pickup: pickup,
+      dropoff: dropoff,
+    );
+  }
+
+  /// Clear, unique passenger card: From → To, when, fare, one status word.
+  Widget _passengerCard({
+    required num amount,
+    required DateTime when,
+    required bool pending,
+    required String counterpart,
+    required String pickup,
+    required String dropoff,
+  }) {
+    final from = _shortPlace(pickup, 'Pickup');
+    final to = _shortPlace(dropoff, 'Drop-off');
+    final status = _plainStatus(ride, pending: pending);
+    final statusColor = _statusColor(ride, pending: pending);
+
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: pending
+                  ? RideShareColors.primary.withValues(alpha: 0.45)
+                  : const Color(0xFFE8E4E0),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _placeRow(
+                          color: RideShareColors.primary,
+                          label: 'From',
+                          place: from,
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 9),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Container(
+                              width: 2,
+                              height: 14,
+                              color: const Color(0xFFE0DBD6),
+                            ),
+                          ),
+                        ),
+                        _placeRow(
+                          color: RideShareColors.primaryDeep,
+                          label: 'To',
+                          place: to,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    formatRideMoney(amount, money),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: RideShareColors.titleText,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Icon(
+                    Icons.schedule_rounded,
+                    size: 15,
+                    color: Colors.grey.shade600,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '${formatRideWhen(when)} · $counterpart',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade700,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      status,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (pending) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: ElevatedButton(
+                    onPressed: onPrimaryAction ?? onTap,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: RideShareColors.primary,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: const Text(
+                      'Pay for this ride',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _placeRow({
+    required Color color,
+    required String label,
+    required String place,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Container(
+              width: 6,
+              height: 6,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              Text(
+                place,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: RideShareColors.titleText,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _driverCard({
+    required num amount,
+    required DateTime when,
+    required bool pending,
+    required String counterpart,
+    required String pickup,
+    required String dropoff,
+  }) {
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(18),
@@ -310,11 +567,7 @@ class RideHistoryTripCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: highlightUnpaid
-                  ? RideShareColors.primary.withValues(alpha: 0.35)
-                  : RideShareColors.outlineVariant,
-            ),
+            border: Border.all(color: RideShareColors.outlineVariant),
             boxShadow: [
               BoxShadow(
                 color: RideShareColors.primaryContainer.withValues(alpha: 0.05),
@@ -323,256 +576,82 @@ class RideHistoryTripCard extends StatelessWidget {
               ),
             ],
           ),
-          foregroundDecoration: highlightUnpaid
-              ? BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  border: const Border(
-                    left: BorderSide(
-                      color: RideShareColors.primary,
-                      width: 4,
-                    ),
-                  ),
-                )
-              : null,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (isDriver)
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor:
-                          RideShareColors.primary.withValues(alpha: 0.12),
-                      child: Text(
-                        counterpart.isNotEmpty
-                            ? counterpart[0].toUpperCase()
-                            : '?',
-                        style: const TextStyle(
-                          color: RideShareColors.primaryDeep,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 18,
-                        ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 24,
+                    backgroundColor:
+                        RideShareColors.primary.withValues(alpha: 0.12),
+                    child: Text(
+                      counterpart.isNotEmpty
+                          ? counterpart[0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                        color: RideShareColors.primaryDeep,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            counterpart,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 17,
-                              color: RideShareColors.titleText,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          Text(
-                            formatRideWhen(when),
-                            style: const TextStyle(
-                              color: RideShareColors.onSurfaceVariant,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          formatRideMoney(amount, money),
-                          style: const TextStyle(
-                            color: RideShareColors.titleText,
-                            fontSize: 17,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        if (ride.isCompleted && pending)
-                          const RideHistoryPaymentChip(pending: true)
-                        else
-                          RideHistoryStatusChip(
-                            status: ride.status,
-                            compact: true,
-                          ),
-                      ],
-                    ),
-                  ],
-                )
-              else
-                Column(
-                  children: [
-                    Row(
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (highlightUnpaid)
-                                const Text(
-                                  'ATTENTION REQUIRED',
-                                  style: TextStyle(
-                                    color: RideShareColors.primary,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 0.6,
-                                  ),
-                                ),
-                              Text(
-                                formatRideWhen(when),
-                                style: TextStyle(
-                                  color: highlightUnpaid
-                                      ? RideShareColors.titleText
-                                      : RideShareColors.onSurfaceVariant,
-                                  fontSize: highlightUnpaid ? 17 : 13,
-                                  fontWeight: highlightUnpaid
-                                      ? FontWeight.w800
-                                      : FontWeight.w500,
-                                ),
-                              ),
-                              if (!highlightUnpaid) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  vehicle,
-                                  style: const TextStyle(
-                                    color: RideShareColors.titleText,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ],
+                        Text(
+                          counterpart,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 17,
+                            color: RideShareColors.titleText,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                         Text(
-                          formatRideMoney(amount, money),
+                          formatRideWhen(when),
                           style: const TextStyle(
-                            color: RideShareColors.titleText,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
+                            color: RideShareColors.onSurfaceVariant,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: RideShareColors.surfaceContainerLow,
-                        borderRadius: BorderRadius.circular(14),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        formatRideMoney(amount, money),
+                        style: const TextStyle(
+                          color: RideShareColors.titleText,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            radius: highlightUnpaid ? 22 : 18,
-                            backgroundColor: RideShareColors.primary
-                                .withValues(alpha: 0.15),
-                            child: Text(
-                              counterpart.isNotEmpty
-                                  ? counterpart[0].toUpperCase()
-                                  : '?',
-                              style: const TextStyle(
-                                color: RideShareColors.primaryDeep,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  counterpart,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    color: RideShareColors.titleText,
-                                  ),
-                                ),
-                                if (highlightUnpaid)
-                                  Text(
-                                    vehicle,
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: RideShareColors.onSurfaceVariant,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          if (ride.isCompleted && pending)
-                            const RideHistoryPaymentChip(pending: true)
-                          else
-                            RideHistoryStatusChip(
-                              status: ride.status,
-                              compact: true,
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                      const SizedBox(height: 4),
+                      if (ride.isCompleted && pending)
+                        const RideHistoryPaymentChip(pending: true)
+                      else
+                        RideHistoryStatusChip(
+                          status: ride.status,
+                          compact: true,
+                        ),
+                    ],
+                  ),
+                ],
+              ),
               const SizedBox(height: 14),
               RideHistoryRouteTimeline(
                 pickup: pickup,
                 dropoff: dropoff,
-                compact: !highlightUnpaid,
+                compact: true,
               ),
-              if (!isDriver) ...[
-                const SizedBox(height: 14),
-                if (highlightUnpaid)
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton.icon(
-                      onPressed: onPrimaryAction ?? onTap,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: RideShareColors.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(28),
-                        ),
-                        elevation: 0,
-                      ),
-                      icon: const Icon(Icons.payments_outlined),
-                      label: const Text(
-                        'Pay Now',
-                        style: TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  )
-                else
-                  SizedBox(
-                    width: double.infinity,
-                    height: 46,
-                    child: OutlinedButton.icon(
-                      onPressed: onPrimaryAction ?? onTap,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: RideShareColors.primaryContainer,
-                        side: const BorderSide(
-                          color: RideShareColors.primaryContainer,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(28),
-                        ),
-                      ),
-                      icon: const Icon(Icons.receipt_long, size: 18),
-                      label: const Text(
-                        'View Receipt',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ),
-              ],
             ],
           ),
         ),

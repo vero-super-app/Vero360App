@@ -10,6 +10,7 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_wi
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_in_ride_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_messaging_sheet.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class DriverRideExecutionScreen extends ConsumerStatefulWidget {
   final int rideId;
@@ -110,7 +111,7 @@ class _DriverRideExecutionScreenState
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+        SnackBar(content: Text(UserFacingError.from(e))),
       );
     }
   }
@@ -146,7 +147,7 @@ class _DriverRideExecutionScreenState
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Failed to cancel: $e'),
+              content: Text(UserFacingError.from(e, fallback: 'Failed to cancel')),
               backgroundColor: Colors.red,
             ),
           );
@@ -424,8 +425,13 @@ class _DriverRideExecutionScreenState
                   RideSwipeToComplete(
                     label: 'Swipe to Complete Ride',
                     enabled: !state.isLoading,
-                    onCompleted: () {
-                      ref.read(rideLifecycleProvider.notifier).completeRide();
+                    onCompleted: () async {
+                      await ref
+                          .read(rideLifecycleProvider.notifier)
+                          .completeRide();
+                      final next = ref.read(rideLifecycleProvider);
+                      return next is RideCompleted &&
+                          next.ride.id == widget.rideId;
                     },
                   ),
                 ],
@@ -445,7 +451,7 @@ class _DriverRideExecutionScreenState
 }
 
 /// Summary screen shown to the driver after completing a ride.
-class _DriverRideCompletionScreen extends StatefulWidget {
+class _DriverRideCompletionScreen extends ConsumerStatefulWidget {
   final Ride ride;
   final VoidCallback onDone;
 
@@ -455,15 +461,16 @@ class _DriverRideCompletionScreen extends StatefulWidget {
   });
 
   @override
-  State<_DriverRideCompletionScreen> createState() =>
+  ConsumerState<_DriverRideCompletionScreen> createState() =>
       _DriverRideCompletionScreenState();
 }
 
 class _DriverRideCompletionScreenState
-    extends State<_DriverRideCompletionScreen>
+    extends ConsumerState<_DriverRideCompletionScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _animController;
   late Animation<double> _scaleAnimation;
+  bool _finishing = false;
 
   @override
   void initState() {
@@ -484,127 +491,175 @@ class _DriverRideCompletionScreenState
     super.dispose();
   }
 
+  void _handleDone() {
+    if (_finishing) return;
+    setState(() => _finishing = true);
+
+    // Capture navigator before callbacks that may dispose this route.
+    final navigator = Navigator.of(context, rootNavigator: true);
+    try {
+      widget.onDone();
+    } catch (_) {}
+    try {
+      ref.read(rideLifecycleProvider.notifier).reset();
+    } catch (_) {}
+
+    if (navigator.canPop()) {
+      navigator.popUntil((route) => route.isFirst);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final r = widget.ride;
     final totalFare = r.actualFare ?? r.estimatedFare;
     final distance = r.actualDistance ?? r.estimatedDistance;
-
     return Scaffold(
       backgroundColor: RideShareColors.background,
-      body: ScaleTransition(
-        scale: _scaleAnimation,
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                const SizedBox(height: 60),
-                Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: const Color(0xFF4CAF50).withValues(alpha: 0.1),
-                    border: Border.all(
-                      color: const Color(0xFF4CAF50),
-                      width: 3,
-                    ),
-                  ),
-                  child: const Icon(
-                    Icons.check_rounded,
-                    size: 60,
-                    color: Color(0xFF4CAF50),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Ride Complete!',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: RideShareColors.titleText,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Great job on this trip',
-                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 40),
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: RideShareColors.outlineVariant),
-                  ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: ScaleTransition(
+                scale: _scaleAnimation,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
                   child: Column(
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Trip Summary',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
+                      const SizedBox(height: 24),
+                      Container(
+                        width: 100,
+                        height: 100,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color:
+                              const Color(0xFF4CAF50).withValues(alpha: 0.1),
+                          border: Border.all(
+                            color: const Color(0xFF4CAF50),
+                            width: 3,
                           ),
-                          if (r.startTime != null && r.endTime != null)
-                            Text(
-                              '${r.endTime!.difference(r.startTime!).inMinutes} mins',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                        ],
+                        ),
+                        child: const Icon(
+                          Icons.check_rounded,
+                          size: 60,
+                          color: Color(0xFF4CAF50),
+                        ),
                       ),
-                      const SizedBox(height: 16),
-                      _summaryRow(
-                          'Distance', '${distance.toStringAsFixed(1)} km'),
-                      const SizedBox(height: 12),
-                      _summaryRow('Pickup', r.pickupAddress ?? 'Unknown'),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Ride Complete!',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: RideShareColors.titleText,
+                        ),
+                      ),
                       const SizedBox(height: 8),
-                      _summaryRow('Dropoff', r.dropoffAddress ?? 'Unknown'),
-                      const Divider(height: 28),
-                      _summaryRow(
-                        'Earnings',
-                        'MK${totalFare.toStringAsFixed(0)}',
-                        emphasize: true,
+                      Text(
+                        'Great job on this trip',
+                        style:
+                            TextStyle(fontSize: 16, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 40),
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                              color: RideShareColors.outlineVariant),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Trip Summary',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                if (r.startTime != null && r.endTime != null)
+                                  Text(
+                                    '${r.endTime!.difference(r.startTime!).inMinutes} mins',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            _summaryRow(
+                              'Distance',
+                              '${distance.toStringAsFixed(1)} km',
+                            ),
+                            const SizedBox(height: 12),
+                            _summaryRow(
+                              'Pickup',
+                              r.pickupAddress ?? 'Unknown',
+                            ),
+                            const SizedBox(height: 8),
+                            _summaryRow(
+                              'Dropoff',
+                              r.dropoffAddress ?? 'Unknown',
+                            ),
+                            const Divider(height: 28),
+                            _summaryRow(
+                              'Earnings',
+                              'MK${totalFare.toStringAsFixed(0)}',
+                              emphasize: true,
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 32),
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: RideShareColors.primary,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    onPressed: () {
-                      widget.onDone();
-                      Navigator.of(context).popUntil((route) => route.isFirst);
-                    },
-                    child: const Text(
-                      'Done',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                      ),
+              ),
+            ),
+            // Pinned outside ScaleTransition so taps always hit the button
+            // (also clear of the system gesture inset via SafeArea).
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+              child: SizedBox(
+                width: double.infinity,
+                height: 54,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: RideShareColors.primary,
+                    disabledBackgroundColor:
+                        RideShareColors.primary.withValues(alpha: 0.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
                     ),
                   ),
+                  onPressed: _finishing ? null : _handleDone,
+                  child: _finishing
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Text(
+                          'Done',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
                 ),
-              ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );

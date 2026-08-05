@@ -7,6 +7,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/promo_image_gallery.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 /// Offer details with seller info before checkout.
@@ -102,7 +103,7 @@ class _PromoDetailPageState extends State<PromoDetailPage> {
   @override
   Widget build(BuildContext context) {
     final promo = _promo;
-    final imageUrl = promo.resolvedImageUrl;
+    final imageUrls = promo.resolvedImageUrls;
     final bottom = MediaQuery.of(context).padding.bottom;
 
     return Scaffold(
@@ -110,7 +111,7 @@ class _PromoDetailPageState extends State<PromoDetailPage> {
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
-            expandedHeight: imageUrl != null ? 260 : 120,
+            expandedHeight: imageUrls.isNotEmpty ? 260 : 120,
             pinned: true,
             stretch: true,
             backgroundColor: _orange,
@@ -120,28 +121,22 @@ class _PromoDetailPageState extends State<PromoDetailPage> {
                 StretchMode.zoomBackground,
                 StretchMode.blurBackground,
               ],
-              background: imageUrl != null
-                  ? Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        ResilientCachedNetworkImage(
-                          url: imageUrl,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                        ),
-                        Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                Colors.black.withValues(alpha: 0.15),
-                                Colors.black.withValues(alpha: 0.55),
-                              ],
-                            ),
+              background: imageUrls.isNotEmpty
+                  ? PromoImageGallery(
+                      urls: imageUrls,
+                      height: 260,
+                      overlay: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.black.withValues(alpha: 0.15),
+                              Colors.black.withValues(alpha: 0.55),
+                            ],
                           ),
                         ),
-                      ],
+                      ),
                     )
                   : Container(
                       decoration: const BoxDecoration(

@@ -655,25 +655,27 @@ class OrderService {
       final byId = <String, OrderItem>{};
       final incomingMerchantOrderIds = <String>{};
 
-      final customerOrders = await _fetchOrdersFromPath(
+      // Fetch customer + merchant endpoints in parallel for faster first paint.
+      final customerFuture = _fetchOrdersFromPath(
         path: '/orders/me',
         headers: h,
         queryParameters: qp,
       );
-      for (final o in customerOrders) {
+      final merchantFuture = isMerchant
+          ? _fetchOrdersFromPath(
+              path: '/orders/merchant/me',
+              headers: h,
+              queryParameters: qp,
+            )
+          : Future<List<OrderItem>>.value(const <OrderItem>[]);
+
+      final results = await Future.wait([customerFuture, merchantFuture]);
+      for (final o in results[0]) {
         byId[o.id] = o;
       }
-
-      if (isMerchant) {
-        final merchantOrders = await _fetchOrdersFromPath(
-          path: '/orders/merchant/me',
-          headers: h,
-          queryParameters: qp,
-        );
-        for (final o in merchantOrders) {
-          byId[o.id] = o;
-          incomingMerchantOrderIds.add(o.id);
-        }
+      for (final o in results[1]) {
+        byId[o.id] = o;
+        incomingMerchantOrderIds.add(o.id);
       }
 
       final all = byId.values.toList();

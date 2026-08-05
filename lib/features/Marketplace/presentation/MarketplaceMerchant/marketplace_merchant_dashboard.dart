@@ -38,6 +38,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_sell
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
+import 'package:vero360_app/widgets/vero_thumb_image.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 // Add login screen import (using your correct path)
@@ -51,6 +52,7 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketP
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
 
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
@@ -157,6 +159,11 @@ class MarketplaceMerchantDashboard extends StatefulWidget {
     this.embeddedInMainNav = false,
   });
 
+  /// Drop My Items memory on logout / account switch.
+  static void clearSessionCaches() {
+    _MarketplaceMerchantDashboardState.clearSessionCaches();
+  }
+
   @override
   State<MarketplaceMerchantDashboard> createState() =>
       _MarketplaceMerchantDashboardState();
@@ -212,6 +219,10 @@ class _MarketplaceMerchantDashboardState
   /// Instant My Items cache (survives tab switches / reopen in-session).
   static final Map<String, List<Map<String, dynamic>>> _itemsMemoryByUid =
       <String, List<Map<String, dynamic>>>{};
+
+  static void clearSessionCaches() {
+    _itemsMemoryByUid.clear();
+  }
 
   static const String _prefsItemsCachePrefix = 'merchant_my_items_cache_v1_';
 
@@ -485,31 +496,12 @@ class _MarketplaceMerchantDashboardState
   Future<bool> _unlockWalletWithPin() async {
     if (_walletUnlockedNow) return true;
 
-    final okSetup = await _ensureAppPinExists();
-    if (!okSetup) return false;
+    final ok = await AppWalletPin.verifyWalletUnlock(context);
+    if (!ok || !mounted) return false;
 
-    final sp = await SharedPreferences.getInstance();
-    final salt = (sp.getString('app_pin_salt') ?? '').trim();
-    final hash = (sp.getString('app_pin_hash') ?? '').trim();
-    if (salt.isEmpty || hash.isEmpty) return false;
-
-    final entered = await _showEnterPinDialog();
-    if (entered == null) return false;
-
-    final enteredHash = _hashPin(entered, salt);
-    final ok = enteredHash == hash;
-
-    if (!ok) {
-      if (!mounted) return false;
-      _toastErr('Wrong password');
-      return false;
-    }
-
-    if (!mounted) return true;
     setState(() {
       _walletUnlockedUntil = DateTime.now().add(_walletUnlockDuration);
     });
-
     return true;
   }
 
@@ -940,15 +932,17 @@ class _MarketplaceMerchantDashboardState
 
   void _startPeriodicUpdates() {
     _ticker?.cancel();
-    // Slightly less aggressive; run jobs in parallel so UI stays responsive.
-    _ticker = Timer.periodic(const Duration(seconds: 45), (_) {
+    var tick = 0;
+    // Lighter polling on low-RAM devices: wallet often, heavy order dump rarely.
+    _ticker = Timer.periodic(const Duration(seconds: 60), (_) {
       if (!mounted) return;
       if (_sheetOpen) return;
+      tick++;
       _hydrateFromFirebaseAuth();
       unawaited(_loadWalletBalance());
-      unawaited(_loadItems(showLoading: false));
-      unawaited(_loadOrderStats());
-      unawaited(_fetchCurrentUserMe());
+      if (tick % 2 == 0) unawaited(_loadItems(showLoading: false));
+      if (tick % 3 == 0) unawaited(_loadOrderStats());
+      if (tick % 4 == 0) unawaited(_fetchCurrentUserMe());
     });
   }
 
@@ -967,11 +961,21 @@ class _MarketplaceMerchantDashboardState
       setState(() {
         if (email.isNotEmpty) _merchantEmail = email;
         if (phone.isNotEmpty) _merchantPhone = phone;
-        if (photo.isNotEmpty) _merchantProfileUrl = photo;
+        if (photo.isNotEmpty) {
+          _merchantProfileUrl = photo;
+        } else {
+          // Avoid keeping a previous account's avatar while prefs/Firestore load.
+          _localPhotoPath = null;
+        }
       });
     }
     if (photo.isNotEmpty) {
       unawaited(_warmProfilePhotoCache(photo));
+    } else {
+      // Drop disk avatar if Auth has no photo for this user yet.
+      unawaited(ProfilePhotoCache.peekLocalPath().then((path) async {
+        if (path != null) await ProfilePhotoCache.clear();
+      }));
     }
   }
 
@@ -1307,24 +1311,38 @@ class _MarketplaceMerchantDashboardState
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
 
+    final currentUid = (_auth.currentUser?.uid ?? _uid).trim();
     final phone = _sanitizePhone(
       prefs.getString('merchant_profile_phone') ?? prefs.getString('phone') ?? '',
     );
     final pic =
-        prefs.getString('profilepicture') ?? _merchantProfileUrl;
+        (prefs.getString('profilepicture') ?? '').trim();
     final desc = (prefs.getString(_kBusinessDescPrefKey) ?? '').trim();
     final hours = (prefs.getString(_kShopHoursPrefKey) ?? '').trim();
     final daysRaw = (prefs.getString(_kShopDaysPrefKey) ?? '').trim();
-    final localPath = await ProfilePhotoCache.peekLocalPath();
+
+    // Only use on-disk avatar when it matches this account + URL.
+    final localPath = pic.isEmpty
+        ? null
+        : await ProfilePhotoCache.peekLocalPath(forRemoteUrl: pic);
+
     if (!mounted) return;
+
+    // Prefer live Firebase Auth photo over a stale prefs URL from another session.
+    final authPhoto = (_auth.currentUser?.photoURL ?? '').trim();
+    final nextPic = pic.isNotEmpty
+        ? pic
+        : (authPhoto.isNotEmpty ? authPhoto : _merchantProfileUrl);
+
     setState(() {
+      if (currentUid.isNotEmpty) _uid = currentUid;
       _merchantEmail = prefs.getString('email') ?? _merchantEmail;
       if (phone.isNotEmpty) _merchantPhone = phone;
-      _merchantProfileUrl = pic;
+      _merchantProfileUrl = nextPic;
+      _localPhotoPath = localPath;
       if (desc.isNotEmpty) _businessDescription = desc;
       if (hours.isNotEmpty) _applyOpeningHoursString(hours);
       if (daysRaw.isNotEmpty) _applyOpeningDays(daysRaw);
-      _localPhotoPath = localPath;
     });
     // Warm/refresh disk cache in background so next open is instant.
     if (_merchantProfileUrl.trim().isNotEmpty) {
@@ -1746,7 +1764,8 @@ class _MarketplaceMerchantDashboardState
       setState(() {
         _soldItems = count;
         _totalEarnings = earnings;
-        _recentSalesOrders = sold;
+        // Keep only recent rows in memory for the UI list.
+        _recentSalesOrders = sold.take(25).toList(growable: false);
       });
     } catch (e) {
       debugPrint('Error loading order stats: $e');
@@ -3204,13 +3223,24 @@ class _MarketplaceMerchantDashboardState
                         ),
                         child: Text(
                           (item['rejectedReason'] ??
-                                  'This listing was not approved. Edit and save to resubmit for review.')
+                                  'This listing was not approved. Edit the photo/text and save to resubmit for review.')
                               .toString(),
                           style: const TextStyle(
                             fontWeight: FontWeight.w700,
                             fontSize: 13,
                             height: 1.35,
+                            color: Color(0xFFB71C1C),
                           ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Tip: use a clear product photo on a plain background — avoid people, selfies, or suggestive poses.',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                          height: 1.3,
+                          color: Color(0xFF6B778C),
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -3612,11 +3642,31 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
+  String _merchantGuideDoneKey([String? uid]) {
+    final id = (uid ?? _auth.currentUser?.uid ?? '').trim();
+    if (id.isEmpty) return _kMerchantGuidePrefKey;
+    return '${_kMerchantGuidePrefKey}_$id';
+  }
+
+  Future<bool> _isMerchantGuideDone(SharedPreferences prefs) async {
+    final uid = (_auth.currentUser?.uid ?? '').trim();
+    final scoped = _merchantGuideDoneKey(uid);
+    if (prefs.getBool(scoped) == true) return true;
+    // Migrate legacy device-wide flag → per-account.
+    if (prefs.getBool(_kMerchantGuidePrefKey) == true) {
+      if (uid.isNotEmpty) {
+        await prefs.setBool(scoped, true);
+      }
+      return true;
+    }
+    return false;
+  }
+
   Future<void> _maybeShowMerchantGuide() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      // Show guide until the merchant has completed or skipped it (once).
-      if (prefs.getBool(_kMerchantGuidePrefKey) == true) return;
+      // Show guide until the merchant has completed or skipped it (once per account).
+      if (await _isMerchantGuideDone(prefs)) return;
       if (!mounted) return;
       setState(() {
         _showMerchantGuide = true;
@@ -3646,6 +3696,9 @@ class _MarketplaceMerchantDashboardState
   Future<void> _completeMerchantGuide() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      final uid = (_auth.currentUser?.uid ?? '').trim();
+      await prefs.setBool(_merchantGuideDoneKey(uid), true);
+      // Legacy key kept so older login checks still treat the guide as finished.
       await prefs.setBool(_kMerchantGuidePrefKey, true);
       await prefs.setBool(_kMerchantGuideShowOnNextOpenKey, false);
     } catch (_) {}
@@ -4281,139 +4334,149 @@ class _MarketplaceMerchantDashboardState
 
   // ----------------- Smaller Business Overview cards -----------------
   Widget _buildStatsSection() {
+    // Use fixed Rows (not nested GridView) so TabBarView/scroll nesting
+    // cannot invent a full-viewport empty gap under the tiles.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Business Overview',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: 4,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            mainAxisExtent: 74,
-          ),
-          itemBuilder: (_, i) {
-            switch (i) {
-              case 0:
-                return _compactStatTile(
-                  title: 'Total Items',
-                  value: '$_totalItems',
-                  icon: Icons.inventory_2,
-                  color: _brandOrange,
-                );
-              case 1:
-                return _compactStatTile(
-                  title: 'Active Items',
-                  value: '$_activeItems',
-                  icon: Icons.verified_rounded,
-                  color: Colors.green,
-                );
-              case 2:
-                return _compactStatTile(
-                  title: 'Sold Items',
-                  value: '$_soldItems',
-                  icon: Icons.shopping_bag_rounded,
-                  color: Colors.blue,
-                );
-              default:
-                return _compactStatTile(
-                  title: 'Earnings',
-                  value: mwk0(_totalEarnings), // Γ£à commas
-                  icon: Icons.payments_rounded,
-                  color: Colors.green,
-                );
-            }
-          },
+        _twoColumnTiles(
+          height: 74,
+          children: [
+            _compactStatTile(
+              title: 'Total Items',
+              value: '$_totalItems',
+              icon: Icons.inventory_2,
+              color: _brandOrange,
+            ),
+            _compactStatTile(
+              title: 'Active Items',
+              value: '$_activeItems',
+              icon: Icons.verified_rounded,
+              color: Colors.green,
+            ),
+            _compactStatTile(
+              title: 'Sold Items',
+              value: '$_soldItems',
+              icon: Icons.shopping_bag_rounded,
+              color: Colors.blue,
+            ),
+            _compactStatTile(
+              title: 'Earnings',
+              value: mwk0(_totalEarnings),
+              icon: Icons.payments_rounded,
+              color: Colors.green,
+            ),
+          ],
         ),
       ],
     );
   }
 
+  /// Compact 2-column tile grid without nested scrollables.
+  Widget _twoColumnTiles({
+    required List<Widget> children,
+    double height = 74,
+    double gap = 12,
+  }) {
+    final rows = <Widget>[];
+    for (var i = 0; i < children.length; i += 2) {
+      if (i > 0) rows.add(SizedBox(height: gap));
+      final right = i + 1 < children.length ? children[i + 1] : null;
+      rows.add(
+        SizedBox(
+          height: height,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: children[i]),
+              SizedBox(width: gap),
+              Expanded(child: right ?? const SizedBox.shrink()),
+            ],
+          ),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: rows,
+    );
+  }
+
   // ----------------- Quick actions + profile actions -----------------
   Widget _buildQuickActionsSection() {
+    final actions = <Widget>[
+      _QuickActionTile(
+        title: 'Add Item',
+        icon: Icons.add_circle_outline,
+        color: _brandOrange,
+        onTap: () => _marketplaceTabs.animateTo(1),
+      ),
+      _QuickActionTile(
+        title: 'My Items',
+        icon: Icons.inventory_2_outlined,
+        color: _brandNavy,
+        onTap: () => _marketplaceTabs.animateTo(2),
+      ),
+      _QuickActionTile(
+        title: 'My Orders',
+        icon: Icons.receipt_long,
+        color: Colors.green,
+        badgeRoute: NotificationStore.kBadgeMyOrders,
+        onTap: () => _openBottomSheet(const OrdersPage()),
+      ),
+      _QuickActionTile(
+        title: 'Latest Arrivals',
+        icon: Icons.rocket,
+        color: Colors.orange,
+        badgeRoute: NotificationStore.kBadgePostArrival,
+        onTap: () => _openBottomSheet(const LatestArrivalsCrudPage()),
+      ),
+      _QuickActionTile(
+        title: 'Send parcels',
+        icon: Icons.local_shipping_outlined,
+        color: Colors.orange,
+        badgeRoute: NotificationStore.kBadgeShipped,
+        onTap: () => _openBottomSheet(const ToShipPage()),
+      ),
+      _QuickActionTile(
+        title: 'Received',
+        icon: Icons.move_to_inbox_outlined,
+        color: Colors.blue,
+        badgeRoute: NotificationStore.kBadgeReceived,
+        onTap: () => _openBottomSheet(const DeliveredOrdersPage()),
+      ),
+      _QuickActionTile(
+        title: 'Refund',
+        icon: Icons.replay_circle_filled_outlined,
+        color: Colors.red,
+        badgeRoute: NotificationStore.kBadgeRefund,
+        onTap: () => _openBottomSheet(const ToRefundPage()),
+      ),
+      _QuickActionTile(
+        title: 'Promotions',
+        icon: Icons.campaign_outlined,
+        color: Colors.orange,
+        badgeRoute: NotificationStore.kBadgePromotions,
+        onTap: () => _openBottomSheet(const PromotionsCrudPage()),
+      ),
+      _QuickActionTile(
+        title: 'My Vero Ride',
+        icon: Icons.directions_car_filled_rounded,
+        color: Colors.orange,
+        onTap: _openRideHistory,
+      ),
+    ];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Quick Actions',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
-        GridView(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            mainAxisExtent: 74,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-          ),
-          children: [
-            _QuickActionTile(
-              title: 'Add Item',
-              icon: Icons.add_circle_outline,
-              color: _brandOrange,
-              onTap: () => _marketplaceTabs.animateTo(1),
-            ),
-            _QuickActionTile(
-              title: 'My Items',
-              icon: Icons.inventory_2_outlined,
-              color: _brandNavy,
-              onTap: () => _marketplaceTabs.animateTo(2),
-            ),
-            _QuickActionTile(
-              title: 'My Orders',
-              icon: Icons.receipt_long,
-              color: Colors.green,
-              badgeRoute: NotificationStore.kBadgeMyOrders,
-              onTap: () => _openBottomSheet(const OrdersPage()),
-            ),
-            _QuickActionTile(
-              title: 'Latest Arrivals',
-              icon: Icons.rocket,
-              color: Colors.orange,
-              badgeRoute: NotificationStore.kBadgePostArrival,
-              onTap: () => _openBottomSheet(const LatestArrivalsCrudPage()),
-            ),
-            _QuickActionTile(
-              title: 'Send parcels',
-              icon: Icons.local_shipping_outlined,
-              color: Colors.orange,
-              badgeRoute: NotificationStore.kBadgeShipped,
-              onTap: () => _openBottomSheet(const ToShipPage()),
-            ),
-            _QuickActionTile(
-              title: 'Received',
-              icon: Icons.move_to_inbox_outlined,
-              color: Colors.blue,
-              badgeRoute: NotificationStore.kBadgeReceived,
-              onTap: () => _openBottomSheet(const DeliveredOrdersPage()),
-            ),
-            _QuickActionTile(
-              title: 'Refund',
-              icon: Icons.replay_circle_filled_outlined,
-              color: Colors.red,
-              badgeRoute: NotificationStore.kBadgeRefund,
-              onTap: () => _openBottomSheet(const ToRefundPage()),
-            ),
-            _QuickActionTile(
-              title: 'Promotions',
-              icon: Icons.campaign_outlined,
-              color: Colors.orange,
-              badgeRoute: NotificationStore.kBadgePromotions,
-              onTap: () => _openBottomSheet(const PromotionsCrudPage()),
-            ),
-            _QuickActionTile(
-              title: 'Ride History',
-              icon: Icons.history_rounded,
-              color: Colors.orange,
-              onTap: _openRideHistory,
-            ),
-          ],
-        ),
+        _twoColumnTiles(height: 74, children: actions),
       ],
     );
   }
@@ -4698,6 +4761,7 @@ class _MarketplaceMerchantDashboardState
         else
           GridView.builder(
             shrinkWrap: true,
+            primary: false,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _items.length,
             gridDelegate: _merchantItemsGridDelegate(context),
@@ -5531,7 +5595,8 @@ class _QuickActionTile extends StatelessWidget {
               clipBehavior: Clip.none,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(14),
+                  height: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: Colors.black12),
@@ -5663,6 +5728,7 @@ class _ItemsGridSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     return GridView.builder(
       shrinkWrap: true,
+      primary: false,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: count,
       gridDelegate: _merchantItemsGridDelegate(context),
@@ -5995,58 +6061,16 @@ class _ItemCard extends StatelessWidget {
   }
 }
 
-// Image widget: supports http(s), data:image, or raw base64 (same idea as MerchantProductsPage)
+// Image widget: supports http(s), data:image, or raw base64 — decode-capped for low RAM.
 class _ImageAny extends StatelessWidget {
   final dynamic imageData;
   const _ImageAny(this.imageData);
 
   @override
   Widget build(BuildContext context) {
-    if (imageData == null) return _placeholder();
-    final raw = imageData.toString().trim();
-    if (raw.isEmpty) return _placeholder();
-
-    try {
-      if (raw.startsWith('http://') || raw.startsWith('https://')) {
-        return Image.network(
-          raw,
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: double.infinity,
-          errorBuilder: (_, __, ___) => _placeholder(),
-        );
-      }
-      if (raw.startsWith('data:image')) {
-        final base64Part = raw.contains(',') ? raw.split(',').last : raw;
-        final bytes = base64Decode(base64Part);
-        return Image.memory(
-          bytes,
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: double.infinity,
-          errorBuilder: (_, __, ___) => _placeholder(),
-        );
-      }
-      final base64Part = raw.contains(',') ? raw.split(',').last : raw;
-      final bytes = base64Decode(base64Part);
-      return Image.memory(
-        bytes,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (_, __, ___) => _placeholder(),
-      );
-    } catch (_) {
-      return _placeholder();
-    }
-  }
-
-  Widget _placeholder() {
-    return Container(
-      color: const Color(0xFFF3F4F7),
-      child: const Center(
-        child: Icon(Icons.image_not_supported_rounded, color: Colors.black26),
-      ),
+    return VeroThumbImage(
+      imageData,
+      decodeLogicalPx: 360,
     );
   }
 }

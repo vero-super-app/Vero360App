@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 class PromotionsPage extends StatefulWidget {
@@ -59,16 +61,32 @@ class _PromotionsPageState extends State<PromotionsPage> {
       _error = null;
     });
     try {
+      final blocked = await BlockedMerchantService.blockedIds();
       final data = await _svc.fetchActivePromos();
+      final filtered = data
+          .where(
+            (p) => !BlockedMerchantService.matchesBlocked(
+              blocked,
+              merchantId: p.merchantFirebaseUid,
+              sellerUserId: p.merchantId > 0 ? '${p.merchantId}' : null,
+              serviceProviderId:
+                  p.serviceProviderId != null ? '${p.serviceProviderId}' : null,
+            ),
+          )
+          .toList();
       if (!mounted) return;
       setState(() {
-        _promos = data;
+        _promos = filtered;
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        // Never surface hosts, IPs, ports, or raw ClientException text.
+        _error = UserFacingError.from(
+          e,
+          fallback: UserFacingError.offline,
+        );
         _loading = false;
       });
     }
@@ -333,7 +351,9 @@ class _FeaturedStrip extends StatelessWidget {
             separatorBuilder: (_, __) => const SizedBox(width: 12),
             itemBuilder: (_, i) {
               final promo = featured[i];
-              final imageUrl = promo.resolvedImageUrl;
+              final imageUrls = promo.resolvedImageUrls;
+              final imageUrl =
+                  imageUrls.isNotEmpty ? imageUrls.first : promo.resolvedImageUrl;
               return GestureDetector(
                 onTap: () => onTap(promo),
                 child: Container(
@@ -364,6 +384,29 @@ class _FeaturedStrip extends StatelessWidget {
                             url: imageUrl,
                             fit: BoxFit.cover,
                             width: double.infinity,
+                          ),
+                        ),
+                      if (imageUrls.length > 1)
+                        Positioned(
+                          top: 10,
+                          right: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '1/${imageUrls.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
                           ),
                         ),
                       Padding(
@@ -465,7 +508,9 @@ class _PromoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final imageUrl = promo.resolvedImageUrl;
+    final imageUrls = promo.resolvedImageUrls;
+    final imageUrl =
+        imageUrls.isNotEmpty ? imageUrls.first : promo.resolvedImageUrl;
 
     return Material(
       color: Colors.white,
@@ -490,20 +535,47 @@ class _PromoCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (imageUrl != null)
-                ClipRRect(
-                  borderRadius: const BorderRadius.horizontal(
-                    left: Radius.circular(17),
-                  ),
-                  child: SizedBox(
-                    width: 108,
-                    height: 108,
-                    child: ResilientCachedNetworkImage(
-                      url: imageUrl,
-                      fit: BoxFit.cover,
-                      width: 108,
-                      height: 108,
+                Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: const BorderRadius.horizontal(
+                        left: Radius.circular(17),
+                      ),
+                      child: SizedBox(
+                        width: 108,
+                        height: 108,
+                        child: ResilientCachedNetworkImage(
+                          url: imageUrl,
+                          fit: BoxFit.cover,
+                          width: 108,
+                          height: 108,
+                        ),
+                      ),
                     ),
-                  ),
+                    if (imageUrls.length > 1)
+                      Positioned(
+                        right: 6,
+                        bottom: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '${imageUrls.length} photos',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 )
               else
                 Container(
@@ -771,7 +843,10 @@ class _ErrorState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              message,
+              UserFacingError.sanitize(
+                message,
+                fallback: 'Check your connection and try again.',
+              ),
               textAlign: TextAlign.center,
               style: const TextStyle(color: Color(0xFF6B7280)),
             ),

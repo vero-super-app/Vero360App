@@ -146,7 +146,7 @@ class MarketplaceDetailModel {
   bool get isOutOfStock => stockQuantity != null && stockQuantity! <= 0;
 
   int get maxOrderQty {
-    if (stockQuantity == null) return 99;
+    if (stockQuantity == null) return 99999;
     return stockQuantity!.clamp(0, 99999);
   }
 

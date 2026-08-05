@@ -841,13 +841,14 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                     nights: _nights,
                   );
                 } catch (_) {}
+                if (!bookingCtx.mounted) return;
+                final cb = widget.afterSuccessfulPayment;
+                if (cb != null) {
+                  cb(bookingCtx, widget.accommodationId);
+                } else if (bookingCtx.mounted) {
+                  Navigator.of(bookingCtx).pop();
+                }
               }());
-              final cb = widget.afterSuccessfulPayment;
-              if (cb != null) {
-                cb(bookingCtx, widget.accommodationId);
-              } else if (bookingCtx.mounted) {
-                Navigator.of(bookingCtx).pop();
-              }
             },
           ),
         ),

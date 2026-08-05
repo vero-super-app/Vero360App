@@ -131,6 +131,59 @@ class AppWalletPin {
   /// Confirms parcel receipt: tries **Face ID / fingerprint** first when available,
   /// then falls back to **PIN** (create PIN on first use if needed).
   static Future<bool> verifyParcelReceipt(BuildContext context) async {
+    if (await _tryBiometric(
+      'Confirm you received this parcel to release payment to the merchant.',
+    )) {
+      return true;
+    }
+    if (!context.mounted) return false;
+    final ensured = await ensurePinExists(context);
+    if (!context.mounted) return false;
+    if (!ensured) return false;
+    return verifyPin(
+      context,
+      title: 'Confirm receipt',
+      subtitle: 'Enter your wallet password to release payment to the seller.',
+    );
+  }
+
+  /// Guest confirms they arrived at a stay — releases escrow to the host.
+  static Future<bool> verifyStayArrival(BuildContext context) async {
+    if (await _tryBiometric(
+      'Confirm you have arrived at this stay to release payment to the host.',
+    )) {
+      return true;
+    }
+    if (!context.mounted) return false;
+    final ensured = await ensurePinExists(context);
+    if (!context.mounted) return false;
+    if (!ensured) return false;
+    return verifyPin(
+      context,
+      title: 'Confirm arrival',
+      subtitle:
+          'Enter your wallet password to release the held payment to the host.',
+    );
+  }
+
+  /// Unlock merchant wallet: **biometrics first**, then wallet password/PIN.
+  static Future<bool> verifyWalletUnlock(BuildContext context) async {
+    if (await _tryBiometric('Unlock your merchant wallet')) {
+      return true;
+    }
+    if (!context.mounted) return false;
+    final ensured = await ensurePinExists(context);
+    if (!context.mounted) return false;
+    if (!ensured) return false;
+    return verifyPin(
+      context,
+      title: 'Unlock wallet',
+      subtitle:
+          'Use Face ID / fingerprint, or enter your wallet password (4–6 digits).',
+    );
+  }
+
+  static Future<bool> _tryBiometric(String reason) async {
     final auth = LocalAuthentication();
     var canUseBiometric = false;
     try {
@@ -143,31 +196,28 @@ class AppWalletPin {
       }
     } catch (_) {}
 
-    if (canUseBiometric) {
-      try {
-        final ok = await auth.authenticate(
-          localizedReason:
-              'Confirm you received this parcel to release payment to the merchant.',
-          options: const AuthenticationOptions(
-            biometricOnly: true,
-            stickyAuth: true,
-          ),
-        );
-        if (ok) return true;
-      } catch (_) {
-        // Fall through to PIN (e.g. user cancelled or error).
-      }
-    }
+    if (!canUseBiometric) return false;
 
-    if (!context.mounted) return false;
-    final ensured = await ensurePinExists(context);
-    if (!context.mounted) return false;
-    if (!ensured) return false;
-    return verifyPin(context);
+    try {
+      return await auth.authenticate(
+        localizedReason: reason,
+        options: const AuthenticationOptions(
+          // Prefer biometrics; allow device PIN/pattern as system fallback.
+          biometricOnly: false,
+          stickyAuth: true,
+        ),
+      );
+    } catch (_) {
+      return false;
+    }
   }
 
-  /// Prompts for PIN and returns true only if it matches the stored hash.
-  static Future<bool> verifyPin(BuildContext context) async {
+  /// Prompts for wallet password/PIN and returns true only if it matches.
+  static Future<bool> verifyPin(
+    BuildContext context, {
+    String title = 'Enter password',
+    String subtitle = 'Enter your 4–6 digit wallet password.',
+  }) async {
     if (!await hasPin()) return false;
 
     final sp = await SharedPreferences.getInstance();
@@ -175,7 +225,11 @@ class AppWalletPin {
     final hash = (sp.getString('app_pin_hash') ?? '').trim();
     if (salt.isEmpty || hash.isEmpty) return false;
 
-    final entered = await _showEnterPinDialog(context);
+    final entered = await _showEnterPinDialog(
+      context,
+      title: title,
+      subtitle: subtitle,
+    );
     if (entered == null) return false;
 
     final ok = _hashPin(entered, salt) == hash;
@@ -187,7 +241,11 @@ class AppWalletPin {
     return ok;
   }
 
-  static Future<String?> _showEnterPinDialog(BuildContext context) async {
+  static Future<String?> _showEnterPinDialog(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+  }) async {
     final controller = TextEditingController();
     String? shortPinHint;
 
@@ -217,10 +275,9 @@ class AppWalletPin {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _pinDialogHeader(
-                      icon: Icons.inventory_2_rounded,
-                      title: 'Confirm receipt',
-                      subtitle:
-                          'Enter your wallet PIN to release payment to the seller.',
+                      icon: Icons.lock_rounded,
+                      title: title,
+                      subtitle: subtitle,
                     ),
                     Padding(
                       padding: EdgeInsets.only(bottom: kb),
@@ -232,7 +289,7 @@ class AppWalletPin {
                             Padding(
                               padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
                               child: Text(
-                                'PIN',
+                                'Password',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w800,
@@ -259,7 +316,8 @@ class AppWalletPin {
                                   fontWeight: FontWeight.w700,
                                   letterSpacing: 2,
                                 ),
-                                decoration: _pinFieldDecoration('4–6 digits'),
+                                decoration:
+                                    _pinFieldDecoration('4–6 digit password'),
                               ),
                             ),
                             if (shortPinHint != null)
@@ -282,7 +340,8 @@ class AppWalletPin {
                                     children: [
                                       Icon(
                                         Icons.info_outline_rounded,
-                                        color: _brandNavy.withValues(alpha: 0.9),
+                                        color:
+                                            _brandNavy.withValues(alpha: 0.9),
                                         size: 22,
                                       ),
                                       const SizedBox(width: 10),
@@ -355,7 +414,7 @@ class AppWalletPin {
                                 elevation: 0,
                               ),
                               child: const Text(
-                                'Confirm',
+                                'Unlock',
                                 style: TextStyle(
                                   fontWeight: FontWeight.w900,
                                   fontSize: 16,

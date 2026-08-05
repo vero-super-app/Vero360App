@@ -18,6 +18,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:vero360_app/GernalServices/chat_service.dart';
 import 'package:vero360_app/GernalServices/chat_service_wrapper.dart';
+import 'package:vero360_app/utils/chat_offplatform_detector.dart';
+import 'package:vero360_app/widgets/chat_offplatform_warning.dart';
 
 /// Legacy Firebase direct-message screen.
 ///
@@ -963,9 +965,28 @@ class _MessagePageState extends State<MessagePage> {
                                 child: bubbleChild,
                               );
 
-                              return GestureDetector(
-                                onLongPress: canAct ? () => _showMsgActions(m) : null,
-                                child: bubble,
+                              final scanText = m.isDeleted
+                                  ? ''
+                                  : (_isImageMsg(txt)
+                                      ? _imgCaption(txt)
+                                      : (_isAudioMsg(txt) || _isCallMsg(txt)
+                                          ? ''
+                                          : txt));
+                              final showOffPlatformWarning =
+                                  ChatOffPlatformDetector
+                                      .containsSensitiveDetails(scanText);
+
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  GestureDetector(
+                                    onLongPress:
+                                        canAct ? () => _showMsgActions(m) : null,
+                                    child: bubble,
+                                  ),
+                                  if (showOffPlatformWarning)
+                                    const ChatOffPlatformWarning(),
+                                ],
                               );
                             },
                           );

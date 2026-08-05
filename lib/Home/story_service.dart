@@ -10,6 +10,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:vero360_app/Home/merchant_story_model.dart';
+import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 
 const String _collection = 'merchant_stories';
 const String _storagePathPrefix = 'merchant_stories';
@@ -95,12 +96,26 @@ class StoryService {
     ) async {
       if (controller.isClosed) return;
       final myGen = ++emitGen;
-      final groups = _groupByMerchant(snap.docs);
+      await BlockedMerchantService.ensureLoaded();
+      final blocked = await BlockedMerchantService.blockedIds();
+      var groups = _groupByMerchant(snap.docs);
+      if (blocked.isNotEmpty) {
+        groups = groups
+            .where((g) => !blocked.contains(g.merchantId.trim()))
+            .toList();
+      }
       final painted = _applyCachedUnviewedFlags(groups, viewerId);
       lastActiveGroups = painted;
       if (!controller.isClosed) controller.add(painted);
-      if (viewerId == null || viewerId.isEmpty || groups.isEmpty) return;
-      final resolved = await _attachUnviewedFlags(groups, viewerId);
+
+      final named = await _resolveLiveMerchantNames(groups);
+      if (myGen != emitGen || controller.isClosed) return;
+      final namedPainted = _applyCachedUnviewedFlags(named, viewerId);
+      lastActiveGroups = namedPainted;
+      if (!controller.isClosed) controller.add(namedPainted);
+
+      if (viewerId == null || viewerId.isEmpty || named.isEmpty) return;
+      final resolved = await _attachUnviewedFlags(named, viewerId);
       if (myGen != emitGen || controller.isClosed) return;
       lastActiveGroups = resolved;
       controller.add(resolved);
@@ -236,13 +251,15 @@ class StoryService {
     if (items.isEmpty) return MerchantStoryRingState.empty;
 
     final hasUnviewed = await _groupHasUnviewedForViewer(items, viewerId);
-    final group = MerchantStoryGroup(
+    var group = MerchantStoryGroup(
       merchantId: items.first.merchantId,
       merchantName: items.first.merchantName,
       merchantImageUrl: items.first.merchantImageUrl,
       items: items,
       hasUnviewed: hasUnviewed,
     );
+    final named = await _resolveLiveMerchantNames([group]);
+    if (named.isNotEmpty) group = named.first;
 
     return MerchantStoryRingState(
       items: items,
@@ -323,6 +340,55 @@ class StoryService {
         final bTime = b.items.last.createdAt;
         return bTime.compareTo(aTime);
       });
+  }
+
+  /// Prefer live shop / user display name over denormalized story fields.
+  Future<List<MerchantStoryGroup>> _resolveLiveMerchantNames(
+    List<MerchantStoryGroup> groups,
+  ) async {
+    if (groups.isEmpty) return groups;
+    final ids = groups
+        .map((g) => g.merchantId.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    if (ids.isEmpty) return groups;
+
+    final nameById = <String, String>{};
+    await Future.wait(ids.map((id) async {
+      try {
+        final snaps = await Future.wait([
+          _firestore.collection('marketplace_merchants').doc(id).get(),
+          _firestore.collection('users').doc(id).get(),
+        ]);
+        for (final snap in snaps) {
+          if (!snap.exists) continue;
+          final data = snap.data();
+          if (data == null) continue;
+          for (final key in const [
+            'businessName',
+            'merchantName',
+            'displayName',
+            'fullName',
+            'name',
+          ]) {
+            final v = (data[key] ?? '').toString().trim();
+            if (v.isNotEmpty) {
+              nameById[id] = v;
+              return;
+            }
+          }
+        }
+      } catch (_) {}
+    }));
+
+    if (nameById.isEmpty) return groups;
+    return [
+      for (final g in groups)
+        nameById.containsKey(g.merchantId)
+            ? g.copyWith(merchantName: nameById[g.merchantId])
+            : g,
+    ];
   }
 
   MerchantStoryItem _docToItem(QueryDocumentSnapshot<Map<String, dynamic>> doc, {int viewerCount = 0}) {

@@ -6,6 +6,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:mime/mime.dart';
@@ -23,13 +25,16 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 import 'package:vero360_app/widgets/voice_note_bubble.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/chat_offplatform_detector.dart';
+import 'package:vero360_app/widgets/chat_offplatform_warning.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as core;
-import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/features/Marketplace/presentation/widgets/merchant_review_prompt.dart';
 
 class MessagePageBackendApi extends StatefulWidget {
@@ -110,6 +115,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   final Map<String, Uint8List> _localImageBytes = {};
   final Map<String, String> _localVoicePaths = {};
   final Map<String, int> _localVoiceDurations = {};
+  BackendChatMessage? _replyingTo;
 
   static const _imgPrefix = 'img::';
   static const _audPrefix = 'aud::';
@@ -140,6 +146,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         if (_hasProductTagInMessages(_messages)) {
           _productTagAttached = true;
         }
+        // Warm VNs ASAP from cache so the first tap is fast.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _prefetchThreadVoiceNotes();
+        });
       }
     }
 
@@ -162,6 +172,9 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           _productTagAttached = true;
         }
       });
+      final audio = _messageAudio(msg);
+      final url = audio?.url.trim() ?? '';
+      if (url.isNotEmpty) unawaited(VoiceNoteBubble.warmUrl(url));
       _scrollToBottom();
     });
 
@@ -259,14 +272,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       return true;
     } catch (e) {
       if (!mounted) return false;
-      final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+      final msg = UserFacingError.from(e, fallback: 'Could not open chat');
       setState(() {
         _resolvingChat = false;
         _loading = false;
-        _loadError = raw;
+        _loadError = msg;
         _bootComplete = false;
       });
-      _toast(raw);
+      _toast(msg);
       return false;
     }
   }
@@ -424,17 +437,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   }
 
   String _friendlyError(Object e) {
-    final raw = e.toString().toLowerCase();
-    if (raw.contains('401') || raw.contains('unauthorized')) {
-      return 'Session expired. Please log in again.';
-    }
-    if (raw.contains('403') || raw.contains('forbidden') || raw.contains('participant')) {
-      return 'You do not have access to this chat.';
-    }
-    if (raw.contains('socket') || raw.contains('network') || raw.contains('timeout')) {
-      return 'Connection problem. Check your internet and try again.';
-    }
-    return 'Could not load messages. Pull to retry.';
+    return UserFacingError.from(
+      e,
+      fallback: 'Could not load messages. Pull to retry.',
+    );
   }
 
   Future<void> _loadMessages({bool silent = false}) async {
@@ -450,6 +456,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           _productTagAttached = true;
         }
       });
+      _prefetchThreadVoiceNotes();
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scroll.hasClients && _scroll.position.maxScrollExtent > 0) {
@@ -514,6 +521,164 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         b.isMine(myId) &&
         a.content == b.content &&
         a.createdAt.difference(b.createdAt).inSeconds.abs() < 30;
+  }
+
+  void _startReply(BackendChatMessage msg) {
+    if (msg.status == 'pending') return;
+    HapticFeedback.selectionClick();
+    setState(() => _replyingTo = msg);
+  }
+
+  void _clearReply() {
+    if (_replyingTo == null) return;
+    setState(() => _replyingTo = null);
+  }
+
+  String _replyPreviewFor(BackendChatMessage msg) {
+    final audio = _messageAudio(msg);
+    if (audio != null || _localVoicePathFor(msg) != null) return 'Voice note';
+    if (_messageImageUrl(msg) != null || _localImageFor(msg) != null) {
+      final cap = _visibleCaption(msg, _messageImageUrl(msg));
+      if (cap != null && cap.trim().isNotEmpty) return cap.trim();
+      return 'Photo';
+    }
+    final text = (msg.content ?? '').trim();
+    if (text.isEmpty) {
+      if (_productTagsFor(msg).isNotEmpty) return 'Shared a product';
+      return 'Message';
+    }
+    if (text.startsWith(_audPrefix)) return 'Voice note';
+    if (text.startsWith(_imgPrefix)) return 'Photo';
+    return text.length > 120 ? '${text.substring(0, 120)}…' : text;
+  }
+
+  Map<String, dynamic>? _replyMetadataPayload() {
+    final reply = _replyingTo;
+    if (reply == null) return null;
+    return {
+      'replyTo': {
+        'messageId': reply.id,
+        if (reply.clientMessageId != null)
+          'clientMessageId': reply.clientMessageId,
+        'senderId': reply.senderId,
+        'type': reply.type,
+        'preview': _replyPreviewFor(reply),
+      },
+    };
+  }
+
+  String _replyAuthorLabel(BackendChatMessage msg) {
+    final myId = _myUserId;
+    if (myId != null && msg.isMine(myId)) return 'You';
+    final name = widget.peerName.trim();
+    return name.isNotEmpty ? name : 'Reply';
+  }
+
+  Widget _buildReplyQuoteChip(
+    Map<String, dynamic> reply, {
+    required bool isMine,
+  }) {
+    final preview = (reply['preview'] ?? 'Message').toString();
+    final senderId = reply['senderId'];
+    final myId = _myUserId;
+    final isOwnQuote =
+        myId != null && senderId != null && senderId.toString() == myId.toString();
+    final author = isOwnQuote
+        ? 'You'
+        : (widget.peerName.trim().isNotEmpty ? widget.peerName.trim() : 'Reply');
+    final bg = isMine
+        ? Colors.white.withValues(alpha: 0.18)
+        : const Color(0xFFFF8A00).withValues(alpha: 0.10);
+    final fg = isMine ? Colors.white : Colors.black87;
+    final accent = isMine ? Colors.white : _brandOrange;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border(
+          left: BorderSide(color: accent, width: 3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            author,
+            style: TextStyle(
+              color: accent,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            preview,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: fg.withValues(alpha: 0.9),
+              fontSize: 12.5,
+              height: 1.25,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildComposerReplyBar() {
+    final reply = _replyingTo;
+    if (reply == null) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _brandOrange.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.reply_rounded, color: _brandOrange, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Replying to ${_replyAuthorLabel(reply)}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12.5,
+                    color: _brandOrange,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _replyPreviewFor(reply),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: _clearReply,
+            icon: const Icon(Icons.close_rounded, size: 20),
+            tooltip: 'Cancel reply',
+          ),
+        ],
+      ),
+    );
   }
 
   void _upsertMessage(BackendChatMessage msg) {
@@ -611,6 +776,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final tags = attachProductTag ? [product.toMessageTag()] : null;
 
     final clientMessageId = const Uuid().v4();
+    final replyMeta = _replyMetadataPayload();
     final pending = BackendChatMessage(
       id: clientMessageId,
       chatId: _chatId,
@@ -621,25 +787,32 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       createdAt: DateTime.now(),
       tags: tags,
       clientMessageId: clientMessageId,
+      metadata: replyMeta,
     );
 
     setState(() {
       _sending = true;
       _messages = [..._messages, pending];
+      _replyingTo = null;
     });
     _input.clear();
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
     try {
+      final productMeta = attachProductTag
+          ? {'source': 'marketplace', 'productId': product.productId}
+          : null;
+      final metadata = <String, dynamic>{
+        if (productMeta != null) ...productMeta,
+        if (replyMeta != null) ...replyMeta,
+      };
       final saved = await BackendChatService.sendMessage(
         chatId: _chatId,
         content: content,
         type: 'text',
         tags: tags,
         clientMessageId: clientMessageId,
-        metadata: attachProductTag
-            ? {'source': 'marketplace', 'productId': product.productId}
-            : null,
+        metadata: metadata.isEmpty ? null : metadata,
       );
 
       if (attachProductTag) _productTagAttached = true;
@@ -661,7 +834,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
             _messages.where((m) => m.clientMessageId != clientMessageId).toList();
         _input.text = content;
       });
-      _toast('Failed to send message: $e');
+      _toast(UserFacingError.from(e, fallback: 'Failed to send message'));
     }
   }
 
@@ -673,6 +846,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (myId == null) return;
 
     final clientMessageId = const Uuid().v4();
+    final replyMeta = _replyMetadataPayload();
     final pending = BackendChatMessage(
       id: clientMessageId,
       chatId: _chatId,
@@ -682,6 +856,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       status: 'pending',
       createdAt: DateTime.now(),
       clientMessageId: clientMessageId,
+      metadata: replyMeta,
     );
 
     setState(() {
@@ -690,6 +865,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       _pendingImage = null;
       _uploadingImage = true;
       _sending = true;
+      _replyingTo = null;
     });
     _input.clear();
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
@@ -702,6 +878,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         caption: caption,
         clientMessageId: clientMessageId,
         mimeType: image.mime,
+        metadata: replyMeta,
       );
 
       if (!mounted) return;
@@ -731,14 +908,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   }
 
   String _friendlyImageError(Object e) {
-    final raw = e.toString().toLowerCase();
-    if (raw.contains('upload failed')) {
-      return 'Could not upload photo. Check your connection.';
-    }
-    if (raw.contains('400')) {
-      return 'Server rejected the image. Trying again may help.';
-    }
-    return 'Failed to send image. Please try again.';
+    return UserFacingError.from(
+      e,
+      fallback: 'Failed to send image. Please try again.',
+    );
   }
 
   Future<String> _uploadImageBytes(_PendingImage image) async {
@@ -892,6 +1065,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (myId == null) return;
 
     final clientMessageId = const Uuid().v4();
+    final replyMeta = _replyMetadataPayload();
     final pending = BackendChatMessage(
       id: clientMessageId,
       chatId: _chatId,
@@ -901,6 +1075,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       status: 'pending',
       createdAt: DateTime.now(),
       clientMessageId: clientMessageId,
+      metadata: replyMeta,
     );
 
     setState(() {
@@ -909,6 +1084,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       _messages = [..._messages, pending];
       _uploadingAudio = true;
       _sending = true;
+      _replyingTo = null;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
@@ -922,12 +1098,18 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         durationMs: durationMs,
         clientMessageId: clientMessageId,
         mimeType: 'audio/mp4',
+        metadata: replyMeta,
       );
 
       if (!mounted) return;
+      // Keep local file mapped so playback stays instant for the sender.
       setState(() {
-        _localVoicePaths.remove(clientMessageId);
-        _localVoiceDurations.remove(clientMessageId);
+        _localVoicePaths[saved.id] = filePath;
+        _localVoiceDurations[saved.id] = durationMs;
+        if (saved.clientMessageId != null) {
+          _localVoicePaths[saved.clientMessageId!] = filePath;
+          _localVoiceDurations[saved.clientMessageId!] = durationMs;
+        }
         _upsertMessage(saved);
         _sending = false;
         _uploadingAudio = false;
@@ -947,7 +1129,6 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         _uploadingAudio = false;
       });
       _showVoiceErrorToast(e);
-    } finally {
       try {
         await File(filePath).delete();
       } catch (_) {}
@@ -1087,6 +1268,17 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     return _localVoiceDurations[key] ?? audio?.durationMs ?? 0;
   }
 
+  void _prefetchThreadVoiceNotes() {
+    final urls = <String>[];
+    for (final m in _messages) {
+      if (_localVoicePathFor(m) != null) continue;
+      final audio = _messageAudio(m);
+      final url = audio?.url.trim() ?? '';
+      if (url.isNotEmpty) urls.add(url);
+    }
+    if (urls.isNotEmpty) VoiceNoteBubble.warmUrls(urls);
+  }
+
   Future<void> _showMsgActions(BackendChatMessage m) async {
     final myId = _myUserId;
     if (myId == null || !m.isMine(myId) || !_within5Min(m)) return;
@@ -1122,6 +1314,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                   await _editMessage(m);
                 },
               ),
+            ListTile(
+              leading: const Icon(Icons.reply_rounded, color: _brandOrange),
+              title: const Text('Reply'),
+              onTap: () {
+                Navigator.pop(context);
+                _startReply(m);
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Color(0xFFEF4444)),
               title: const Text(
@@ -1160,7 +1360,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       });
       BackendChatService.refreshThreads();
     } catch (e) {
-      _toast('Could not delete message: $e');
+      _toast(UserFacingError.from(e, fallback: 'Could not delete message'));
     }
   }
 
@@ -1182,7 +1382,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       setState(() => _upsertMessage(saved));
       BackendChatService.refreshThreads();
     } catch (e) {
-      _toast('Could not edit message: $e');
+      _toast(UserFacingError.from(e, fallback: 'Could not edit message'));
     }
   }
 
@@ -1244,7 +1444,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       BackendChatService.refreshThreads();
       _toast('Chat cleared');
     } catch (e) {
-      _toast('Could not clear chat: $e');
+      _toast(UserFacingError.from(e, fallback: 'Could not clear chat'));
     }
   }
 
@@ -1438,18 +1638,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       }
     }
     if (merchantId == null || merchantId.isEmpty) {
-      _toast('Seller shop is not available for this chat.');
+      _toast('Profile is not available for this chat.');
       return;
     }
     if (!mounted) return;
-    Navigator.push(
+    await openMerchantOrDriverProfile(
       context,
-      MaterialPageRoute(
-        builder: (_) => MerchantProductsPage(
-          merchantId: merchantId!,
-          merchantName: widget.peerName,
-        ),
-      ),
+      profileId: merchantId,
+      displayName: widget.peerName,
     );
   }
 
@@ -1799,15 +1995,17 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                         ),
                       ),
                     )
-                  : ListView.builder(
-                      controller: _scroll,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 16,
+                  : SlidableAutoCloseBehavior(
+                      child: ListView.builder(
+                        controller: _scroll,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 16,
+                        ),
+                        itemCount: _messages.length,
+                        itemBuilder: (context, i) =>
+                            _buildMessageTile(_messages[i], i),
                       ),
-                      itemCount: _messages.length,
-                      itemBuilder: (context, i) =>
-                          _buildMessageTile(_messages[i], i),
                     ),
             ),
           ],
@@ -1830,6 +2028,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final voiceDuration = _voiceDurationFor(msg, audio);
     final canAct = isMine && _within5Min(msg) && !isPending;
     final isLastOutgoing = isMine && index == _lastOutgoingMessageIndex();
+    final scanText = [
+      caption,
+      msg.content,
+    ].whereType<String>().join('\n');
+    final showOffPlatformWarning =
+        ChatOffPlatformDetector.containsSensitiveDetails(scanText);
 
     final bubble = Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -1875,6 +2079,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (msg.replyTo != null)
+                          _buildReplyQuoteChip(msg.replyTo!, isMine: isMine),
                         ..._productTagsFor(msg).map(
                           (tag) => Padding(
                             padding: const EdgeInsets.only(bottom: 6),
@@ -2013,9 +2219,48 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           const SizedBox(height: 12),
         ],
         GestureDetector(
-          onLongPress: canAct ? () => _showMsgActions(msg) : null,
-          child: bubble,
+          onLongPress: () {
+            if (canAct) {
+              _showMsgActions(msg);
+            } else if (msg.status != 'pending') {
+              _startReply(msg);
+            }
+          },
+          child: Slidable(
+            key: ValueKey('msg_${msg.clientMessageId ?? msg.id}'),
+            groupTag: 'chat_messages',
+            startActionPane: msg.status == 'pending'
+                ? null
+                : ActionPane(
+                    motion: const StretchMotion(),
+                    extentRatio: 0.18,
+                    children: [
+                      CustomSlidableAction(
+                        onPressed: (_) => _startReply(msg),
+                        backgroundColor: Colors.transparent,
+                        foregroundColor: _brandOrange,
+                        child: const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.reply_rounded, color: _brandOrange),
+                            SizedBox(height: 4),
+                            Text(
+                              'Reply',
+                              style: TextStyle(
+                                color: _brandOrange,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+            child: bubble,
+          ),
         ),
+        if (showOffPlatformWarning) const ChatOffPlatformWarning(),
       ],
     );
   }
@@ -2306,6 +2551,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (_recording) _buildRecordingBar(),
+            if (_replyingTo != null) _buildComposerReplyBar(),
             if (_pendingImage != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),

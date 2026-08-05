@@ -1,22 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class ToastHelper {
   /// Show a custom toast with your app logo and a status color.
-  /// [assetPath] defaults to your logo asset.
+  /// Failure [message] / [errorMessage] are sanitized so hosts, IPs, and
+  /// raw exceptions never appear in production UI.
   static void showCustomToast(
     BuildContext context,
     String message, {
     bool isSuccess = true,
     Duration duration = const Duration(seconds: 3),
     String assetPath = 'assets/logo_mark.png',
-    required String errorMessage, // default logo path
+    required String errorMessage,
   }) {
     final fToast = FToast()..init(context);
 
-    final bg = isSuccess ? Colors.green.shade700 : Colors.red.shade700;
+    final safeMessage = isSuccess
+        ? message
+        : UserFacingError.sanitize(message);
 
-    final hasErrorDetails = !isSuccess && errorMessage.trim().isNotEmpty;
+    final rawDetails = errorMessage.trim();
+    final safeDetails = (!isSuccess && rawDetails.isNotEmpty)
+        ? UserFacingError.sanitize(rawDetails, fallback: '')
+        : '';
+
+    final hasErrorDetails = safeDetails.isNotEmpty &&
+        safeDetails != safeMessage &&
+        !UserFacingError.looksSensitive(rawDetails);
+
+    final bg = isSuccess ? Colors.green.shade700 : Colors.red.shade700;
 
     final toast = Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -34,7 +47,6 @@ class ToastHelper {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // App logo
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: Image.asset(
@@ -51,13 +63,13 @@ class ToastHelper {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  message,
+                  safeMessage,
                   style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
                 if (hasErrorDetails) ...[
                   const SizedBox(height: 4),
                   Text(
-                    errorMessage,
+                    safeDetails,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -78,6 +90,21 @@ class ToastHelper {
       child: toast,
       gravity: ToastGravity.CENTER,
       toastDuration: duration,
+    );
+  }
+
+  /// Convenience: never leaks exception text into the UI.
+  static void showFailure(
+    BuildContext context,
+    String message, {
+    Object? error,
+  }) {
+    showCustomToast(
+      context,
+      UserFacingError.sanitize(message),
+      isSuccess: false,
+      errorMessage:
+          error == null ? '' : UserFacingError.from(error, fallback: ''),
     );
   }
 

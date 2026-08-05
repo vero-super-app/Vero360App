@@ -146,28 +146,61 @@ class _DestinationSearchScreenState
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
+              padding: const EdgeInsets.fromLTRB(12, 8, 16, 0),
               child: Row(
                 children: [
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back),
-                    color: RideShareColors.titleText,
-                    style: IconButton.styleFrom(
-                      backgroundColor: RideShareColors.surfaceContainerLow,
-                      shape: const CircleBorder(),
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: RideShareColors.primary.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.arrow_back_ios_new,
+                        color: RideShareColors.titleText,
+                        size: 18,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _title,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      color: RideShareColors.titleText,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _title == 'Search' ? 'Book Your Vero Ride' : _title,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 17,
+                            letterSpacing: -0.3,
+                            color: RideShareColors.titleText,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Container(
+                          height: 2.5,
+                          width: 72,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                RideShareColors.primary,
+                                RideShareColors.primary.withValues(alpha: 0.35),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const Spacer(),
+                  const SizedBox(width: 10),
                   _ProfileAvatar(url: profilePictureUrl),
                 ],
               ),
@@ -205,8 +238,8 @@ class _DestinationSearchScreenState
                       )
                     else
                       _ShortcutTile(
-                        icon: Icons.map,
-                        iconBg: RideShareColors.primaryContainer,
+                        icon: Icons.map_rounded,
+                        iconBg: RideShareColors.primary,
                         iconColor: Colors.white,
                         title: 'Set on map',
                         subtitle: 'Pick a location visually',
@@ -572,19 +605,19 @@ class _ShortcutsSection extends ConsumerWidget {
     return Column(
       children: [
         _ShortcutTile(
-          icon: Icons.map,
-          iconBg: RideShareColors.primaryContainer,
+          icon: Icons.map_rounded,
+          iconBg: RideShareColors.primary,
           iconColor: Colors.white,
           title: 'Set on map',
           subtitle: 'Pick a location visually',
           onTap: onSetOnMap,
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 6),
         if (home != null) ...[
           _ShortcutTile(
-            icon: Icons.home,
+            icon: Icons.home_rounded,
             iconBg: RideShareColors.primarySoft,
-            iconColor: RideShareColors.primary,
+            iconColor: RideShareColors.primaryDeep,
             title: 'Home',
             subtitle: home.address,
             onTap: () => onPlaceSelected(home!),
@@ -594,17 +627,17 @@ class _ShortcutsSection extends ConsumerWidget {
           _ShortcutTile(
             icon: Icons.home_outlined,
             iconBg: RideShareColors.primarySoft,
-            iconColor: RideShareColors.primary,
+            iconColor: RideShareColors.primaryDeep,
             title: 'Home',
             subtitle: 'Add your home address',
             onTap: onSetHome,
           ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 6),
         if (work != null) ...[
           _ShortcutTile(
-            icon: Icons.work,
+            icon: Icons.work_rounded,
             iconBg: RideShareColors.primarySoft,
-            iconColor: RideShareColors.primary,
+            iconColor: RideShareColors.primaryDeep,
             title: 'Work',
             subtitle: work.address,
             onTap: () => onPlaceSelected(work!),
@@ -614,7 +647,7 @@ class _ShortcutsSection extends ConsumerWidget {
           _ShortcutTile(
             icon: Icons.work_outline,
             iconBg: RideShareColors.primarySoft,
-            iconColor: RideShareColors.primary,
+            iconColor: RideShareColors.primaryDeep,
             title: 'Work',
             subtitle: 'Add your work address',
             onTap: onSetWork,
@@ -626,11 +659,11 @@ class _ShortcutsSection extends ConsumerWidget {
             .take(5)
             .map(
               (place) => Padding(
-                padding: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.only(top: 6),
                 child: _ShortcutTile(
-                  icon: Icons.star,
+                  icon: Icons.star_rounded,
                   iconBg: RideShareColors.primarySoft,
-                  iconColor: RideShareColors.primary,
+                  iconColor: RideShareColors.primaryDeep,
                   title: place.name,
                   subtitle: place.address,
                   onTap: () => onPlaceSelected(place),
@@ -664,30 +697,33 @@ class _ShortcutTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: RideShareColors.surface,
+      color: Colors.white,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
         onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: RideShareColors.outlineVariant),
+            border: Border.all(
+              color: RideShareColors.primary.withValues(alpha: 0.18),
+            ),
+            color: RideShareColors.primary.withValues(alpha: 0.03),
           ),
           child: Row(
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 32,
+                height: 32,
                 decoration: BoxDecoration(
                   color: iconBg,
-                  shape: BoxShape.circle,
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: iconColor, size: 22),
+                child: Icon(icon, color: iconColor, size: 16),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -695,8 +731,8 @@ class _ShortcutTile extends StatelessWidget {
                     Text(
                       title,
                       style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
                         color: RideShareColors.titleText,
                       ),
                     ),
@@ -704,15 +740,20 @@ class _ShortcutTile extends StatelessWidget {
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: RideShareColors.onSurfaceVariant,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade600,
                       ),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right, color: RideShareColors.outline),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: RideShareColors.primary.withValues(alpha: 0.55),
+                size: 20,
+              ),
             ],
           ),
         ),

@@ -212,6 +212,7 @@ class BackendChatMessage {
   final List<Map<String, dynamic>>? tags;
   final Map<String, dynamic>? sender;
   final String? clientMessageId;
+  final Map<String, dynamic>? metadata;
 
   BackendChatMessage({
     required this.id,
@@ -227,11 +228,24 @@ class BackendChatMessage {
     this.tags,
     this.sender,
     this.clientMessageId,
+    this.metadata,
   });
 
   bool isMine(int myUserId) => senderId == myUserId;
 
+  Map<String, dynamic>? get replyTo {
+    final raw = metadata?['replyTo'] ?? metadata?['reply_to'];
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return null;
+  }
+
   factory BackendChatMessage.fromJson(Map<String, dynamic> json) {
+    Map<String, dynamic>? meta;
+    final rawMeta = json['metadata'] ?? json['meta'];
+    if (rawMeta is Map) {
+      meta = Map<String, dynamic>.from(rawMeta);
+    }
+
     return BackendChatMessage(
       id: json['id']?.toString() ?? '',
       chatId: json['chatId']?.toString() ?? '',
@@ -266,6 +280,7 @@ class BackendChatMessage {
           ? Map<String, dynamic>.from(json['sender'] as Map)
           : null,
       clientMessageId: json['clientMessageId']?.toString(),
+      metadata: meta,
     );
   }
 
@@ -284,6 +299,7 @@ class BackendChatMessage {
       'tags': tags,
       'sender': sender,
       'clientMessageId': clientMessageId,
+      if (metadata != null) 'metadata': metadata,
     };
   }
 }
@@ -495,9 +511,11 @@ class BackendChatService {
   static final _threadsLiveController =
       StreamController<List<BackendChatThread>>.broadcast();
   static List<BackendChatThread> _cachedThreads = [];
+  /// Backend user id that [_cachedThreads] belongs to (guards account switches).
+  static int? _cachedThreadsOwnerUserId;
   static Set<String> _deletedThreadIds = {};
   static bool _threadsWatchReady = false;
-  static bool _threadsRefreshListenerAttached = false;
+  static StreamSubscription<void>? _threadsRefreshSub;
   static Timer? _threadsFallbackPollTimer;
   static String? _activeChatId;
   static bool _wsConnected = false;
@@ -858,23 +876,6 @@ class BackendChatService {
     }
   }
 
-  static List<BackendChatThread> _mergeServerThreads(
-    List<BackendChatThread> server,
-    List<BackendChatThread> prior,
-  ) {
-    final serverIds = server
-        .map((t) => t.id.trim())
-        .where((id) => id.isNotEmpty)
-        .toSet();
-    final extras = prior.where((t) {
-      final id = t.id.trim();
-      return id.isNotEmpty && !serverIds.contains(id);
-    });
-    final merged = [...server, ...extras];
-    merged.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    return merged;
-  }
-
   static List<dynamic> _extractThreadListFromJson(dynamic json) {
     if (json is List) return json;
     if (json is! Map) return const [];
@@ -897,6 +898,18 @@ class BackendChatService {
     await BackendMessagingCache.initialize();
     await ensureAuth();
     final userId = _userId;
+
+    // Never carry another account's in-memory threads into this session.
+    if (userId != null &&
+        _cachedThreadsOwnerUserId != null &&
+        _cachedThreadsOwnerUserId != userId) {
+      _cachedThreads = [];
+      _deletedThreadIds = {};
+    }
+    if (userId != null) {
+      _cachedThreadsOwnerUserId = userId;
+    }
+
     final prior = List<BackendChatThread>.from(_cachedThreads);
 
     if (userId != null) {
@@ -911,12 +924,9 @@ class BackendChatService {
 
     try {
       final fresh = await getThreads();
-      final merged = _mergeServerThreads(
-        fresh,
-        prior.isNotEmpty ? prior : _cachedThreads,
-      );
-      // Drop deleted chats from the in-memory + disk cache so they stay gone.
-      _cachedThreads = _filterDeletedThreads(merged);
+      // Server list is source of truth. Merging "extras" from prior memory/disk
+      // previously leaked another account's chats onto new accounts.
+      _cachedThreads = _filterDeletedThreads(fresh);
       _threadsWatchReady = true;
       _emitCachedThreads();
       if (userId != null) {
@@ -945,13 +955,10 @@ class BackendChatService {
       await _reloadThreadCache();
     }
 
-    if (!_threadsRefreshListenerAttached) {
-      _threadsRefreshListenerAttached = true;
-      _threadsRefresh.listen((_) {
-        unawaited(_reloadThreadCache());
-      });
-      _ensureThreadsFallbackPoll();
-    }
+    _threadsRefreshSub ??= _threadsRefresh.listen((_) {
+      unawaited(_reloadThreadCache());
+    });
+    _ensureThreadsFallbackPoll();
   }
 
   /// Notify all listeners to refresh threads (called after sending a message)
@@ -989,6 +996,11 @@ class BackendChatService {
       _userId = null;
       _authToken = null;
       _tokenFetchedAt = null;
+      _cachedThreads = [];
+      _cachedThreadsOwnerUserId = null;
+      _deletedThreadIds = {};
+      _threadsWatchReady = false;
+      _emitCachedThreads();
     }
 
     final cacheValid = !forceRefresh &&
@@ -1015,13 +1027,8 @@ class BackendChatService {
     _cachedFirebaseUid = user.uid;
     _tokenFetchedAt = DateTime.now();
 
-    final cachedUserId = sp.getInt('userId') ?? sp.getInt('user_id');
-    if (cachedUserId != null && cachedUserId > 0) {
-      _userId = cachedUserId;
-      await _loadDeletedThreadIds(cachedUserId);
-      return;
-    }
-
+    // Always resolve numeric id from the server for this Firebase user.
+    // Trusting a stale SharedPreferences userId is what leaked prior-account chats.
     final userId = await _fetchNumericUserIdFromMe();
     if (userId == null) {
       throw Exception(
@@ -1029,26 +1036,40 @@ class BackendChatService {
       );
     }
 
+    final staleCached = sp.getInt('userId') ?? sp.getInt('user_id');
+    if (staleCached != null && staleCached > 0 && staleCached != userId) {
+      _cachedThreads = [];
+      _cachedThreadsOwnerUserId = null;
+      _deletedThreadIds = {};
+      _threadsWatchReady = false;
+      _emitCachedThreads();
+      // Drop corrupted disk threads saved under the wrong account id.
+      unawaited(BackendMessagingCache.clearThreadsForUser(userId));
+      unawaited(BackendMessagingCache.clearThreadsForUser(staleCached));
+    }
+
     await sp.setInt('userId', userId);
     await sp.setInt('user_id', userId);
     _userId = userId;
+    _cachedThreadsOwnerUserId = userId;
     await _loadDeletedThreadIds(userId);
   }
 
-  /// Clear in-memory auth cache (e.g. on sign-out).
+  /// Clear in-memory auth + thread cache (e.g. on sign-out / account switch).
   static void clearAuthCache() {
     _authToken = null;
     _userId = null;
     _cachedFirebaseUid = null;
     _tokenFetchedAt = null;
     _cachedThreads = [];
+    _cachedThreadsOwnerUserId = null;
     _deletedThreadIds = {};
     _threadsWatchReady = false;
-    _threadsRefreshListenerAttached = false;
     _activeChatId = null;
     _wsConnected = false;
     _threadsFallbackPollTimer?.cancel();
     _threadsFallbackPollTimer = null;
+    _emitCachedThreads();
   }
 
   /// Always load numeric DB user id for the current Firebase session.
@@ -2288,6 +2309,7 @@ class BackendChatService {
     String caption = '',
     String? clientMessageId,
     String? mimeType,
+    Map<String, dynamic>? metadata,
   }) async {
     await ensureAuth();
 
@@ -2325,6 +2347,13 @@ class BackendChatService {
         final payload = Map<String, dynamic>.from(attempt);
         if (clientMessageId != null && clientMessageId.isNotEmpty) {
           payload['clientMessageId'] = clientMessageId;
+        }
+        if (metadata != null && metadata.isNotEmpty) {
+          final existing = payload['metadata'];
+          payload['metadata'] = {
+            if (existing is Map) ...Map<String, dynamic>.from(existing),
+            ...metadata,
+          };
         }
 
         final response = await http
@@ -2376,22 +2405,28 @@ class BackendChatService {
     required int durationMs,
     String? clientMessageId,
     String? mimeType,
+    Map<String, dynamic>? metadata,
   }) async {
     await ensureAuth();
 
     final mime = mimeType ?? 'audio/mp4';
     final duration = durationMs.clamp(0, 600000);
+    final mergedMeta = <String, dynamic>{
+      'durationMs': duration,
+      if (metadata != null) ...metadata,
+    };
 
     final attempts = <Map<String, dynamic>>[
       {
         'content': '$_legacyAudPrefix$audioUrl|$duration',
         'type': 'text',
+        'metadata': mergedMeta,
       },
       {
         'content': audioUrl,
         'type': 'audio',
         'attachmentUrls': [audioUrl],
-        'metadata': {'durationMs': duration},
+        'metadata': mergedMeta,
       },
       {
         'content': audioUrl,
@@ -2404,6 +2439,7 @@ class BackendChatService {
             'durationMs': duration,
           },
         ],
+        'metadata': mergedMeta,
       },
     ];
 

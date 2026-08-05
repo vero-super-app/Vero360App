@@ -1213,10 +1213,14 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     Share.share(_shareMessage);
   }
 
+  static const int _kMaxReportPhotos = 4;
+
   Future<void> _showReportScreenshotPicker(
-    BuildContext sheetCtx,
-    void Function(XFile? file) onPicked,
-  ) async {
+    BuildContext sheetCtx, {
+    required int remainingSlots,
+    required void Function(List<XFile> files) onPicked,
+  }) async {
+    if (remainingSlots <= 0) return;
     await showModalBottomSheet<void>(
       context: sheetCtx,
       isScrollControlled: true,
@@ -1248,7 +1252,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             ),
             const SizedBox(height: 14),
             const Text(
-              'Add screenshot',
+              'Add screenshots',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 18,
@@ -1258,7 +1262,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Optional — helps us review faster',
+              'Up to $_kMaxReportPhotos photos · $remainingSlots slot${remainingSlots == 1 ? '' : 's'} left',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,
@@ -1272,9 +1276,12 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
               onTap: () async {
                 Navigator.pop(ctx);
                 try {
-                  final img = await ImagePicker()
-                      .pickImage(source: ImageSource.camera);
-                  onPicked(img);
+                  final img = await ImagePicker().pickImage(
+                    source: ImageSource.camera,
+                    imageQuality: 85,
+                    maxWidth: 1600,
+                  );
+                  if (img != null) onPicked([img]);
                 } catch (_) {}
               },
               child: Padding(
@@ -1314,10 +1321,24 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
               onTap: () async {
                 Navigator.pop(ctx);
                 try {
-                  final img = await ImagePicker()
-                      .pickImage(source: ImageSource.gallery);
-                  onPicked(img);
-                } catch (_) {}
+                  final imgs = await ImagePicker().pickMultiImage(
+                    imageQuality: 85,
+                    maxWidth: 1600,
+                    limit: remainingSlots,
+                  );
+                  if (imgs.isNotEmpty) {
+                    onPicked(imgs.take(remainingSlots).toList());
+                  }
+                } catch (_) {
+                  try {
+                    final img = await ImagePicker().pickImage(
+                      source: ImageSource.gallery,
+                      imageQuality: 85,
+                      maxWidth: 1600,
+                    );
+                    if (img != null) onPicked([img]);
+                  } catch (_) {}
+                }
               },
               child: Padding(
                 padding:
@@ -1354,6 +1375,81 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         ),
       ),
     );
+  }
+
+  String _safeStorageSegment(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return 'unknown';
+    return t.replaceAll(RegExp(r'[^\w\-.]'), '_');
+  }
+
+  Future<String> _uploadReportProof({
+    required XFile file,
+    required String merchantId,
+    required String reporterUid,
+    required int index,
+  }) async {
+    final ext = file.name.toLowerCase().split('.').last;
+    final safeExt =
+        (ext.length <= 5 && RegExp(r'^[a-z0-9]+$').hasMatch(ext)) ? ext : 'jpg';
+    final contentType = switch (safeExt) {
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      'gif' => 'image/gif',
+      _ => 'image/jpeg',
+    };
+
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) {
+      throw StateError('Photo ${index + 1} is empty.');
+    }
+
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final safeMerchant = _safeStorageSegment(merchantId);
+    final safeUid = _safeStorageSegment(reporterUid);
+
+    // Primary path + fallback under profile_photos (already allowed by Storage rules).
+    final paths = <String>[
+      'reports/merchant/$safeMerchant/$safeUid/${ts}_$index.$safeExt',
+      'profile_photos/${reporterUid}_report_${safeMerchant}_${ts}_$index.$safeExt',
+    ];
+
+    Object? lastError;
+    for (final path in paths) {
+      for (var attempt = 0; attempt < 3; attempt++) {
+        try {
+          final ref = FirebaseStorage.instance.ref().child(path);
+          final meta = SettableMetadata(
+            contentType: contentType,
+            customMetadata: {
+              'purpose': 'merchant_report',
+              'merchantId': merchantId,
+              'index': '$index',
+            },
+          );
+          try {
+            await ref.putData(bytes, meta);
+          } catch (_) {
+            // Some devices fail putData; putFile is more reliable on Android.
+            await ref.putFile(File(file.path), meta);
+          }
+          final url = await ref.getDownloadURL();
+          if (url.trim().isEmpty) {
+            throw StateError('Empty download URL for photo ${index + 1}');
+          }
+          return url;
+        } catch (e) {
+          lastError = e;
+          debugPrint(
+            '[ReportMerchant] upload path=$path attempt=${attempt + 1}: $e',
+          );
+          await Future<void>.delayed(
+            Duration(milliseconds: 250 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    throw lastError ?? StateError('Could not upload photo ${index + 1}');
   }
 
   Future<void> _refreshBlockedByViewer() async {
@@ -1480,9 +1576,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
   Future<void> _reportMerchant() async {
     final controller = TextEditingController();
-    XFile? picked;
+    final picked = <XFile>[];
 
-    final result = await showDialog<({String message, XFile? picked})?>(
+    final result = await showDialog<({String message, List<XFile> picked})?>(
       context: context,
       barrierDismissible: true,
       builder: (dialogCtx) => StatefulBuilder(
@@ -1567,7 +1663,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                   ),
                   const SizedBox(height: 18),
                   Text(
-                    'Screenshot (optional)',
+                    'Screenshots (optional, up to $_kMaxReportPhotos)',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
@@ -1575,129 +1671,116 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Material(
-                    color: const Color(0xFFF6F7FB),
-                    borderRadius: BorderRadius.circular(16),
-                    child: InkWell(
+                  if (picked.isNotEmpty) ...[
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (var i = 0; i < picked.length; i++)
+                          Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: SizedBox(
+                                  width: 72,
+                                  height: 72,
+                                  child: Image.file(
+                                    File(picked[i].path),
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                top: -6,
+                                right: -6,
+                                child: Material(
+                                  color: Colors.red.shade600,
+                                  shape: const CircleBorder(),
+                                  child: InkWell(
+                                    customBorder: const CircleBorder(),
+                                    onTap: () =>
+                                        setLocal(() => picked.removeAt(i)),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(4),
+                                      child: Icon(Icons.close,
+                                          size: 14, color: Colors.white),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  if (picked.length < _kMaxReportPhotos)
+                    Material(
+                      color: const Color(0xFFF6F7FB),
                       borderRadius: BorderRadius.circular(16),
-                      onTap: () => _showReportScreenshotPicker(
-                        dialogCtx,
-                        (file) {
-                          if (file != null) {
-                            setLocal(() => picked = file);
-                          }
-                        },
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: picked == null
-                            ? Row(
-                                children: [
-                                  Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: BoxDecoration(
-                                      color: _brandOrange.withValues(alpha: 0.2),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: const Icon(
-                                        Icons.add_photo_alternate_outlined,
-                                        color: _brandOrange),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        const Text(
-                                          'Add a screenshot',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w800,
-                                            fontSize: 15,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          'Camera or gallery',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey.shade600,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  Icon(Icons.chevron_right_rounded,
-                                      color: Colors.grey.shade400),
-                                ],
-                              )
-                            : Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: SizedBox(
-                                      width: 72,
-                                      height: 72,
-                                      child: Image.file(
-                                        File(picked!.path),
-                                        fit: BoxFit.cover,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => _showReportScreenshotPicker(
+                          dialogCtx,
+                          remainingSlots: _kMaxReportPhotos - picked.length,
+                          onPicked: (files) {
+                            if (files.isEmpty) return;
+                            setLocal(() {
+                              for (final f in files) {
+                                if (picked.length >= _kMaxReportPhotos) break;
+                                picked.add(f);
+                              }
+                            });
+                          },
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 44,
+                                height: 44,
+                                decoration: BoxDecoration(
+                                  color: _brandOrange.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Icon(
+                                    Icons.add_photo_alternate_outlined,
+                                    color: _brandOrange),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      picked.isEmpty
+                                          ? 'Add screenshots'
+                                          : 'Add more photos',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 15,
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'Screenshot attached',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w800,
-                                            color: Colors.green.shade800,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          picked!.name,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey.shade700,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        TextButton.icon(
-                                          onPressed: () =>
-                                              setLocal(() => picked = null),
-                                          style: TextButton.styleFrom(
-                                            foregroundColor:
-                                                Colors.red.shade700,
-                                            padding: EdgeInsets.zero,
-                                            minimumSize: Size.zero,
-                                            tapTargetSize:
-                                                MaterialTapTargetSize.shrinkWrap,
-                                          ),
-                                          icon: const Icon(Icons.delete_outline,
-                                              size: 18),
-                                          label: const Text(
-                                            'Remove',
-                                            style: TextStyle(
-                                                fontWeight: FontWeight.w800),
-                                          ),
-                                        ),
-                                      ],
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Camera or gallery · ${picked.length}/$_kMaxReportPhotos',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
+                              Icon(Icons.chevron_right_rounded,
+                                  color: Colors.grey.shade400),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
-                  ),
                   const SizedBox(height: 20),
                   Row(
                     children: [
@@ -1725,17 +1808,17 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                         child: FilledButton(
                           onPressed: () {
                             final msg = controller.text.trim();
-                            if (msg.isEmpty && picked == null) {
+                            if (msg.isEmpty && picked.isEmpty) {
                               final messenger =
                                   ScaffoldMessenger.maybeOf(dialogCtx);
                               if (messenger != null) {
                                 messenger.showSnackBar(
-                                  SnackBar(
-                                    content: const Text(
+                                  const SnackBar(
+                                    content: Text(
                                       'Please write a message or add a screenshot.',
                                     ),
                                     behavior: SnackBarBehavior.floating,
-                                    margin: const EdgeInsets.all(16),
+                                    margin: EdgeInsets.all(16),
                                   ),
                                 );
                               } else {
@@ -1750,7 +1833,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                             }
                             Navigator.pop(
                               dialogCtx,
-                              (message: msg, picked: picked),
+                              (
+                                message: msg,
+                                picked: List<XFile>.from(picked),
+                              ),
                             );
                           },
                           style: FilledButton.styleFrom(
@@ -1795,47 +1881,168 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     }
 
     final message = result.message;
-    final pickedFile = result.picked;
+    final pickedFiles = result.picked;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Sending report…')),
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Sending report…'),
+        duration: Duration(seconds: 60),
+      ),
     );
 
     try {
-      String? proofUrl;
-      if (pickedFile != null) {
-        final ext = pickedFile.name.toLowerCase().split('.').last;
-        final safeExt = (ext.length <= 5) ? ext : 'png';
-        final ref = FirebaseStorage.instance.ref().child(
-              'reports/merchant/${widget.merchantId.trim()}/${user.uid}/${DateTime.now().millisecondsSinceEpoch}.$safeExt',
-            );
-        final file = File(pickedFile.path);
-        final task = await ref.putFile(file);
-        proofUrl = await task.ref.getDownloadURL();
+      final mid = widget.merchantId.trim();
+      final proofUrls = <String>[];
+
+      // Upload every attached photo (retries + fallback path). Fail if any missing.
+      for (var i = 0; i < pickedFiles.length; i++) {
+        if (mounted) {
+          messenger.hideCurrentSnackBar();
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(
+                'Uploading photo ${i + 1} of ${pickedFiles.length}…',
+              ),
+              duration: const Duration(seconds: 60),
+            ),
+          );
+        }
+        final url = await _uploadReportProof(
+          file: pickedFiles[i],
+          merchantId: mid,
+          reporterUid: user.uid,
+          index: i,
+        );
+        proofUrls.add(url);
+      }
+
+      if (pickedFiles.isNotEmpty && proofUrls.length != pickedFiles.length) {
+        throw StateError(
+          'Only ${proofUrls.length} of ${pickedFiles.length} photos uploaded.',
+        );
+      }
+
+      if (mounted) {
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Saving report…'),
+            duration: Duration(seconds: 30),
+          ),
+        );
       }
 
       await _firestore.collection('merchant_reports').add({
-        'merchantId': widget.merchantId.trim(),
+        'merchantId': mid,
         'merchantName': _shopDisplayName,
         'reporterUid': user.uid,
         'reporterEmail': user.email,
         'message': message,
-        'proofUrl': proofUrl,
+        'proofUrl': proofUrls.isNotEmpty ? proofUrls.first : null,
+        'proofUrls': proofUrls,
+        'photoCount': proofUrls.length,
+        'photoCountRequested': pickedFiles.length,
+        'photoUploadFailures': 0,
         'createdAt': FieldValue.serverTimestamp(),
         'status': 'open',
       });
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Thank you. Your report was sent.')),
+      messenger.hideCurrentSnackBar();
+
+      final received = proofUrls.length;
+      final String body;
+      if (received == 0) {
+        body = 'Your report was sent successfully. Our team will review it.';
+      } else if (received == 1) {
+        body = 'Your report was sent successfully.\n\n1 photo received.';
+      } else {
+        body =
+            'Your report was sent successfully.\n\nAll $received photos received.';
+      }
+
+      // Dialog is hard to miss (SnackBar/toast can be hidden under nav bars).
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Row(
+            children: [
+              Icon(
+                Icons.check_circle_rounded,
+                color: Colors.green.shade700,
+                size: 28,
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Report sent',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            body,
+            style: TextStyle(
+              height: 1.45,
+              fontSize: 15,
+              color: Colors.grey.shade800,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: FilledButton.styleFrom(
+                backgroundColor: _brandOrange,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text(
+                'OK',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
       );
     } catch (e) {
       if (!mounted) return;
-      ToastHelper.showCustomToast(
-        context,
-        'Could not send report. Please try again.',
-        isSuccess: false,
-        errorMessage: e.toString(),
+      messenger.hideCurrentSnackBar();
+      debugPrint('[ReportMerchant] send failed: $e');
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            'Report not sent',
+            style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+          content: Text(
+            pickedFiles.isEmpty
+                ? 'Could not send your report. Please try again later.'
+                : 'Could not upload all ${pickedFiles.length} photos.\n\n'
+                    'Your report was not sent. Please check your connection and try again.',
+            style: TextStyle(height: 1.4, color: Colors.grey.shade800),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: FilledButton.styleFrom(backgroundColor: _brandOrange),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
       );
     }
   }

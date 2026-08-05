@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 
@@ -22,15 +21,15 @@ Color courierStatusColor(CourierStatus status, ColorScheme cs) {
 IconData courierStatusIcon(CourierStatus status) {
   switch (status) {
     case CourierStatus.pending:
-      return PhosphorIconsBold.hourglassMedium;
+      return Icons.hourglass_empty;
     case CourierStatus.accepted:
-      return PhosphorIconsBold.handWaving;
+      return Icons.waving_hand;
     case CourierStatus.onTheWay:
-      return PhosphorIconsBold.truck;
+      return Icons.local_shipping;
     case CourierStatus.delivered:
-      return PhosphorIconsBold.checkCircle;
+      return Icons.check_circle;
     case CourierStatus.cancelled:
-      return PhosphorIconsBold.xCircle;
+      return Icons.cancel;
   }
 }
 
@@ -147,7 +146,7 @@ class CourierDeliveryCard extends StatelessWidget {
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
                   icon: const Icon(
-                    PhosphorIconsBold.copy,
+                    Icons.copy,
                     size: 18,
                     color: _muted,
                   ),
@@ -214,7 +213,7 @@ class CourierDeliveryCard extends StatelessWidget {
         Expanded(
           child: _personSection(
             label: 'Sender',
-            icon: PhosphorIconsBold.paperPlaneTilt,
+            icon: Icons.send,
             accent: const Color(0xFF2D9CDB),
             name: view.senderName,
             phone: view.senderPhone,
@@ -225,7 +224,7 @@ class CourierDeliveryCard extends StatelessWidget {
         Expanded(
           child: _personSection(
             label: 'Receiver',
-            icon: PhosphorIconsBold.user,
+            icon: Icons.person,
             accent: _brandOrange,
             name: view.recipientName,
             phone: view.recipientPhone,
@@ -328,7 +327,7 @@ class CourierDeliveryCard extends StatelessWidget {
       child: Column(
         children: [
           _routeStop(
-            icon: PhosphorIconsFill.mapPin,
+            icon: Icons.location_on,
             iconColor: const Color(0xFF27AE60),
             label: 'Pickup',
             value: delivery.pickupLocation,
@@ -346,7 +345,7 @@ class CourierDeliveryCard extends StatelessWidget {
             ),
           ),
           _routeStop(
-            icon: PhosphorIconsFill.mapPin,
+            icon: Icons.location_on,
             iconColor: const Color(0xFFEB5757),
             label: 'Drop-off',
             value: delivery.dropoffLocation,
@@ -412,7 +411,7 @@ class CourierDeliveryCard extends StatelessWidget {
           Row(
             children: [
               Icon(
-                PhosphorIconsBold.package,
+                Icons.inventory_2,
                 size: 14,
                 color: _brandOrange,
               ),
@@ -485,7 +484,7 @@ class CourierDeliveryCard extends StatelessWidget {
           Row(
             children: [
               Icon(
-                PhosphorIconsRegular.note,
+                Icons.sticky_note_2,
                 size: 14,
                 color: Colors.grey.shade600,
               ),

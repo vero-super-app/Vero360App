@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
@@ -148,7 +147,7 @@ class _PromoDetailPageState extends State<PromoDetailPage> {
                       ),
                       child: const Center(
                         child: Icon(
-                          PhosphorIconsBold.tag,
+                          Icons.local_offer,
                           color: Colors.white54,
                           size: 64,
                         ),
@@ -196,7 +195,7 @@ class _PromoDetailPageState extends State<PromoDetailPage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(
-                            PhosphorIconsBold.calendarBlank,
+                            Icons.calendar_today,
                             size: 16,
                             color: Color(0xFFFF6B00),
                           ),
@@ -263,7 +262,7 @@ class _PromoDetailPageState extends State<PromoDetailPage> {
                   ),
                   const SizedBox(height: 24),
                   _BenefitTile(
-                    icon: PhosphorIconsBold.shieldCheck,
+                    icon: Icons.verified_user,
                     title: 'Verified merchant offer',
                     subtitle: 'Promotions are published by Vero360 partners.',
                   ),
@@ -299,7 +298,7 @@ class _PromoDetailPageState extends State<PromoDetailPage> {
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              icon: const Icon(PhosphorIconsBold.arrowRight),
+              icon: const Icon(Icons.arrow_forward),
               label: Text(
                 'Buy now · ${promo.formattedPrice}',
                 style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
@@ -750,7 +749,7 @@ class _PromoPeriodCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(
-              PhosphorIconsBold.calendarBlank,
+              Icons.calendar_today,
               color: Color(0xFFFF6B00),
               size: 20,
             ),

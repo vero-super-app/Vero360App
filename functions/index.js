@@ -1481,3 +1481,84 @@ exports.onOrderPartyAlertCreated = onDocumentCreated(
   },
 );
 
+// ───────────────────────────────────────────────
+//  Didit KYC
+// ───────────────────────────────────────────────
+const { defineSecret } = require('firebase-functions/params');
+const axios = require('axios');
+
+const diditApiKey = defineSecret('DIDIT_API_KEY');
+
+/**
+ * Creates a Didit KYC session for the signed-in user.
+ * Flutter calls: FirebaseFunctions.instance.httpsCallable('createDiditSession')
+ *
+ * Prerequisites:
+ *   firebase functions:secrets:set DIDIT_API_KEY
+ *   firebase functions:secrets:set DIDIT_WEBHOOK_SECRET
+ *   firebase deploy --only functions:createDiditSession,functions:diditWebhook
+ */
+exports.createDiditSession = onCall(
+  { secrets: [diditApiKey] },
+  async (request) => {
+    const uid = request.auth && request.auth.uid;
+    if (!uid) {
+      throw new HttpsError('unauthenticated', 'Sign in required.');
+    }
+
+    let data;
+    try {
+      const res = await axios.post(
+        'https://verification.didit.me/v3/session/',
+        {
+          vendor_data: uid,
+          features: 'OCR + FACE',
+          expected_details: { country: 'MW' },
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Api-Key': diditApiKey.value(),
+          },
+        },
+      );
+      data = res.data || {};
+    } catch (err) {
+      if (err && err.response) {
+        console.error(
+          'Didit session create failed',
+          err.response.status,
+          err.response.data,
+        );
+      } else {
+        console.error('Didit session create failed', err);
+      }
+      throw new HttpsError(
+        'internal',
+        'Could not start identity verification.',
+      );
+    }
+
+    const sessionId = data.session_id;
+    const sessionToken = data.session_token;
+    if (!sessionId || !sessionToken) {
+      console.error('Didit session response missing fields', data);
+      throw new HttpsError('internal', 'Invalid Didit session response.');
+    }
+
+    await admin.firestore().collection('users').doc(uid).set(
+      {
+        kycStatus: 'pending',
+        kycSessionId: sessionId,
+        kycVerified: false,
+      },
+      { merge: true },
+    );
+
+    return { session_token: sessionToken };
+  },
+);
+
+/** Didit destination webhook — see ./didit_webhook.js */
+const { diditWebhook } = require('./didit_webhook');
+exports.diditWebhook = diditWebhook;

@@ -43,6 +43,7 @@ import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 // Add login screen import (using your correct path)
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/kyc_verification_screen.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'
     show veroFloatingNavClearance;
 
@@ -64,9 +65,9 @@ import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 
-import 'package:intl/intl.dart'; // ‚úÖ NEW
+import 'package:intl/intl.dart'; // G£‡ NEW
 
-// ----------------- ‚úÖ PRICE FORMAT HELPERS (MWK with commas) -----------------
+// ----------------- G£‡ PRICE FORMAT HELPERS (MWK with commas) -----------------
 final NumberFormat _mwk0Fmt =
     NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
 final NumberFormat _mwk2Fmt =
@@ -83,7 +84,7 @@ String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
 String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
 // ---------------------------------------------------------------------------
 
-/// ‚ÄúYour Items‚Äù / ‚ÄúMy Items‚Äù grids: taller cells on narrow screens + large text scale
+/// G«£Your ItemsG«• / G«£My ItemsG«• grids: taller cells on narrow screens + large text scale
 /// so [_ModernItemMiniCard] / [_ItemCard] never bottom-overflow inside the cell.
 SliverGridDelegate _merchantItemsGridDelegate(BuildContext context) {
   final w = MediaQuery.sizeOf(context).width;
@@ -175,7 +176,7 @@ class _MarketplaceMerchantDashboardState
   final MerchantServiceHelper _helper = MerchantServiceHelper();
   final OrderService _orderService = OrderService();
 
-  // ‚úÖ Use CartService singleton from provider
+  // G£‡ Use CartService singleton from provider
   final CartService _cartService = CartServiceProvider.getInstance();
 
   final _picker = ImagePicker();
@@ -196,7 +197,7 @@ class _MarketplaceMerchantDashboardState
 
   LocalMedia? _cover;
 
-  // ‚úÖ multi-photos for posting
+  // G£‡ multi-photos for posting
   static const int _maxGalleryPhotos = 5;
   final List<LocalMedia> _gallery = <LocalMedia>[];
 
@@ -250,6 +251,10 @@ class _MarketplaceMerchantDashboardState
   double _rating = 0.0;
   String _status = 'pending';
 
+  /// Didit KYC: verified | pending | rejected | (empty = not started)
+  String _kycStatus = '';
+  String _kycRejectionReason = '';
+
   // Merchant profile details
   String _merchantEmail = 'No Email';
   String _merchantPhone = 'No Phone';
@@ -261,7 +266,7 @@ class _MarketplaceMerchantDashboardState
 
   TimeOfDay? _openTime;
   TimeOfDay? _closeTime;
-  /// Dart [DateTime.weekday] values: 1 = Mon ‚Ä¶ 7 = Sun. Empty = every day.
+  /// Dart [DateTime.weekday] values: 1 = Mon G«™ 7 = Sun. Empty = every day.
   Set<int> _openDays = {};
 
   bool _loadingMe = false;
@@ -269,7 +274,7 @@ class _MarketplaceMerchantDashboardState
 
   Timer? _ticker;
 
-  // ‚úÖ prevent periodic refresh while an edit sheet is open (stops random crashes)
+  // G£‡ prevent periodic refresh while an edit sheet is open (stops random crashes)
   bool _sheetOpen = false;
 
   // First-time merchant guide (show once after login, then persist as done)
@@ -515,7 +520,7 @@ class _MarketplaceMerchantDashboardState
             header: _walletPinDialogHeader(
               icon: Icons.account_balance_wallet_rounded,
               title: 'Unlock wallet',
-              subtitle: 'Enter your 4‚Äì6 digit PIN.',
+              subtitle: 'Enter your 4G«Ù6 digit PIN.',
             ),
             body: Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -539,7 +544,7 @@ class _MarketplaceMerchantDashboardState
                       fontWeight: FontWeight.w700,
                       letterSpacing: 2,
                     ),
-                    decoration: _walletPinFieldDecoration('Wallet PIN (4‚Äì6 digits)'),
+                    decoration: _walletPinFieldDecoration('Wallet PIN (4G«Ù6 digits)'),
                   ),
                   if (shortPinHint != null) ...[
                     const SizedBox(height: 8),
@@ -635,7 +640,7 @@ class _MarketplaceMerchantDashboardState
             header: _walletPinDialogHeader(
               icon: Icons.pin_rounded,
               title: 'Set wallet PIN',
-              subtitle: 'Create a 4‚Äì6 digit PIN.',
+              subtitle: 'Create a 4G«Ù6 digit PIN.',
             ),
             body: Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -659,7 +664,7 @@ class _MarketplaceMerchantDashboardState
                       fontWeight: FontWeight.w700,
                       letterSpacing: 2,
                     ),
-                    decoration: _walletPinFieldDecoration('New PIN (4‚Äì6 digits)'),
+                    decoration: _walletPinFieldDecoration('New PIN (4G«Ù6 digits)'),
                   ),
                   const SizedBox(height: 10),
                   TextField(
@@ -795,14 +800,15 @@ class _MarketplaceMerchantDashboardState
     unawaited(_loadItems(showLoading: _items.isEmpty));
     unawaited(_loadWalletBalance());
 
-    // 3) Heavier network work after first frame ‚Äî don't block skeleton exit.
+    // 3) Heavier network work after first frame G«ˆ don't block skeleton exit.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_loadMerchantData());
       unawaited(_fetchCurrentUserMe());
       unawaited(_pullPhoneAndProfileFromFirestore());
+      unawaited(_loadKycStatus());
       unawaited(_ensureBusinessName());
-      // Backfill can rewrite many docs ‚Äî defer so dashboard opens fast.
+      // Backfill can rewrite many docs G«ˆ defer so dashboard opens fast.
       Future<void>.delayed(const Duration(seconds: 2), () {
         if (!mounted) return;
         unawaited(_syncBackendUserIdToFirestore());
@@ -815,7 +821,7 @@ class _MarketplaceMerchantDashboardState
   /// Prefs + clear loading shell without waiting on APIs.
   Future<void> _bootstrapFast() async {
     await _loadMerchantProfileFromPrefs();
-    // Disk cache may be ready after prefs ‚Äî apply if memory was empty.
+    // Disk cache may be ready after prefs G«ˆ apply if memory was empty.
     if (_items.isEmpty) {
       await _hydrateItemsFromPrefsCache();
     }
@@ -873,7 +879,7 @@ class _MarketplaceMerchantDashboardState
     final copy = items.map((e) => Map<String, dynamic>.from(e)).toList();
     _itemsMemoryByUid[uid] = copy;
     try {
-      // Keep prefs payload small ‚Äî drop huge base64 blobs from disk cache.
+      // Keep prefs payload small G«ˆ drop huge base64 blobs from disk cache.
       final slim = copy.map((e) {
         final m = Map<String, dynamic>.from(e);
         final img = (m['image'] ?? '').toString();
@@ -940,7 +946,7 @@ class _MarketplaceMerchantDashboardState
     });
   }
 
-  // ----------------- Business name FIX (Auth ‚Üí Firestore ‚Üí API ‚Üí Prefs) -----------------
+  // ----------------- Business name FIX (Auth GÂ∆ Firestore GÂ∆ API GÂ∆ Prefs) -----------------
   void _hydrateFromFirebaseAuth() {
     final u = _auth.currentUser;
     if (u == null) return;
@@ -1434,7 +1440,7 @@ class _MarketplaceMerchantDashboardState
       _closeTime = null;
       return;
     }
-    final parts = s.replaceAll('‚Äì', '-').replaceAll('‚Äî', '-').split('-');
+    final parts = s.replaceAll('G«Ù', '-').replaceAll('G«ˆ', '-').split('-');
     if (parts.length != 2) return;
     final open = _parseShopTime(parts[0]);
     final close = _parseShopTime(parts[1]);
@@ -1464,7 +1470,7 @@ class _MarketplaceMerchantDashboardState
   String _formatOpenDaysLabel(Set<int> days) {
     if (days.isEmpty || days.length == 7) return 'Every day';
     final sorted = days.toList()..sort();
-    // Contiguous ranges ‚Üí Mon‚ÄìFri style
+    // Contiguous ranges GÂ∆ MonG«ÙFri style
     final ranges = <String>[];
     int start = sorted.first;
     int prev = sorted.first;
@@ -1476,27 +1482,27 @@ class _MarketplaceMerchantDashboardState
       }
       ranges.add(start == prev
           ? _kDayLabels[start - 1]
-          : '${_kDayLabels[start - 1]}‚Äì${_kDayLabels[prev - 1]}');
+          : '${_kDayLabels[start - 1]}G«Ù${_kDayLabels[prev - 1]}');
       start = prev = d;
     }
     ranges.add(start == prev
         ? _kDayLabels[start - 1]
-        : '${_kDayLabels[start - 1]}‚Äì${_kDayLabels[prev - 1]}');
+        : '${_kDayLabels[start - 1]}G«Ù${_kDayLabels[prev - 1]}');
     return ranges.join(', ');
   }
 
   String get _shopHoursSummary {
     if (_openTime == null || _closeTime == null) return 'Set shop hours';
     final times =
-        '${_formatShopTime(_openTime!)}‚Äì${_formatShopTime(_closeTime!)}';
-    return '${_formatOpenDaysLabel(_openDays)} ¬∑ $times';
+        '${_formatShopTime(_openTime!)}G«Ù${_formatShopTime(_closeTime!)}';
+    return '${_formatOpenDaysLabel(_openDays)} -+ $times';
   }
 
   bool get _isShopOpenNow {
     final open = _openTime;
     final close = _closeTime;
     if (open == null || close == null) return false;
-    final today = DateTime.now().weekday; // 1=Mon ‚Ä¶ 7=Sun
+    final today = DateTime.now().weekday; // 1=Mon G«™ 7=Sun
     if (_openDays.isNotEmpty && !_openDays.contains(today)) return false;
     final now = TimeOfDay.now();
     final nowM = now.hour * 60 + now.minute;
@@ -1542,7 +1548,7 @@ class _MarketplaceMerchantDashboardState
       _toastErr('Please sign in again.');
       return;
     }
-    final hours = '${_formatShopTime(open)}‚Äì${_formatShopTime(close)}';
+    final hours = '${_formatShopTime(open)}G«Ù${_formatShopTime(close)}';
     final dayList = (days.isEmpty || days.length == 7)
         ? <int>[1, 2, 3, 4, 5, 6, 7]
         : (days.toList()..sort());
@@ -1581,7 +1587,7 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  // ‚úÖ /users/me for email/phone/pic/rating
+  // G£‡ /users/me for email/phone/pic/rating
   Future<void> _fetchCurrentUserMe() async {
     if (!mounted) return;
 
@@ -1868,7 +1874,7 @@ class _MarketplaceMerchantDashboardState
   /// When [showLoading] is false, keeps the current grid visible while refreshing
   /// in the background (used by periodic updates so the UI stays stable).
   Future<void> _loadItems({bool showLoading = true}) async {
-    // Prefer showing cached items ‚Äî never blank the grid while refreshing.
+    // Prefer showing cached items G«ˆ never blank the grid while refreshing.
     if (_items.isEmpty) {
       _hydrateItemsFromLocalCache();
       if (_items.isEmpty) await _hydrateItemsFromPrefsCache();
@@ -2010,6 +2016,7 @@ class _MarketplaceMerchantDashboardState
   Future<void> _refreshAll() async {
     _hydrateFromFirebaseAuth();
     await _pullPhoneAndProfileFromFirestore();
+    await _loadKycStatus();
     await _ensureBusinessName();
     await _fetchCurrentUserMe();
     await _loadMerchantData();
@@ -2018,6 +2025,32 @@ class _MarketplaceMerchantDashboardState
     if (_merchantProfileUrl.trim().isNotEmpty) {
       unawaited(_warmProfilePhotoCache(_merchantProfileUrl));
     }
+  }
+
+  Future<void> _loadKycStatus() async {
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) return;
+    try {
+      final doc = await _firestore.collection('users').doc(uid).get();
+      final data = doc.data() ?? {};
+      final status = (data['kycStatus'] ?? '').toString().trim().toLowerCase();
+      final reason = (data['kycRejectionReason'] ?? '').toString().trim();
+      if (!mounted) return;
+      setState(() {
+        _kycStatus = status;
+        _kycRejectionReason = reason;
+      });
+    } catch (e) {
+      if (kDebugMode) debugPrint('KYC status load failed: $e');
+    }
+  }
+
+  Future<void> _openKycVerification() async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const KycVerificationScreen()),
+    );
+    if (!mounted) return;
+    await _loadKycStatus();
   }
 
   // ----------------- Profile image helpers -----------------
@@ -2479,7 +2512,7 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  // ----------------- ‚úÖ More photos helpers -----------------
+  // ----------------- G£‡ More photos helpers -----------------
   Future<void> _pickMorePhotos() async {
     try {
       final files = await _picker.pickMultiImage(
@@ -2525,16 +2558,16 @@ class _MarketplaceMerchantDashboardState
     if (e is FirebaseException) {
       switch (e.code) {
         case 'permission-denied':
-          return 'You don‚Äôt have permission to post this listing. Please sign in again and try once more.';
+          return 'You donG«÷t have permission to post this listing. Please sign in again and try once more.';
         case 'unauthenticated':
           return 'Please sign in to post on Marketplace.';
         case 'unavailable':
         case 'deadline-exceeded':
-          return 'We‚Äôre having trouble connecting. Check your internet and try again.';
+          return 'WeG«÷re having trouble connecting. Check your internet and try again.';
         case 'resource-exhausted':
           return 'Too many requests right now. Please wait a moment and try again.';
         default:
-          return 'Couldn‚Äôt post your listing. Please try again.';
+          return 'CouldnG«÷t post your listing. Please try again.';
       }
     }
     if (e is StateError) {
@@ -2545,7 +2578,7 @@ class _MarketplaceMerchantDashboardState
         return msg;
       }
     }
-    return 'Couldn‚Äôt post your listing. Please try again.';
+    return 'CouldnG«÷t post your listing. Please try again.';
   }
 
   // ----------------- CREATE item -----------------
@@ -2587,7 +2620,7 @@ class _MarketplaceMerchantDashboardState
 
       final firebaseUid = user?.uid ?? _uid;
       if (firebaseUid.trim().isEmpty) {
-        _toastErr('Missing user id ‚Äî sign in and try again.');
+        _toastErr('Missing user id G«ˆ sign in and try again.');
         return;
       }
       final sellerId = await _getNestUserId();
@@ -2675,10 +2708,10 @@ class _MarketplaceMerchantDashboardState
       };
 
       await _firestore.collection('marketplace_items').add(data);
-      debugPrint('Firestore write OK ‚Üí marketplace_items (pending review)');
+      debugPrint('Firestore write OK GÂ∆ marketplace_items (pending review)');
 
       if (!mounted) return;
-      _toastOk('Submitted for review. We‚Äôll notify you when it‚Äôs live.');
+      _toastOk('Submitted for review. WeG«÷ll notify you when itG«÷s live.');
 
       _name.clear();
       _price.clear();
@@ -2734,7 +2767,7 @@ class _MarketplaceMerchantDashboardState
       unawaited(_persistItemsCache(_items));
 
       if (!mounted) return;
-      _toastOk('Deleted ‚Ä¢ ${item['name']}');
+      _toastOk('Deleted G«Û ${item['name']}');
 
       setState(() {
         _totalItems = _items.length;
@@ -2749,7 +2782,7 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  // ‚úÖ FIXED: no parent setState while sheet is closing + no crash after save
+  // G£‡ FIXED: no parent setState while sheet is closing + no crash after save
   Future<void> _openEditItemSheet(Map<String, dynamic> item) async {
     final id = (item['id'] ?? '').toString().trim();
     if (id.isEmpty) return;
@@ -3004,7 +3037,7 @@ class _MarketplaceMerchantDashboardState
                     patch['imageHashes'] = FieldValue.arrayUnion([coverHash]);
                   }
                   if (prevReview == 'approved') {
-                    // New cover on live item ‚Üí re-review.
+                    // New cover on live item GÂ∆ re-review.
                     patch['isActive'] = false;
                     patch['reviewStatus'] = 'pending';
                   }
@@ -3214,7 +3247,7 @@ class _MarketplaceMerchantDashboardState
                     ],
                     if (_itemReviewStatus(item) == 'pending') ...[
                       const Text(
-                        'Under review ‚Äî edits will keep this listing pending until approved.',
+                        'Under review G«ˆ edits will keep this listing pending until approved.',
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 13,
@@ -3273,7 +3306,7 @@ class _MarketplaceMerchantDashboardState
       },
     );
 
-    // ‚úÖ allow sheet route to fully finish closing animation before disposing
+    // G£‡ allow sheet route to fully finish closing animation before disposing
     await Future.delayed(const Duration(milliseconds: 350));
     nameCtrl.dispose();
     priceCtrl.dispose();
@@ -3639,7 +3672,7 @@ class _MarketplaceMerchantDashboardState
         _showMerchantGuide = true;
         _merchantGuideStep = 0;
       });
-      // Match the first card (Add Item) to the Add Item tab ‚Äî not the previous tab.
+      // Match the first card (Add Item) to the Add Item tab G«ˆ not the previous tab.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_showMerchantGuide) return;
         _syncMerchantGuideTab(_merchantGuideStep);
@@ -3647,7 +3680,7 @@ class _MarketplaceMerchantDashboardState
     } catch (_) {}
   }
 
-  /// Tabs: 0 Dashboard, 1 Add Item, 2 My Items ‚Äî align with [_merchantGuideSteps] copy.
+  /// Tabs: 0 Dashboard, 1 Add Item, 2 My Items G«ˆ align with [_merchantGuideSteps] copy.
   void _syncMerchantGuideTab(int step) {
     if (step < 0 || step >= _merchantGuideSteps.length) return;
     final int tab = switch (step) {
@@ -3828,7 +3861,7 @@ class _MarketplaceMerchantDashboardState
       WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowMerchantGuide());
     }
 
-    // ‚úÖ removed DefaultTabController (it can trigger dependents assertion in some setups)
+    // G£‡ removed DefaultTabController (it can trigger dependents assertion in some setups)
     return Stack(
       children: [
         Column(
@@ -3867,6 +3900,8 @@ class _MarketplaceMerchantDashboardState
                         children: [
                           _buildModernHeaderCard(),
                           const SizedBox(height: 12),
+                          _buildKycSection(),
+                          const SizedBox(height: 12),
                           _buildStatsSection(),
                           const SizedBox(height: 12),
                           _buildQuickActionsSection(),
@@ -3893,6 +3928,147 @@ class _MarketplaceMerchantDashboardState
   }
 
   // ----------------- Header (modern) -----------------
+  Widget _buildKycSection() {
+    final status = _kycStatus.trim().toLowerCase();
+    final verified = status == 'verified' || status == 'approved';
+    final pending = status == 'pending' || status == 'in_review' || status == 'submitted';
+    final rejected = status == 'rejected' || status == 'declined';
+
+    late final String title;
+    late final String subtitle;
+    late final Color badgeBg;
+    late final Color badgeFg;
+    late final String badgeLabel;
+    late final IconData icon;
+
+    if (verified) {
+      title = 'Identity verified';
+      subtitle = 'Your KYC check is complete.';
+      badgeBg = const Color(0xFFE7F6EC);
+      badgeFg = Colors.green.shade700;
+      badgeLabel = 'Verified';
+      icon = Icons.verified_user_rounded;
+    } else if (pending) {
+      title = 'Verification in progress';
+      subtitle = 'We are reviewing your Didit submission.';
+      badgeBg = const Color(0xFFFFF3E5);
+      badgeFg = const Color(0xFFB86E00);
+      badgeLabel = 'Pending';
+      icon = Icons.hourglass_top_rounded;
+    } else if (rejected) {
+      title = 'Verification needs attention';
+      subtitle = _kycRejectionReason.isNotEmpty
+          ? _kycRejectionReason
+          : 'Your previous attempt was declined. Try again.';
+      badgeBg = const Color(0xFFFFEDEE);
+      badgeFg = Colors.red.shade700;
+      badgeLabel = 'Rejected';
+      icon = Icons.gpp_bad_outlined;
+    } else {
+      title = 'Verify your identity';
+      subtitle =
+          'Complete a quick ID + face check with Didit to unlock full merchant trust.';
+      badgeBg = const Color(0xFFFFF3E5);
+      badgeFg = const Color(0xFFB86E00);
+      badgeLabel = 'Required';
+      icon = Icons.badge_outlined;
+    }
+
+    final canStart = !verified;
+
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: canStart ? _openKycVerification : null,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: _brandOrange.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: _brandOrange),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'KYC verification',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: badgeBg,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            badgeLabel,
+                            style: TextStyle(
+                              color: badgeFg,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                        color: Color(0xFF101010),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                        height: 1.3,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              if (canStart) ...[
+                const SizedBox(width: 6),
+                const Icon(Icons.chevron_right, color: Colors.black38),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildModernHeaderCard() {
     final business = _displayBusinessName();
     final st = _status.trim().toLowerCase();
@@ -4363,7 +4539,7 @@ class _MarketplaceMerchantDashboardState
                     style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 6),
                 Text(
-                  unlocked ? mwk2(_walletBalance) : 'MWK ‚Ä¢‚Ä¢‚Ä¢‚Ä¢', // ‚úÖ commas
+                  unlocked ? mwk2(_walletBalance) : 'MWK G«ÛG«ÛG«ÛG«Û', // G£‡ commas
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
@@ -4374,7 +4550,7 @@ class _MarketplaceMerchantDashboardState
                   const Padding(
                     padding: EdgeInsets.only(top: 4),
                     child: Text(
-                      'Locked ‚Äî tap Open to unlock',
+                      'Locked G«ˆ tap Open to unlock',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -4496,7 +4672,7 @@ class _MarketplaceMerchantDashboardState
           ...displayList.map((o) {
             final dateStr = o.orderDate != null
                 ? _recentSaleDateFmt.format(o.orderDate!.toLocal())
-                : '‚Äî';
+                : 'G«ˆ';
             return Container(
               margin: const EdgeInsets.only(bottom: 10),
               decoration: BoxDecoration(
@@ -4539,7 +4715,7 @@ class _MarketplaceMerchantDashboardState
                           ),
                         ],
                       ),
-                      Text('${mwk0(o.total)}  ¬∑  $dateStr'),
+                      Text('${mwk0(o.total)}  -+  $dateStr'),
                     ],
                   ),
                 ),
@@ -4562,7 +4738,7 @@ class _MarketplaceMerchantDashboardState
   }
 
 
-  // ----------------- ‚ÄúTop items‚Äù replaced: list ALL merchant items -----------------
+  // ----------------- G«£Top itemsG«• replaced: list ALL merchant items -----------------
   Widget _buildAllClientItemsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4595,7 +4771,7 @@ class _MarketplaceMerchantDashboardState
     );
   }
 
-  // ----------------- ‚úÖ Add Item Tab (with multi-photos) -----------------
+  // ----------------- G£‡ Add Item Tab (with multi-photos) -----------------
   Widget _buildAddItemTab() {
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
@@ -4673,7 +4849,7 @@ class _MarketplaceMerchantDashboardState
               ),
               const SizedBox(height: 14),
 
-              // ‚úÖ More Photos
+              // G£‡ More Photos
               Row(
                 children: [
                   const Expanded(
@@ -4863,7 +5039,7 @@ class _MarketplaceMerchantDashboardState
                 ),
                 child: const Text(
                   'New listings are reviewed automatically before going live. '
-                  'You‚Äôll get a notification when yours is approved.',
+                  'YouG«÷ll get a notification when yours is approved.',
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 13,
@@ -4885,7 +5061,7 @@ class _MarketplaceMerchantDashboardState
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.upload_rounded),
                   label: Text(
-                    _submitting ? 'Posting‚Ä¶' : 'Post on Marketplace',
+                    _submitting ? 'PostingG«™' : 'Post on Marketplace',
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                 ),
@@ -5374,7 +5550,7 @@ class _MarketplaceMerchantDashboardState
       ),
     );
   }
-} // ‚úÖ END of _MarketplaceMerchantDashboardState
+} // G£‡ END of _MarketplaceMerchantDashboardState
 
 // ----------------- Quick action tile -----------------
 class _QuickActionTile extends StatelessWidget {
@@ -5569,7 +5745,7 @@ class _ItemsGridSkeleton extends StatelessWidget {
 // ----------------- Cards -----------------
 
 /// Firestore `marketplace_items` may use `image` (base64), `imageUrl` (upload flow),
-/// or only `gallery` / `galleryUrls` ‚Äî same as [main_marketPlace] / MerchantProductsPage.
+/// or only `gallery` / `galleryUrls` G«ˆ same as [main_marketPlace] / MerchantProductsPage.
 String? _coverImageSourceFromItem(Map<String, dynamic> item) {
   String? take(dynamic v) {
     final t = (v ?? '').toString().trim();

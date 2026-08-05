@@ -61,6 +61,20 @@ import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 final GlobalKey<NavigatorState> navKey = appNavKey;
 
+/// Lower raster resolution on Android so Adreno sharedmem stays under budget.
+Widget _androidGpuSoftened(BuildContext context, Widget? child) {
+  final content = child ?? const SizedBox.shrink();
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    return content;
+  }
+  final mq = MediaQuery.of(context);
+  if (mq.devicePixelRatio <= 1.25) return content;
+  return MediaQuery(
+    data: mq.copyWith(devicePixelRatio: 1.25),
+    child: content,
+  );
+}
+
 bool _isPasswordResetDeepLink(Uri uri) {
   final oobCode = uri.queryParameters['oobCode'];
   if (oobCode == null || oobCode.isEmpty) return false;
@@ -192,10 +206,11 @@ Future<bool> _ensureFirebaseHealthy({
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Low-RAM phones: cap decoded image memory so product grids don't OOM.
-  // Default Flutter cache can hold ~100MB+ of full-res bitmaps.
-  PaintingBinding.instance.imageCache.maximumSize = 60;
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 40 << 20; // 40 MB
+  // Cap decoded-image cache — Redmi 8A / 2GB Adreno dies on GPU texture OOM.
+  final lowRamAndroid = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  PaintingBinding.instance.imageCache.maximumSize = lowRamAndroid ? 12 : 60;
+  PaintingBinding.instance.imageCache.maximumSizeBytes =
+      lowRamAndroid ? 8 << 20 : 48 << 20; // 8 MB on Android, 48 MB elsewhere
 
   // Start Firebase self-heal immediately, but do not block first paint.
   unawaited(_ensureFirebaseHealthy(quiet: true));
@@ -240,12 +255,14 @@ class _AppBootstrapState extends State<AppBootstrap> {
     super.initState();
     _bootFuture = _boot();
 
-    // Defer heavier, non-blocking services until after the first frame.
+    // Stagger heavy native init so 2GB phones finish first paint without LMK.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 1800));
         try {
           await GoogleMapsConfig.initialize();
         } catch (_) {}
+        await Future<void>.delayed(const Duration(milliseconds: 600));
         try {
           await NotificationService.instance.initialize();
           NotificationService.setNavigatorKey(navKey);
@@ -414,6 +431,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
               scaffoldBackgroundColor: _splashBg,
               colorSchemeSeed: const Color(0xFFFF6B00),
             ),
+            builder: _androidGpuSoftened,
             home: VeroLaunchSplash(
               title: _bootTitle,
               message: _bootMessage,
@@ -578,20 +596,30 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  void _trimImageMemory() {
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final previous = _lastLifecycleState;
     _lastLifecycleState = state;
 
     if (state == AppLifecycleState.paused) {
-      // Free decoded bitmaps while backgrounded — big win on 2–3GB phones.
-      PaintingBinding.instance.imageCache.clear();
+      // Free decoded bitmaps while backgrounded — critical on 2GB Redmi.
+      _trimImageMemory();
       // System PIN/biometric UI also pauses the activity. Do not treat that as
       // "user left the app" or the next resume will lock again after unlock.
       if (!_biometricAuthInProgress && !_showBiometricLock) {
         _biometricSessionUnlocked = false;
       }
       return;
+    }
+
+    if (state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      _trimImageMemory();
     }
 
     if (state == AppLifecycleState.resumed &&
@@ -786,7 +814,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 ],
               );
             }
-            return content;
+            return _androidGpuSoftened(context, content);
           },
 
           // Bootstrap resolves role → home. Fallback cream only if shell unknown.

@@ -72,22 +72,29 @@ class _ResilientCachedNetworkImageState
     final u = _currentUrl;
     final placeholderBg =
         widget.placeholderColor ?? Colors.grey.shade100;
-    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final dpr = MediaQuery.devicePixelRatioOf(context)
+        .clamp(1.0, _androidLowEnd ? 1.5 : 3.0);
 
     // Prefer caller values. Only auto-size from *finite* layout size, and only
     // set ONE mem dimension so aspect ratio stays correct (avoids "shrunk" tiles).
+    // On low-end Android, infer a tighter decode budget when sizes are omitted.
     int? memW = widget.memCacheWidth;
     int? memH = widget.memCacheHeight;
     if (memW == null && memH == null) {
       if (widget.width != null && widget.width!.isFinite && widget.width! > 0) {
-        memW = (widget.width! * dpr).round().clamp(128, 1200);
+        final maxPx = _androidLowEnd ? 720 : 1200;
+        memW = (widget.width! * dpr).round().clamp(128, maxPx);
       } else if (widget.height != null &&
           widget.height!.isFinite &&
           widget.height! > 0) {
-        memH = (widget.height! * dpr).round().clamp(128, 1200);
+        final maxPx = _androidLowEnd ? 720 : 1200;
+        memH = (widget.height! * dpr).round().clamp(128, maxPx);
+      } else if (_androidLowEnd) {
+        final layoutW = MediaQuery.sizeOf(context).width;
+        memW = (layoutW * dpr).round().clamp(48, 720);
       }
-      // Unconstrained (marketplace grids that expand): leave null so quality
-      // stays sharp; global imageCache limits still protect low-RAM phones.
+      // Unconstrained (non-Android): leave null so quality stays sharp;
+      // global imageCache limits still protect low-RAM phones.
     }
 
     Widget placeholder() => Container(
@@ -103,18 +110,6 @@ class _ResilientCachedNetworkImageState
                 )
               : null,
         );
-
-    final dpr = MediaQuery.devicePixelRatioOf(context).clamp(1.0, 1.5);
-    int? memW = widget.memCacheWidth;
-    int? memH = widget.memCacheHeight;
-    if (_androidLowEnd && memW == null && memH == null) {
-      final layoutW = widget.width ?? MediaQuery.sizeOf(context).width;
-      final layoutH = widget.height;
-      memW = (layoutW * dpr).round().clamp(48, 720);
-      if (layoutH != null) {
-        memH = (layoutH * dpr).round().clamp(48, 720);
-      }
-    }
 
     return CachedNetworkImage(
       imageUrl: u,

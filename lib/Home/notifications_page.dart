@@ -21,6 +21,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
   void initState() {
     super.initState();
     _loadProfilePicture();
+    // Ensure we only show the signed-in account's persisted notifications.
+    NotificationStore.instance.ensureLoaded();
   }
 
   String _sectionLabel(DateTime dt) {

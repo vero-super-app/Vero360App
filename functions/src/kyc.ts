@@ -80,6 +80,6 @@ export const createDiditSession = onCall(
       { merge: true },
     );
 
-    return { session_token: sessionToken };
+    return { session_token: sessionToken, url: data.url || data.session_url || `https://verify.didit.me/session/${sessionToken}` };
   },
 );

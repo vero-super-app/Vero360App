@@ -1555,7 +1555,12 @@ exports.createDiditSession = onCall(
       { merge: true },
     );
 
-    return { session_token: sessionToken };
+    const url =
+      data.url ||
+      data.session_url ||
+      `https://verify.didit.me/session/${sessionToken}`;
+
+    return { session_token: sessionToken, url };
   },
 );
 

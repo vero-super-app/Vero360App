@@ -1,5 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/guest_booking_local_cache.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
@@ -64,6 +65,11 @@ class SessionLocalCache {
     } catch (_) {}
     BlockedMerchantService.clearSessionCache();
 
+    // In-app notification list must not follow the next account.
+    try {
+      await NotificationStore.instance.clearForLogout();
+    } catch (_) {}
+
     try {
       final sp = await SharedPreferences.getInstance();
       for (final k in _exactKeys) {
@@ -71,6 +77,7 @@ class SessionLocalCache {
       }
       // Legacy unscoped guest booking cache.
       await sp.remove('guest_paid_stay_bookings_v1');
+      await sp.remove('vero360_notifications');
       for (final key in sp.getKeys().toList()) {
         if (_prefixes.any(key.startsWith)) {
           await sp.remove(key);

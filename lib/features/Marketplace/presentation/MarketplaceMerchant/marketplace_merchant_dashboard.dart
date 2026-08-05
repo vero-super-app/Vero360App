@@ -65,9 +65,9 @@ import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 
-import 'package:intl/intl.dart'; // G£à NEW
+import 'package:intl/intl.dart'; // G?? NEW
 
-// ----------------- G£à PRICE FORMAT HELPERS (MWK with commas) -----------------
+// ----------------- G?? PRICE FORMAT HELPERS (MWK with commas) -----------------
 final NumberFormat _mwk0Fmt =
     NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
 final NumberFormat _mwk2Fmt =
@@ -84,7 +84,7 @@ String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
 String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
 // ---------------------------------------------------------------------------
 
-/// GÇ£Your ItemsGÇ¥ / GÇ£My ItemsGÇ¥ grids: taller cells on narrow screens + large text scale
+/// G?Your ItemsG? / G?My ItemsG? grids: taller cells on narrow screens + large text scale
 /// so [_ModernItemMiniCard] / [_ItemCard] never bottom-overflow inside the cell.
 SliverGridDelegate _merchantItemsGridDelegate(BuildContext context) {
   final w = MediaQuery.sizeOf(context).width;
@@ -176,7 +176,7 @@ class _MarketplaceMerchantDashboardState
   final MerchantServiceHelper _helper = MerchantServiceHelper();
   final OrderService _orderService = OrderService();
 
-  // G£à Use CartService singleton from provider
+  // G?? Use CartService singleton from provider
   final CartService _cartService = CartServiceProvider.getInstance();
 
   final _picker = ImagePicker();
@@ -197,7 +197,7 @@ class _MarketplaceMerchantDashboardState
 
   LocalMedia? _cover;
 
-  // G£à multi-photos for posting
+  // G?? multi-photos for posting
   static const int _maxGalleryPhotos = 5;
   final List<LocalMedia> _gallery = <LocalMedia>[];
 
@@ -266,7 +266,7 @@ class _MarketplaceMerchantDashboardState
 
   TimeOfDay? _openTime;
   TimeOfDay? _closeTime;
-  /// Dart [DateTime.weekday] values: 1 = Mon GÇª 7 = Sun. Empty = every day.
+  /// Dart [DateTime.weekday] values: 1 = Mon G? 7 = Sun. Empty = every day.
   Set<int> _openDays = {};
 
   bool _loadingMe = false;
@@ -274,7 +274,7 @@ class _MarketplaceMerchantDashboardState
 
   Timer? _ticker;
 
-  // G£à prevent periodic refresh while an edit sheet is open (stops random crashes)
+  // G?? prevent periodic refresh while an edit sheet is open (stops random crashes)
   bool _sheetOpen = false;
 
   // First-time merchant guide (show once after login, then persist as done)
@@ -520,7 +520,7 @@ class _MarketplaceMerchantDashboardState
             header: _walletPinDialogHeader(
               icon: Icons.account_balance_wallet_rounded,
               title: 'Unlock wallet',
-              subtitle: 'Enter your 4GÇô6 digit PIN.',
+              subtitle: 'Enter your 4G??6 digit PIN.',
             ),
             body: Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -544,7 +544,7 @@ class _MarketplaceMerchantDashboardState
                       fontWeight: FontWeight.w700,
                       letterSpacing: 2,
                     ),
-                    decoration: _walletPinFieldDecoration('Wallet PIN (4GÇô6 digits)'),
+                    decoration: _walletPinFieldDecoration('Wallet PIN (4G??6 digits)'),
                   ),
                   if (shortPinHint != null) ...[
                     const SizedBox(height: 8),
@@ -640,7 +640,7 @@ class _MarketplaceMerchantDashboardState
             header: _walletPinDialogHeader(
               icon: Icons.pin_rounded,
               title: 'Set wallet PIN',
-              subtitle: 'Create a 4GÇô6 digit PIN.',
+              subtitle: 'Create a 4G??6 digit PIN.',
             ),
             body: Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -664,7 +664,7 @@ class _MarketplaceMerchantDashboardState
                       fontWeight: FontWeight.w700,
                       letterSpacing: 2,
                     ),
-                    decoration: _walletPinFieldDecoration('New PIN (4GÇô6 digits)'),
+                    decoration: _walletPinFieldDecoration('New PIN (4G??6 digits)'),
                   ),
                   const SizedBox(height: 10),
                   TextField(
@@ -800,7 +800,7 @@ class _MarketplaceMerchantDashboardState
     unawaited(_loadItems(showLoading: _items.isEmpty));
     unawaited(_loadWalletBalance());
 
-    // 3) Heavier network work after first frame GÇö don't block skeleton exit.
+    // 3) Heavier network work after first frame G?? don't block skeleton exit.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_loadMerchantData());
@@ -808,7 +808,7 @@ class _MarketplaceMerchantDashboardState
       unawaited(_pullPhoneAndProfileFromFirestore());
       unawaited(_loadKycStatus());
       unawaited(_ensureBusinessName());
-      // Backfill can rewrite many docs GÇö defer so dashboard opens fast.
+      // Backfill can rewrite many docs G?? defer so dashboard opens fast.
       Future<void>.delayed(const Duration(seconds: 2), () {
         if (!mounted) return;
         unawaited(_syncBackendUserIdToFirestore());
@@ -821,7 +821,7 @@ class _MarketplaceMerchantDashboardState
   /// Prefs + clear loading shell without waiting on APIs.
   Future<void> _bootstrapFast() async {
     await _loadMerchantProfileFromPrefs();
-    // Disk cache may be ready after prefs GÇö apply if memory was empty.
+    // Disk cache may be ready after prefs G?? apply if memory was empty.
     if (_items.isEmpty) {
       await _hydrateItemsFromPrefsCache();
     }
@@ -879,7 +879,7 @@ class _MarketplaceMerchantDashboardState
     final copy = items.map((e) => Map<String, dynamic>.from(e)).toList();
     _itemsMemoryByUid[uid] = copy;
     try {
-      // Keep prefs payload small GÇö drop huge base64 blobs from disk cache.
+      // Keep prefs payload small G?? drop huge base64 blobs from disk cache.
       final slim = copy.map((e) {
         final m = Map<String, dynamic>.from(e);
         final img = (m['image'] ?? '').toString();
@@ -946,7 +946,7 @@ class _MarketplaceMerchantDashboardState
     });
   }
 
-  // ----------------- Business name FIX (Auth GåÆ Firestore GåÆ API GåÆ Prefs) -----------------
+  // ----------------- Business name FIX (Auth G?? Firestore G?? API G?? Prefs) -----------------
   void _hydrateFromFirebaseAuth() {
     final u = _auth.currentUser;
     if (u == null) return;
@@ -1440,7 +1440,7 @@ class _MarketplaceMerchantDashboardState
       _closeTime = null;
       return;
     }
-    final parts = s.replaceAll('GÇô', '-').replaceAll('GÇö', '-').split('-');
+    final parts = s.replaceAll('G??', '-').replaceAll('G??', '-').split('-');
     if (parts.length != 2) return;
     final open = _parseShopTime(parts[0]);
     final close = _parseShopTime(parts[1]);
@@ -1470,7 +1470,7 @@ class _MarketplaceMerchantDashboardState
   String _formatOpenDaysLabel(Set<int> days) {
     if (days.isEmpty || days.length == 7) return 'Every day';
     final sorted = days.toList()..sort();
-    // Contiguous ranges GåÆ MonGÇôFri style
+    // Contiguous ranges G?? MonG??Fri style
     final ranges = <String>[];
     int start = sorted.first;
     int prev = sorted.first;
@@ -1482,19 +1482,19 @@ class _MarketplaceMerchantDashboardState
       }
       ranges.add(start == prev
           ? _kDayLabels[start - 1]
-          : '${_kDayLabels[start - 1]}GÇô${_kDayLabels[prev - 1]}');
+          : '${_kDayLabels[start - 1]}G??${_kDayLabels[prev - 1]}');
       start = prev = d;
     }
     ranges.add(start == prev
         ? _kDayLabels[start - 1]
-        : '${_kDayLabels[start - 1]}GÇô${_kDayLabels[prev - 1]}');
+        : '${_kDayLabels[start - 1]}G??${_kDayLabels[prev - 1]}');
     return ranges.join(', ');
   }
 
   String get _shopHoursSummary {
     if (_openTime == null || _closeTime == null) return 'Set shop hours';
     final times =
-        '${_formatShopTime(_openTime!)}GÇô${_formatShopTime(_closeTime!)}';
+        '${_formatShopTime(_openTime!)}G??${_formatShopTime(_closeTime!)}';
     return '${_formatOpenDaysLabel(_openDays)} -+ $times';
   }
 
@@ -1502,7 +1502,7 @@ class _MarketplaceMerchantDashboardState
     final open = _openTime;
     final close = _closeTime;
     if (open == null || close == null) return false;
-    final today = DateTime.now().weekday; // 1=Mon GÇª 7=Sun
+    final today = DateTime.now().weekday; // 1=Mon G? 7=Sun
     if (_openDays.isNotEmpty && !_openDays.contains(today)) return false;
     final now = TimeOfDay.now();
     final nowM = now.hour * 60 + now.minute;
@@ -1548,7 +1548,7 @@ class _MarketplaceMerchantDashboardState
       _toastErr('Please sign in again.');
       return;
     }
-    final hours = '${_formatShopTime(open)}GÇô${_formatShopTime(close)}';
+    final hours = '${_formatShopTime(open)}G??${_formatShopTime(close)}';
     final dayList = (days.isEmpty || days.length == 7)
         ? <int>[1, 2, 3, 4, 5, 6, 7]
         : (days.toList()..sort());
@@ -1587,7 +1587,7 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  // G£à /users/me for email/phone/pic/rating
+  // G?? /users/me for email/phone/pic/rating
   Future<void> _fetchCurrentUserMe() async {
     if (!mounted) return;
 
@@ -1874,7 +1874,7 @@ class _MarketplaceMerchantDashboardState
   /// When [showLoading] is false, keeps the current grid visible while refreshing
   /// in the background (used by periodic updates so the UI stays stable).
   Future<void> _loadItems({bool showLoading = true}) async {
-    // Prefer showing cached items GÇö never blank the grid while refreshing.
+    // Prefer showing cached items G?? never blank the grid while refreshing.
     if (_items.isEmpty) {
       _hydrateItemsFromLocalCache();
       if (_items.isEmpty) await _hydrateItemsFromPrefsCache();
@@ -2512,7 +2512,7 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  // ----------------- G£à More photos helpers -----------------
+  // ----------------- G?? More photos helpers -----------------
   Future<void> _pickMorePhotos() async {
     try {
       final files = await _picker.pickMultiImage(
@@ -2558,16 +2558,16 @@ class _MarketplaceMerchantDashboardState
     if (e is FirebaseException) {
       switch (e.code) {
         case 'permission-denied':
-          return 'You donGÇÖt have permission to post this listing. Please sign in again and try once more.';
+          return 'You donG??t have permission to post this listing. Please sign in again and try once more.';
         case 'unauthenticated':
           return 'Please sign in to post on Marketplace.';
         case 'unavailable':
         case 'deadline-exceeded':
-          return 'WeGÇÖre having trouble connecting. Check your internet and try again.';
+          return 'WeG??re having trouble connecting. Check your internet and try again.';
         case 'resource-exhausted':
           return 'Too many requests right now. Please wait a moment and try again.';
         default:
-          return 'CouldnGÇÖt post your listing. Please try again.';
+          return 'CouldnG??t post your listing. Please try again.';
       }
     }
     if (e is StateError) {
@@ -2578,7 +2578,7 @@ class _MarketplaceMerchantDashboardState
         return msg;
       }
     }
-    return 'CouldnGÇÖt post your listing. Please try again.';
+    return 'CouldnG??t post your listing. Please try again.';
   }
 
   // ----------------- CREATE item -----------------
@@ -2620,7 +2620,7 @@ class _MarketplaceMerchantDashboardState
 
       final firebaseUid = user?.uid ?? _uid;
       if (firebaseUid.trim().isEmpty) {
-        _toastErr('Missing user id GÇö sign in and try again.');
+        _toastErr('Missing user id G?? sign in and try again.');
         return;
       }
       final sellerId = await _getNestUserId();
@@ -2708,10 +2708,10 @@ class _MarketplaceMerchantDashboardState
       };
 
       await _firestore.collection('marketplace_items').add(data);
-      debugPrint('Firestore write OK GåÆ marketplace_items (pending review)');
+      debugPrint('Firestore write OK G?? marketplace_items (pending review)');
 
       if (!mounted) return;
-      _toastOk('Submitted for review. WeGÇÖll notify you when itGÇÖs live.');
+      _toastOk('Submitted for review. WeG??ll notify you when itG??s live.');
 
       _name.clear();
       _price.clear();
@@ -2767,7 +2767,7 @@ class _MarketplaceMerchantDashboardState
       unawaited(_persistItemsCache(_items));
 
       if (!mounted) return;
-      _toastOk('Deleted GÇó ${item['name']}');
+      _toastOk('Deleted G?? ${item['name']}');
 
       setState(() {
         _totalItems = _items.length;
@@ -2782,7 +2782,7 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  // G£à FIXED: no parent setState while sheet is closing + no crash after save
+  // G?? FIXED: no parent setState while sheet is closing + no crash after save
   Future<void> _openEditItemSheet(Map<String, dynamic> item) async {
     final id = (item['id'] ?? '').toString().trim();
     if (id.isEmpty) return;
@@ -3037,7 +3037,7 @@ class _MarketplaceMerchantDashboardState
                     patch['imageHashes'] = FieldValue.arrayUnion([coverHash]);
                   }
                   if (prevReview == 'approved') {
-                    // New cover on live item GåÆ re-review.
+                    // New cover on live item G?? re-review.
                     patch['isActive'] = false;
                     patch['reviewStatus'] = 'pending';
                   }
@@ -3235,7 +3235,7 @@ class _MarketplaceMerchantDashboardState
                       ),
                       const SizedBox(height: 6),
                       const Text(
-                        'Tip: use a clear product photo on a plain background â€” avoid people, selfies, or suggestive poses.',
+                        'Tip: use a clear product photo on a plain background ? avoid people, selfies, or suggestive poses.',
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 12,
@@ -3247,7 +3247,7 @@ class _MarketplaceMerchantDashboardState
                     ],
                     if (_itemReviewStatus(item) == 'pending') ...[
                       const Text(
-                        'Under review GÇö edits will keep this listing pending until approved.',
+                        'Under review G?? edits will keep this listing pending until approved.',
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 13,
@@ -3306,7 +3306,7 @@ class _MarketplaceMerchantDashboardState
       },
     );
 
-    // G£à allow sheet route to fully finish closing animation before disposing
+    // G?? allow sheet route to fully finish closing animation before disposing
     await Future.delayed(const Duration(milliseconds: 350));
     nameCtrl.dispose();
     priceCtrl.dispose();
@@ -3652,7 +3652,7 @@ class _MarketplaceMerchantDashboardState
     final uid = (_auth.currentUser?.uid ?? '').trim();
     final scoped = _merchantGuideDoneKey(uid);
     if (prefs.getBool(scoped) == true) return true;
-    // Migrate legacy device-wide flag â†’ per-account.
+    // Migrate legacy device-wide flag ? per-account.
     if (prefs.getBool(_kMerchantGuidePrefKey) == true) {
       if (uid.isNotEmpty) {
         await prefs.setBool(scoped, true);
@@ -3672,7 +3672,7 @@ class _MarketplaceMerchantDashboardState
         _showMerchantGuide = true;
         _merchantGuideStep = 0;
       });
-      // Match the first card (Add Item) to the Add Item tab GÇö not the previous tab.
+      // Match the first card (Add Item) to the Add Item tab G?? not the previous tab.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_showMerchantGuide) return;
         _syncMerchantGuideTab(_merchantGuideStep);
@@ -3680,7 +3680,7 @@ class _MarketplaceMerchantDashboardState
     } catch (_) {}
   }
 
-  /// Tabs: 0 Dashboard, 1 Add Item, 2 My Items GÇö align with [_merchantGuideSteps] copy.
+  /// Tabs: 0 Dashboard, 1 Add Item, 2 My Items G?? align with [_merchantGuideSteps] copy.
   void _syncMerchantGuideTab(int step) {
     if (step < 0 || step >= _merchantGuideSteps.length) return;
     final int tab = switch (step) {
@@ -3861,7 +3861,7 @@ class _MarketplaceMerchantDashboardState
       WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowMerchantGuide());
     }
 
-    // G£à removed DefaultTabController (it can trigger dependents assertion in some setups)
+    // G?? removed DefaultTabController (it can trigger dependents assertion in some setups)
     return Stack(
       children: [
         Column(
@@ -3931,138 +3931,221 @@ class _MarketplaceMerchantDashboardState
   Widget _buildKycSection() {
     final status = _kycStatus.trim().toLowerCase();
     final verified = status == 'verified' || status == 'approved';
-    final pending = status == 'pending' || status == 'in_review' || status == 'submitted';
+    final pending =
+        status == 'pending' || status == 'in_review' || status == 'submitted';
     final rejected = status == 'rejected' || status == 'declined';
 
     late final String title;
     late final String subtitle;
-    late final Color badgeBg;
-    late final Color badgeFg;
     late final String badgeLabel;
     late final IconData icon;
+    late final List<Color> markGradient;
+    late final Color badgeBg;
+    late final Color badgeFg;
+    late final Color badgeBorder;
+    late final Color accent;
+    late final Color cardWash;
 
     if (verified) {
       title = 'Identity verified';
       subtitle = 'Your KYC check is complete.';
-      badgeBg = const Color(0xFFE7F6EC);
-      badgeFg = Colors.green.shade700;
       badgeLabel = 'Verified';
       icon = Icons.verified_user_rounded;
+      markGradient = const [Color(0xFF34C759), Color(0xFF1B8F3E)];
+      badgeBg = const Color(0xFFEAF8EF);
+      badgeFg = const Color(0xFF1B8F3E);
+      badgeBorder = const Color(0xFFB7E6C5);
+      accent = const Color(0xFF1B8F3E);
+      cardWash = const Color(0xFFF4FBF6);
     } else if (pending) {
       title = 'Verification in progress';
       subtitle = 'We are reviewing your Didit submission.';
-      badgeBg = const Color(0xFFFFF3E5);
-      badgeFg = const Color(0xFFB86E00);
-      badgeLabel = 'Pending';
+      badgeLabel = 'In review';
       icon = Icons.hourglass_top_rounded;
+      markGradient = const [Color(0xFFFFB347), Color(0xFFE86F00)];
+      badgeBg = const Color(0xFFFFF3E6);
+      badgeFg = const Color(0xFFB86E00);
+      badgeBorder = const Color(0xFFFFD9A8);
+      accent = const Color(0xFFE86F00);
+      cardWash = const Color(0xFFFFFBF7);
     } else if (rejected) {
       title = 'Verification needs attention';
       subtitle = _kycRejectionReason.isNotEmpty
           ? _kycRejectionReason
           : 'Your previous attempt was declined. Try again.';
-      badgeBg = const Color(0xFFFFEDEE);
-      badgeFg = Colors.red.shade700;
-      badgeLabel = 'Rejected';
-      icon = Icons.gpp_bad_outlined;
+      badgeLabel = 'Action needed';
+      icon = Icons.gpp_bad_rounded;
+      markGradient = const [Color(0xFFFF6B6B), Color(0xFFD14343)];
+      badgeBg = const Color(0xFFFFF1F0);
+      badgeFg = const Color(0xFFD14343);
+      badgeBorder = const Color(0xFFFFD4D0);
+      accent = const Color(0xFFD14343);
+      cardWash = const Color(0xFFFFF8F7);
     } else {
       title = 'Verify your identity';
       subtitle =
-          'Complete a quick ID + face check with Didit to unlock full merchant trust.';
-      badgeBg = const Color(0xFFFFF3E5);
-      badgeFg = const Color(0xFFB86E00);
+          'Quick ID + face check with Didit ? unlock full merchant trust.';
       badgeLabel = 'Required';
       icon = Icons.badge_outlined;
+      markGradient = const [Color(0xFFFF9A1F), Color(0xFFE86F00)];
+      badgeBg = const Color(0xFFFFF3E6);
+      badgeFg = const Color(0xFFE86F00);
+      badgeBorder = const Color(0xFFFFD9A8);
+      accent = _brandOrange;
+      cardWash = const Color(0xFFFFFBF7);
     }
 
     final canStart = !verified;
 
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(18),
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(20),
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(20),
         onTap: canStart ? _openKycVerification : null,
-        child: Container(
-          padding: const EdgeInsets.all(14),
+        child: Ink(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.black12),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: _brandOrange.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: _brandOrange),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'KYC verification',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: badgeBg,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            badgeLabel,
-                            style: TextStyle(
-                              color: badgeFg,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                        color: Color(0xFF101010),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 12,
-                        height: 1.3,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              if (canStart) ...[
-                const SizedBox(width: 6),
-                const Icon(Icons.chevron_right, color: Colors.black38),
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                cardWash,
+                Colors.white,
               ],
+            ),
+            border: Border.all(
+              color: accent.withValues(alpha: 0.18),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: accent.withValues(alpha: 0.08),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
             ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: markGradient,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: markGradient.last.withValues(alpha: 0.28),
+                        blurRadius: 12,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: Icon(icon, color: Colors.white, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'KYC verification',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                                letterSpacing: -0.2,
+                                color: Color(0xFF141414),
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: badgeBg,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(color: badgeBorder),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    color: badgeFg,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  badgeLabel,
+                                  style: TextStyle(
+                                    color: badgeFg,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 11,
+                                    letterSpacing: 0.1,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13.5,
+                          letterSpacing: -0.15,
+                          color: accent,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: Color(0xFF6B6B6B),
+                          fontSize: 12.5,
+                          height: 1.35,
+                          fontWeight: FontWeight.w400,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                if (canStart) ...[
+                  const SizedBox(width: 4),
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.arrow_forward_rounded,
+                      size: 16,
+                      color: accent,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
@@ -4539,7 +4622,7 @@ class _MarketplaceMerchantDashboardState
                     style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 6),
                 Text(
-                  unlocked ? mwk2(_walletBalance) : 'MWK GÇóGÇóGÇóGÇó', // G£à commas
+                  unlocked ? mwk2(_walletBalance) : 'MWK G??G??G??G??', // G?? commas
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
@@ -4550,7 +4633,7 @@ class _MarketplaceMerchantDashboardState
                   const Padding(
                     padding: EdgeInsets.only(top: 4),
                     child: Text(
-                      'Locked GÇö tap Open to unlock',
+                      'Locked G?? tap Open to unlock',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -4672,7 +4755,7 @@ class _MarketplaceMerchantDashboardState
           ...displayList.map((o) {
             final dateStr = o.orderDate != null
                 ? _recentSaleDateFmt.format(o.orderDate!.toLocal())
-                : 'GÇö';
+                : 'G??';
             return Container(
               margin: const EdgeInsets.only(bottom: 10),
               decoration: BoxDecoration(
@@ -4738,7 +4821,7 @@ class _MarketplaceMerchantDashboardState
   }
 
 
-  // ----------------- GÇ£Top itemsGÇ¥ replaced: list ALL merchant items -----------------
+  // ----------------- G?Top itemsG? replaced: list ALL merchant items -----------------
   Widget _buildAllClientItemsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4771,7 +4854,7 @@ class _MarketplaceMerchantDashboardState
     );
   }
 
-  // ----------------- G£à Add Item Tab (with multi-photos) -----------------
+  // ----------------- G?? Add Item Tab (with multi-photos) -----------------
   Widget _buildAddItemTab() {
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
@@ -4849,7 +4932,7 @@ class _MarketplaceMerchantDashboardState
               ),
               const SizedBox(height: 14),
 
-              // G£à More Photos
+              // G?? More Photos
               Row(
                 children: [
                   const Expanded(
@@ -5039,7 +5122,7 @@ class _MarketplaceMerchantDashboardState
                 ),
                 child: const Text(
                   'New listings are reviewed automatically before going live. '
-                  'YouGÇÖll get a notification when yours is approved.',
+                  'YouG??ll get a notification when yours is approved.',
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 13,
@@ -5061,7 +5144,7 @@ class _MarketplaceMerchantDashboardState
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.upload_rounded),
                   label: Text(
-                    _submitting ? 'PostingGÇª' : 'Post on Marketplace',
+                    _submitting ? 'PostingG?' : 'Post on Marketplace',
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                 ),
@@ -5550,7 +5633,7 @@ class _MarketplaceMerchantDashboardState
       ),
     );
   }
-} // G£à END of _MarketplaceMerchantDashboardState
+} // G?? END of _MarketplaceMerchantDashboardState
 
 // ----------------- Quick action tile -----------------
 class _QuickActionTile extends StatelessWidget {
@@ -5745,7 +5828,7 @@ class _ItemsGridSkeleton extends StatelessWidget {
 // ----------------- Cards -----------------
 
 /// Firestore `marketplace_items` may use `image` (base64), `imageUrl` (upload flow),
-/// or only `gallery` / `galleryUrls` GÇö same as [main_marketPlace] / MerchantProductsPage.
+/// or only `gallery` / `galleryUrls` G?? same as [main_marketPlace] / MerchantProductsPage.
 String? _coverImageSourceFromItem(Map<String, dynamic> item) {
   String? take(dynamic v) {
     final t = (v ?? '').toString().trim();
@@ -6061,7 +6144,7 @@ class _ItemCard extends StatelessWidget {
   }
 }
 
-// Image widget: supports http(s), data:image, or raw base64 â€” decode-capped for low RAM.
+// Image widget: supports http(s), data:image, or raw base64 ? decode-capped for low RAM.
 class _ImageAny extends StatelessWidget {
   final dynamic imageData;
   const _ImageAny(this.imageData);

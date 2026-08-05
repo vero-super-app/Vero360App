@@ -1,6 +1,7 @@
 // lib/Gernalproviders/notification_store.dart
 import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -54,6 +55,9 @@ class AppNotificationItem {
 }
 
 /// In-app store for notifications: list, unread count, persist and notify.
+///
+/// Persistence is always scoped by Firebase UID so logging out / swapping
+/// accounts on the same device cannot show another user's alerts.
 class NotificationStore extends ChangeNotifier {
   NotificationStore._();
 
@@ -104,14 +108,30 @@ class NotificationStore extends ChangeNotifier {
   final List<AppNotificationItem> _items = [];
   bool _loaded = false;
   String _loadedKey = '';
+  String? _boundUid;
 
-  Future<String> _storageKey() async {
+  /// UID whose notifications are currently in memory (null after logout).
+  String? get boundUid => _boundUid;
+
+  String _keyForUid(String? uid) {
+    final clean = (uid ?? '').trim();
+    if (clean.isNotEmpty) return '${_prefsKeyBase}_$clean';
+    return '${_prefsKeyBase}_guest';
+  }
+
+  Future<String?> _resolveUid({String? uidOverride}) async {
+    final override = (uidOverride ?? '').trim();
+    if (override.isNotEmpty) return override;
+
+    final authUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    if (authUid.isNotEmpty) return authUid;
+
     try {
       final prefs = await SharedPreferences.getInstance();
-      final uid = (prefs.getString('uid') ?? '').trim();
-      if (uid.isNotEmpty) return '${_prefsKeyBase}_$uid';
+      final prefsUid = (prefs.getString('uid') ?? '').trim();
+      if (prefsUid.isNotEmpty) return prefsUid;
     } catch (_) {}
-    return '${_prefsKeyBase}_guest';
+    return null;
   }
 
   List<AppNotificationItem> get items =>
@@ -166,39 +186,75 @@ class NotificationStore extends ChangeNotifier {
     }
   }
 
-  /// Loads persisted notifications from disk (call after login / on app start).
+  /// Loads persisted notifications for the signed-in user (call after login / on app start).
   Future<void> ensureLoaded() async {
-    await _load();
+    final uid = await _resolveUid();
+    await switchToUser(uid);
+  }
+
+  /// Force the in-memory list to match [uid]'s disk cache (or empty when signed out).
+  Future<void> switchToUser(String? uid) async {
+    final next = (uid ?? '').trim();
+    final key = _keyForUid(next.isEmpty ? null : next);
+
+    if (_loaded && _loadedKey == key && _boundUid == (next.isEmpty ? null : next)) {
+      notifyListeners();
+      return;
+    }
+
+    _boundUid = next.isEmpty ? null : next;
+    _loaded = true;
+    _loadedKey = key;
+    _items.clear();
+
+    if (next.isEmpty) {
+      notifyListeners();
+      return;
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(key);
+      if (raw != null) {
+        final list = jsonDecode(raw);
+        if (list is List) {
+          for (final e in list) {
+            final item = AppNotificationItem.fromJson(
+                e is Map ? Map<String, dynamic>.from(e) : null);
+            if (item != null) _items.add(item);
+          }
+        }
+      }
+    } catch (_) {}
     notifyListeners();
   }
 
   Future<void> _load() async {
-    final key = await _storageKey();
-    if (_loaded && _loadedKey == key) return;
-    _loaded = true;
-    _loadedKey = key;
-    _items.clear();
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(key);
-      if (raw == null) return;
-      final list = jsonDecode(raw);
-      if (list is List) {
-        for (final e in list) {
-          final item = AppNotificationItem.fromJson(
-              e is Map ? Map<String, dynamic>.from(e) : null);
-          if (item != null) _items.add(item);
-        }
+    final uid = await _resolveUid();
+    // Refuse to load/write under guest when signed out — avoids mixing accounts.
+    if (uid == null || uid.isEmpty) {
+      if (_items.isNotEmpty || _boundUid != null) {
+        _items.clear();
+        _boundUid = null;
+        _loaded = true;
+        _loadedKey = _keyForUid(null);
+        notifyListeners();
       }
-    } catch (_) {}
+      return;
+    }
+    await switchToUser(uid);
   }
 
   Future<void> _save() async {
+    final uid = _boundUid ?? await _resolveUid();
+    if (uid == null || uid.isEmpty) return;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final key = await _storageKey();
+      final key = _keyForUid(uid);
       final list = items.take(_maxStored).map((e) => e.toJson()).toList();
       await prefs.setString(key, jsonEncode(list));
+      _loadedKey = key;
+      _boundUid = uid;
     } catch (_) {}
   }
 
@@ -209,7 +265,9 @@ class NotificationStore extends ChangeNotifier {
     required String body,
     Map<String, dynamic>? payload,
   }) async {
-    await _load();
+    final uid = await _resolveUid();
+    if (uid == null || uid.isEmpty) return;
+    await switchToUser(uid);
     if (_items.any((e) => e.id == id)) return;
     _items.add(AppNotificationItem(
       id: id,
@@ -224,6 +282,7 @@ class NotificationStore extends ChangeNotifier {
   /// Mark all as read. Call when user opens the notifications page.
   Future<void> markAllAsRead() async {
     await _load();
+    if (_boundUid == null) return;
     bool changed = false;
     for (final item in _items) {
       if (!item.read) {
@@ -240,6 +299,7 @@ class NotificationStore extends ChangeNotifier {
   /// Mark a single notification as read.
   Future<void> markAsRead(String id) async {
     await _load();
+    if (_boundUid == null) return;
     AppNotificationItem? found;
     for (final e in _items) {
       if (e.id == id) {
@@ -254,15 +314,39 @@ class NotificationStore extends ChangeNotifier {
     }
   }
 
-  /// Clear all notifications (optional).
+  /// Clear all notifications for the current bound user.
   Future<void> clearAll() async {
-    final key = await _storageKey();
+    final uid = _boundUid ?? await _resolveUid();
     _items.clear();
     _loaded = true;
-    _loadedKey = key;
+    _loadedKey = _keyForUid(uid);
+    _boundUid = (uid == null || uid.isEmpty) ? null : uid;
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(key);
+      if (uid != null && uid.isNotEmpty) {
+        await prefs.remove(_keyForUid(uid));
+      }
+      await prefs.remove(_keyForUid(null));
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  /// Wipe in-memory + disk notifications for the session that is logging out.
+  /// Call while the previous UID is still known (before prefs/auth are cleared).
+  Future<void> clearForLogout({String? uid}) async {
+    final resolved = (uid ?? _boundUid ?? await _resolveUid() ?? '').trim();
+    _items.clear();
+    _boundUid = null;
+    _loaded = true;
+    _loadedKey = _keyForUid(null);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (resolved.isNotEmpty) {
+        await prefs.remove(_keyForUid(resolved));
+      }
+      await prefs.remove(_keyForUid(null));
+      // Legacy unscoped key from older builds.
+      await prefs.remove(_prefsKeyBase);
     } catch (_) {}
     notifyListeners();
   }

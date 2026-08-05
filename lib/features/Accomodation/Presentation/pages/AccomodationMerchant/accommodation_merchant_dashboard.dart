@@ -245,9 +245,11 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    // Do not add MediaQuery.viewInsets padding here — Scaffold already
+    // resizes for the keyboard; doubling it fills the screen with white space.
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F7),
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         backgroundColor: _orange,
         foregroundColor: Colors.white,
@@ -262,11 +264,10 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
         ),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.only(bottom: bottomInset),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-            child: Container(
+        child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          child: Container(
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
@@ -849,7 +850,6 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
             ),
           ),
         ),
-      ),
     );
   }
 }

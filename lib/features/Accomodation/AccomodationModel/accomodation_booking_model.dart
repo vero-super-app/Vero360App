@@ -5,6 +5,10 @@ class VeroBookingsCreatePayload {
   final num price;
   final num bookingFee;
   final String? phoneNumber;
+  /// Optional end date (`yyyy-MM-dd`); ignored if API does not yet support it.
+  final String? checkOut;
+  /// Optional night count; ignored if API does not yet support it.
+  final int? nights;
 
   VeroBookingsCreatePayload({
     required this.accommodationId,
@@ -12,6 +16,8 @@ class VeroBookingsCreatePayload {
     required this.price,
     this.bookingFee = 0,
     this.phoneNumber,
+    this.checkOut,
+    this.nights,
   });
 
   Map<String, dynamic> toJson() => {
@@ -23,6 +29,11 @@ class VeroBookingsCreatePayload {
           'phone_number': phoneNumber!.trim(),
         if (phoneNumber != null && phoneNumber!.trim().isNotEmpty)
           'phoneNumber': phoneNumber!.trim(),
+        if (checkOut != null && checkOut!.trim().isNotEmpty) ...{
+          'checkOut': checkOut!.trim(),
+          'checkOutDate': checkOut!.trim(),
+        },
+        if (nights != null && nights! > 0) 'nights': nights,
       };
 }
 

@@ -188,6 +188,7 @@ class OrderPartyNotificationService {
     String? guestLine,
     String? guestEmail,
     String? checkInLabel,
+    String? staySummary,
     int? nights,
     String? fromUid,
   }) async {
@@ -209,7 +210,10 @@ class OrderPartyNotificationService {
     final buf = StringBuffer("$whoDetail booked $prop");
     final cin = (checkInLabel ?? '').trim();
     if (cin.isNotEmpty) buf.write(' · Check-in $cin');
-    if (nights != null && nights > 0) {
+    final summary = (staySummary ?? '').trim();
+    if (summary.isNotEmpty) {
+      buf.write(' · $summary');
+    } else if (nights != null && nights > 0) {
       buf.write(' · $nights night${nights == 1 ? '' : 's'}');
     }
     buf.write('. Ref $ref.');

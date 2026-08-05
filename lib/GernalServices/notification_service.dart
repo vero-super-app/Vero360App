@@ -964,6 +964,8 @@ class NotificationService {
     String? guestDisplayLine,
     String? guestEmail,
     String? checkInLabel,
+    /// Prefer this (e.g. "2 nights", "1 day", "1 month") over raw [nights].
+    String? staySummary,
     int? nights,
   }) async {
     final prop =
@@ -973,10 +975,14 @@ class NotificationService {
     final displayRef = formatVeroAccommodationBookingRef(ref);
 
     final cin = (checkInLabel ?? '').trim();
+    final summary = (staySummary ?? '').trim();
     final n = nights ?? 0;
+    final durationLabel = summary.isNotEmpty
+        ? summary
+        : (n > 0 ? '$n night${n == 1 ? '' : 's'}' : '');
     final stayBits = <String>[
       if (cin.isNotEmpty) 'Check-in $cin',
-      if (n > 0) '$n night${n == 1 ? '' : 's'}',
+      if (durationLabel.isNotEmpty) durationLabel,
     ];
     final staySeg = stayBits.isEmpty ? '' : ' ${stayBits.join(' · ')}.';
 
@@ -1001,6 +1007,7 @@ class NotificationService {
         guestLine: guestDisplayLine,
         guestEmail: guestEmail,
         checkInLabel: checkInLabel,
+        staySummary: staySummary,
         nights: nights,
         fromUid: FirebaseAuth.instance.currentUser?.uid,
       );

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -12,17 +13,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_booking_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/accommodation_occupancy_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/booking_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/guest_booking_local_cache.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_listing_image.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
+import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart' show DeliveryType;
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 /// After PayChangu success: [bookingContext] is the booking screen (under the webview).
 typedef AccommodationAfterPayCallback = void Function(
@@ -130,6 +137,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final BookingService _bookingService = BookingService();
+  final AccommodationOccupancyService _occupancy =
+      AccommodationOccupancyService();
   late final PageController _heroController;
 
   DateTime _checkIn = DateTime.now().add(const Duration(days: 1));
@@ -141,10 +150,15 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   int _heroIndex = 0;
   bool _showSwipeHint = false;
   Timer? _swipeHintTimer;
+  Timer? _heroAutoTimer;
+  static const _heroAutoInterval = Duration(seconds: 3);
+  bool _openingChat = false;
+  String _ownerUid = '';
   String _ownerName = '';
-  String _ownerEmail = '';
   String _ownerPhone = '';
   String _ownerPhotoUrl = '';
+  Map<String, int> _nightCounts = {};
+  bool _paymentSucceeded = false;
 
   List<Widget> get _heroPages {
     final pages = <Widget>[];
@@ -193,9 +207,26 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     });
   }
 
+  void _startHeroAutoplay() {
+    _heroAutoTimer?.cancel();
+    final count = _heroPages.length;
+    if (count <= 1) return;
+    _heroAutoTimer = Timer.periodic(_heroAutoInterval, (_) {
+      if (!mounted || !_heroController.hasClients) return;
+      if (_heroPages.length <= 1) return;
+      final next = (_heroIndex + 1) % _heroPages.length;
+      _heroController.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
   @override
   void dispose() {
     _swipeHintTimer?.cancel();
+    _heroAutoTimer?.cancel();
     _heroController.dispose();
     _nameController.dispose();
     _emailController.dispose();
@@ -204,7 +235,10 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   }
 
   Future<void> _bootstrap() async {
-    await _loadOwnerProfile();
+    await Future.wait([
+      _loadOwnerProfile(),
+      _loadOccupancy(),
+    ]);
     final ok = await AuthHandler.isAuthenticated();
     if (!mounted) return;
     setState(() {
@@ -213,13 +247,99 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     });
     if (ok) await _prefillFromAccount();
     if (!mounted) return;
-    _scheduleSwipeHint(_heroPages.length);
+    if (_isMonthlyRent) {
+      _applyMonthlyStayWindow();
+    } else {
+      _snapDatesToAvailable();
+    }
+    final pageCount = _heroPages.length;
+    _scheduleSwipeHint(pageCount);
+    _startHeroAutoplay();
+  }
+
+  int get _inventoryCapacity => AccommodationOccupancyService.capacityForType(
+        accommodationType: widget.accommodationType,
+        roomsAvailable: widget.roomsAvailable,
+      );
+
+  Future<void> _loadOccupancy({bool fromServer = false}) async {
+    if (widget.accommodationId <= 0) return;
+    final counts = await _occupancy.fetchNightCounts(
+      widget.accommodationId,
+      fromServer: fromServer,
+    );
+    if (!mounted) return;
+    setState(() => _nightCounts = counts);
+  }
+
+  bool _isNightBooked(DateTime day) {
+    return _occupancy.isNightFull(
+      nightCounts: _nightCounts,
+      night: day,
+      capacity: _inventoryCapacity,
+    );
+  }
+
+  bool _isCheckInSelectable(DateTime day) {
+    final d = DateTime(day.year, day.month, day.day);
+    final today = DateTime.now();
+    final first = DateTime(today.year, today.month, today.day);
+    if (d.isBefore(first)) return false;
+    return !_isNightBooked(d);
+  }
+
+  /// Check-out day is exclusive; require all slept nights before it to have room.
+  bool _isCheckOutSelectable(DateTime day) {
+    final d = DateTime(day.year, day.month, day.day);
+    final minOut = DateTime(_checkIn.year, _checkIn.month, _checkIn.day)
+        .add(const Duration(days: 1));
+    if (d.isBefore(minOut)) return false;
+    return _occupancy.isRangeAvailable(
+      nightCounts: _nightCounts,
+      checkIn: _checkIn,
+      checkOut: d,
+      capacity: _inventoryCapacity,
+    );
+  }
+
+  void _snapDatesToAvailable() {
+    final today = DateTime.now();
+    var cin = DateTime(_checkIn.year, _checkIn.month, _checkIn.day);
+    final first = DateTime(today.year, today.month, today.day);
+    if (cin.isBefore(first)) cin = first;
+
+    var guard = 0;
+    while (!_isCheckInSelectable(cin) && guard < 400) {
+      cin = cin.add(const Duration(days: 1));
+      guard++;
+    }
+
+    var cout = DateTime(_checkOut.year, _checkOut.month, _checkOut.day);
+    if (!cout.isAfter(cin)) {
+      cout = cin.add(const Duration(days: 1));
+    }
+    guard = 0;
+    while (!_occupancy.isRangeAvailable(
+          nightCounts: _nightCounts,
+          checkIn: cin,
+          checkOut: cout,
+          capacity: _inventoryCapacity,
+        ) &&
+        guard < 400) {
+      cout = cout.add(const Duration(days: 1));
+      guard++;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _checkIn = cin;
+      _checkOut = cout;
+    });
   }
 
   Future<void> _loadOwnerProfile() async {
     final fallbackName = (widget.hostDisplayName ?? '').trim();
     var ownerName = fallbackName;
-    var ownerEmail = '';
     var ownerPhone = '';
     var ownerPhoto = '';
     var ownerUid = (widget.hostMerchantUid ?? '').trim();
@@ -279,9 +399,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             d['fullName']?.toString(),
             ownerName,
           ]);
-          ownerEmail = _firstNonEmpty([
-            d['email']?.toString(),
-          ]);
+          // Do not load/expose owner email to guests.
           ownerPhone = _firstNonEmpty([
             d['phone']?.toString(),
             d['phoneNumber']?.toString(),
@@ -298,8 +416,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
 
     if (!mounted) return;
     setState(() {
+      _ownerUid = ownerUid;
       _ownerName = ownerName;
-      _ownerEmail = ownerEmail;
       _ownerPhone = ownerPhone;
       _ownerPhotoUrl = ownerPhoto;
     });
@@ -361,7 +479,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             : (widget.hostDisplayName?.trim().isNotEmpty == true
                 ? widget.hostDisplayName!.trim()
                 : 'Accommodation owner');
-        final email = _ownerEmail.trim();
         final phone = _ownerPhone.trim();
         final photo = _ownerPhotoUrl.trim();
         final hasPhoto = photo.startsWith('http://') || photo.startsWith('https://');
@@ -430,17 +547,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                   ),
                 ],
               ),
-              if (email.isNotEmpty) ...[
-                const SizedBox(height: 14),
-                Text('Email: $email',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey.shade800,
-                      fontWeight: FontWeight.w600,
-                    )),
-              ],
               if (phone.isNotEmpty) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 14),
                 Text('Phone: $phone',
                     style: TextStyle(
                       fontSize: 13,
@@ -456,6 +564,34 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                   label: const Text('View profile picture'),
                 ),
               ],
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _openingChat
+                      ? null
+                      : () {
+                          Navigator.pop(ctx);
+                          unawaited(_openChatWithOwner());
+                        },
+                  icon: _openingChat
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.chat_bubble_rounded),
+                  label: Text(_openingChat ? 'Opening chat…' : 'Message owner'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         );
@@ -554,6 +690,113 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     if (ok) await _prefillFromAccount();
     if (!mounted) return;
     _scheduleSwipeHint(_heroPages.length);
+    _startHeroAutoplay();
+  }
+
+  Future<void> _openChatWithOwner() async {
+    if (_openingChat) return;
+
+    final ownerUid = _ownerUid.trim().isNotEmpty
+        ? _ownerUid.trim()
+        : (widget.hostMerchantUid ?? '').trim();
+    if (ownerUid.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Owner chat is unavailable for this listing.',
+        isSuccess: false,
+        errorMessage: 'Owner chat is unavailable for this listing.',
+      );
+      return;
+    }
+
+    final me = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (me.isNotEmpty && me == ownerUid) {
+      ToastHelper.showCustomToast(
+        context,
+        'This is your own listing — you cannot chat with yourself.',
+        isSuccess: false,
+        errorMessage: 'This is your own listing — you cannot chat with yourself.',
+      );
+      return;
+    }
+
+    final ok = await AuthHandler.isAuthenticated();
+    if (!ok) {
+      await _goToSignIn();
+      if (!mounted) return;
+      if (!await AuthHandler.isAuthenticated()) return;
+    }
+    if (!mounted) return;
+
+    setState(() => _openingChat = true);
+    try {
+      unawaited(BackendChatService.warmForMarketplaceChat().catchError((_) {}));
+      unawaited(BackendMessagingSocket.connect().catchError((_) {}));
+
+      final result = await BackendChatService.startMerchantChat(
+        merchantId: ownerUid,
+        sellerUserId: ownerUid,
+      );
+
+      if (!mounted) return;
+
+      final peerName = _ownerName.trim().isNotEmpty
+          ? _ownerName.trim()
+          : (widget.hostDisplayName?.trim().isNotEmpty == true
+              ? widget.hostDisplayName!.trim()
+              : 'Accommodation owner');
+      String? cover;
+      for (final u in widget.photoSources) {
+        final t = u.trim();
+        if (t.startsWith('http')) {
+          cover = t;
+          break;
+        }
+      }
+      final productContext = ChatProductContext(
+        productId: 'acc_${widget.accommodationId}',
+        name: widget.propertyName,
+        image: cover,
+        price: widget.pricePerNight.toDouble(),
+        description: widget.location,
+        merchantId: ownerUid,
+      );
+
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MessagePageBackendApi(
+            peerId: result.chat.id,
+            peerName: peerName,
+            peerAvatarUrl: _ownerPhotoUrl,
+            productContext: productContext,
+            peerMerchantId: ownerUid,
+            peerUserId: result.sellerId,
+            sendProductEnquiry: true,
+            resolveMerchantId: ownerUid,
+            resolveSellerUserId: ownerUid,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[_openChatWithOwner] $e');
+      if (mounted) {
+        final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+        final message = raw.contains('own listing') ||
+                raw.contains('cannot chat with yourself') ||
+                raw.contains('cannot chat with ur self')
+            ? raw
+            : UserFacingError.from(e, fallback: 'Could not open chat with owner');
+        ToastHelper.showCustomToast(
+          context,
+          message,
+          isSuccess: false,
+          errorMessage: message,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _openingChat = false);
+    }
   }
 
   int get _nights {
@@ -564,16 +807,22 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   AccommodationPricePeriod get _effectivePricePeriod =>
       widget.pricePeriod ?? AccommodationPricePeriod.night;
 
+  bool get _isMonthlyRent =>
+      _effectivePricePeriod == AccommodationPricePeriod.month;
+
   bool get _isMultiRoomType {
     final t = widget.accommodationType.toLowerCase().trim();
     return t == 'hotel' || t == 'lodge';
   }
 
-  /// For monthly listings: bill in 30-night blocks (rounded up).
-  int get _billingMonths {
-    final n = _nights;
-    return n < 1 ? 1 : (n + 29) ~/ 30;
-  }
+  /// Monthly listings are always billed as 1 calendar month (no check-in/out UI).
+  static const int _monthStayDays = 30;
+
+  /// For monthly listings: always 1 month. Otherwise inferred from dates.
+  int get _billingMonths => _isMonthlyRent ? 1 : (() {
+        final n = _nights;
+        return n < 1 ? 1 : (n + 29) ~/ 30;
+      })();
 
   num get _billableUnits {
     switch (_effectivePricePeriod) {
@@ -598,18 +847,65 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       case AccommodationPricePeriod.day:
         return '$_nights day${_nights == 1 ? '' : 's'}';
       case AccommodationPricePeriod.month:
-        final m = _billingMonths;
-        return '$m month${m == 1 ? '' : 's'}';
+        return '1 month';
     }
   }
 
+  /// Monthly rent: fixed 30-day window starting at the next available day.
+  void _applyMonthlyStayWindow() {
+    final today = DateTime.now();
+    var start = DateTime(today.year, today.month, today.day)
+        .add(const Duration(days: 1));
+    var guard = 0;
+    while (!_isCheckInSelectable(start) && guard < 400) {
+      start = start.add(const Duration(days: 1));
+      guard++;
+    }
+    var end = start.add(const Duration(days: _monthStayDays));
+    guard = 0;
+    while (!_occupancy.isRangeAvailable(
+          nightCounts: _nightCounts,
+          checkIn: start,
+          checkOut: end,
+          capacity: _inventoryCapacity,
+        ) &&
+        guard < 400) {
+      start = start.add(const Duration(days: 1));
+      end = start.add(const Duration(days: _monthStayDays));
+      guard++;
+    }
+    if (!mounted) return;
+    setState(() {
+      _checkIn = start;
+      _checkOut = end;
+    });
+  }
+
   Future<void> _pickCheckIn() async {
+    await _loadOccupancy(fromServer: true);
+    if (!mounted) return;
     final first = DateTime.now();
-    final picked = await showDatePicker(
+    final firstDay = DateTime(first.year, first.month, first.day);
+    var initial = _checkIn.isBefore(firstDay) ? firstDay : _checkIn;
+    if (!_isCheckInSelectable(initial)) {
+      initial = firstDay;
+      var guard = 0;
+      while (!_isCheckInSelectable(initial) && guard < 400) {
+        initial = initial.add(const Duration(days: 1));
+        guard++;
+      }
+    }
+    final picked = await showDialog<DateTime>(
       context: context,
-      initialDate: _checkIn.isBefore(first) ? first : _checkIn,
-      firstDate: first,
-      lastDate: first.add(const Duration(days: 365 * 2)),
+      builder: (ctx) => _BookedAwareDatePickerDialog(
+        title: 'Check-in',
+        helpText: 'Red days means booked that day or night.',
+        initialDate: initial,
+        firstDate: firstDay,
+        lastDate: firstDay.add(const Duration(days: 365 * 2)),
+        isBooked: _isNightBooked,
+        isSelectable: _isCheckInSelectable,
+      ),
     );
     if (picked == null || !mounted) return;
     setState(() {
@@ -617,16 +913,55 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       if (!_checkOut.isAfter(_checkIn)) {
         _checkOut = _checkIn.add(const Duration(days: 1));
       }
+      if (!_occupancy.isRangeAvailable(
+        nightCounts: _nightCounts,
+        checkIn: _checkIn,
+        checkOut: _checkOut,
+        capacity: _inventoryCapacity,
+      )) {
+        var cout = _checkIn.add(const Duration(days: 1));
+        var guard = 0;
+        while (!_occupancy.isRangeAvailable(
+              nightCounts: _nightCounts,
+              checkIn: _checkIn,
+              checkOut: cout,
+              capacity: _inventoryCapacity,
+            ) &&
+            guard < 400) {
+          cout = cout.add(const Duration(days: 1));
+          guard++;
+        }
+        _checkOut = cout;
+      }
     });
   }
 
   Future<void> _pickCheckOut() async {
-    final minOut = _checkIn.add(const Duration(days: 1));
-    final picked = await showDatePicker(
+    await _loadOccupancy(fromServer: true);
+    if (!mounted) return;
+    final minOut = DateTime(_checkIn.year, _checkIn.month, _checkIn.day)
+        .add(const Duration(days: 1));
+    var initial = _checkOut.isBefore(minOut) ? minOut : _checkOut;
+    if (!_isCheckOutSelectable(initial)) {
+      initial = minOut;
+      var guard = 0;
+      while (!_isCheckOutSelectable(initial) && guard < 400) {
+        initial = initial.add(const Duration(days: 1));
+        guard++;
+      }
+    }
+    final picked = await showDialog<DateTime>(
       context: context,
-      initialDate: _checkOut.isBefore(minOut) ? minOut : _checkOut,
-      firstDate: minOut,
-      lastDate: _checkIn.add(const Duration(days: 365 * 2)),
+      builder: (ctx) => _BookedAwareDatePickerDialog(
+        title: 'Check-out',
+        helpText:
+            'Red means booked that day or night.',
+        initialDate: initial,
+        firstDate: minOut,
+        lastDate: _checkIn.add(const Duration(days: 365 * 2)),
+        isBooked: _isNightBooked,
+        isSelectable: _isCheckOutSelectable,
+      ),
     );
     if (picked == null || !mounted) return;
     setState(() => _checkOut = picked);
@@ -714,14 +1049,43 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     }
 
     setState(() => _submitting = true);
+    _paymentSucceeded = false;
+    String? reservedRef;
+    final paymentSuccessGate = Completer<void>();
+
+    Future<void> releaseIfNeeded() async {
+      final ref = reservedRef;
+      if (ref == null || _paymentSucceeded) return;
+      await _occupancy.releaseStay(
+        accommodationId: widget.accommodationId,
+        bookingRef: ref,
+      );
+      reservedRef = null;
+      unawaited(_loadOccupancy());
+    }
+
     try {
       final dateStr = DateFormat('yyyy-MM-dd').format(_checkIn);
+      final checkOutStr = DateFormat('yyyy-MM-dd').format(_checkOut);
+      if (!_occupancy.isRangeAvailable(
+        nightCounts: _nightCounts,
+        checkIn: _checkIn,
+        checkOut: _checkOut,
+        capacity: _inventoryCapacity,
+      )) {
+        throw OccupancyConflictException(
+          'Those dates are already booked.',
+        );
+      }
+
       final payload = VeroBookingsCreatePayload(
         accommodationId: widget.accommodationId,
         bookingDate: dateStr,
         price: _totalMwk,
         bookingFee: 0,
         phoneNumber: _phoneController.text.trim(),
+        checkOut: checkOutStr,
+        nights: _nights,
       );
       final result = await _bookingService.createBooking(payload);
       if (!mounted) return;
@@ -731,6 +1095,17 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
           message: 'Booking created but no reference from server.',
         );
       }
+
+      await _occupancy.reserveStay(
+        accommodationId: widget.accommodationId,
+        bookingRef: bookingNo,
+        checkIn: _checkIn,
+        checkOut: _checkOut,
+        capacity: _inventoryCapacity,
+      );
+      reservedRef = bookingNo;
+      // Refresh local view of inventory after reserve.
+      unawaited(_loadOccupancy());
 
       final hostForAlerts = await _resolveHostMerchantUidForAlerts(
         fromListing: widget.hostMerchantUid,
@@ -815,6 +1190,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       );
 
       if (!mounted) return;
+      setState(() => _submitting = false);
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (_) => InAppPaymentPage(
@@ -825,7 +1201,24 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             deliveryType: DeliveryType.pickup,
             accommodationEscrow: escrow,
             onSuccessNavigate: (bookingCtx) {
+              _paymentSucceeded = true;
+              if (!paymentSuccessGate.isCompleted) {
+                paymentSuccessGate.complete();
+              }
               unawaited(() async {
+                try {
+                  await _occupancy.confirmPaid(
+                    accommodationId: widget.accommodationId,
+                    bookingRef: bookingNo,
+                    checkIn: _checkIn,
+                    checkOut: _checkOut,
+                    capacity: _inventoryCapacity,
+                  );
+                } catch (e) {
+                  if (kDebugMode) {
+                    debugPrint('[booking] confirmPaid failed: $e');
+                  }
+                }
                 try {
                   await GuestBookingLocalCache.rememberPaidStay(paidStaySnapshot);
                 } catch (_) {}
@@ -838,6 +1231,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                     guestDisplayLine: _nameController.text.trim(),
                     guestEmail: _emailController.text.trim(),
                     checkInLabel: DateFormat.yMMMd().format(_checkIn),
+                    staySummary: _staySummaryLine,
                     nights: _nights,
                   );
                 } catch (_) {}
@@ -853,7 +1247,29 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
           ),
         ),
       );
+
+      // Wait for success callback (post-frame) before freeing a reservation.
+      // Do NOT release on a short frame race — that wiped inventory after paid stays.
+      await Future.any<void>([
+        paymentSuccessGate.future,
+        Future<void>.delayed(const Duration(seconds: 2)),
+      ]);
+      if (!_paymentSucceeded) {
+        await releaseIfNeeded();
+      }
+    } on OccupancyConflictException catch (e) {
+      await releaseIfNeeded();
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          e.message,
+          isSuccess: false,
+          errorMessage: e.message,
+        );
+        unawaited(_loadOccupancy());
+      }
     } on SocketException catch (e) {
+      await releaseIfNeeded();
       if (mounted) {
         ToastHelper.showCustomToast(
           context,
@@ -863,6 +1279,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         );
       }
     } on TimeoutException {
+      await releaseIfNeeded();
       if (mounted) {
         ToastHelper.showCustomToast(
           context,
@@ -872,6 +1289,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         );
       }
     } on ApiException catch (e) {
+      await releaseIfNeeded();
       if (mounted) {
         ToastHelper.showCustomToast(
           context,
@@ -881,6 +1299,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         );
       }
     } catch (e) {
+      await releaseIfNeeded();
       if (mounted) {
         ToastHelper.showCustomToast(
           context,
@@ -999,6 +1418,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                           _heroIndex = i;
                           if (i > 0) _showSwipeHint = false;
                         });
+                        _startHeroAutoplay();
                       },
                       children: pages,
                     ),
@@ -1191,10 +1611,11 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                     ownerName: _ownerName.isNotEmpty
                         ? _ownerName
                         : (widget.hostDisplayName ?? ''),
-                    ownerEmail: _ownerEmail,
                     ownerPhone: _ownerPhone,
                     ownerPhotoUrl: _ownerPhotoUrl,
+                    openingChat: _openingChat,
                     onViewProfile: _showOwnerProfileSheet,
+                    onMessageOwner: () => unawaited(_openChatWithOwner()),
                   ),
                 ),
               ),
@@ -1203,26 +1624,100 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                   child: _SectionCard(
                     icon: Icons.calendar_month_rounded,
-                    title: 'Dates',
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _DateTile(
-                            label: 'Check-in',
-                            value: dateFmt.format(_checkIn),
-                            onTap: _submitting ? null : _pickCheckIn,
+                    title: _isMonthlyRent ? 'Rental period' : 'Dates',
+                    child: _isMonthlyRent
+                        ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFF4E8),
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: _brandOrange.withValues(alpha: 0.35),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Monthly rent',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 15,
+                                        color: Color(0xFF16284C),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                     
+                                      'This stay is billed as monthly rent',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        height: 1.35,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.grey.shade800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                 
+                                  ],
+                                ),
+                              ),
+                            ],
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _DateTile(
+                                      label: 'Check-in',
+                                      value: dateFmt.format(_checkIn),
+                                      onTap:
+                                          _submitting ? null : _pickCheckIn,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _DateTile(
+                                      label: 'Check-out',
+                                      value: dateFmt.format(_checkOut),
+                                      onTap:
+                                          _submitting ? null : _pickCheckOut,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 12,
+                                    height: 12,
+                                    decoration: BoxDecoration(
+                                      color: Colors.red.shade600,
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      'Red on calendar = Booked on this day',
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.grey.shade700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _DateTile(
-                            label: 'Check-out',
-                            value: dateFmt.format(_checkOut),
-                            onTap: _submitting ? null : _pickCheckOut,
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
                 ),
               ),
@@ -1504,25 +1999,28 @@ class _SignInRequiredCard extends StatelessWidget {
 }
 
 class _AccommodationOwnerBanner extends StatelessWidget {
+  static const _orange = Color(0xFFFF8A00);
+
   final String ownerName;
-  final String ownerEmail;
   final String ownerPhone;
   final String ownerPhotoUrl;
+  final bool openingChat;
   final VoidCallback onViewProfile;
+  final VoidCallback onMessageOwner;
 
   const _AccommodationOwnerBanner({
     required this.ownerName,
-    required this.ownerEmail,
     required this.ownerPhone,
     required this.ownerPhotoUrl,
+    required this.openingChat,
     required this.onViewProfile,
+    required this.onMessageOwner,
   });
 
   @override
   Widget build(BuildContext context) {
     final display =
         ownerName.trim().isNotEmpty ? ownerName.trim() : 'Accommodation owner';
-    final emailLine = ownerEmail.trim();
     final phoneLine = ownerPhone.trim();
     final missingPhone = phoneLine.isEmpty;
     final hasPhoto = ownerPhotoUrl.startsWith('http');
@@ -1587,19 +2085,6 @@ class _AccommodationOwnerBanner extends StatelessWidget {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                if (emailLine.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    emailLine,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.85),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 2),
                 Text(
                   missingPhone ? 'No phone' : phoneLine,
@@ -1616,19 +2101,52 @@ class _AccommodationOwnerBanner extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                TextButton.icon(
-                  onPressed: onViewProfile,
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  icon: const Icon(Icons.person_search_rounded, size: 16),
-                  label: const Text(
-                    'View profile',
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
-                  ),
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 0,
+                  children: [
+                    TextButton.icon(
+                      onPressed: onViewProfile,
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      icon: const Icon(Icons.person_search_rounded, size: 16),
+                      label: const Text(
+                        'View profile',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w800, fontSize: 12),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: openingChat ? null : onMessageOwner,
+                      style: TextButton.styleFrom(
+                        foregroundColor: _orange,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      icon: openingChat
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: _orange,
+                              ),
+                            )
+                          : const Icon(Icons.chat_bubble_rounded, size: 16),
+                      label: Text(
+                        openingChat ? 'Opening…' : 'Message owner',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w800, fontSize: 12),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1756,6 +2274,266 @@ class _DateTile extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Custom month calendar: booked nights are red with "Booked" label for all guests.
+class _BookedAwareDatePickerDialog extends StatefulWidget {
+  final String title;
+  final String helpText;
+  final DateTime initialDate;
+  final DateTime firstDate;
+  final DateTime lastDate;
+  final bool Function(DateTime day) isBooked;
+  final bool Function(DateTime day) isSelectable;
+
+  const _BookedAwareDatePickerDialog({
+    required this.title,
+    required this.helpText,
+    required this.initialDate,
+    required this.firstDate,
+    required this.lastDate,
+    required this.isBooked,
+    required this.isSelectable,
+  });
+
+  @override
+  State<_BookedAwareDatePickerDialog> createState() =>
+      _BookedAwareDatePickerDialogState();
+}
+
+class _BookedAwareDatePickerDialogState
+    extends State<_BookedAwareDatePickerDialog> {
+  static const _orange = Color(0xFFFF8A00);
+  static const _navy = Color(0xFF16284C);
+  late DateTime _visibleMonth;
+  late DateTime _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = DateTime(
+      widget.initialDate.year,
+      widget.initialDate.month,
+      widget.initialDate.day,
+    );
+    _visibleMonth = DateTime(_selected.year, _selected.month);
+  }
+
+  DateTime get _monthStart => DateTime(_visibleMonth.year, _visibleMonth.month);
+  DateTime get _monthEnd =>
+      DateTime(_visibleMonth.year, _visibleMonth.month + 1, 0);
+
+  bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  void _shiftMonth(int delta) {
+    final next = DateTime(_visibleMonth.year, _visibleMonth.month + delta);
+    final firstMonth =
+        DateTime(widget.firstDate.year, widget.firstDate.month);
+    final lastMonth = DateTime(widget.lastDate.year, widget.lastDate.month);
+    if (next.isBefore(firstMonth) || next.isAfter(lastMonth)) return;
+    setState(() => _visibleMonth = next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final firstWeekday = _monthStart.weekday % 7; // Sun=0
+    final daysInMonth = _monthEnd.day;
+    final cells = <DateTime?>[];
+    for (var i = 0; i < firstWeekday; i++) {
+      cells.add(null);
+    }
+    for (var d = 1; d <= daysInMonth; d++) {
+      cells.add(DateTime(_visibleMonth.year, _visibleMonth.month, d));
+    }
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              widget.title,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: _navy,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              widget.helpText,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade700,
+                height: 1.3,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () => _shiftMonth(-1),
+                  icon: const Icon(Icons.chevron_left_rounded),
+                ),
+                Expanded(
+                  child: Text(
+                    DateFormat.yMMMM().format(_visibleMonth),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                      color: _navy,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => _shiftMonth(1),
+                  icon: const Icon(Icons.chevron_right_rounded),
+                ),
+              ],
+            ),
+            Row(
+              children: const [
+                Expanded(child: Center(child: Text('S', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                Expanded(child: Center(child: Text('M', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                Expanded(child: Center(child: Text('T', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                Expanded(child: Center(child: Text('W', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                Expanded(child: Center(child: Text('T', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                Expanded(child: Center(child: Text('F', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                Expanded(child: Center(child: Text('S', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+              ],
+            ),
+            const SizedBox(height: 6),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: cells.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 7,
+                mainAxisSpacing: 4,
+                crossAxisSpacing: 4,
+              ),
+              itemBuilder: (context, i) {
+                final day = cells[i];
+                if (day == null) return const SizedBox.shrink();
+
+                final booked = widget.isBooked(day);
+                final selectable = widget.isSelectable(day);
+                final selected = _sameDay(day, _selected);
+                final beforeFirst = day.isBefore(
+                  DateTime(
+                    widget.firstDate.year,
+                    widget.firstDate.month,
+                    widget.firstDate.day,
+                  ),
+                );
+                final afterLast = day.isAfter(
+                  DateTime(
+                    widget.lastDate.year,
+                    widget.lastDate.month,
+                    widget.lastDate.day,
+                  ),
+                );
+                final outOfRange = beforeFirst || afterLast;
+
+                Color bg;
+                Color fg;
+                if (booked) {
+                  bg = Colors.red.shade600;
+                  fg = Colors.white;
+                } else if (selected) {
+                  bg = _orange;
+                  fg = Colors.white;
+                } else if (!selectable || outOfRange) {
+                  bg = Colors.grey.shade200;
+                  fg = Colors.grey.shade500;
+                } else {
+                  bg = Colors.grey.shade100;
+                  fg = _navy;
+                }
+
+                return Material(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(10),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: (selectable && !outOfRange)
+                        ? () => setState(() => _selected = day)
+                        : null,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            '${day.day}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                              color: fg,
+                            ),
+                          ),
+                          if (booked)
+                            Text(
+                              'Booked',
+                              maxLines: 1,
+                              overflow: TextOverflow.clip,
+                              style: TextStyle(
+                                fontSize: 7.5,
+                                fontWeight: FontWeight.w800,
+                                color: fg,
+                                height: 1.1,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade600,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Text(
+                  'Booked on this day',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 4),
+                FilledButton(
+                  onPressed: widget.isSelectable(_selected)
+                      ? () => Navigator.pop(context, _selected)
+                      : null,
+                  style: FilledButton.styleFrom(backgroundColor: _orange),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

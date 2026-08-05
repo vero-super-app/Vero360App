@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/accommodation_occupancy_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accommodation_booking_page.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accommodation_my_bookings_tab.dart';
@@ -111,9 +112,13 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
   bool _isAccommodationMerchantUser = false;
   int? _openingAccommodationId;
 
-  /// Paid stays for the signed-in guest — used to disable “Book now” on check-in days.
+  /// Paid stays for the signed-in guest — fallback while shared occupancy loads.
   List<BookingItem> _guestPaidStays = [];
   final MyBookingService _myBookingService = MyBookingService();
+  final AccommodationOccupancyService _occupancy =
+      AccommodationOccupancyService();
+  /// Shared tonight counts from Firestore (all guests).
+  Map<int, int> _sharedTonightCounts = {};
   final Map<int, String> _hostelGenderByApiId = <int, String>{};
   final Map<int, String> _hostelRoomTypeByApiId = <int, String>{};
   final Map<int, bool> _hostelAvailabilityByApiId = <int, bool>{};
@@ -202,35 +207,101 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     try {
       final list = await _myBookingService.getGuestMyBookings();
       if (mounted) setState(() => _guestPaidStays = list);
+      // Backfill shared inventory from this guest's paid stays so other
+      // accounts see "Booked" (covers bookings made before occupancy / after a wipe).
+      unawaited(_publishGuestStaysToOccupancy(list));
     } catch (_) {
       if (mounted) setState(() => _guestPaidStays = []);
     }
   }
 
-  bool _isSingleUnitType(String type) {
-    return type == 'house' || type == 'bnb' || type == 'apartment';
+  Future<void> _publishGuestStaysToOccupancy(List<BookingItem> stays) async {
+    for (final b in stays) {
+      final accId = b.accommodationId;
+      if (accId == null || accId <= 0) continue;
+      if (!b.includeInGuestMyBookings) continue;
+      final checkIn = b.bookingDate;
+      if (checkIn == null) continue;
+      final checkOut = b.checkOutDate ??
+          DateTime(checkIn.year, checkIn.month, checkIn.day)
+              .add(Duration(days: b.effectiveNights()));
+      final capacity = AccommodationOccupancyService.capacityForType(
+        accommodationType: b.accommodationType ?? '',
+        roomsAvailable: 1,
+      );
+      try {
+        await _occupancy.publishPaidStay(
+          accommodationId: accId,
+          bookingRef: b.bookingNumber?.trim().isNotEmpty == true
+              ? b.bookingNumber!.trim()
+              : b.id,
+          checkIn: checkIn,
+          checkOut: checkOut,
+          capacity: capacity,
+        );
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    final ids = stays
+        .map((b) => b.accommodationId)
+        .whereType<int>()
+        .where((id) => id > 0);
+    await _loadSharedTonightCounts(ids);
+  }
+
+  Future<void> _loadSharedTonightCounts(
+    Iterable<int> ids, {
+    bool replace = false,
+  }) async {
+    try {
+      final map = await _occupancy.fetchTodayCounts(ids);
+      if (!mounted) return;
+      setState(() {
+        if (replace) {
+          _sharedTonightCounts = map;
+        } else {
+          _sharedTonightCounts = {..._sharedTonightCounts, ...map};
+          // Clear ids that are no longer occupied tonight.
+          for (final id in ids) {
+            if (!map.containsKey(id)) {
+              _sharedTonightCounts.remove(id);
+            }
+          }
+        }
+      });
+    } catch (_) {
+      if (mounted && replace) {
+        setState(() => _sharedTonightCounts = {});
+      }
+    }
   }
 
   bool _isBookedTodayForListing(Accommodation accommodation) {
     final accommodationId = accommodation.id;
     if (accommodationId <= 0) return false;
-    final n = DateTime.now();
-    final today = DateTime(n.year, n.month, n.day);
-    final todaysBookings = _guestPaidStays
-        .where((b) => b.stayCoversCalendarDay(today, accommodationId))
-        .length;
-    if (todaysBookings <= 0) return false;
 
     final type = accommodation.accommodationType.toLowerCase().trim();
     if (type == 'hostel') {
       final explicitlyAvailable = _hostelAvailabilityByApiId[accommodationId];
       if (explicitlyAvailable == false) return true;
     }
-    if (_isSingleUnitType(type)) return true;
-    if (type == 'hotel' || type == 'lodge') {
-      return todaysBookings >= accommodation.roomsAvailable;
-    }
-    return false;
+
+    final capacity = AccommodationOccupancyService.capacityForType(
+      accommodationType: accommodation.accommodationType,
+      roomsAvailable: accommodation.roomsAvailable,
+    );
+
+    // Shared Firestore occupancy — same for every guest on Discover.
+    final shared = _sharedTonightCounts[accommodationId] ?? 0;
+    if (shared >= capacity) return true;
+
+    // Fallback only for this device while shared mirror catches up.
+    final n = DateTime.now();
+    final today = DateTime(n.year, n.month, n.day);
+    final ownTonight = _guestPaidStays
+        .where((b) => b.stayCoversCalendarDay(today, accommodationId))
+        .length;
+    return ownTonight >= capacity;
   }
 
   Future<void> _openBookingFlow(Accommodation accommodation) async {
@@ -245,6 +316,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
       if (mounted) {
         unawaited(_refreshSession());
         unawaited(_loadGuestPaidStays());
+        unawaited(_loadSharedTonightCounts([accommodation.id]));
       }
       return;
     }
@@ -266,6 +338,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     if (mounted) {
       unawaited(_refreshSession());
       unawaited(_loadGuestPaidStays());
+      unawaited(_loadSharedTonightCounts([accommodation.id]));
     }
     } finally {
       if (mounted) {
@@ -454,7 +527,10 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
       type: _selectedType,
       location: _locationQuery.isEmpty ? null : _locationQuery,
     );
-    return _mergePricingPeriodFromFirestore(list);
+    final merged = await _mergePricingPeriodFromFirestore(list);
+    // Await so Discover cards get global "Booked today" before first paint.
+    await _loadSharedTonightCounts(merged.map((a) => a.id), replace: true);
+    return merged;
   }
 
   Future<List<Accommodation>> _mergePricingPeriodFromFirestore(
@@ -658,8 +734,11 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
               setState(() {
                 _loadFromService();
               });
-              await _future;
-              await _loadGuestPaidStays();
+              final list = await _future ?? const <Accommodation>[];
+              await Future.wait([
+                _loadGuestPaidStays(),
+                _loadSharedTonightCounts(list.map((a) => a.id)),
+              ]);
             },
             child: FutureBuilder<List<Accommodation>>(
               future: _future,

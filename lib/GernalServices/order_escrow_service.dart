@@ -177,6 +177,67 @@ class OrderEscrowService {
     );
   }
 
+  /// Sanitize booking ref the same way [createHoldForAccommodationBooking] does.
+  static String sanitizeAccommodationEscrowId(String bookingRef) {
+    return bookingRef
+        .trim()
+        .replaceAll(RegExp(r'[/\s.#$[\]]'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
+  }
+
+  static String accommodationEscrowDocId(String bookingRef) {
+    final safe = sanitizeAccommodationEscrowId(bookingRef);
+    if (safe.isEmpty) return '';
+    return 'acc_$safe';
+  }
+
+  /// Resolve held/released escrow for a guest stay (doc id `acc_…` or orderNumber).
+  static Future<OrderEscrowSnapshot?> fetchEscrowForAccommodationBooking({
+    required String bookingId,
+    String? bookingNumber,
+  }) async {
+    final candidates = <String>{};
+    void addRaw(String? raw) {
+      final t = (raw ?? '').trim();
+      if (t.isEmpty) return;
+      candidates.add(t);
+      final docId = accommodationEscrowDocId(t);
+      if (docId.isNotEmpty) candidates.add(docId);
+      // VERO / vero variants used in guest UI vs payment refs.
+      final lower = t.toLowerCase();
+      if (lower.startsWith('vero') && t.length > 4) {
+        final rest = t.substring(4).trim();
+        if (rest.isNotEmpty) {
+          candidates.add(rest);
+          final d = accommodationEscrowDocId(rest);
+          if (d.isNotEmpty) candidates.add(d);
+          candidates.add('VERO$rest');
+          final dv = accommodationEscrowDocId('VERO$rest');
+          if (dv.isNotEmpty) candidates.add(dv);
+        }
+      } else {
+        candidates.add('VERO$t');
+        final dv = accommodationEscrowDocId('VERO$t');
+        if (dv.isNotEmpty) candidates.add(dv);
+      }
+    }
+
+    addRaw(bookingNumber);
+    addRaw(bookingId);
+
+    for (final id in candidates) {
+      final esc = await fetchEscrow(id);
+      if (esc != null) return esc;
+      // Also try any-status resolve (released stays should show as released).
+      final anyId = await _resolveEscrowDocIdAny(id);
+      if (anyId == null) continue;
+      final snap = await _doc(anyId).get();
+      if (!snap.exists || snap.data() == null) continue;
+      return OrderEscrowSnapshot.fromMap(anyId, snap.data()!);
+    }
+    return null;
+  }
+
   /// Payment tx_ref stored on the escrow hold (used for PayChangu refunds).
   static Future<String?> fetchTxRefForOrder(String orderId) async {
     final escrowDocId = await _resolveEscrowDocIdAny(orderId);
@@ -844,9 +905,19 @@ class OrderEscrowService {
     await FirebaseWalletService.creditWallet(
       merchantId: merchantUid,
       amount: merchantAmount,
-      description: buyerConfirmed
-          ? 'Marketplace sale — buyer confirmed receipt'
-          : 'Marketplace sale — auto-released after $escrowAutoReleaseLabel',
+      description: () {
+        final isAcc =
+            (data['serviceType'] ?? '').toString().trim().toLowerCase() ==
+                'accommodation';
+        if (buyerConfirmed) {
+          return isAcc
+              ? 'Stay payment — guest confirmed arrival'
+              : 'Marketplace sale — buyer confirmed receipt';
+        }
+        return isAcc
+            ? 'Stay payment — auto-released after $escrowAutoReleaseLabel'
+            : 'Marketplace sale — auto-released after $escrowAutoReleaseLabel';
+      }(),
       reference: txRef,
       type: 'sale_escrow',
     );

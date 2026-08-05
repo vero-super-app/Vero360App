@@ -238,4 +238,95 @@ class OrderPartyNotificationService {
       debugPrint('[OrderPartyNotification] publishAccommodationBookingToHost: $e');
     }
   }
+
+  /// Sender: parcel accepted / rejected / delivered (Vero Courier).
+  static Future<void> publishCourierStatusToSender({
+    required String senderUid,
+    required String trackingCode,
+    required String statusValue,
+    String? pickup,
+    String? dropoff,
+  }) async {
+    final uid = senderUid.trim();
+    if (uid.isEmpty) return;
+
+    final code = trackingCode.trim().isEmpty ? 'your parcel' : trackingCode.trim();
+    final status = statusValue.trim().toUpperCase();
+
+    late final String title;
+    late final String body;
+    late final String event;
+
+    switch (status) {
+      case 'ACCEPTED':
+        title = 'Parcel accepted';
+        body = 'Your parcel $code has been accepted by Vero Courier.';
+        event = 'accepted';
+        break;
+      case 'CANCELLED':
+        title = 'Parcel rejected';
+        body = 'Your parcel $code was rejected. Contact support if you need help.';
+        event = 'rejected';
+        break;
+      case 'DELIVERED':
+        title = 'Parcel delivered';
+        body = 'Your parcel $code has been delivered.';
+        event = 'delivered';
+        break;
+      default:
+        return;
+    }
+
+    final from = (pickup ?? '').trim();
+    final to = (dropoff ?? '').trim();
+    final routeSeg = (from.isNotEmpty && to.isNotEmpty) ? ' ($from → $to)' : '';
+
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': title,
+        'body': '$body$routeSeg',
+        'payload': {
+          'type': 'courier_status',
+          'status': event,
+          'trackingNumber': code,
+          'courierStatus': status,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+      });
+      if (kDebugMode) {
+        debugPrint(
+          '[OrderPartyNotification] courier $event queued toUid=$uid code=$code',
+        );
+      }
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishCourierStatusToSender: $e');
+    }
+  }
+
+  /// Resolve Firebase Auth uid from a users/{doc} email field (best-effort).
+  static Future<String?> resolveUidByEmail(String? email) async {
+    final e = (email ?? '').trim().toLowerCase();
+    if (e.isEmpty || e == 'no-email@vero.local') return null;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: e)
+          .limit(1)
+          .get();
+      if (snap.docs.isNotEmpty) return snap.docs.first.id;
+    } catch (err) {
+      debugPrint('[OrderPartyNotification] resolveUidByEmail: $err');
+    }
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: (email ?? '').trim())
+          .limit(1)
+          .get();
+      if (snap.docs.isNotEmpty) return snap.docs.first.id;
+    } catch (_) {}
+    return null;
+  }
 }

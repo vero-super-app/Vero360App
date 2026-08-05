@@ -1,16 +1,28 @@
 import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart';
 
 /// Device-local paid stays shown in “My bookings” until `GET /bookings/me` catches up.
+///
+/// Scoped per Firebase uid so logout / account switch cannot leak another user’s stays.
 class GuestBookingLocalCache {
   GuestBookingLocalCache._();
 
-  static const _prefsKey = 'guest_paid_stay_bookings_v1';
+  static const _legacyPrefsKey = 'guest_paid_stay_bookings_v1';
+  static const _prefsPrefix = 'guest_paid_stay_bookings_v1_';
   static const _maxEntries = 20;
+
+  static String? get _uid => FirebaseAuth.instance.currentUser?.uid.trim();
+
+  static String? _prefsKeyForCurrentUser() {
+    final uid = _uid;
+    if (uid == null || uid.isEmpty) return null;
+    return '$_prefsPrefix$uid';
+  }
 
   static String _refKey(BookingItem b) {
     final ref = b.displayBookingRef.trim().toLowerCase();
@@ -27,10 +39,52 @@ class GuestBookingLocalCache {
     return aRef.isNotEmpty && aRef == bRef;
   }
 
-  static Future<List<BookingItem>> loadPaidStays() async {
+  /// Wipe all guest stay caches (legacy + every uid). Call on logout.
+  static Future<void> clearOnLogout() async {
     try {
       final sp = await SharedPreferences.getInstance();
-      final raw = sp.getString(_prefsKey);
+      await sp.remove(_legacyPrefsKey);
+      for (final key in sp.getKeys().toList()) {
+        if (key == _legacyPrefsKey || key.startsWith(_prefsPrefix)) {
+          await sp.remove(key);
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// Remove one stay from the current user’s local cache (e.g. after delete / 404).
+  static Future<void> removeStay(BookingItem item) async {
+    final key = _prefsKeyForCurrentUser();
+    if (key == null) {
+      await clearOnLogout();
+      return;
+    }
+    try {
+      final existing = await loadPaidStays();
+      final remaining =
+          existing.where((b) => !sameBooking(b, item)).toList(growable: false);
+      final sp = await SharedPreferences.getInstance();
+      if (remaining.isEmpty) {
+        await sp.remove(key);
+        return;
+      }
+      await sp.setString(
+        key,
+        jsonEncode(remaining.map(_toJson).toList()),
+      );
+    } catch (_) {}
+  }
+
+  static Future<List<BookingItem>> loadPaidStays() async {
+    final key = _prefsKeyForCurrentUser();
+    if (key == null) return [];
+    try {
+      final sp = await SharedPreferences.getInstance();
+      // Drop legacy unscoped cache so prior-account stays cannot leak.
+      if (sp.containsKey(_legacyPrefsKey)) {
+        await sp.remove(_legacyPrefsKey);
+      }
+      final raw = sp.getString(key);
       if (raw == null || raw.isEmpty) return [];
       final decoded = jsonDecode(raw);
       if (decoded is! List) return [];
@@ -46,6 +100,9 @@ class GuestBookingLocalCache {
 
   static Future<void> rememberPaidStay(BookingItem item) async {
     if (!item.includeInGuestMyBookings) return;
+    final key = _prefsKeyForCurrentUser();
+    if (key == null) return;
+
     final existing = await loadPaidStays();
     final merged = [
       item,
@@ -56,31 +113,40 @@ class GuestBookingLocalCache {
     }
     final sp = await SharedPreferences.getInstance();
     await sp.setString(
-      _prefsKey,
+      key,
       jsonEncode(merged.map(_toJson).toList()),
     );
 
+    // Persist PAID on backend so My bookings / host views stop showing UNPAID.
     final id = item.id.trim();
-    if (id.isNotEmpty) {
-      try {
-        await MyBookingService().updateStatus(id, BookingStatus.confirmed);
-      } catch (_) {}
+    final ref = (item.bookingNumber ?? '').trim();
+    try {
+      await MyBookingService().markBookingPaid(
+        bookingId: id.isNotEmpty ? id : null,
+        bookingNumber: ref.isNotEmpty
+            ? ref
+            : (item.displayBookingRef.isNotEmpty ? item.displayBookingRef : null),
+      );
+    } catch (_) {
+      // Local cache still shows the stay until API catches up / retry.
     }
   }
 
   static Future<void> pruneIfPresentInApi(List<BookingItem> api) async {
     if (api.isEmpty) return;
+    final key = _prefsKeyForCurrentUser();
+    if (key == null) return;
     final local = await loadPaidStays();
     if (local.isEmpty) return;
     final remaining =
         local.where((l) => !api.any((a) => sameBooking(a, l))).toList();
     final sp = await SharedPreferences.getInstance();
     if (remaining.isEmpty) {
-      await sp.remove(_prefsKey);
+      await sp.remove(key);
       return;
     }
     await sp.setString(
-      _prefsKey,
+      key,
       jsonEncode(remaining.map(_toJson).toList()),
     );
   }

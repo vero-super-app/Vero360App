@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
@@ -91,7 +92,7 @@ class CourierDeliveryCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildHeader(),
+            _buildHeader(context),
             const SizedBox(height: 14),
             _buildPeopleRow(view),
             const SizedBox(height: 14),
@@ -114,18 +115,55 @@ class CourierDeliveryCard extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(BuildContext context) {
+    final code = delivery.trackingCode.isNotEmpty
+        ? delivery.trackingCode
+        : 'Delivery #${delivery.courierId}';
+    final copyValue = delivery.trackingCode.isNotEmpty
+        ? delivery.trackingCode
+        : '${delivery.courierId}';
+
     return Row(
       children: [
         Expanded(
-          child: Text(
-            'Delivery #${delivery.courierId}',
-            style: const TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w800,
-              color: _ink,
-              letterSpacing: -0.3,
-            ),
+          child: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  code,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: _ink,
+                    letterSpacing: -0.3,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (copyValue.isNotEmpty)
+                IconButton(
+                  tooltip: 'Copy tracking number',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                  icon: const Icon(
+                    PhosphorIconsBold.copy,
+                    size: 18,
+                    color: _muted,
+                  ),
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: copyValue));
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Copied $copyValue'),
+                        behavior: SnackBarBehavior.floating,
+                        duration: const Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                ),
+            ],
           ),
         ),
         Container(

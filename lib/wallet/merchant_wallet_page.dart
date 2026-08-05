@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 class MerchantWalletPage extends StatefulWidget {
@@ -31,6 +32,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   WalletModel? _wallet;
   double _walletBalance = 0.0;
   bool _isLoading = true;
+  bool _isUnlocked = false;
+  bool _unlockFailed = false;
   bool _isProcessingPayout = false;
   List<WalletTransaction> _recentTransactions = [];
   
@@ -72,8 +75,22 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   @override
   void initState() {
     super.initState();
-    _initializeWallet();
-    _loadMerchantData();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _requireUnlock());
+  }
+
+  Future<void> _requireUnlock() async {
+    final ok = await AppWalletPin.verifyWalletUnlock(context);
+    if (!mounted) return;
+    if (!ok) {
+      setState(() {
+        _unlockFailed = true;
+        _isLoading = false;
+      });
+      return;
+    }
+    setState(() => _isUnlocked = true);
+    await _initializeWallet();
+    await _loadMerchantData();
   }
 
   Future<void> _initializeWallet() async {
@@ -692,7 +709,29 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
-      body: _isLoading
+      body: !_isUnlocked
+          ? Center(
+              child: _unlockFailed
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Wallet locked'),
+                        const SizedBox(height: 12),
+                        FilledButton(
+                          onPressed: () {
+                            setState(() {
+                              _unlockFailed = false;
+                              _isLoading = true;
+                            });
+                            _requireUnlock();
+                          },
+                          child: const Text('Unlock'),
+                        ),
+                      ],
+                    )
+                  : const CircularProgressIndicator(color: Color(0xFFFF8A00)),
+            )
+          : _isLoading
           ? const Center(
               child: CircularProgressIndicator(color: Color(0xFFFF8A00)),
             )

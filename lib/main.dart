@@ -56,6 +56,7 @@ import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 final GlobalKey<NavigatorState> navKey = appNavKey;
@@ -1090,6 +1091,9 @@ class AuthFlow {
     await p.remove('role');
     await p.remove('has_driver_profile');
     resetDriverSessionCache();
+    try {
+      await SessionLocalCache.clearOnLogout();
+    } catch (_) {}
 
     try {
       await FirebaseAuth.instance.signOut();

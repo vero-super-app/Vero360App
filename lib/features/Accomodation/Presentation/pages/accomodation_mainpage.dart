@@ -281,8 +281,8 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
           accommodation,
           afterSuccessfulPayment: (bookingCtx, accId) {
             if (!bookingCtx.mounted) return;
-            Navigator.of(bookingCtx).pop();
-            Navigator.of(bookingCtx).push<void>(
+            // Replace booking page with My bookings so the stay is visible immediately.
+            Navigator.of(bookingCtx).pushReplacement(
               MaterialPageRoute<void>(
                 builder: (_) => AccommodationMainPage(
                   focusAccommodationId: accId,

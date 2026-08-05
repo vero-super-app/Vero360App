@@ -335,10 +335,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await prefs.setString('uid', uid);
     }
 
-    // Marketplace onboarding guide only for marketplace merchants.
-    if (role == 'merchant' &&
-        merchantService == 'marketplace' &&
-        prefs.getBool('marketplace_merchant_guide_v1_done') != true) {
+    // Marketplace onboarding guide only for marketplace merchants (once per account).
+    final guideDone = prefs.getBool('marketplace_merchant_guide_v1_done') == true ||
+        (uid != null &&
+            uid.isNotEmpty &&
+            prefs.getBool('marketplace_merchant_guide_v1_done_$uid') == true);
+    if (role == 'merchant' && merchantService == 'marketplace' && !guideDone) {
       await prefs.setBool('marketplace_merchant_guide_show_on_next_open', true);
     }
 

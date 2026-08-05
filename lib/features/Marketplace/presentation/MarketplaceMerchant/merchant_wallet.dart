@@ -14,6 +14,7 @@ class _HeldEscrowRow {
   final DateTime? deliveredAt;
   final DateTime? createdAt;
   final bool awaitingShipment;
+  final bool isAccommodation;
 
   const _HeldEscrowRow({
     required this.itemName,
@@ -22,6 +23,7 @@ class _HeldEscrowRow {
     this.deliveredAt,
     this.createdAt,
     this.awaitingShipment = false,
+    this.isAccommodation = false,
   });
 }
 
@@ -120,8 +122,11 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
   String _escrowReleaseSummary() {
     final window = OrderEscrowService.escrowAutoReleaseLabel;
+    final isAcc = widget.serviceType.toLowerCase() == 'accommodation';
     if (_heldEscrowRows.isEmpty) {
-      return 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
+      return isAcc
+          ? 'Not withdrawable yet — waiting for guest check-in confirmation.'
+          : 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
     }
 
     final dueNow = _heldEscrowRows.where((r) {
@@ -149,7 +154,9 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
     final awaiting = _heldEscrowRows.any((r) => r.awaitingShipment);
     if (awaiting) {
-      return 'Ship orders with proof to start the $window release timer.';
+      return isAcc
+          ? 'Guest confirms arrival in My bookings to release stay payment.'
+          : 'Ship orders with proof to start the $window release timer.';
     }
 
     return 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
@@ -171,9 +178,15 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           final amountText = 'MWK ${_mwkFormat.format(row.amount.truncate())}';
           String statusText;
           if (row.awaitingShipment) {
-            statusText = row.createdAt != null
-                ? 'Bought ${_releaseDateFormat.format(row.createdAt!.toLocal())} · awaiting shipment'
-                : 'Awaiting shipment — timer starts when you ship';
+            if (row.isAccommodation) {
+              statusText = row.createdAt != null
+                  ? 'Booked ${_releaseDateFormat.format(row.createdAt!.toLocal())} · awaiting guest check-in'
+                  : 'Awaiting guest check-in — guest releases payment on arrival';
+            } else {
+              statusText = row.createdAt != null
+                  ? 'Bought ${_releaseDateFormat.format(row.createdAt!.toLocal())} · awaiting shipment'
+                  : 'Awaiting shipment — timer starts when you ship';
+            }
           } else if (row.releaseDueAt != null &&
               !DateTime.now().isBefore(row.releaseDueAt!)) {
             statusText = 'Ready to release';
@@ -185,7 +198,9 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                 : 'Releases ${_releaseDateFormat.format(row.releaseDueAt!.toLocal())} '
                     '(${OrderEscrowService.escrowAutoReleaseLabel} after shipment)';
           } else {
-            statusText = 'Awaiting buyer confirmation';
+            statusText = row.isAccommodation
+                ? 'Awaiting guest arrival confirmation'
+                : 'Awaiting buyer confirmation';
           }
 
           return Padding(
@@ -275,6 +290,9 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         }
 
         final awaitingShipment = deliveredAt == null;
+        final isAccommodation =
+            (data['serviceType'] ?? '').toString().trim().toLowerCase() ==
+                'accommodation';
 
         rows.add(_HeldEscrowRow(
           itemName: (data['itemName'] ?? data['orderNumber'] ?? 'Sale')
@@ -284,6 +302,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           deliveredAt: deliveredAt,
           createdAt: createdAt,
           awaitingShipment: awaitingShipment,
+          isAccommodation: isAccommodation,
         ));
       }
       rows.sort((a, b) {
@@ -1260,6 +1279,19 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           Text(
                             'Marketplace sales are credited when the buyer confirms receipt, '
                             'or automatically ${OrderEscrowService.escrowAutoReleaseLabel} after delivery.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.white.withOpacity(0.88),
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                        if (widget.serviceType.toLowerCase() ==
+                            'accommodation') ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            'Stay payments are held in escrow until the guest confirms arrival '
+                            'in My bookings (biometrics or wallet password). Stays are not shipped.',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.white.withOpacity(0.88),

@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/guest_booking_local_cache.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart'
     show AuthRequiredException, MyBookingService;
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/booking_delete_confirm_dialog.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 
 /// Lists the signed-in user’s accommodation bookings from `GET /vero/bookings/me`.
 class AccommodationMyBookingsTab extends StatefulWidget {
@@ -29,6 +33,10 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   DateTime? _searchDate;
+
+  /// Escrow snapshot keyed by booking id / booking number.
+  final Map<String, OrderEscrowSnapshot?> _escrowByBooking = {};
+  String? _releasingBookingKey;
 
   @override
   bool get wantKeepAlive => true;
@@ -60,12 +68,297 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
   Future<List<BookingItem>> _load() async {
     final loggedIn = await AuthHandler.isAuthenticated();
     if (!loggedIn) {
+      // Avoid showing a previous account’s cached stays while signed out.
+      await GuestBookingLocalCache.clearOnLogout();
       throw AuthRequiredException('Sign in to see your bookings');
     }
-    return _svc.getGuestMyBookings();
+    final list = await _svc.getGuestMyBookings();
+    await _loadEscrowForBookings(list);
+    return list;
+  }
+
+  String _bookingEscrowKey(BookingItem b) {
+    final bn = (b.bookingNumber ?? '').trim();
+    if (bn.isNotEmpty) return bn;
+    return b.id.trim();
+  }
+
+  Future<void> _loadEscrowForBookings(
+    List<BookingItem> list, {
+    bool notify = false,
+  }) async {
+    final next = <String, OrderEscrowSnapshot?>{};
+    await Future.wait(list.map((b) async {
+      if (!b.includeInGuestMyBookings &&
+          b.status != BookingStatus.confirmed &&
+          b.status != BookingStatus.completed) {
+        return;
+      }
+      final key = _bookingEscrowKey(b);
+      if (key.isEmpty) return;
+      try {
+        next[key] = await OrderEscrowService.fetchEscrowForAccommodationBooking(
+          bookingId: b.id,
+          bookingNumber: b.bookingNumber ?? b.displayBookingRef,
+        );
+      } catch (_) {
+        next[key] = null;
+      }
+    }));
+    _escrowByBooking
+      ..clear()
+      ..addAll(next);
+    if (notify && mounted) setState(() {});
+  }
+
+  bool _isOnOrAfterCheckIn(BookingItem b) {
+    final start = b.bookingDate;
+    if (start == null) return true;
+    final today = DateTime.now();
+    final checkIn = DateTime(start.year, start.month, start.day);
+    final d = DateTime(today.year, today.month, today.day);
+    return !d.isBefore(checkIn);
+  }
+
+  Future<void> _confirmArrivalAndRelease(BookingItem b) async {
+    final key = _bookingEscrowKey(b);
+    if (key.isEmpty || _releasingBookingKey != null) return;
+
+    var escrow = _escrowByBooking[key] ??
+        await OrderEscrowService.fetchEscrowForAccommodationBooking(
+          bookingId: b.id,
+          bookingNumber: b.bookingNumber ?? b.displayBookingRef,
+        );
+    if (!mounted) return;
+    if (escrow == null || !escrow.isHeld) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No payment is on hold for this stay (already released or missing).',
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!_isOnOrAfterCheckIn(b)) {
+      final when = b.bookingDate != null
+          ? DateFormat.yMMMd().format(b.bookingDate!)
+          : 'check-in day';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'You can confirm arrival from $when (check-in day) onward.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text(
+          'Confirm arrival?',
+          style: TextStyle(fontWeight: FontWeight.w900),
+        ),
+        content: Text(
+          'By confirming, you are telling us you have arrived at '
+          '${(b.accommodationName ?? 'this stay').trim()}.\n\n'
+          'This will release the held payment from escrow to the '
+          'accommodation owner.\n\n'
+          'If you confirm without actually going to the accommodation, '
+          'Vero360 is not responsible for that payment.\n\n'
+          'Next, you will verify with biometrics or your wallet password.',
+          style: TextStyle(height: 1.45, color: Colors.grey.shade800),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: _brandOrange),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _releasingBookingKey = key);
+    try {
+      final verified = await AppWalletPin.verifyStayArrival(context);
+      if (!verified || !mounted) return;
+
+      await OrderEscrowService.releaseFunds(
+        orderId: escrow.orderId,
+        buyerConfirmed: true,
+      );
+      if (!mounted) return;
+
+      ToastHelper.showCustomToast(
+        context,
+        'Payment released to the host. Enjoy your stay!',
+        isSuccess: true,
+        errorMessage: '',
+      );
+
+      final refreshed =
+          await OrderEscrowService.fetchEscrowForAccommodationBooking(
+        bookingId: b.id,
+        bookingNumber: b.bookingNumber ?? b.displayBookingRef,
+      );
+      if (!mounted) return;
+      setState(() => _escrowByBooking[key] = refreshed);
+    } on StateError catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        e.toString().replaceFirst('Bad state: ', ''),
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not release payment: $e',
+        isSuccess: false,
+        errorMessage: '$e',
+      );
+    } finally {
+      if (mounted) setState(() => _releasingBookingKey = null);
+    }
+  }
+
+  Widget _buildEscrowReleaseSection(BookingItem b) {
+    if (!b.includeInGuestMyBookings &&
+        b.status != BookingStatus.confirmed &&
+        b.status != BookingStatus.completed) {
+      return const SizedBox.shrink();
+    }
+
+    final key = _bookingEscrowKey(b);
+    final escrow = _escrowByBooking[key];
+    final releasing = _releasingBookingKey == key;
+
+    if (escrow != null && escrow.isReleased) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.green.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.green.shade200),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.verified_rounded, color: Colors.green.shade700),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Arrival confirmed — payment released to the host.',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: Colors.green.shade900,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (escrow == null || !escrow.isHeld) {
+      return const SizedBox.shrink();
+    }
+
+    final canConfirm = _isOnOrAfterCheckIn(b);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF7ED),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Payment held in escrow',
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 13,
+                color: _brandNavy,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              canConfirm
+                  ? 'When you arrive at your stay, confirm below to release payment to the host. This uses Face ID / fingerprint or your wallet password.'                  : 'After check-in day, confirm arrival here to release the held payment to the host.',
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.4,
+                color: Colors.grey.shade800,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: (!canConfirm || releasing)
+                    ? null
+                    : () => _confirmArrivalAndRelease(b),
+                icon: releasing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.home_work_rounded, size: 20),
+                label: Text(
+                  releasing
+                      ? 'Releasing…'
+                      : canConfirm
+                          ? 'I\'ve arrived — release payment'
+                          : 'Available on check-in day',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                style: FilledButton.styleFrom(
+                  backgroundColor: _brandOrange,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.grey.shade300,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   bool _showPaidBadge(BookingItem b) {
+    if (b.includeInGuestMyBookings) return true;
     switch (b.status) {
       case BookingStatus.confirmed:
       case BookingStatus.completed:
@@ -78,6 +371,11 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
   }
 
   String _statusLabel(BookingItem b) {
+    if (b.includeInGuestMyBookings &&
+        (b.status == BookingStatus.pending ||
+            b.status == BookingStatus.unknown)) {
+      return 'Booked';
+    }
     switch (b.status) {
       case BookingStatus.pending:
         return 'Pending payment';
@@ -152,10 +450,10 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
   }
 
   Future<void> _confirmAndDelete(BuildContext context, BookingItem b) async {
-    if (b.id.isEmpty) return;
+    if (b.id.isEmpty && (b.bookingNumber ?? '').trim().isEmpty) return;
     final ok = await showBookingDeleteConfirmDialog(
       context,
-      bookingId: b.id,
+      bookingId: b.id.isNotEmpty ? b.id : (b.bookingNumber ?? ''),
       bookingRefLabel: b.displayBookingRef,
       title: 'Delete this booking?',
       body:
@@ -163,17 +461,43 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
     );
     if (ok != true || !context.mounted) return;
     try {
-      await _svc.deleteBooking(b.id);
+      var removedFromServer = false;
+      final id = b.id.trim();
+      if (id.isNotEmpty) {
+        try {
+          await _svc.deleteBooking(id);
+          removedFromServer = true;
+        } catch (e) {
+          final msg = e.toString().toLowerCase();
+          // Cache-only / already-gone rows still need to leave the list.
+          final notFound = msg.contains('404') ||
+              msg.contains('not found') ||
+              msg.contains('notfound');
+          if (!notFound) rethrow;
+        }
+      }
+      await GuestBookingLocalCache.removeStay(b);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Booking deleted')),
+        SnackBar(
+          content: Text(
+            removedFromServer
+                ? 'Booking deleted'
+                : 'Booking removed from My bookings',
+          ),
+        ),
       );
       _reload();
     } catch (e) {
+      // Still drop local ghost stays so the UI matches reality.
+      try {
+        await GuestBookingLocalCache.removeStay(b);
+      } catch (_) {}
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
       );
+      _reload();
     }
   }
 
@@ -625,6 +949,7 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                           widget.isDark,
                           boldValue: true,
                         ),
+                        _buildEscrowReleaseSection(b),
                         if (b.accommodationId != null) ...[
                           const SizedBox(height: 6),
                           Text(

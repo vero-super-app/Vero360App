@@ -25,6 +25,7 @@ import 'package:vero360_app/Home/CustomersProfilepage.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
+import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
 
 // Merchant dashboards
@@ -185,6 +186,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
     }
 
     setState(() => _isLoggedIn = loggedIn);
+    if (loggedIn) {
+      unawaited(BlockedMerchantService.reload());
+    }
     if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
       setState(() => _selectedIndex = 0);
     }

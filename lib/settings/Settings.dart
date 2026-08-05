@@ -28,6 +28,7 @@ import 'package:vero360_app/utils/display_name_sync.dart';
 import 'package:vero360_app/utils/app_update_checker.dart';
 import 'package:vero360_app/utils/app_version_info.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
+import 'package:vero360_app/settings/blocked_merchants_page.dart';
 
 // REQUIRED PAGES
 import 'package:vero360_app/GeneralPages/address.dart'; // AddressPage
@@ -2288,6 +2289,23 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: _t('Notifications', 'Zidziwitso'),
                   subtitle: _t('Push, orders, messages', 'Zidziwitso, maoda, mauthenga'),
                   onTap: _openNotifications,
+                ),
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.block_outlined,
+                  title: _t('Blocked merchants', 'Amalonda oblocked'),
+                  subtitle: _t(
+                    'Manage hidden shops and sellers',
+                    'Sinthani malonda oblocked',
+                  ),
+                  onTap: () {
+                    _maybeHaptic();
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const BlockedMerchantsPage(),
+                      ),
+                    );
+                  },
                 ),
                 _SettingsTile(
                   compact: _compactMode,

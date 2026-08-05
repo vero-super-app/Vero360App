@@ -33,10 +33,10 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
   DateTime? _endDate;
   bool _submitting = false;
 
-  // image
+  // images (up to 4 photos per promotion)
+  static const int _maxPromoPhotos = 4;
   final _picker = ImagePicker();
-  XFile? _picked;
-  Uint8List? _pickedBytes;
+  final List<_PickedPromoImage> _pickedImages = [];
 
   // list
   List<PromoModel> _items = [];
@@ -82,37 +82,57 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
     }
   }
 
-  // image pickers
   Future<void> _pickFromGallery() async {
+    if (_pickedImages.length >= _maxPromoPhotos) {
+      ToastHelper.showCustomToast(
+        context,
+        'You can add up to $_maxPromoPhotos photos per promotion.',
+        isSuccess: false,
+        errorMessage: 'Photo limit',
+      );
+      return;
+    }
     final x = await _picker.pickImage(
       source: ImageSource.gallery,
       imageQuality: 90,
       maxWidth: 2048,
     );
-    if (x != null) {
-      _picked = x;
-      _pickedBytes = await x.readAsBytes();
-      setState(() {});
-    }
+    if (x != null) await _addPicked(x);
   }
 
   Future<void> _pickFromCamera() async {
+    if (_pickedImages.length >= _maxPromoPhotos) {
+      ToastHelper.showCustomToast(
+        context,
+        'You can add up to $_maxPromoPhotos photos per promotion.',
+        isSuccess: false,
+        errorMessage: 'Photo limit',
+      );
+      return;
+    }
     final x = await _picker.pickImage(
       source: ImageSource.camera,
       imageQuality: 90,
       maxWidth: 2048,
     );
-    if (x != null) {
-      _picked = x;
-      _pickedBytes = await x.readAsBytes();
-      setState(() {});
-    }
+    if (x != null) await _addPicked(x);
+  }
+
+  Future<void> _addPicked(XFile x) async {
+    final bytes = await x.readAsBytes();
+    if (!mounted) return;
+    setState(() {
+      _pickedImages.add(_PickedPromoImage(file: x, bytes: bytes));
+    });
+  }
+
+  void _removePickedAt(int index) {
+    if (index < 0 || index >= _pickedImages.length) return;
+    setState(() => _pickedImages.removeAt(index));
   }
 
   void _clearPicked() {
-    _picked = null;
-    _pickedBytes = null;
-    setState(() {});
+    setState(() => _pickedImages.clear());
   }
 
   String _formatPickedDateTime(DateTime? dt) {
@@ -197,14 +217,15 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
 
     setState(() => _submitting = true);
     try {
-      String? imageUrl;
-      if (_pickedBytes != null && _picked != null) {
+      final uploadedUrls = <String>[];
+      for (final pick in _pickedImages) {
         final filename =
-            _picked!.name.isNotEmpty ? _picked!.name : 'promo.jpg';
-        imageUrl = await svc.uploadImageBytes(
-          _pickedBytes!,
+            pick.file.name.isNotEmpty ? pick.file.name : 'promo.jpg';
+        final url = await svc.uploadImageBytes(
+          pick.bytes,
           filename: filename,
         );
+        if (url.trim().isNotEmpty) uploadedUrls.add(url.trim());
       }
 
       final priceRaw = _price.text.trim();
@@ -227,7 +248,8 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
         title: _title.text.trim(),
         description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         price: price,
-        image: imageUrl,
+        image: uploadedUrls.isNotEmpty ? uploadedUrls.first : null,
+        gallery: uploadedUrls.length > 1 ? uploadedUrls.sublist(1) : const [],
         isActive: true,
         startsAt: _startDate,
         endsAt: _endDate,
@@ -257,8 +279,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       _price.clear();
       _startDate = null;
       _endDate = null;
-      _picked = null;
-      _pickedBytes = null;
+      _pickedImages.clear();
       setState(() {});
       await _loadMine();
       _tabs.animateTo(1);
@@ -477,12 +498,13 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 12),
 
-                _FullBleedPicker(
-                  picked: _picked,
-                  pickedBytes: _pickedBytes,
+                _MultiPromoImagePicker(
+                  images: _pickedImages,
+                  maxPhotos: _maxPromoPhotos,
                   onPickGallery: _pickFromGallery,
                   onPickCamera: _pickFromCamera,
-                  onClearPicked: _clearPicked,
+                  onRemoveAt: _removePickedAt,
+                  onClearAll: _clearPicked,
                   filledBtnStyle: _filledBtnStyle(padV: 12),
                 ),
                 const SizedBox(height: 12),
@@ -765,6 +787,130 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
 }
 
 /* ---------- helper widgets: full-bleed, no empty space ---------- */
+
+class _PickedPromoImage {
+  final XFile file;
+  final Uint8List bytes;
+  const _PickedPromoImage({required this.file, required this.bytes});
+}
+
+class _MultiPromoImagePicker extends StatelessWidget {
+  const _MultiPromoImagePicker({
+    required this.images,
+    required this.maxPhotos,
+    required this.onPickGallery,
+    required this.onPickCamera,
+    required this.onRemoveAt,
+    required this.onClearAll,
+    required this.filledBtnStyle,
+  });
+
+  final List<_PickedPromoImage> images;
+  final int maxPhotos;
+  final VoidCallback onPickGallery;
+  final VoidCallback onPickCamera;
+  final void Function(int index) onRemoveAt;
+  final VoidCallback onClearAll;
+  final ButtonStyle filledBtnStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    final canAdd = images.length < maxPhotos;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (images.isEmpty)
+          Card(
+            elevation: 8,
+            shadowColor: Colors.black12,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            clipBehavior: Clip.antiAlias,
+            child: const AspectRatio(
+              aspectRatio: 16 / 9,
+              child: _PlaceholderCover(),
+            ),
+          )
+        else
+          SizedBox(
+            height: 168,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: images.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final pick = images[index];
+                return Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: SizedBox(
+                        width: 220,
+                        height: 168,
+                        child: Image.memory(
+                          pick.bytes,
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Material(
+                        color: Colors.black54,
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          onTap: () => onRemoveAt(index),
+                          customBorder: const CircleBorder(),
+                          child: const Padding(
+                            padding: EdgeInsets.all(6),
+                            child: Icon(Icons.close, color: Colors.white, size: 18),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 8),
+        Text(
+          '${images.length}/$maxPhotos photos',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: Colors.grey.shade700,
+            fontSize: 13,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            FilledButton.tonalIcon(
+              style: filledBtnStyle,
+              onPressed: canAdd ? onPickGallery : null,
+              icon: const Icon(Icons.photo_library),
+              label: const Text('Gallery'),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: canAdd ? onPickCamera : null,
+              icon: const Icon(Icons.photo_camera),
+              label: const Text('Camera'),
+            ),
+            const Spacer(),
+            if (images.isNotEmpty)
+              TextButton.icon(
+                onPressed: onClearAll,
+                icon: const Icon(Icons.close),
+                label: const Text('Clear all'),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
 
 class _DateTimePickerTile extends StatelessWidget {
   const _DateTimePickerTile({

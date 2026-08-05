@@ -40,6 +40,7 @@ import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
@@ -822,10 +823,19 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
     String? category,
   }) async {
+    final blocked = await BlockedMerchantService.blockedIds();
     final all = _excludeFood(
       docs
           .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
           .where((item) => item.isActive)
+          .where(
+            (item) => !BlockedMerchantService.matchesBlocked(
+              blocked,
+              merchantId: item.merchantId,
+              sellerUserId: item.sellerUserId,
+              serviceProviderId: item.serviceProviderId,
+            ),
+          )
           .toList(),
     );
     if (category == null || category.isEmpty) {

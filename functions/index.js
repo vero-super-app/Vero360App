@@ -1439,4 +1439,45 @@ exports.onEscrowReleased = onDocumentUpdated(
   },
 );
 
+/**
+ * When the app queues an order_party_alerts doc (courier accept/reject/delivered,
+ * escrow, etc.), also send a real FCM push so background/killed devices get it.
+ * Marketplace moderation already calls sendFcmToUser itself — skip those to avoid doubles.
+ */
+exports.onOrderPartyAlertCreated = onDocumentCreated(
+  {
+    document: `${ORDER_PARTY_ALERTS}/{alertId}`,
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async (event) => {
+    const data = event.data?.data() || {};
+    const toUid = String(data.toUid || '').trim();
+    if (!toUid) return;
+
+    const payload =
+      data.payload && typeof data.payload === 'object' ? data.payload : {};
+    const type = String(payload.type || data.type || '').trim().toLowerCase();
+
+    // Only courier accept/reject/delivered (app-queued). Other alert types already
+    // have their own FCM paths and would double-notify.
+    if (type !== 'courier_status') return;
+
+    const title = String(data.title || 'Vero360').trim() || 'Vero360';
+    const body = String(data.body || '').trim();
+    if (!body) return;
+
+    const dataPayload = stringifyDataPayload({
+      title,
+      body,
+      ...payload,
+    });
+
+    try {
+      await sendFcmToUser(toUid, title, body, dataPayload);
+      console.log(`onOrderPartyAlertCreated FCM sent courier_status to ${toUid}`);
+    } catch (err) {
+      console.error(`onOrderPartyAlertCreated FCM failed for ${toUid}`, err);
+    }
+  },
+);
 

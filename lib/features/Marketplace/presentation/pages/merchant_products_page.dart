@@ -10,6 +10,7 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_detail_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
@@ -109,6 +110,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   bool? _isAccommodationHost;
   /// Driver accounts must not show a merchant shop.
   bool _redirectingToDriver = false;
+  /// True when the signed-in viewer has blocked this merchant.
+  bool _blockedByViewer = false;
 
   double? _merchantRating;
   int _merchantReviewCount = 0;
@@ -536,6 +539,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   void initState() {
     super.initState();
     unawaited(_maybeRedirectDriverProfile());
+    unawaited(_refreshBlockedByViewer());
     final id = widget.merchantId.trim();
     final memItems = _itemsMemCache[id];
     if (memItems != null) {
@@ -1352,6 +1356,14 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
+  Future<void> _refreshBlockedByViewer() async {
+    final blocked = await BlockedMerchantService.isBlocked(widget.merchantId);
+    if (!mounted) return;
+    if (_blockedByViewer != blocked) {
+      setState(() => _blockedByViewer = blocked);
+    }
+  }
+
   Future<void> _blockMerchant() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -1440,10 +1452,29 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       ),
     );
     if (ok != true || !mounted) return;
+    await BlockedMerchantService.blockMerchant(
+      merchantId: widget.merchantId,
+      displayName: _shopDisplayName,
+    );
+    if (!mounted) return;
+    setState(() => _blockedByViewer = true);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-          content: Text(
-              'Merchant blocked (coming soon to sync across devices).')),
+      SnackBar(
+        content: Text('${_shopDisplayName} blocked. Unblock anytime in Settings.'),
+        action: SnackBarAction(
+          label: 'Unblock',
+          onPressed: _unblockMerchant,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _unblockMerchant() async {
+    await BlockedMerchantService.unblockMerchant(widget.merchantId);
+    if (!mounted) return;
+    setState(() => _blockedByViewer = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${_shopDisplayName} unblocked')),
     );
   }
 
@@ -2429,6 +2460,61 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       return const Scaffold(
         backgroundColor: _pageBg,
         body: AppSkeletonListPlaceholder(items: 8),
+      );
+    }
+    if (_blockedByViewer) {
+      return Scaffold(
+        backgroundColor: _pageBg,
+        appBar: AppBar(
+          elevation: 0,
+          backgroundColor: _brandOrange,
+          foregroundColor: Colors.white,
+          title: const Text('Shop'),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.block_rounded, size: 64, color: Colors.red.shade400),
+                const SizedBox(height: 20),
+                Text(
+                  'You blocked ${_shopDisplayName}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: _brandNavy,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Their shop, products, stories, and promotions are hidden from your app.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.45,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                const SizedBox(height: 28),
+                FilledButton.icon(
+                  onPressed: _unblockMerchant,
+                  icon: const Icon(Icons.lock_open_rounded),
+                  label: const Text('Unblock merchant'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 14,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
     return Scaffold(

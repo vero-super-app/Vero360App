@@ -545,22 +545,25 @@ class _VerocourierPageState extends State<VerocourierPage> {
   }
 
   Future<void> _trackDelivery() async {
-    final id = int.tryParse(_trackCtrl.text.trim());
-    if (id == null) {
-      _toast('Enter a valid delivery number.', isError: true);
+    final query = _trackCtrl.text.trim();
+    if (query.isEmpty) {
+      _toast('Enter your tracking number (e.g. VC506683).', isError: true);
       return;
     }
     setState(() => _tracking = true);
     try {
-      final data = await _courierService.getMyDeliveryById(
-        id,
+      final data = await _courierService.getMyDeliveryByTrackingOrId(
+        query,
         senderPhone: _activeSenderPhone,
         senderEmail: _senderEmail.isEmpty ? null : _senderEmail,
       );
       if (!mounted) return;
       setState(() {
         _trackingResult = data;
-        _trackedDeliveryId = id;
+        _trackedDeliveryId = data.courierId;
+        if (data.trackingCode.isNotEmpty) {
+          _trackCtrl.text = data.trackingCode;
+        }
       });
       _startProgressPolling();
     } on ApiException catch (e) {
@@ -652,10 +655,12 @@ class _VerocourierPageState extends State<VerocourierPage> {
     _senderCity = _serviceCityLabel;
 
     setState(() => _submitting = true);
+    final senderUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
     final mergedAdditionalInfo = [
       _additionalCtrl.text.trim(),
       if (_senderNameCtrl.text.trim().isNotEmpty)
         'Sender: ${_senderNameCtrl.text.trim()}',
+      if (senderUid.isNotEmpty) 'SenderUid: $senderUid',
       if (_recipientNameCtrl.text.trim().isNotEmpty)
         'Recipient: ${_recipientNameCtrl.text.trim()}',
       if (_sanitizePhone(_recipientPhoneCtrl.text).isNotEmpty)
@@ -687,7 +692,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
         ),
       );
       if (!mounted) return;
-      _toast('Delivery created: #${created.courierId}');
+      final code = created.trackingCode.isNotEmpty
+          ? created.trackingCode
+          : '#${created.courierId}';
+      _toast('Delivery created: $code');
       _formKey.currentState?.reset();
       _pickupCtrl.clear();
       _dropoffCtrl.clear();
@@ -695,7 +703,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
       _descriptionCtrl.clear();
       _additionalCtrl.clear();
       // Keep sender + recipient for the next booking; they stay in prefs.
-      _trackCtrl.text = created.courierId.toString();
+      _trackCtrl.text = code;
       await _onServiceTabChanged(2);
       await _trackDelivery();
       await _loadDeliveries();
@@ -808,7 +816,8 @@ class _VerocourierPageState extends State<VerocourierPage> {
         alignment: Alignment.centerRight,
         child: TextButton.icon(
           onPressed: () async {
-            _trackCtrl.text = d.courierId.toString();
+            _trackCtrl.text =
+                d.trackingCode.isNotEmpty ? d.trackingCode : '${d.courierId}';
             if (_selectedService != 2) {
               await _onServiceTabChanged(2);
             }
@@ -1547,10 +1556,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
                   Expanded(
                     child: TextField(
                       controller: _trackCtrl,
-                      keyboardType: TextInputType.number,
+                      textCapitalization: TextCapitalization.characters,
                       decoration: const InputDecoration(
                         isDense: true,
-                        hintText: 'Your delivery number',
+                        hintText: 'Tracking number (e.g. VC506683)',
                         border: InputBorder.none,
                       ),
                     ),

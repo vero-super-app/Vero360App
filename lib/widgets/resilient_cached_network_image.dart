@@ -1,9 +1,14 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 
 /// HTTP(S) images with disk cache ([CachedNetworkImage]). On failure, retries the
 /// other scheme (http ↔ https). Pass [memCacheWidth] **or** [memCacheHeight]
 /// (prefer one) for thumbnails so Flutter does not decode full-resolution bitmaps.
+///
+/// On Android, when callers omit mem-cache sizes, we infer a tight decode
+/// budget from layout size so 2GB devices do not GPU-OOM on full images.
 class ResilientCachedNetworkImage extends StatefulWidget {
   const ResilientCachedNetworkImage({
     required this.url,
@@ -59,6 +64,9 @@ class _ResilientCachedNetworkImageState
     return url;
   }
 
+  static bool get _androidLowEnd =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
   @override
   Widget build(BuildContext context) {
     final u = _currentUrl;
@@ -96,6 +104,18 @@ class _ResilientCachedNetworkImageState
               : null,
         );
 
+    final dpr = MediaQuery.devicePixelRatioOf(context).clamp(1.0, 1.5);
+    int? memW = widget.memCacheWidth;
+    int? memH = widget.memCacheHeight;
+    if (_androidLowEnd && memW == null && memH == null) {
+      final layoutW = widget.width ?? MediaQuery.sizeOf(context).width;
+      final layoutH = widget.height;
+      memW = (layoutW * dpr).round().clamp(48, 720);
+      if (layoutH != null) {
+        memH = (layoutH * dpr).round().clamp(48, 720);
+      }
+    }
+
     return CachedNetworkImage(
       imageUrl: u,
       fit: widget.fit,
@@ -103,6 +123,8 @@ class _ResilientCachedNetworkImageState
       height: widget.height,
       memCacheWidth: memW,
       memCacheHeight: memH,
+      maxWidthDiskCache: _androidLowEnd ? 720 : null,
+      maxHeightDiskCache: _androidLowEnd ? 720 : null,
       fadeInDuration: Duration.zero,
       fadeOutDuration: Duration.zero,
       placeholder: (context, _) => placeholder(),

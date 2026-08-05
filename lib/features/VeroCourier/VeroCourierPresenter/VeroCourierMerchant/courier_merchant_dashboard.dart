@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
@@ -164,7 +163,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
         actions: [
           IconButton(
             onPressed: _busy ? null : _reload,
-            icon: const Icon(PhosphorIconsBold.arrowsClockwise),
+            icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
           ),
         ],
@@ -178,10 +177,10 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
               spacing: 10,
               runSpacing: 10,
               children: [
-                _countCard('Total', total, PhosphorIconsBold.package, _skyBlue),
-                _countCard('Pending', pending, PhosphorIconsBold.hourglassMedium, _violet),
-                _countCard('Active', active, PhosphorIconsBold.truck, _mintGreen),
-                _countCard('Delivered', done, PhosphorIconsBold.checkCircle, _rose),
+                _countCard('Total', total, Icons.inventory_2, _skyBlue),
+                _countCard('Pending', pending, Icons.hourglass_empty, _violet),
+                _countCard('Active', active, Icons.local_shipping, _mintGreen),
+                _countCard('Delivered', done, Icons.check_circle, _rose),
               ],
             ),
             const SizedBox(height: 16),
@@ -270,7 +269,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
       delivery: d,
       trailing: PopupMenuButton<String>(
         enabled: !_busy,
-        icon: const Icon(PhosphorIconsBold.dotsThreeVertical),
+        icon: const Icon(Icons.more_vert),
         onSelected: (value) async {
           if (value == 'delete') {
             await _delete(d);

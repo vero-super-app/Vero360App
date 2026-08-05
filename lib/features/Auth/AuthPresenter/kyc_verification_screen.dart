@@ -1,5 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:didit_sdk/sdk_flutter.dart';
+import 'package:didit_sdk_autodetection/sdk_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
@@ -66,11 +66,22 @@ class _KycVerificationScreenState extends State<KycVerificationScreen> {
       }
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = (e.message?.trim().isNotEmpty == true)
-            ? e.message!
-            : 'Could not start verification. Try again.';
-      });
+      final code = e.code.toLowerCase();
+      String msg;
+      if (code == 'not-found' || code == 'not_found') {
+        msg =
+            'Verification service is not available yet. '
+            'Ask support to deploy createDiditSession, then try again.';
+      } else if (code == 'unauthenticated') {
+        msg = 'Please sign in again, then retry verification.';
+      } else if (code == 'unavailable') {
+        msg = 'Network issue reaching verification. Check connection and retry.';
+      } else if (e.message?.trim().isNotEmpty == true) {
+        msg = e.message!;
+      } else {
+        msg = 'Could not start verification. Try again.';
+      }
+      setState(() => _error = msg);
     } catch (e) {
       if (!mounted) return;
       setState(() {

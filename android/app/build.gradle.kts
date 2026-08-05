@@ -38,7 +38,7 @@ android {
         versionCode = 10003
         versionName = "1.1.1"
         multiDexEnabled = true
-        
+
         // Load Google Maps API key from .env
         val googleMapsKey = envProperties.getProperty("GOOGLE_MAPS_API_KEY", "")
         manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = googleMapsKey
@@ -63,6 +63,10 @@ android {
             excludes += "META-INF/DEPENDENCIES"
             pickFirsts += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
+        // Compress .so in the APK — smaller install on low-storage Redmi phones.
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     signingConfigs {
@@ -85,6 +89,18 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+        // Profile is what you should run on 2GB phones (debug is too heavy).
+        getByName("profile") {
+            matchingFallbacks += listOf("release")
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

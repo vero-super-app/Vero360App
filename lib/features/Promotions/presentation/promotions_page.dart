@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
@@ -284,7 +283,7 @@ class _PromotionsPageState extends State<PromotionsPage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(
-                            PhosphorIconsBold.lightning,
+                            Icons.bolt,
                             color: Colors.white,
                             size: 16,
                           ),
@@ -588,7 +587,7 @@ class _PromoCard extends StatelessWidget {
                     ),
                   ),
                   child: const Icon(
-                    PhosphorIconsBold.tag,
+                    Icons.local_offer,
                     color: _orange,
                     size: 32,
                   ),
@@ -636,7 +635,7 @@ class _PromoCard extends StatelessWidget {
                       Row(
                         children: [
                           Icon(
-                            PhosphorIconsBold.calendarBlank,
+                            Icons.calendar_today,
                             size: 13,
                             color: Colors.grey.shade600,
                           ),
@@ -670,7 +669,7 @@ class _PromoCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 2),
                           const Icon(
-                            PhosphorIconsBold.caretRight,
+                            Icons.chevron_right,
                             size: 14,
                             color: _orange,
                           ),
@@ -712,7 +711,7 @@ class _ShareIconButton extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(8),
           child: Icon(
-            PhosphorIconsBold.shareNetwork,
+            Icons.share,
             size: 18,
             color: light ? Colors.white : _orange,
           ),
@@ -766,7 +765,7 @@ class _EmptyState extends StatelessWidget {
                 borderRadius: BorderRadius.circular(18),
               ),
               child: const Icon(
-                PhosphorIconsBold.tag,
+                Icons.local_offer,
                 color: Color(0xFFFF6B00),
                 size: 30,
               ),

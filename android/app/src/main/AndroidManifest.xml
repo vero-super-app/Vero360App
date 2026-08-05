@@ -23,9 +23,11 @@
 
     <application
         android:enableOnBackInvokedCallback="true"
-        android:name="${applicationName}"
+        android:name=".VeroApplication"
         android:label="Vero360"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:largeHeap="true"
+        android:hardwareAccelerated="true">
 
         <activity
             android:name=".MainActivity"
@@ -75,12 +77,8 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- Redmi 8A / older Adreno: Vulkan Impeller can SIGSEGV on the raster
-             thread. Prefer OpenGL ES Impeller backend. -->
-        <meta-data
-            android:name="io.flutter.embedding.android.ImpellerBackend"
-            android:value="opengles" />
-        <!-- Fallback if the engine still honors the opt-out on this device. -->
+        <!-- Redmi 8A: Impeller (Vulkan *and* OpenGLES) OOMs Adreno 506 →
+             SIGSEGV on 1.raster. Use legacy Skia only. -->
         <meta-data
             android:name="io.flutter.embedding.android.EnableImpeller"
             android:value="false" />

@@ -8,11 +8,16 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:vero360_app/GeneralModels/chat_product_context.dart';
+import 'package:vero360_app/GeneralModels/order_list_helpers.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/presentation/widgets/merchant_review_prompt.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
@@ -131,8 +136,6 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   final Color _brand = const Color(0xFFFF8A00);
   final _money = NumberFormat.currency(symbol: 'MK ', decimalDigits: 0);
   final _date = DateFormat('dd MMM yyyy, HH:mm');
-  final _dateSearch = DateFormat('dd MMM yyyy');
-  final _dateSearchAlt = DateFormat('yyyy-MM-dd');
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -182,25 +185,38 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
       (v) => v != null && _statusLabel(v).toLowerCase() == s,
     );
     if (idx >= 0) _tab.index = idx;
+    // Paint from the first API response (refund-page speed), then hydrate
+    // proofs / escrow / phones in the background without a second fetch.
     _ordersFuture = _svc.getMyOrders();
     unawaited(_bootstrapOrders());
   }
 
   Future<void> _bootstrapOrders() async {
-    await _loadShippingPrefs();
-    await _loadDeliveryMetaPrefs();
+    await Future.wait([
+      _loadShippingPrefs(),
+      _loadDeliveryMetaPrefs(),
+    ]);
     if (!mounted) return;
-    setState(() {
-      _ordersFuture = _fetchOrdersWithProofs();
-    });
+    try {
+      final list = await _ordersFuture;
+      if (!mounted) return;
+      await Future.wait([
+        _hydrateFirestoreDelivery(list),
+        _hydrateEscrow(list),
+        _hydrateMerchantPhones(list),
+      ]);
+    } catch (_) {}
   }
 
   Future<List<OrderItem>> _fetchOrdersWithProofs() async {
     final list = await _svc.getMyOrders();
     if (!mounted) return list;
-    await _hydrateFirestoreDelivery(list);
-    await _hydrateEscrow(list);
-    await _hydrateMerchantPhones(list);
+    // Don't block list paint on hydration — refresh UI when extras arrive.
+    unawaited(Future.wait([
+      _hydrateFirestoreDelivery(list),
+      _hydrateEscrow(list),
+      _hydrateMerchantPhones(list),
+    ]));
     return list;
   }
 
@@ -258,6 +274,131 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     final om = (o.merchantUid ?? '').trim();
     if (mu.isNotEmpty) return mu == myUid;
     return om.isNotEmpty && om == myUid;
+  }
+
+  /// Quick message: prefer the buyer who placed the order; if that's you, message the seller.
+  Future<void> _openOrderMessage(OrderItem o) async {
+    final myUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    final buyerUid = (o.customerUid ?? '').trim();
+    final sellerUid = (o.merchantUid ?? '').trim();
+
+    final iAmBuyer = myUid.isNotEmpty && buyerUid.isNotEmpty && myUid == buyerUid;
+    final messageBuyer = !iAmBuyer && buyerUid.isNotEmpty;
+
+    final peerFirebaseUid = messageBuyer ? buyerUid : sellerUid;
+    final peerName = messageBuyer
+        ? ((o.customerName ?? '').trim().isEmpty
+            ? 'Buyer'
+            : o.customerName!.trim())
+        : ((o.merchantName ?? '').trim().isEmpty
+            ? 'Seller'
+            : o.merchantName!.trim());
+
+    if (peerFirebaseUid.isEmpty &&
+        !(iAmBuyer && (o.merchantId > 0 || (o.itemSqlId ?? 0) > 0))) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        messageBuyer
+            ? 'Buyer contact is not available for messaging'
+            : 'Seller contact is not available for messaging',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: Color(0xFFFF8A00)),
+      ),
+    );
+
+    try {
+      unawaited(BackendChatService.warmForMarketplaceChat().catchError((_) {}));
+      unawaited(BackendMessagingSocket.connect().catchError((_) {}));
+
+      String chatId = '';
+      int? peerUserId;
+      Future<MerchantChatResult>? pendingMerchantChat;
+
+      if (messageBuyer) {
+        peerUserId = await BackendChatService.getUserIdByFirebaseUidValidated(
+          peerFirebaseUid,
+        );
+        if (peerUserId == null || peerUserId <= 0) {
+          throw Exception('Could not find the buyer’s chat account.');
+        }
+        final cached =
+            BackendChatService.findCachedDirectChatWithPeer(peerUserId);
+        if (cached != null) {
+          chatId = cached.id;
+        } else {
+          final chat = await BackendChatService.ensureChat(
+            peerUserId: peerUserId,
+            peerName: peerName,
+          );
+          chatId = chat.id;
+        }
+      } else {
+        // Buyer messaging seller (listing / merchant resolve).
+        pendingMerchantChat = BackendChatService.startMerchantChat(
+          sqlItemId: (o.itemSqlId ?? 0) > 0 ? o.itemSqlId : null,
+          ownerId: o.merchantId > 0 ? o.merchantId : null,
+          merchantId: sellerUid.isNotEmpty ? sellerUid : null,
+        );
+        try {
+          final quick = await pendingMerchantChat.timeout(
+            const Duration(milliseconds: 550),
+          );
+          chatId = quick.chat.id;
+          peerUserId = quick.sellerId;
+          pendingMerchantChat = null;
+        } on TimeoutException {
+          // Open chat UI; page finishes the same in-flight resolve.
+        }
+      }
+
+      final productContext = ChatProductContext(
+        productId: o.id,
+        name: o.itemName,
+        image: o.itemImage.isEmpty ? null : o.itemImage,
+        price: o.price.toDouble(),
+        description: 'Order ${o.orderNumber}',
+        merchantId: sellerUid.isEmpty ? null : sellerUid,
+      );
+
+      if (!mounted) return;
+      Navigator.of(context).pop(); // loading
+
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => MessagePageBackendApi(
+            peerId: chatId,
+            peerName: peerName,
+            productContext: productContext,
+            peerMerchantId: sellerUid.isEmpty ? null : sellerUid,
+            peerUserId: peerUserId,
+            resolveSqlItemId: (o.itemSqlId ?? 0) > 0 ? o.itemSqlId : null,
+            resolveOwnerId: o.merchantId > 0 ? o.merchantId : null,
+            resolveMerchantId: sellerUid.isEmpty ? null : sellerUid,
+            pendingMerchantChat: pendingMerchantChat,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop(); // loading
+      final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+      ToastHelper.showCustomToast(
+        context,
+        'Could not open chat',
+        isSuccess: false,
+        errorMessage: raw,
+      );
+    }
   }
 
   Future<void> _confirmParcelReceived(OrderItem o) async {
@@ -796,19 +937,45 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Image
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: SizedBox(
-              width: 82,
-              height: 82,
-              child: o.itemImage.isEmpty
-                  ? Container(
-                      color: const Color(0xFFF1F2F6),
-                      child: const Icon(Icons.image_outlined, color: Colors.grey),
-                    )
-                  : Image.network(o.itemImage, fit: BoxFit.cover),
-            ),
+          // Image + quick message (buyer who placed the order / seller)
+          Column(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: 82,
+                  height: 82,
+                  child: o.itemImage.isEmpty
+                      ? Container(
+                          color: const Color(0xFFF1F2F6),
+                          child: const Icon(
+                            Icons.image_outlined,
+                            color: Colors.grey,
+                          ),
+                        )
+                      : Image.network(o.itemImage, fit: BoxFit.cover),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Material(
+                color: _brand,
+                shape: const CircleBorder(),
+                elevation: 1,
+                child: InkWell(
+                  onTap: () => _openOrderMessage(o),
+                  customBorder: const CircleBorder(),
+                  child: const SizedBox(
+                    width: 40,
+                    height: 40,
+                    child: Icon(
+                      Icons.chat_bubble_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(width: 12),
 
@@ -1117,7 +1284,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
           final items = byStatus
               .where((o) => _orderMatchesSearch(o, _searchQuery))
               .toList();
-          items.sort(_compareOrdersNewestFirst);
+          OrderListHelpers.sortNewestFirst(items);
           final focusId = _focusOrderId;
           final focusNo = _focusOrderNumber;
           if ((focusId != null && focusId.isNotEmpty) ||
@@ -1173,29 +1340,8 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  int _compareOrdersNewestFirst(OrderItem a, OrderItem b) {
-    final ad = a.orderDate;
-    final bd = b.orderDate;
-    if (ad == null && bd == null) return b.id.compareTo(a.id);
-    if (ad == null) return 1;
-    if (bd == null) return -1;
-    final cmp = bd.compareTo(ad);
-    if (cmp != 0) return cmp;
-    return b.id.compareTo(a.id);
-  }
-
-  bool _orderMatchesSearch(OrderItem o, String q) {
-    if (q.trim().isEmpty) return true;
-    final lower = q.trim().toLowerCase();
-    if (o.orderNumber.toLowerCase().contains(lower)) return true;
-    if (o.orderDate != null) {
-      final d = o.orderDate!.toLocal();
-      if (_dateSearch.format(d).toLowerCase().contains(lower)) return true;
-      if (_dateSearchAlt.format(d).contains(lower)) return true;
-      if (_date.format(d).toLowerCase().contains(lower)) return true;
-    }
-    return false;
-  }
+  bool _orderMatchesSearch(OrderItem o, String q) =>
+      OrderListHelpers.matchesSearch(o, q);
 
   @override
   Widget build(BuildContext context) {
@@ -1236,29 +1382,13 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
             child: TextField(
               controller: _searchController,
               onChanged: (v) => setState(() => _searchQuery = v),
-              decoration: InputDecoration(
-                hintText: 'Search by order number or date...',
-                hintStyle: const TextStyle(color: Color(0xFF9CA3AF)),
-                prefixIcon: const Icon(Icons.search, color: Color(0xFF6B778C)),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _searchQuery = '');
-                        },
-                      )
-                    : null,
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
+              decoration: OrderListHelpers.searchDecoration(
+                hint: 'Search by order number…',
+                hasQuery: _searchQuery.isNotEmpty,
+                onClear: () {
+                  _searchController.clear();
+                  setState(() => _searchQuery = '');
+                },
               ),
             ),
           ),

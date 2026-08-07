@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -60,10 +60,22 @@ class _PromotionsPageState extends State<PromotionsPage> {
       _error = null;
     });
     try {
+      final blocked = await BlockedMerchantService.blockedIds();
       final data = await _svc.fetchActivePromos();
+      final filtered = data
+          .where(
+            (p) => !BlockedMerchantService.matchesBlocked(
+              blocked,
+              merchantId: p.merchantFirebaseUid,
+              sellerUserId: p.merchantId > 0 ? '${p.merchantId}' : null,
+              serviceProviderId:
+                  p.serviceProviderId != null ? '${p.serviceProviderId}' : null,
+            ),
+          )
+          .toList();
       if (!mounted) return;
       setState(() {
-        _promos = data;
+        _promos = filtered;
         _loading = false;
       });
     } catch (e) {
@@ -271,7 +283,7 @@ class _PromotionsPageState extends State<PromotionsPage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(
-                            PhosphorIconsBold.lightning,
+                            Icons.bolt,
                             color: Colors.white,
                             size: 16,
                           ),
@@ -338,7 +350,9 @@ class _FeaturedStrip extends StatelessWidget {
             separatorBuilder: (_, __) => const SizedBox(width: 12),
             itemBuilder: (_, i) {
               final promo = featured[i];
-              final imageUrl = promo.resolvedImageUrl;
+              final imageUrls = promo.resolvedImageUrls;
+              final imageUrl =
+                  imageUrls.isNotEmpty ? imageUrls.first : promo.resolvedImageUrl;
               return GestureDetector(
                 onTap: () => onTap(promo),
                 child: Container(
@@ -369,6 +383,29 @@ class _FeaturedStrip extends StatelessWidget {
                             url: imageUrl,
                             fit: BoxFit.cover,
                             width: double.infinity,
+                          ),
+                        ),
+                      if (imageUrls.length > 1)
+                        Positioned(
+                          top: 10,
+                          right: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '1/${imageUrls.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
                           ),
                         ),
                       Padding(
@@ -470,7 +507,9 @@ class _PromoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final imageUrl = promo.resolvedImageUrl;
+    final imageUrls = promo.resolvedImageUrls;
+    final imageUrl =
+        imageUrls.isNotEmpty ? imageUrls.first : promo.resolvedImageUrl;
 
     return Material(
       color: Colors.white,
@@ -495,20 +534,47 @@ class _PromoCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (imageUrl != null)
-                ClipRRect(
-                  borderRadius: const BorderRadius.horizontal(
-                    left: Radius.circular(17),
-                  ),
-                  child: SizedBox(
-                    width: 108,
-                    height: 108,
-                    child: ResilientCachedNetworkImage(
-                      url: imageUrl,
-                      fit: BoxFit.cover,
-                      width: 108,
-                      height: 108,
+                Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: const BorderRadius.horizontal(
+                        left: Radius.circular(17),
+                      ),
+                      child: SizedBox(
+                        width: 108,
+                        height: 108,
+                        child: ResilientCachedNetworkImage(
+                          url: imageUrl,
+                          fit: BoxFit.cover,
+                          width: 108,
+                          height: 108,
+                        ),
+                      ),
                     ),
-                  ),
+                    if (imageUrls.length > 1)
+                      Positioned(
+                        right: 6,
+                        bottom: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '${imageUrls.length} photos',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 )
               else
                 Container(
@@ -521,7 +587,7 @@ class _PromoCard extends StatelessWidget {
                     ),
                   ),
                   child: const Icon(
-                    PhosphorIconsBold.tag,
+                    Icons.local_offer,
                     color: _orange,
                     size: 32,
                   ),
@@ -569,7 +635,7 @@ class _PromoCard extends StatelessWidget {
                       Row(
                         children: [
                           Icon(
-                            PhosphorIconsBold.calendarBlank,
+                            Icons.calendar_today,
                             size: 13,
                             color: Colors.grey.shade600,
                           ),
@@ -603,7 +669,7 @@ class _PromoCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 2),
                           const Icon(
-                            PhosphorIconsBold.caretRight,
+                            Icons.chevron_right,
                             size: 14,
                             color: _orange,
                           ),
@@ -645,7 +711,7 @@ class _ShareIconButton extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(8),
           child: Icon(
-            PhosphorIconsBold.shareNetwork,
+            Icons.share,
             size: 18,
             color: light ? Colors.white : _orange,
           ),
@@ -699,7 +765,7 @@ class _EmptyState extends StatelessWidget {
                 borderRadius: BorderRadius.circular(18),
               ),
               child: const Icon(
-                PhosphorIconsBold.tag,
+                Icons.local_offer,
                 color: Color(0xFFFF6B00),
                 size: 30,
               ),

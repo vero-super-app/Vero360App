@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_menu_post_page.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
@@ -856,7 +857,9 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
             ),
           ),
           FilledButton.icon(
-            onPressed: () {
+            onPressed: () async {
+              final ok = await AppWalletPin.verifyWalletUnlock(context);
+              if (!ok || !mounted) return;
               Navigator.push(
                 context,
                 MaterialPageRoute(

@@ -10,6 +10,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:vero360_app/Home/merchant_story_model.dart';
+import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 
 const String _collection = 'merchant_stories';
 const String _storagePathPrefix = 'merchant_stories';
@@ -95,7 +96,14 @@ class StoryService {
     ) async {
       if (controller.isClosed) return;
       final myGen = ++emitGen;
-      final groups = _groupByMerchant(snap.docs);
+      await BlockedMerchantService.ensureLoaded();
+      final blocked = await BlockedMerchantService.blockedIds();
+      var groups = _groupByMerchant(snap.docs);
+      if (blocked.isNotEmpty) {
+        groups = groups
+            .where((g) => !blocked.contains(g.merchantId.trim()))
+            .toList();
+      }
       final painted = _applyCachedUnviewedFlags(groups, viewerId);
       lastActiveGroups = painted;
       if (!controller.isClosed) controller.add(painted);

@@ -19,41 +19,41 @@ class FirebaseWalletService {
     required String merchantName,
   }) async {
     try {
-      // Check if wallet exists
-      final walletQuery = await _firestore
+      final query = _firestore
           .collection('wallets')
           .where('userId', isEqualTo: merchantId)
-          .limit(1)
-          .get();
+          .limit(1);
+
+      // Cache-first so the merchant wallet screen paints quickly on repeat opens.
+      QuerySnapshot<Map<String, dynamic>>? walletQuery;
+      try {
+        final cached = await query.get(const GetOptions(source: Source.cache));
+        if (cached.docs.isNotEmpty) walletQuery = cached;
+      } catch (_) {}
+      walletQuery ??= await query.get();
 
       if (walletQuery.docs.isNotEmpty) {
-        // Return existing wallet
         final walletDoc = walletQuery.docs.first;
         return WalletModel.fromMap({
           ...walletDoc.data(),
           'walletId': walletDoc.id,
         });
-      } else {
-        // Create new wallet
-        final walletId = await _generateWalletId();
-        final newWallet = WalletModel(
-          walletId: walletId,
-          userId: merchantId,
-          merchantName: merchantName,
-          balance: 0.0,
-          pendingBalance: 0.0,
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-          transactions: [],
-        );
-
-        await _firestore
-            .collection('wallets')
-            .doc(walletId)
-            .set(newWallet.toMap());
-
-        return newWallet;
       }
+
+      final walletId = await _generateWalletId();
+      final newWallet = WalletModel(
+        walletId: walletId,
+        userId: merchantId,
+        merchantName: merchantName,
+        balance: 0.0,
+        pendingBalance: 0.0,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+        transactions: [],
+      );
+
+      await _firestore.collection('wallets').doc(walletId).set(newWallet.toMap());
+      return newWallet;
     } catch (e) {
       print('Error getting/creating wallet: $e');
       rethrow;
@@ -89,7 +89,7 @@ class FirebaseWalletService {
     }
   }
 
-  // Debit wallet (for payouts)
+  // Debit wallet (for payouts). Completes immediately so cash-out is not stuck pending.
   static Future<void> debitWallet({
     required String merchantId,
     required double amount,
@@ -116,14 +116,14 @@ class FirebaseWalletService {
         throw Exception('Insufficient balance');
       }
 
-      // Create transaction
+      // Create transaction — completed instantly (cash out now).
       final transactionId = 'TXN${DateTime.now().millisecondsSinceEpoch}';
       final walletTransaction = WalletTransaction(
         transactionId: transactionId,
         walletId: walletDoc.id,
         type: 'payout',
         amount: amount,
-        status: 'pending',
+        status: 'completed',
         description: description,
         reference: reference,
         createdAt: DateTime.now(),
@@ -133,15 +133,16 @@ class FirebaseWalletService {
       await _firestore.runTransaction((firestoreTransaction) async {
         final walletRef = _firestore.collection('wallets').doc(walletDoc.id);
         final walletSnapshot = await firestoreTransaction.get(walletRef);
-        
+
         if (!walletSnapshot.exists) {
           throw Exception('Wallet not found');
         }
 
         final data = walletSnapshot.data() as Map<String, dynamic>;
         final newBalance = (data['balance'] ?? 0.0).toDouble() - amount;
-        final transactions = List<Map<String, dynamic>>.from(data['transactions'] ?? []);
-        
+        final transactions =
+            List<Map<String, dynamic>>.from(data['transactions'] ?? []);
+
         transactions.add({
           ...walletTransaction.toMap(),
           'createdAt': Timestamp.now(),
@@ -149,25 +150,99 @@ class FirebaseWalletService {
 
         firestoreTransaction.update(walletRef, {
           'balance': newBalance,
-          'pendingBalance': FieldValue.increment(amount),
           'updatedAt': Timestamp.now(),
           'transactions': transactions,
         });
       });
 
       // Also create a separate transaction document
-      await _firestore
-          .collection('wallet_transactions')
-          .doc(transactionId)
-          .set({
-            ...walletTransaction.toMap(),
-            'createdAt': Timestamp.now(),
-            'updatedAt': Timestamp.now(),
-          });
-
+      await _firestore.collection('wallet_transactions').doc(transactionId).set({
+        ...walletTransaction.toMap(),
+        'createdAt': Timestamp.now(),
+        'updatedAt': Timestamp.now(),
+      });
     } catch (e) {
       print('Error debiting wallet: $e');
       rethrow;
+    }
+  }
+
+  /// Clears old payouts that were left as `pending` forever (pre-instant cash-out).
+  /// Marks them completed and zeroes [pendingBalance] so funds are not stuck.
+  static Future<int> settleStuckPendingPayouts(String merchantId) async {
+    final uid = merchantId.trim();
+    if (uid.isEmpty) return 0;
+
+    try {
+      final walletQuery = await _firestore
+          .collection('wallets')
+          .where('userId', isEqualTo: uid)
+          .limit(1)
+          .get();
+      if (walletQuery.docs.isEmpty) return 0;
+
+      final walletDoc = walletQuery.docs.first;
+      final walletId = walletDoc.id;
+      final data = walletDoc.data();
+      final transactions =
+          List<Map<String, dynamic>>.from(data['transactions'] ?? []);
+      var changed = 0;
+
+      for (var i = 0; i < transactions.length; i++) {
+        final t = Map<String, dynamic>.from(transactions[i]);
+        final type = (t['type'] ?? '').toString().toLowerCase();
+        final status = (t['status'] ?? '').toString().toLowerCase();
+        if (type == 'payout' && status == 'pending') {
+          t['status'] = 'completed';
+          t['updatedAt'] = Timestamp.now();
+          t['settledAt'] = Timestamp.now();
+          t['settleReason'] = 'instant_cashout_backfill';
+          transactions[i] = t;
+          changed++;
+
+          final txId = (t['transactionId'] ?? '').toString().trim();
+          if (txId.isNotEmpty) {
+            try {
+              await _firestore.collection('wallet_transactions').doc(txId).set({
+                'status': 'completed',
+                'updatedAt': Timestamp.now(),
+                'settledAt': Timestamp.now(),
+                'settleReason': 'instant_cashout_backfill',
+              }, SetOptions(merge: true));
+            } catch (_) {}
+          }
+        }
+      }
+
+      final txQs = await _firestore
+          .collection('wallet_transactions')
+          .where('walletId', isEqualTo: walletId)
+          .where('type', isEqualTo: 'payout')
+          .where('status', isEqualTo: 'pending')
+          .get();
+
+      for (final doc in txQs.docs) {
+        await doc.reference.update({
+          'status': 'completed',
+          'updatedAt': Timestamp.now(),
+          'settledAt': Timestamp.now(),
+          'settleReason': 'instant_cashout_backfill',
+        });
+        changed++;
+      }
+
+      if (changed > 0 || (data['pendingBalance'] ?? 0) != 0) {
+        await walletDoc.reference.update({
+          'transactions': transactions,
+          'pendingBalance': 0.0,
+          'updatedAt': Timestamp.now(),
+        });
+      }
+
+      return changed;
+    } catch (e) {
+      print('Error settling stuck payouts: $e');
+      return 0;
     }
   }
 

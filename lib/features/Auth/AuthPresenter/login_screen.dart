@@ -329,8 +329,13 @@ class _LoginScreenState extends State<LoginScreen> {
             prefs.getString('merchant_service') ?? merchantService,
           ) ??
           '';
-      if (savedService == 'marketplace' &&
-          prefs.getBool('marketplace_merchant_guide_v1_done') != true) {
+      final guideUid = (user['uid'] ?? user['firebaseUid'] ?? prefs.getString('uid') ?? '')
+          .toString()
+          .trim();
+      final guideDone = prefs.getBool('marketplace_merchant_guide_v1_done') == true ||
+          (guideUid.isNotEmpty &&
+              prefs.getBool('marketplace_merchant_guide_v1_done_$guideUid') == true);
+      if (savedService == 'marketplace' && !guideDone) {
         await prefs.setBool('marketplace_merchant_guide_show_on_next_open', true);
       }
     }

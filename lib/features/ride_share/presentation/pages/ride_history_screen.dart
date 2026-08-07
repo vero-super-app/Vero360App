@@ -200,47 +200,93 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
                             },
                           ),
                           const SizedBox(height: 18),
-                        ],
-                        Row(
-                          children: [
-                            Text(
-                              _isDriver ? 'Recent Activity' : 'Past Trips',
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w800,
-                                color: RideShareColors.titleText,
+                          Row(
+                            children: [
+                              const Text(
+                                'Recent Activity',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w800,
+                                  color: RideShareColors.titleText,
+                                ),
                               ),
-                            ),
-                            const Spacer(),
-                            TextButton.icon(
-                              onPressed: () =>
-                                  setState(() => _showSearch = !_showSearch),
-                              icon: Icon(
-                                _showSearch
-                                    ? Icons.close
-                                    : Icons.filter_list,
-                                size: 18,
-                                color: RideShareColors.primary,
-                              ),
-                              label: Text(
-                                _showSearch ? 'Close' : 'Filter',
-                                style: const TextStyle(
+                              const Spacer(),
+                              TextButton.icon(
+                                onPressed: () =>
+                                    setState(() => _showSearch = !_showSearch),
+                                icon: Icon(
+                                  _showSearch
+                                      ? Icons.close
+                                      : Icons.filter_list,
+                                  size: 18,
                                   color: RideShareColors.primary,
-                                  fontWeight: FontWeight.w700,
+                                ),
+                                label: Text(
+                                  _showSearch ? 'Close' : 'Filter',
+                                  style: const TextStyle(
+                                    color: RideShareColors.primary,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (_showSearch) ...[
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: _searchController,
+                              decoration: InputDecoration(
+                                hintText: 'Search trips, places, people…',
+                                filled: true,
+                                fillColor: Colors.white,
+                                prefixIcon: const Icon(Icons.search),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  borderSide: const BorderSide(
+                                    color: RideShareColors.outlineVariant,
+                                  ),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  borderSide: const BorderSide(
+                                    color: RideShareColors.outlineVariant,
+                                  ),
                                 ),
                               ),
                             ),
+                            const SizedBox(height: 10),
+                            _statusFilters(),
                           ],
-                        ),
-                        if (_showSearch) ...[
-                          const SizedBox(height: 8),
+                        ] else ...[
+                          const Text(
+                            'Your trips',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: RideShareColors.titleText,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Tap a trip to see the full receipt.',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
                           TextField(
                             controller: _searchController,
                             decoration: InputDecoration(
-                              hintText: 'Search trips, places, people…',
+                              hintText: 'Search by place or driver…',
                               filled: true,
                               fillColor: Colors.white,
                               prefixIcon: const Icon(Icons.search),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(14),
                                 borderSide: const BorderSide(
@@ -256,31 +302,9 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: [
-                                for (final status in const [
-                                  'ALL',
-                                  'COMPLETED',
-                                  'CANCELLED',
-                                ])
-                                  RideHistoryFilterChip(
-                                    label: status == 'ALL'
-                                        ? 'All'
-                                        : status[0] +
-                                            status.substring(1).toLowerCase(),
-                                    selected: _statusFilter == status,
-                                    onTap: () {
-                                      setState(() => _statusFilter = status);
-                                      _reload();
-                                    },
-                                  ),
-                              ],
-                            ),
-                          ),
+                          _statusFilters(),
                         ],
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 12),
                         _miniSummary(page, money),
                         const SizedBox(height: 14),
                         if (page.rides.isEmpty)
@@ -325,7 +349,7 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
 
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 8, 16, 12),
+      padding: const EdgeInsets.fromLTRB(8, 8, 16, 14),
       decoration: const BoxDecoration(
         color: Colors.white,
         border: Border(
@@ -345,13 +369,27 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              _isDriver ? 'Earnings & History' : 'Activity',
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                color: RideShareColors.titleText,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _isDriver ? 'Earnings & History' : 'My rides',
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: RideShareColors.titleText,
+                  ),
+                ),
+                if (!_isDriver)
+                  const Text(
+                    'From → To · when · price · status',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: RideShareColors.onSurfaceVariant,
+                    ),
+                  ),
+              ],
             ),
           ),
           Container(
@@ -363,7 +401,7 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
               border: Border.all(color: RideShareColors.outlineVariant),
             ),
             child: Icon(
-              _isDriver ? Icons.local_taxi : Icons.person,
+              _isDriver ? Icons.local_taxi : Icons.directions_car_filled_rounded,
               color: RideShareColors.primary,
               size: 20,
             ),
@@ -375,14 +413,41 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
 
   Widget _miniSummary(RideHistoryPage page, NumberFormat money) {
     final summary = page.summary;
-    final primary = _isDriver
-        ? summary.totalEarnings ?? 0
-        : summary.totalSpent ?? 0;
+    if (!_isDriver) {
+      final spent = summary.totalSpent ?? 0;
+      final trips = summary.completedCount + summary.cancelledCount;
+      final label = trips == 0
+          ? 'No trips yet'
+          : '${summary.completedCount} completed'
+              '${summary.cancelledCount > 0 ? ' · ${summary.cancelledCount} cancelled' : ''}'
+              '${spent > 0 ? ' · ${formatRideMoney(spent, money)} spent' : ''}';
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: RideShareColors.primarySoft.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: RideShareColors.primary.withValues(alpha: 0.18),
+          ),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: RideShareColors.titleText,
+          ),
+        ),
+      );
+    }
+
+    final primary = summary.totalEarnings ?? 0;
     return Row(
       children: [
         Expanded(
           child: _statTile(
-            _isDriver ? 'Total earned' : 'Total spent',
+            'Total earned',
             formatRideMoney(primary, money),
           ),
         ),
@@ -395,6 +460,33 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
           child: _statTile('Cancelled', '${summary.cancelledCount}'),
         ),
       ],
+    );
+  }
+
+  Widget _statusFilters() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final status in const [
+            'ALL',
+            'COMPLETED',
+            'CANCELLED',
+          ])
+            RideHistoryFilterChip(
+              label: status == 'ALL'
+                  ? 'All'
+                  : status == 'COMPLETED'
+                      ? 'Completed'
+                      : 'Cancelled',
+              selected: _statusFilter == status,
+              onTap: () {
+                setState(() => _statusFilter = status);
+                _reload();
+              },
+            ),
+        ],
+      ),
     );
   }
 
@@ -453,7 +545,7 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
           ),
           const SizedBox(height: 16),
           const Text(
-            'No trips yet',
+            'No rides yet',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w800,
@@ -464,7 +556,7 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
           Text(
             _isDriver
                 ? 'Completed trips and earnings will show up here.'
-                : 'Your past Vero Rides will appear here.',
+                : 'When you take a Vero Ride, it shows up here\nas From → To with the price and status.',
             textAlign: TextAlign.center,
             style: const TextStyle(color: RideShareColors.onSurfaceVariant),
           ),

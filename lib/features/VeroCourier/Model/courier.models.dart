@@ -55,6 +55,8 @@ enum CourierStatus {
 
 class CourierDelivery {
   final int courierId;
+  /// Backend code like `VC506683` (preferred for UI / tracking).
+  final String? trackingNumber;
   final String courierPhone;
   final String courierEmail;
   final String courierCity;
@@ -69,6 +71,7 @@ class CourierDelivery {
 
   const CourierDelivery({
     required this.courierId,
+    this.trackingNumber,
     required this.courierPhone,
     required this.courierEmail,
     required this.courierCity,
@@ -82,11 +85,21 @@ class CourierDelivery {
     required this.updatedAt,
   });
 
+  /// Display / track code from backend (`VC…`), else numeric id fallback.
+  String get trackingCode {
+    final code = (trackingNumber ?? '').trim();
+    if (code.isNotEmpty) return code;
+    return courierId > 0 ? '#$courierId' : '';
+  }
+
   factory CourierDelivery.fromJson(Map<String, dynamic> json) {
     final statusRaw = (json['CourierStatus'] ?? json['status'] ?? 'PENDING')
         .toString();
     return CourierDelivery(
       courierId: _toInt(json['CourierID'] ?? json['id']) ?? 0,
+      trackingNumber: _toNullableString(
+        json['trackingNumber'] ?? json['TrackingNumber'] ?? json['tracking_number'],
+      ),
       courierPhone: (json['CourierPhone'] ?? '').toString(),
       courierEmail: (json['CourierEmail'] ?? '').toString(),
       courierCity: (json['CourierCity'] ?? '').toString(),
@@ -121,11 +134,30 @@ class CourierDelivery {
 
   /// Structured view of [additionalInformation] plus top-level sender fields.
   CourierDeliveryView get view => CourierDeliveryView.fromDelivery(this);
+
+  CourierDelivery copyWithStatus(CourierStatus next) {
+    return CourierDelivery(
+      courierId: courierId,
+      trackingNumber: trackingNumber,
+      courierPhone: courierPhone,
+      courierEmail: courierEmail,
+      courierCity: courierCity,
+      pickupLocation: pickupLocation,
+      dropoffLocation: dropoffLocation,
+      typeOfGoods: typeOfGoods,
+      descriptionOfGoods: descriptionOfGoods,
+      additionalInformation: additionalInformation,
+      status: next,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
 }
 
 /// Parsed sender/receiver/notes from pipe-separated [additionalInformation].
 class CourierDeliveryView {
   final String? senderName;
+  final String? senderUid;
   final String senderPhone;
   final String senderCity;
   final String? recipientName;
@@ -135,6 +167,7 @@ class CourierDeliveryView {
 
   const CourierDeliveryView({
     this.senderName,
+    this.senderUid,
     required this.senderPhone,
     required this.senderCity,
     this.recipientName,
@@ -147,6 +180,7 @@ class CourierDeliveryView {
     final parsed = _parseAdditionalInfo(d.additionalInformation);
     return CourierDeliveryView(
       senderName: parsed.senderName,
+      senderUid: parsed.senderUid,
       senderPhone: d.courierPhone.trim(),
       senderCity: d.courierCity.trim(),
       recipientName: parsed.recipientName,
@@ -158,6 +192,7 @@ class CourierDeliveryView {
 
   static ({
     String? senderName,
+    String? senderUid,
     String? recipientName,
     String? recipientPhone,
     String? recipientAddress,
@@ -166,6 +201,7 @@ class CourierDeliveryView {
     if (raw == null || raw.trim().isEmpty) {
       return (
         senderName: null,
+        senderUid: null,
         recipientName: null,
         recipientPhone: null,
         recipientAddress: null,
@@ -174,6 +210,7 @@ class CourierDeliveryView {
     }
 
     String? senderName;
+    String? senderUid;
     String? recipientName;
     String? recipientPhone;
     String? recipientAddress;
@@ -181,7 +218,9 @@ class CourierDeliveryView {
 
     for (final part in raw.split('|').map((s) => s.trim()).where((s) => s.isNotEmpty)) {
       final lower = part.toLowerCase();
-      if (lower.startsWith('sender:')) {
+      if (lower.startsWith('senderuid:') || lower.startsWith('sender uid:')) {
+        senderUid = part.substring(part.indexOf(':') + 1).trim();
+      } else if (lower.startsWith('sender:')) {
         senderName = part.substring(part.indexOf(':') + 1).trim();
       } else if (lower.startsWith('recipient phone:')) {
         recipientPhone = part.substring(part.indexOf(':') + 1).trim();
@@ -197,6 +236,7 @@ class CourierDeliveryView {
     final notes = noteParts.isEmpty ? null : noteParts.join(' · ');
     return (
       senderName: senderName,
+      senderUid: senderUid,
       recipientName: recipientName,
       recipientPhone: recipientPhone,
       recipientAddress: recipientAddress,

@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'package:vero360_app/GeneralModels/order_list_helpers.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/buyer_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
@@ -13,25 +16,10 @@ import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/order_message_buyer_button.dart';
 
 const String _ankoloTrackingUrl = 'https://ankolo.com/track-parcel';
 const String _smartTrackingUrl = 'https://tracking.smartdeliveriesmw.com/';
-
-class _DeliveredPayload {
-  final List<OrderItem> orders;
-  final Map<String, Map<String, String>> deliveryMeta;
-  final Map<String, String> buyerPhonesByOrderId;
-  final Map<String, OrderEscrowSnapshot?> escrowByOrderId;
-  final Map<String, String> merchantPhonesByOrderId;
-
-  const _DeliveredPayload({
-    required this.orders,
-    required this.deliveryMeta,
-    required this.buyerPhonesByOrderId,
-    required this.escrowByOrderId,
-    required this.merchantPhonesByOrderId,
-  });
-}
 
 class _TrackingWebViewPage extends StatefulWidget {
   final String url;
@@ -128,49 +116,82 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
   final Color _brand = const Color(0xFFFF8A00);
   final _money = NumberFormat.currency(symbol: 'MK ', decimalDigits: 0);
   final _date = DateFormat('dd MMM yyyy, HH:mm');
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
-  late Future<_DeliveredPayload> _future;
+  bool _loading = true;
+  String? _error;
+  List<OrderItem> _orders = const [];
+  Map<String, Map<String, String>> _deliveryMeta = const {};
+  Map<String, String> _buyerPhonesByOrderId = const {};
+  Map<String, OrderEscrowSnapshot?> _escrowByOrderId = const {};
+  Map<String, String> _merchantPhonesByOrderId = const {};
   String? _releasingOrderId;
 
   @override
   void initState() {
     super.initState();
-    _future = _loadPayload();
+    unawaited(_loadPayload());
   }
 
-  Future<_DeliveredPayload> _loadPayload() async {
-    final orders = await _svc.getMyOrders(status: OrderStatus.delivered);
-    await OrderEscrowService.processDueAutoReleasesForOrders(orders);
-    final ids = orders.map((e) => e.id);
-    final deliveryMeta = await DeliveryProofService.getDeliveryMetadata(ids);
-    final buyerPhonesByOrderId =
-        await BuyerPhoneResolver.resolveForOrders(orders);
-    final escrowByOrderId =
-        await OrderEscrowService.fetchEscrowForOrdersResolved(orders);
-    final merchantPhonesByOrderId =
-        await MerchantPhoneResolver.resolveForOrders(orders);
-    return _DeliveredPayload(
-      orders: orders,
-      deliveryMeta: deliveryMeta,
-      buyerPhonesByOrderId: buyerPhonesByOrderId,
-      escrowByOrderId: escrowByOrderId,
-      merchantPhonesByOrderId: merchantPhonesByOrderId,
-    );
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
-  Future<void> _reload() async {
-    if (!mounted) return;
-    setState(() {
-      _future = _loadPayload();
-    });
-    try {
-      await _future;
-    } catch (_) {
-      // Error shown by FutureBuilder
+  /// Fast path: paint orders ASAP (newest first), hydrate extras in background.
+  Future<void> _loadPayload() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
     }
-    if (!mounted) return;
-    setState(() {});
+    try {
+      final orders = await _svc.getMyOrders(status: OrderStatus.delivered);
+      OrderListHelpers.sortNewestFirst(orders);
+      if (!mounted) return;
+      setState(() {
+        _orders = orders;
+        _deliveryMeta = const {};
+        _buyerPhonesByOrderId = const {};
+        _escrowByOrderId = const {};
+        _merchantPhonesByOrderId = const {};
+        _loading = false;
+      });
+      unawaited(_hydratePayloadExtras(orders));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
   }
+
+  Future<void> _hydratePayloadExtras(List<OrderItem> orders) async {
+    if (orders.isEmpty || !mounted) return;
+    try {
+      unawaited(OrderEscrowService.processDueAutoReleasesForOrders(orders));
+      final ids = orders.map((e) => e.id);
+      final results = await Future.wait([
+        DeliveryProofService.getDeliveryMetadata(ids),
+        BuyerPhoneResolver.resolveForOrders(orders),
+        OrderEscrowService.fetchEscrowForOrdersResolved(orders),
+        MerchantPhoneResolver.resolveForOrders(orders),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _deliveryMeta = results[0] as Map<String, Map<String, String>>;
+        _buyerPhonesByOrderId = results[1] as Map<String, String>;
+        _escrowByOrderId = results[2] as Map<String, OrderEscrowSnapshot?>;
+        _merchantPhonesByOrderId = results[3] as Map<String, String>;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _reload() => _loadPayload();
 
   Future<void> _openTrackingWebView(String url, String title) async {
     if (!mounted) return;
@@ -573,7 +594,6 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
     Map<String, String> buyerPhonesByOrderId,
     Map<String, String> merchantPhonesByOrderId,
   ) {
-    final String imageUrl = o.itemImage.toString();
     final String itemName = o.itemName.toString();
     final String orderNo = o.orderNumber.toString();
     final String paymentStr = switch (o.paymentStatus) {
@@ -637,20 +657,16 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: SizedBox(
-              width: 72,
-              height: 72,
-              child: imageUrl.isEmpty
-                  ? Container(
-                      color: const Color(0xFFF1F2F6),
-                      child: const Icon(
-                        Icons.inventory_2_outlined,
-                        color: Colors.grey,
-                      ),
-                    )
-                  : Image.network(imageUrl, fit: BoxFit.cover),
+          OrderThumbWithBuyerChat(
+            order: o,
+            size: 72,
+            brand: _brand,
+            placeholder: Container(
+              color: const Color(0xFFF1F2F6),
+              child: const Icon(
+                Icons.inventory_2_outlined,
+                color: Colors.grey,
+              ),
             ),
           ),
           const SizedBox(width: 10),
@@ -875,6 +891,10 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
 
   @override
   Widget build(BuildContext context) {
+    final filtered = _orders
+        .where((o) => OrderListHelpers.matchesSearch(o, _searchQuery))
+        .toList();
+
     return Scaffold(
       backgroundColor: const Color(0xFFF6F7FB),
       appBar: AppBar(
@@ -883,67 +903,107 @@ class _DeliveredOrdersPageState extends State<DeliveredOrdersPage> {
         foregroundColor: const Color(0xFF222222),
         title: const Text('Delivered orders'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Refresh',
+            onPressed: _loading ? null : _reload,
+          ),
+        ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _reload,
-        child: FutureBuilder<_DeliveredPayload>(
-          future: _future,
-          builder: (context, snap) {
-            if (snap.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snap.hasError) {
-              return ListView(
-                children: [
-                  const SizedBox(height: 80),
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(
-                        'Error: ${snap.error}',
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            }
-            final payload = snap.data!;
-            final data = payload.orders;
-            if (data.isEmpty) {
-              return ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                children: [
-                  _deliveredOrdersInstructionCard(),
-                  const SizedBox(height: 48),
-                  const Center(
-                    child: Text(
-                      'No delivered orders yet',
-                      style: TextStyle(color: Colors.red),
-                    ),
-                  ),
-                ],
-              );
-            }
-            return ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              itemCount: data.length + 1,
-              itemBuilder: (_, i) {
-                if (i == 0) return _deliveredOrdersInstructionCard();
-                final o = data[i - 1];
-                final meta = payload.deliveryMeta[o.id] ?? const {};
-                final escrow = payload.escrowByOrderId[o.id];
-                return _card(
-                  o,
-                  meta,
-                  escrow,
-                  payload.buyerPhonesByOrderId,
-                  payload.merchantPhonesByOrderId,
-                );
-              },
-            );
-          },
-        ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: TextField(
+              controller: _searchController,
+              onChanged: (v) => setState(() => _searchQuery = v),
+              textInputAction: TextInputAction.search,
+              decoration: OrderListHelpers.searchDecoration(
+                hint: 'Search by order number…',
+                hasQuery: _searchQuery.isNotEmpty,
+                onClear: () {
+                  _searchController.clear();
+                  setState(() => _searchQuery = '');
+                },
+              ),
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
+              color: _brand,
+              onRefresh: _reload,
+              child: _loading
+                  ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        SizedBox(height: 120),
+                        Center(
+                          child: CircularProgressIndicator(
+                            color: Color(0xFFFF8A00),
+                          ),
+                        ),
+                      ],
+                    )
+                  : _error != null
+                      ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: [
+                            const SizedBox(height: 80),
+                            Center(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                child: Text(
+                                  'Error: $_error',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      : filtered.isEmpty
+                          ? ListView(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                              children: [
+                                _deliveredOrdersInstructionCard(),
+                                const SizedBox(height: 48),
+                                Center(
+                                  child: Text(
+                                    _orders.isEmpty
+                                        ? 'No delivered orders yet'
+                                        : 'No orders match your search',
+                                    style: const TextStyle(color: Colors.red),
+                                  ),
+                                ),
+                              ],
+                            )
+                          : ListView.builder(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                              itemCount: filtered.length + 1,
+                              itemBuilder: (_, i) {
+                                if (i == 0) {
+                                  return _deliveredOrdersInstructionCard();
+                                }
+                                final o = filtered[i - 1];
+                                final meta = _deliveryMeta[o.id] ?? const {};
+                                final escrow = _escrowByOrderId[o.id];
+                                return _card(
+                                  o,
+                                  meta,
+                                  escrow,
+                                  _buyerPhonesByOrderId,
+                                  _merchantPhonesByOrderId,
+                                );
+                              },
+                            ),
+            ),
+          ),
+        ],
       ),
     );
   }

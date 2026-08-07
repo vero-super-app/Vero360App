@@ -176,8 +176,9 @@ class NotificationService {
     // Register token when user signs in (handles login after app start)
     FirebaseAuth.instance.authStateChanges().listen((user) async {
       if (user != null) {
+        // Always rebind store to this Firebase UID before accepting pushes.
+        await NotificationStore.instance.switchToUser(user.uid);
         await registerTokenWithBackend();
-        await NotificationStore.instance.ensureLoaded();
         _syncOrderPartyAlertListener(user);
         _syncChatAlertListener(user);
         await EngagementNotificationService.instance.syncTopicSubscription();
@@ -190,10 +191,14 @@ class NotificationService {
           }),
         );
       } else {
-        // Ensure notifications from previous account do not remain visible.
-        await NotificationStore.instance.clearAll();
+        // Signed out elsewhere / session ended — drop in-memory list + listeners.
+        // Full FCM unbind is done in [clearSessionOnLogout] before signOut.
         _syncOrderPartyAlertListener(null);
         _syncChatAlertListener(null);
+        await NotificationStore.instance.clearForLogout();
+        try {
+          await _localNotifications.cancelAll();
+        } catch (_) {}
         await EngagementNotificationService.instance.syncTopicSubscription();
       }
     });
@@ -385,10 +390,87 @@ class NotificationService {
   //  Handlers
   // ───────────────────────────────────────────────
 
+  /// Call **before** FirebaseAuth.signOut so we can remove this device's FCM
+  /// token from the leaving account. Prevents pushes for account A arriving
+  /// while account B is logged in on the same phone.
+  Future<void> clearSessionOnLogout() async {
+    final user = FirebaseAuth.instance.currentUser;
+    final uid = user?.uid;
+
+    _syncOrderPartyAlertListener(null);
+    _syncChatAlertListener(null);
+
+    String? fcmToken;
+    try {
+      fcmToken = await FirebaseMessaging.instance.getToken();
+    } catch (_) {}
+
+    if (user != null && fcmToken != null && fcmToken.isNotEmpty) {
+      try {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'fcmToken': FieldValue.delete(),
+          'fcmTokens': FieldValue.arrayRemove([fcmToken]),
+          'fcmUpdatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[NotificationService] FCM token remove on logout failed: $e');
+        }
+      }
+    }
+
+    try {
+      await FirebaseMessaging.instance.deleteToken();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[NotificationService] FCM deleteToken on logout failed: $e');
+      }
+    }
+
+    try {
+      await _localNotifications.cancelAll();
+    } catch (_) {}
+
+    await NotificationStore.instance.clearForLogout(uid: uid);
+    try {
+      await EngagementNotificationService.instance.syncTopicSubscription();
+    } catch (_) {}
+  }
+
+  /// Returns false when the push names a Firebase recipient that is not the signed-in user.
+  bool _payloadBelongsToCurrentUser(Map<String, dynamic> data) {
+    final current = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    if (current.isEmpty) return false;
+
+    final targets = <String>{};
+    for (final key in const ['toUid', 'recipientUid', 'targetUid']) {
+      final v = (data[key] ?? '').toString().trim();
+      if (v.isNotEmpty) targets.add(v);
+    }
+    // `uid` is often Firebase UID; skip pure numeric Nest/user ids.
+    final uidField = (data['uid'] ?? '').toString().trim();
+    if (uidField.isNotEmpty && int.tryParse(uidField) == null) {
+      targets.add(uidField);
+    }
+
+    // No explicit Firebase recipient — accept only while store is bound to current user.
+    if (targets.isEmpty) {
+      final bound = (NotificationStore.instance.boundUid ?? '').trim();
+      return bound.isEmpty || bound == current;
+    }
+    return targets.contains(current);
+  }
+
   Future<void> _handleForegroundMessage(RemoteMessage message) async {
     // Support both "notification" payload and "data-only" messages (e.g. from FCM console)
     final notification = message.notification;
     final data = message.data;
+    if (!_payloadBelongsToCurrentUser(data)) {
+      if (kDebugMode) {
+        debugPrint('Foreground FCM ignored (wrong account / signed out)');
+      }
+      return;
+    }
     final title = notification?.title ?? data['title'] as String? ?? 'Vero360';
     final body = notification?.body ?? data['body'] as String? ?? 'New notification';
     if (kDebugMode) debugPrint("Foreground FCM received");
@@ -448,6 +530,7 @@ class NotificationService {
   }
 
   void _addToStoreIfNeeded(RemoteMessage message) {
+    if (!_payloadBelongsToCurrentUser(message.data)) return;
     final n = message.notification;
     final id = message.messageId ?? 'fcm_${message.hashCode}_${DateTime.now().millisecondsSinceEpoch}';
     NotificationStore.instance.addNotification(
@@ -848,6 +931,7 @@ class NotificationService {
     required String body,
     required String chatId,
   }) async {
+    if (FirebaseAuth.instance.currentUser == null) return;
     final payload = jsonEncode({
       'type': 'new_message',
       'chatId': chatId,
@@ -877,12 +961,16 @@ class NotificationService {
     String? payload,
     bool interactive = false,
   }) async {
+    if (FirebaseAuth.instance.currentUser == null) return;
     final id = 'manual_${DateTime.now().millisecondsSinceEpoch}';
     Map<String, dynamic> payloadMap = {};
     if (payload != null && payload.isNotEmpty) {
       try {
         payloadMap = jsonDecode(payload) as Map<String, dynamic>? ?? {};
       } catch (_) {}
+    }
+    if (payloadMap.isNotEmpty && !_payloadBelongsToCurrentUser(payloadMap)) {
+      return;
     }
     NotificationStore.instance.addNotification(
       id: id,
@@ -964,6 +1052,8 @@ class NotificationService {
     String? guestDisplayLine,
     String? guestEmail,
     String? checkInLabel,
+    /// Prefer this (e.g. "2 nights", "1 day", "1 month") over raw [nights].
+    String? staySummary,
     int? nights,
   }) async {
     final prop =
@@ -973,10 +1063,14 @@ class NotificationService {
     final displayRef = formatVeroAccommodationBookingRef(ref);
 
     final cin = (checkInLabel ?? '').trim();
+    final summary = (staySummary ?? '').trim();
     final n = nights ?? 0;
+    final durationLabel = summary.isNotEmpty
+        ? summary
+        : (n > 0 ? '$n night${n == 1 ? '' : 's'}' : '');
     final stayBits = <String>[
       if (cin.isNotEmpty) 'Check-in $cin',
-      if (n > 0) '$n night${n == 1 ? '' : 's'}',
+      if (durationLabel.isNotEmpty) durationLabel,
     ];
     final staySeg = stayBits.isEmpty ? '' : ' ${stayBits.join(' · ')}.';
 
@@ -1001,6 +1095,7 @@ class NotificationService {
         guestLine: guestDisplayLine,
         guestEmail: guestEmail,
         checkInLabel: checkInLabel,
+        staySummary: staySummary,
         nights: nights,
         fromUid: FirebaseAuth.instance.currentUser?.uid,
       );

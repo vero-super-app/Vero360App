@@ -228,21 +228,7 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
         ),
         resizeToAvoidBottomInset: true,
         backgroundColor: Colors.white,
-        body: _initialising
-            ? const Center(
-                child: CircularProgressIndicator(
-                  valueColor:
-                      AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00)),
-                ),
-              )
-            : FadeTransition(
-                opacity: _fadeAnimationController,
-                child: _isOffline
-                    ? _buildNoInternetScreen()
-                    : !_isLoggedIn
-                        ? _buildAuthRequiredScreen()
-                        : _buildMainContent(selectedDropoffPlace),
-              ),
+        body: _buildMainContent(selectedDropoffPlace),
       ),
     );
   }

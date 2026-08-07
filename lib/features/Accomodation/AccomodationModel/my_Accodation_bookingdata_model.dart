@@ -500,12 +500,16 @@ class BookingCreatePayload {
   final String bookingDate; // "YYYY-MM-DD" or ISO date
   final num price;
   final num bookingFee;
+  final String? checkOut;
+  final int? nights;
 
   BookingCreatePayload({
     required this.accommodationId,
     required this.bookingDate,
     required this.price,
     required this.bookingFee,
+    this.checkOut,
+    this.nights,
   });
 
   Map<String, dynamic> toJson() => {
@@ -513,5 +517,10 @@ class BookingCreatePayload {
     'bookingDate': bookingDate,
     'price': price,
     'bookingFee': bookingFee,
+    if (checkOut != null && checkOut!.trim().isNotEmpty) ...{
+      'checkOut': checkOut!.trim(),
+      'checkOutDate': checkOut!.trim(),
+    },
+    if (nights != null && nights! > 0) 'nights': nights,
   };
 }

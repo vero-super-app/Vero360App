@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_widgets.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/vero_courier_service.dart';
@@ -47,11 +47,48 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
     }
   }
 
+  Future<void> _notifySenderOfStatus(
+    CourierDelivery d,
+    CourierStatus status,
+  ) async {
+    if (status != CourierStatus.accepted &&
+        status != CourierStatus.cancelled &&
+        status != CourierStatus.delivered) {
+      return;
+    }
+
+    var uid = (d.view.senderUid ?? '').trim();
+    if (uid.isEmpty) {
+      uid = (await OrderPartyNotificationService.resolveUidByEmail(
+            d.courierEmail,
+          ))
+              ?.trim() ??
+          '';
+    }
+    if (uid.isEmpty) return;
+
+    final code = d.trackingCode.isNotEmpty ? d.trackingCode : '#${d.courierId}';
+    await OrderPartyNotificationService.publishCourierStatusToSender(
+      senderUid: uid,
+      trackingCode: code,
+      statusValue: status.value,
+      pickup: d.pickupLocation,
+      dropoff: d.dropoffLocation,
+    );
+  }
+
   Future<void> _setStatus(CourierDelivery d, CourierStatus status) async {
     setState(() => _busy = true);
     try {
-      await _service.updateStatus(id: d.courierId, status: status);
-      _toast('Delivery #${d.courierId} updated to ${status.value}.');
+      final updated = await _service.updateStatus(id: d.courierId, status: status);
+      final code = updated.trackingCode.isNotEmpty
+          ? updated.trackingCode
+          : (d.trackingCode.isNotEmpty ? d.trackingCode : '#${d.courierId}');
+      _toast('$code updated to ${status.value}.');
+      // Prefer API payload; fall back to local row so SenderUid still resolves.
+      final forAlert =
+          (updated.view.senderUid ?? '').trim().isNotEmpty ? updated : d.copyWithStatus(status);
+      await _notifySenderOfStatus(forAlert, status);
       await _reload();
     } on ApiException catch (e) {
       _toast(e.message);
@@ -63,11 +100,12 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
   }
 
   Future<void> _delete(CourierDelivery d) async {
+    final code = d.trackingCode.isNotEmpty ? d.trackingCode : '#${d.courierId}';
     final ok = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('Delete Delivery'),
-            content: Text('Delete delivery #${d.courierId}?'),
+            content: Text('Delete delivery $code?'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -86,7 +124,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
     setState(() => _busy = true);
     try {
       await _service.deleteDelivery(d.courierId);
-      _toast('Delivery #${d.courierId} deleted.');
+      _toast('Delivery $code deleted.');
       await _reload();
     } on ApiException catch (e) {
       _toast(e.message);
@@ -125,7 +163,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
         actions: [
           IconButton(
             onPressed: _busy ? null : _reload,
-            icon: const Icon(PhosphorIconsBold.arrowsClockwise),
+            icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
           ),
         ],
@@ -139,10 +177,10 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
               spacing: 10,
               runSpacing: 10,
               children: [
-                _countCard('Total', total, PhosphorIconsBold.package, _skyBlue),
-                _countCard('Pending', pending, PhosphorIconsBold.hourglassMedium, _violet),
-                _countCard('Active', active, PhosphorIconsBold.truck, _mintGreen),
-                _countCard('Delivered', done, PhosphorIconsBold.checkCircle, _rose),
+                _countCard('Total', total, Icons.inventory_2, _skyBlue),
+                _countCard('Pending', pending, Icons.hourglass_empty, _violet),
+                _countCard('Active', active, Icons.local_shipping, _mintGreen),
+                _countCard('Delivered', done, Icons.check_circle, _rose),
               ],
             ),
             const SizedBox(height: 16),
@@ -231,7 +269,7 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
       delivery: d,
       trailing: PopupMenuButton<String>(
         enabled: !_busy,
-        icon: const Icon(PhosphorIconsBold.dotsThreeVertical),
+        icon: const Icon(Icons.more_vert),
         onSelected: (value) async {
           if (value == 'delete') {
             await _delete(d);
@@ -249,7 +287,11 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
           ...CourierStatus.values.map(
             (status) => PopupMenuItem<String>(
               value: status.value,
-              child: Text('Set ${status.value}'),
+              child: Text(
+                status == CourierStatus.cancelled
+                    ? 'Reject (CANCELLED)'
+                    : 'Set ${status.value}',
+              ),
             ),
           ),
           const PopupMenuDivider(),

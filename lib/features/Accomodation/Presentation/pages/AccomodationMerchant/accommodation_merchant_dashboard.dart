@@ -28,6 +28,7 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/Home/homepage.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
@@ -244,9 +245,11 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    // Do not add MediaQuery.viewInsets padding here — Scaffold already
+    // resizes for the keyboard; doubling it fills the screen with white space.
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F7),
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         backgroundColor: _orange,
         foregroundColor: Colors.white,
@@ -261,11 +264,10 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
         ),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.only(bottom: bottomInset),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-            child: Container(
+        child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          child: Container(
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
@@ -848,7 +850,6 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
             ),
           ),
         ),
-      ),
     );
   }
 }
@@ -2885,27 +2886,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   Future<bool> _unlockWalletWithPin() async {
     if (_walletUnlockedNow) return true;
 
-    final okSetup = await _ensureAppPinExists();
-    if (!okSetup) return false;
+    final ok = await AppWalletPin.verifyWalletUnlock(context);
+    if (!ok || !mounted) return false;
 
-    final sp = await SharedPreferences.getInstance();
-    final salt = (sp.getString('app_pin_salt') ?? '').trim();
-    final hash = (sp.getString('app_pin_hash') ?? '').trim();
-    if (salt.isEmpty || hash.isEmpty) return false;
-
-    final entered = await _showEnterPinDialog();
-    if (entered == null) return false;
-
-    final enteredHash = _hashPin(entered, salt);
-    final ok = enteredHash == hash;
-
-    if (!ok) {
-      if (!mounted) return false;
-      _toastErr('Wrong password');
-      return false;
-    }
-
-    if (!mounted) return true;
     setState(() {
       _walletUnlockedUntil = DateTime.now().add(_walletUnlockDuration);
     });

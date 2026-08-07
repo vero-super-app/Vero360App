@@ -32,20 +32,20 @@ class BuyerPhoneResolver {
       uidsToFetch.add(buyerUid);
     }
 
-    for (final uid in uidsToFetch) {
+    await Future.wait(uidsToFetch.map((uid) async {
       try {
         final doc = await firestore.collection('users').doc(uid).get();
-        if (!doc.exists) continue;
+        if (!doc.exists) return;
         final data = doc.data();
         final phone = safeMerchantPhone((data?['phone'] ?? '').toString());
-        if (phone == 'No phone number') continue;
+        if (phone == 'No phone number') return;
         for (final o in orders) {
           if ((o.customerUid ?? '').trim() == uid) {
             out[o.id] = phone;
           }
         }
       } catch (_) {}
-    }
+    }));
 
     return out;
   }

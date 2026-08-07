@@ -23,9 +23,11 @@
 
     <application
         android:enableOnBackInvokedCallback="true"
-        android:name="${applicationName}"
+        android:name=".VeroApplication"
         android:label="Vero360"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:largeHeap="true"
+        android:hardwareAccelerated="true">
 
         <activity
             android:name=".MainActivity"
@@ -75,6 +77,12 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Redmi 8A: Impeller (Vulkan *and* OpenGLES) OOMs Adreno 506 →
+             SIGSEGV on 1.raster. Use legacy Skia only. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+
         <!-- Google Maps key (loaded from .env via gradle) -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
@@ -85,6 +93,15 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Allow url_launcher / canLaunchUrl to resolve https job apply links -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
         </intent>
     </queries>
 

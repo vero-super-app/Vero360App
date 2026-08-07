@@ -4,7 +4,6 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
@@ -545,22 +544,25 @@ class _VerocourierPageState extends State<VerocourierPage> {
   }
 
   Future<void> _trackDelivery() async {
-    final id = int.tryParse(_trackCtrl.text.trim());
-    if (id == null) {
-      _toast('Enter a valid delivery number.', isError: true);
+    final query = _trackCtrl.text.trim();
+    if (query.isEmpty) {
+      _toast('Enter your tracking number (e.g. VC506683).', isError: true);
       return;
     }
     setState(() => _tracking = true);
     try {
-      final data = await _courierService.getMyDeliveryById(
-        id,
+      final data = await _courierService.getMyDeliveryByTrackingOrId(
+        query,
         senderPhone: _activeSenderPhone,
         senderEmail: _senderEmail.isEmpty ? null : _senderEmail,
       );
       if (!mounted) return;
       setState(() {
         _trackingResult = data;
-        _trackedDeliveryId = id;
+        _trackedDeliveryId = data.courierId;
+        if (data.trackingCode.isNotEmpty) {
+          _trackCtrl.text = data.trackingCode;
+        }
       });
       _startProgressPolling();
     } on ApiException catch (e) {
@@ -652,10 +654,12 @@ class _VerocourierPageState extends State<VerocourierPage> {
     _senderCity = _serviceCityLabel;
 
     setState(() => _submitting = true);
+    final senderUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
     final mergedAdditionalInfo = [
       _additionalCtrl.text.trim(),
       if (_senderNameCtrl.text.trim().isNotEmpty)
         'Sender: ${_senderNameCtrl.text.trim()}',
+      if (senderUid.isNotEmpty) 'SenderUid: $senderUid',
       if (_recipientNameCtrl.text.trim().isNotEmpty)
         'Recipient: ${_recipientNameCtrl.text.trim()}',
       if (_sanitizePhone(_recipientPhoneCtrl.text).isNotEmpty)
@@ -687,7 +691,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
         ),
       );
       if (!mounted) return;
-      _toast('Delivery created: #${created.courierId}');
+      final code = created.trackingCode.isNotEmpty
+          ? created.trackingCode
+          : '#${created.courierId}';
+      _toast('Delivery created: $code');
       _formKey.currentState?.reset();
       _pickupCtrl.clear();
       _dropoffCtrl.clear();
@@ -695,7 +702,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
       _descriptionCtrl.clear();
       _additionalCtrl.clear();
       // Keep sender + recipient for the next booking; they stay in prefs.
-      _trackCtrl.text = created.courierId.toString();
+      _trackCtrl.text = code;
       await _onServiceTabChanged(2);
       await _trackDelivery();
       await _loadDeliveries();
@@ -808,13 +815,14 @@ class _VerocourierPageState extends State<VerocourierPage> {
         alignment: Alignment.centerRight,
         child: TextButton.icon(
           onPressed: () async {
-            _trackCtrl.text = d.courierId.toString();
+            _trackCtrl.text =
+                d.trackingCode.isNotEmpty ? d.trackingCode : '${d.courierId}';
             if (_selectedService != 2) {
               await _onServiceTabChanged(2);
             }
             await _trackDelivery();
           },
-          icon: const Icon(PhosphorIconsBold.magnifyingGlass, size: 16),
+          icon: const Icon(Icons.search, size: 16),
           label: const Text('Track'),
         ),
       ),
@@ -912,7 +920,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
                       ),
                     ),
                     child: const Icon(
-                      PhosphorIconsBold.truck,
+                      Icons.local_shipping,
                       color: Colors.white,
                       size: 28,
                     ),
@@ -975,7 +983,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
                 borderRadius: BorderRadius.circular(18),
               ),
               child: const Icon(
-                PhosphorIconsBold.lock,
+                Icons.lock,
                 color: _veroOrange,
                 size: 30,
               ),
@@ -1105,7 +1113,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
     return _modernDetailCard(
       key: const ValueKey('senderCard'),
       accent: _skyBlue,
-      icon: PhosphorIconsBold.userCircle,
+      icon: Icons.account_circle,
       title: 'From you',
       subtitle: 'Pickup in $_serviceCityLabel only ($_serviceCityCode)',
       child: Column(
@@ -1135,7 +1143,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
     return _modernDetailCard(
       key: const ValueKey('recipientCard'),
       accent: _mintGreen,
-      icon: PhosphorIconsBold.mapPin,
+      icon: Icons.location_on,
       title: 'To recipient',
       subtitle:
           'Must be in $_serviceCityLabel ($_serviceCityCode → $_serviceCityCode)',
@@ -1364,8 +1372,8 @@ class _VerocourierPageState extends State<VerocourierPage> {
                   onPressed: _advanceSendingStep,
                   icon: Icon(
                     _sendingStep == 0
-                        ? PhosphorIconsBold.arrowRight
-                        : PhosphorIconsBold.checkCircle,
+                        ? Icons.arrow_forward
+                        : Icons.check_circle,
                     size: 20,
                   ),
                   label: Text(
@@ -1497,7 +1505,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
                                   height: 16,
                                   child: CircularProgressIndicator(strokeWidth: 2),
                                 )
-                              : const Icon(PhosphorIconsBold.paperPlaneTilt),
+                              : const Icon(Icons.send),
                           label: Text(_submitting ? 'Submitting...' : 'Book Delivery'),
                         ),
                       ),
@@ -1541,16 +1549,16 @@ class _VerocourierPageState extends State<VerocourierPage> {
                       color: _violet.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(PhosphorIconsBold.magnifyingGlass, color: _violet),
+                    child: const Icon(Icons.search, color: _violet),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: TextField(
                       controller: _trackCtrl,
-                      keyboardType: TextInputType.number,
+                      textCapitalization: TextCapitalization.characters,
                       decoration: const InputDecoration(
                         isDense: true,
-                        hintText: 'Your delivery number',
+                        hintText: 'Tracking number (e.g. VC506683)',
                         border: InputBorder.none,
                       ),
                     ),
@@ -1588,7 +1596,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 child: Row(
                   children: [
-                    const Icon(PhosphorIconsBold.clockCounterClockwise, color: _violet, size: 18),
+                    const Icon(Icons.history, color: _violet, size: 18),
                     const SizedBox(width: 8),
                     const Text(
                       'Live status',
@@ -1651,10 +1659,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
 
   Widget _serviceTypesRow() {
     final List<(String, IconData, Color)> services = [
-      ('Sending Details', PhosphorIconsBold.package, _skyBlue),
-      ('Send a Parcel', PhosphorIconsBold.truck, _mintGreen),
-      ('Progress', PhosphorIconsBold.airplaneTakeoff, _violet),
-      ('Shipping History', PhosphorIconsBold.clockCounterClockwise, _rose),
+      ('Sending Details', Icons.inventory_2, _skyBlue),
+      ('Send a Parcel', Icons.local_shipping, _mintGreen),
+      ('Progress', Icons.flight_takeoff, _violet),
+      ('Shipping History', Icons.history, _rose),
     ];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,

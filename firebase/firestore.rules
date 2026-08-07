@@ -51,6 +51,23 @@ service cloud.firestore {
       allow read, create, update: if isSignedIn();
     }
 
+    // Shared stay inventory — night counts are public so every guest sees "Booked".
+    match /accommodation_occupancy/{accommodationId} {
+      allow read: if true;
+      allow create, update: if isSignedIn();
+
+      match /nights/{dayId} {
+        allow read: if true;
+        allow create, update: if isSignedIn();
+      }
+
+      match /stays/{bookingRef} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update: if isSignedIn();
+      }
+    }
+
     // Other app collections (chat, notifications, etc.) — signed-in users only.
     match /{document=**} {
       allow read, write: if isSignedIn();

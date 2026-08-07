@@ -20,6 +20,7 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
+import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -1284,14 +1285,19 @@ class AuthService {
       await _google.signOut();
     } catch (_) {}
 
-    // Step 4: Firebase sign out
+    // Step 4: Detach FCM + clear in-app notifications WHILE still authenticated
+    // so the leaving account no longer targets this device.
+    try {
+      await NotificationService.instance.clearSessionOnLogout();
+    } catch (_) {
+      try {
+        await NotificationStore.instance.clearForLogout();
+      } catch (_) {}
+    }
+
+    // Step 5: Firebase sign out
     try {
       await _firebaseAuth.signOut();
-    } catch (_) {}
-
-    // Step 5: Clear notifications
-    try {
-      await NotificationStore.instance.clearAll();
     } catch (_) {}
 
     // Step 5b: Clear in-memory messaging state + socket (deleted-chat prefs stay on disk).

@@ -1,23 +1,33 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
+import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet_transactions_page.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class _HeldEscrowRow {
   final String itemName;
   final double amount;
   final DateTime? releaseDueAt;
+  final DateTime? deliveredAt;
+  final DateTime? createdAt;
   final bool awaitingShipment;
+  final bool isAccommodation;
 
   const _HeldEscrowRow({
     required this.itemName,
     required this.amount,
     this.releaseDueAt,
+    this.deliveredAt,
+    this.createdAt,
     this.awaitingShipment = false,
+    this.isAccommodation = false,
   });
 }
 
@@ -71,14 +81,19 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   ];
   
   static const List<Map<String, String>> _mobileMoneyProviders = [
-    {"id": "airtel_money", "name": "Airtel Money"},
-    {"id": "mpamba", "name": "MPamba (TNM)"},
-    {"id": "national_bank_mobile", "name": "National Bank Mobile"},
+    {
+      'id': PayChanguConfig.airtelMoneyOperatorRefId,
+      'name': 'Airtel Money',
+    },
+    {
+      'id': PayChanguConfig.tnmMpambaOperatorRefId,
+      'name': 'MPamba (TNM)',
+    },
   ];
   
   int? _selectedBankIndex;
   String _selectedPayoutMethod = 'bank';
-  String _selectedMobileProvider = 'airtel_money';
+  String _selectedMobileProvider = PayChanguConfig.airtelMoneyOperatorRefId;
   
   StreamSubscription<WalletModel?>? _walletSubscription;
   StreamSubscription<QuerySnapshot>? _transactionsSubscription;
@@ -92,26 +107,35 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     _loadMerchantData();
     _setupEscrowHeldStream();
     _escrowReleaseTimer = Timer.periodic(
-      const Duration(minutes: 15),
+      OrderEscrowService.escrowTestMode
+          ? const Duration(seconds: 30)
+          : const Duration(minutes: 15),
       (_) => _processDueEscrowReleases(),
     );
   }
 
   /// Marketplace orders and paid accommodation stays both write `order_escrow`
   /// so incoming stay payments appear in escrow here.
+  ///
+  /// Merchant-only path (no `/orders/me` round-trip) so the wallet stays snappy.
   /// Credits wallet when the 7-day window passed and the buyer did not confirm.
   Future<void> _processDueEscrowReleases() async {
     try {
-      await OrderEscrowService.processDueAutoReleasesForSignedInUser();
+      await OrderEscrowService.processDueAutoReleasesForMerchant(
+        widget.merchantId,
+      );
     } catch (e) {
       debugPrint('[MerchantWallet] escrow auto-release: $e');
     }
   }
 
   String _escrowReleaseSummary() {
-    final days = OrderEscrowService.escrowAutoReleaseDays;
+    final window = OrderEscrowService.escrowAutoReleaseLabel;
+    final isAcc = widget.serviceType.toLowerCase() == 'accommodation';
     if (_heldEscrowRows.isEmpty) {
-      return 'Not withdrawable yet — waiting for buyer confirmation or $days‑day auto‑release.';
+      return isAcc
+          ? 'Not withdrawable yet — waiting for guest check-in confirmation.'
+          : 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
     }
 
     final dueNow = _heldEscrowRows.where((r) {
@@ -139,10 +163,12 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
     final awaiting = _heldEscrowRows.any((r) => r.awaitingShipment);
     if (awaiting) {
-      return 'Ship orders with proof to start the $days‑day release timer.';
+      return isAcc
+          ? 'Guest confirms arrival in My bookings to release stay payment.'
+          : 'Ship orders with proof to start the $window release timer.';
     }
 
-    return 'Not withdrawable yet — waiting for buyer confirmation or $days‑day auto‑release.';
+    return 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
   }
 
   Widget _buildHeldEscrowDetails({bool onDarkBackground = false}) {
@@ -161,15 +187,29 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           final amountText = 'MWK ${_mwkFormat.format(row.amount.truncate())}';
           String statusText;
           if (row.awaitingShipment) {
-            statusText = 'Awaiting shipment';
+            if (row.isAccommodation) {
+              statusText = row.createdAt != null
+                  ? 'Booked ${_releaseDateFormat.format(row.createdAt!.toLocal())} · awaiting guest check-in'
+                  : 'Awaiting guest check-in — guest releases payment on arrival';
+            } else {
+              statusText = row.createdAt != null
+                  ? 'Bought ${_releaseDateFormat.format(row.createdAt!.toLocal())} · awaiting shipment'
+                  : 'Awaiting shipment — timer starts when you ship';
+            }
           } else if (row.releaseDueAt != null &&
               !DateTime.now().isBefore(row.releaseDueAt!)) {
             statusText = 'Ready to release';
           } else if (row.releaseDueAt != null) {
-            statusText =
-                'Releases ${_releaseDateFormat.format(row.releaseDueAt!.toLocal())}';
+            final shipped = row.deliveredAt;
+            statusText = shipped != null
+                ? 'Shipped ${_releaseDateFormat.format(shipped.toLocal())} · '
+                    'releases ${_releaseDateFormat.format(row.releaseDueAt!.toLocal())}'
+                : 'Releases ${_releaseDateFormat.format(row.releaseDueAt!.toLocal())} '
+                    '(${OrderEscrowService.escrowAutoReleaseLabel} after shipment)';
           } else {
-            statusText = 'Awaiting buyer confirmation';
+            statusText = row.isAccommodation
+                ? 'Awaiting guest arrival confirmation'
+                : 'Awaiting buyer confirmation';
           }
 
           return Padding(
@@ -241,26 +281,54 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         final dueRaw = data['releaseDueAt'];
         if (dueRaw is Timestamp) releaseDueAt = dueRaw.toDate();
 
+        DateTime? deliveredAt;
         final deliveredRaw = data['deliveredAt'];
-        final awaitingShipment = deliveredRaw == null;
+        if (deliveredRaw is Timestamp) deliveredAt = deliveredRaw.toDate();
+
+        DateTime? createdAt;
+        final createdRaw = data['createdAt'];
+        if (createdRaw is Timestamp) createdAt = createdRaw.toDate();
+
+        // Stale ship date from a previous order (before this hold existed).
+        final bogusShip = deliveredAt != null &&
+            createdAt != null &&
+            deliveredAt.isBefore(createdAt.subtract(const Duration(minutes: 5)));
+        if (bogusShip) {
+          deliveredAt = null;
+          releaseDueAt = null;
+        }
+
+        final awaitingShipment = deliveredAt == null;
+        final isAccommodation =
+            (data['serviceType'] ?? '').toString().trim().toLowerCase() ==
+                'accommodation';
 
         rows.add(_HeldEscrowRow(
           itemName: (data['itemName'] ?? data['orderNumber'] ?? 'Sale')
               .toString(),
           amount: v,
           releaseDueAt: releaseDueAt,
+          deliveredAt: deliveredAt,
+          createdAt: createdAt,
           awaitingShipment: awaitingShipment,
+          isAccommodation: isAccommodation,
         ));
       }
       rows.sort((a, b) {
         if (a.awaitingShipment != b.awaitingShipment) {
-          return a.awaitingShipment ? 1 : -1;
+          return a.awaitingShipment ? -1 : 1; // newest unpaid shipments first
+        }
+        final ac = a.createdAt;
+        final bc = b.createdAt;
+        if (ac != null && bc != null) {
+          final cmp = bc.compareTo(ac);
+          if (cmp != 0) return cmp;
         }
         final ad = a.releaseDueAt;
         final bd = b.releaseDueAt;
         if (ad == null && bd == null) return 0;
-        if (ad == null) return 1;
-        if (bd == null) return -1;
+        if (ad == null) return -1;
+        if (bd == null) return 1;
         return ad.compareTo(bd);
       });
       if (!mounted) return;
@@ -273,18 +341,27 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
   Future<void> _initializeWallet() async {
     try {
-      // Run the escrow auto-release sweep in the background: it fetches orders
-      // and walks escrow docs one by one, which is far too slow to block the
-      // first paint. The wallet/escrow streams pick up any releases it makes.
+      // Escrow repair/release in background — never block first paint.
       unawaited(_processDueEscrowReleases());
+      // Clear payouts that were stuck as pending forever.
+      unawaited(FirebaseWalletService.settleStuckPendingPayouts(widget.merchantId));
 
-      // Get or create wallet
       final wallet = await FirebaseWalletService.getOrCreateWallet(
         merchantId: widget.merchantId,
         merchantName: widget.merchantName,
       );
-      
-      // Set up real-time wallet stream
+
+      if (!mounted) return;
+
+      // Paint immediately, then attach live streams.
+      setState(() {
+        _wallet = wallet;
+        _walletBalance = wallet.balance;
+        _pendingBalance = wallet.pendingBalance;
+        _isLoading = false;
+      });
+
+      _walletSubscription?.cancel();
       _walletSubscription = FirebaseWalletService
           .getWalletStream(widget.merchantId)
           .listen((wallet) {
@@ -296,16 +373,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           });
         }
       });
-      
-      // Set up transactions stream
+
       _setupTransactionsStream(wallet.walletId);
-      
-      setState(() {
-        _wallet = wallet;
-        _walletBalance = wallet.balance;
-        _pendingBalance = wallet.pendingBalance;
-        _isLoading = false;
-      });
     } catch (e) {
       print('Wallet initialization error: $e');
       _showError('Failed to load wallet: $e');
@@ -722,11 +791,13 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           if (phone.length != 13) {
                             return 'Enter valid 13-digit number';
                           }
-                          if (_selectedMobileProvider == 'airtel_money' &&
+                          if (_selectedMobileProvider ==
+                                  PayChanguConfig.airtelMoneyOperatorRefId &&
                               !phone.startsWith('+2659')) {
                             return 'Airtel Money numbers must start with +2659…';
                           }
-                          if (_selectedMobileProvider == 'mpamba' &&
+                          if (_selectedMobileProvider ==
+                                  PayChanguConfig.tnmMpambaOperatorRefId &&
                               !phone.startsWith('+2658')) {
                             return 'TNM Mpamba numbers must start with +2658…';
                           }
@@ -777,7 +848,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           ),
                           SizedBox(height: 8),
                           Text(
-                            '• Processing time: 24-48 hours',
+                            '• Cash out is instant to your bank or mobile money',
                             style: TextStyle(fontSize: 12),
                           ),
                           Text(
@@ -789,7 +860,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                             style: TextStyle(fontSize: 12),
                           ),
                           Text(
-                            '• Funds will be sent to your registered account',
+                            '• Funds are sent immediately after you confirm',
                             style: TextStyle(fontSize: 12),
                           ),
                         ],
@@ -901,50 +972,112 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
   Future<void> _requestPayout(void Function(void Function()) setState) async {
     if (!_formKey.currentState!.validate()) return;
-    
+
     if (_selectedPayoutMethod == 'bank' && _selectedBankIndex == null) {
       _showError('Please select a bank');
       return;
     }
 
     setState(() => _isProcessingPayout = true);
-    
+
     try {
       final amount = double.parse(_amountController.text);
-      final payoutRef = 'PAYOUT-${widget.serviceType}-${DateTime.now().millisecondsSinceEpoch}';
-      
-      // 1. Debit wallet in Firestore
+      final payoutRef =
+          'PAYOUT-${widget.serviceType}-${DateTime.now().millisecondsSinceEpoch}';
+
+      // 1) Send money via PayChangu first (real cash-out).
+      await _processPayChanguPayout(amount, payoutRef);
+
+      // 2) Debit wallet as completed (instant — not stuck pending).
+      final momoName = _mobileMoneyProviders
+          .where((p) => p['id'] == _selectedMobileProvider)
+          .map((p) => p['name']!)
+          .firstOrNull;
       await FirebaseWalletService.debitWallet(
         merchantId: widget.merchantId,
         amount: amount,
-        description: _selectedPayoutMethod == 'bank' 
-            ? 'Bank Transfer Payout (${widget.serviceType})' 
-            : '${_selectedMobileProvider.toUpperCase()} Payout (${widget.serviceType})',
+        description: _selectedPayoutMethod == 'bank'
+            ? 'Bank Transfer Payout (${widget.serviceType})'
+            : '${momoName ?? 'Mobile Money'} Payout (${widget.serviceType})',
         reference: payoutRef,
       );
-      
-      // 2. Save bank details for future use
+
       if (_selectedPayoutMethod == 'bank') {
         await _saveBankDetails();
       }
 
-      // Ensure UI shows the new payout transaction immediately.
       if (mounted) _forceTransactionsReload();
-      
-      // 3. Show success and close dialog
+
       if (mounted) {
         Navigator.pop(context);
-        _showSuccess('Payout request submitted! Processing in 24-48 hours.');
+        _showSuccess('Payout sent! Cash-out completed.');
       }
       _clearControllers();
-      
     } catch (e) {
       print('Payout error: $e');
-      _showError('Failed to process payout: ${e.toString()}');
+      _showError(
+        UserFacingError.from(e, fallback: 'Failed to process payout'),
+      );
     } finally {
       if (mounted) {
         setState(() => _isProcessingPayout = false);
       }
+    }
+  }
+
+  Future<void> _processPayChanguPayout(double amount, String reference) async {
+    final chargeId = reference.replaceAll(RegExp(r'[^A-Za-z0-9\-_]'), '');
+    final amountStr = amount.round().toString();
+    final email = _emailController.text.trim();
+
+    late final Uri uri;
+    late final Map<String, dynamic> payload;
+
+    if (_selectedPayoutMethod == 'bank') {
+      uri = PayChanguConfig.bankPayoutInitializeUri();
+      payload = {
+        'payout_method': 'bank_transfer',
+        'bank_uuid': _banks[_selectedBankIndex! - 1]['uuid'],
+        'amount': amountStr,
+        'charge_id': chargeId,
+        'bank_account_name': _accountNameController.text.trim(),
+        'bank_account_number': _accountNumberController.text.trim(),
+        if (email.isNotEmpty) 'email': email,
+      };
+    } else {
+      uri = PayChanguConfig.mobileMoneyPayoutInitializeUri();
+      var mobile = _phoneController.text.trim().replaceAll(RegExp(r'\s+'), '');
+      if (mobile.startsWith('+265')) {
+        mobile = '0${mobile.substring(4)}';
+      } else if (mobile.startsWith('265')) {
+        mobile = '0${mobile.substring(3)}';
+      }
+      payload = {
+        'mobile_money_operator_ref_id': _selectedMobileProvider,
+        'mobile': mobile,
+        'amount': amountStr,
+        'charge_id': chargeId,
+        if (email.isNotEmpty) 'email': email,
+      };
+    }
+
+    final response = await http
+        .post(
+          uri,
+          headers: PayChanguConfig.authHeaders,
+          body: jsonEncode(payload),
+        )
+        .timeout(const Duration(seconds: 45));
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception('Payout failed: ${response.body}');
+    }
+
+    final responseData = jsonDecode(response.body);
+    if (responseData is Map &&
+        responseData['status'] != null &&
+        responseData['status'].toString().toLowerCase() != 'success') {
+      throw Exception(responseData['message'] ?? 'Payout failed');
     }
   }
 
@@ -1220,7 +1353,20 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           const SizedBox(height: 10),
                           Text(
                             'Marketplace sales are credited when the buyer confirms receipt, '
-                            'or automatically ${OrderEscrowService.escrowAutoReleaseDays} days after delivery.',
+                            'or automatically ${OrderEscrowService.escrowAutoReleaseLabel} after delivery.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.white.withOpacity(0.88),
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                        if (widget.serviceType.toLowerCase() ==
+                            'accommodation') ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            'Stay payments are held in escrow until the guest confirms arrival '
+                            'in My bookings (biometrics or wallet password). Stays are not shipped.',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.white.withOpacity(0.88),

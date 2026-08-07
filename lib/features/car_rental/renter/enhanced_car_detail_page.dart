@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GeneralModels/car_model.dart';
 import 'package:vero360_app/utils/formatters.dart';
 import 'package:vero360_app/features/car_rental/widgets/rating_widget.dart';
-import 'package:vero360_app/features/car_rental/widgets/cost_breakdown_widget.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 
 class EnhancedCarDetailPage extends ConsumerStatefulWidget {
@@ -80,7 +79,7 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
     final rentalDays = _startDate != null && _endDate != null
         ? _endDate!.difference(_startDate!).inDays + 1
         : 0;
-    
+
     final totalCost = rentalDays > 0
         ? (widget.car.dailyRate * rentalDays).toInt() +
             (_includeInsurance ? 5000 * rentalDays : 0)
@@ -102,7 +101,8 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
               color: Colors.grey[300],
               child: widget.car.imageUrl != null
                   ? Image.network(widget.car.imageUrl!, fit: BoxFit.cover)
-                  : Icon(Icons.directions_car, size: 100, color: Colors.grey[600]),
+                  : Icon(Icons.directions_car,
+                      size: 100, color: Colors.grey[600]),
             ),
 
             Padding(
@@ -119,10 +119,12 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
                         children: [
                           Text(
                             '${widget.car.brand} ${widget.car.model}',
-                            style:
-                                Theme.of(context).textTheme.titleLarge?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
                           ),
                           Text(
                             widget.car.licensePlate,
@@ -164,10 +166,7 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
                       ),
                       Text(
                         CarHireFormatters.formatCurrency(widget.car.dailyRate),
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodyLarge
-                            ?.copyWith(
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                               fontWeight: FontWeight.bold,
                               color: CarRentalColors.brandOrange,
                             ),
@@ -323,9 +322,10 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
                     children: [
                       Text(
                         'Recent Reviews',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
                       ),
                       TextButton(
                         onPressed: () {
@@ -402,28 +402,29 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
                               ),
                             ],
                           ),
-                          const Icon(Icons.calendar_today, color: CarRentalColors.brandOrange),
-                          ],
-                          ),
-                          ),
-                          ),
-                          const SizedBox(height: 12),
+                          const Icon(Icons.calendar_today,
+                              color: CarRentalColors.brandOrange),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
 
-                          // End Date
-                          GestureDetector(
-                          onTap: _selectEndDate,
-                          child: Container(
-                          padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
-                          ),
-                          decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey[300]!),
-                          borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
+                  // End Date
+                  GestureDetector(
+                    onTap: _selectEndDate,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey[300]!),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -445,7 +446,8 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
                               ),
                             ],
                           ),
-                          const Icon(Icons.calendar_today, color: CarRentalColors.brandOrange),
+                          const Icon(Icons.calendar_today,
+                              color: CarRentalColors.brandOrange),
                         ],
                       ),
                     ),
@@ -453,11 +455,11 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
                   if (rentalDays > 0) ...[
                     const SizedBox(height: 12),
                     Text(
-                        '$rentalDays days selected',
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodySmall
-                            ?.copyWith(color: CarRentalColors.brandOrange),
+                      '$rentalDays days selected',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: CarRentalColors.brandOrange),
                     ),
                   ],
                   const SizedBox(height: 16),
@@ -471,7 +473,8 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
                           Checkbox(
                             value: _includeInsurance,
                             onChanged: (value) {
-                              setState(() => _includeInsurance = value ?? false);
+                              setState(
+                                  () => _includeInsurance = value ?? false);
                             },
                           ),
                           Expanded(
@@ -545,8 +548,8 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
                                           .textTheme
                                           .bodyMedium),
                                   Text(
-                                    CarHireFormatters.formatCurrency(5000 *
-                                        rentalDays.toDouble()),
+                                    CarHireFormatters.formatCurrency(
+                                        5000 * rentalDays.toDouble()),
                                     style: Theme.of(context)
                                         .textTheme
                                         .bodyMedium
@@ -594,8 +597,7 @@ class _EnhancedCarDetailPageState extends ConsumerState<EnhancedCarDetailPage> {
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton(
-                      onPressed:
-                          rentalDays > 0 ? _proceedToPayment : null,
+                      onPressed: rentalDays > 0 ? _proceedToPayment : null,
                       child: const Text('Proceed to Payment'),
                     ),
                   ),

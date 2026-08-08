@@ -10,11 +10,13 @@ plugins {
     // id("com.google.firebase.crashlytics") // optional
 }
 
-// Load .env file
+// Load .env file (local). Fall back to committed .env.example for CI (Codemagic).
 val envFile = File(project.rootDir.parentFile, ".env")
+val envExampleFile = File(project.rootDir.parentFile, ".env.example")
 val envProperties = Properties()
-if (envFile.exists()) {
-    envFile.inputStream().use { envProperties.load(it) }
+when {
+    envFile.exists() -> envFile.inputStream().use { envProperties.load(it) }
+    envExampleFile.exists() -> envExampleFile.inputStream().use { envProperties.load(it) }
 }
 
 // Release signing: create android/key.properties (see Flutter keystore guide).
@@ -26,17 +28,18 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.vero.vero360"
+    namespace = "com.vero265.app"
 
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     defaultConfig {
-        applicationId = "com.vero.vero360"
+        // Must match the package_name registered in google-services.json exactly.
+        applicationId = "com.vero265.app"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = 10003
-        versionName = "1.1.1"
+        versionCode = 1
+        versionName = "1.0.0"
         multiDexEnabled = true
 
         // Load Google Maps API key from .env

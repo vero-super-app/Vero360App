@@ -36,23 +36,27 @@ if (-not $SkipSecrets) {
 
 Secrets (paste when prompted, then Enter):
   1) DIDIT_API_KEY
-       Didit Console → API & Webhooks → API Keys → copy the API key
-  2) DIDIT_WEBHOOK_SECRET
+       Didit Console → API & Webhooks → API Keys
+  2) DIDIT_WORKFLOW_ID
+       Didit Console → Workflows → open your KYC workflow → copy Workflow ID (UUID)
+  3) DIDIT_WEBHOOK_SECRET
        Didit Console → destination → secret_shared_key
-       (If you have no destination yet, paste: pending-after-destination
-        then re-run secrets after you create the destination.)
+       (If no destination yet, paste: pending-after-destination)
 
-Skip this step next time with:
+Skip next time:
   .\tool\deploy_kyc.ps1 -SkipSecrets
 
 '@
   Invoke-Firebase "functions:secrets:set DIDIT_API_KEY --project $project"
+  Invoke-Firebase "functions:secrets:set DIDIT_WORKFLOW_ID --project $project"
   Invoke-Firebase "functions:secrets:set DIDIT_WEBHOOK_SECRET --project $project"
 } else {
   Write-Host 'Skipping secrets (-SkipSecrets).'
 }
 
 Write-Host 'Deploying createDiditSession + diditWebhook...'
+# Large index.js can exceed the default 10s discovery window on Windows.
+$env:FUNCTIONS_DISCOVERY_TIMEOUT = '90'
 Invoke-Firebase "deploy --only functions:createDiditSession,functions:diditWebhook --project $project"
 
 Write-Host @'

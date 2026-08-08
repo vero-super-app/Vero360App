@@ -28,9 +28,12 @@ class AppUpdateCheckResult {
 class AppUpdateChecker {
   AppUpdateChecker._();
 
-  static const playStoreId = 'com.vero.vero360';
-  /// Prefer production package; iOS project may still report a legacy bundle id.
+  static const playStoreId = 'com.vero265.app';
+  /// Prefer production package; keep legacy candidates for older installs.
   static const iosBundleCandidates = <String>[
+    'com.vero265.app',
+    'com.verosuperapp.v265',
+    'com.verosuperapp.265',
     'com.vero.vero360',
     'com.example.verotechApp',
   ];

@@ -1500,7 +1500,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _maybeHaptic();
     try {
       const storeUrl =
-          'https://play.google.com/store/apps/details?id=com.vero.vero360';
+          'https://play.google.com/store/apps/details?id=com.vero265.app';
       final text = _t(
         'Try Vero360 – one app for VeroRide,marketplace, food, transport,accomodation and more. $storeUrl',
         'Yesani Vero360 – pulogalamu imodzi ya msika, chakudya, mayendedwe, ndi zina. $storeUrl',

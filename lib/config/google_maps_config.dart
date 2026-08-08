@@ -18,17 +18,17 @@ class GoogleMapsConfig {
       return;
     }
 
-    // Fallback to .env file
+    // Bundled env template (always present in git / CI). Prefer dart-define above.
     try {
-      await dotenv.load(fileName: ".env");
+      await dotenv.load(fileName: '.env.example');
       apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
-      
+
       if (apiKey.isNotEmpty && kDebugMode) {
-        debugPrint('[GoogleMapsConfig] API key loaded from .env');
+        debugPrint('[GoogleMapsConfig] API key loaded from .env.example');
       }
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('[GoogleMapsConfig] Error loading .env: $e');
+        debugPrint('[GoogleMapsConfig] Error loading .env.example: $e');
       }
       apiKey = '';
     }

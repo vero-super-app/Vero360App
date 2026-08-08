@@ -85,6 +85,78 @@ class DriverService {
     }
   }
 
+  /// Upload a driver/vehicle document. [type]: license|national_id|vehicle|registration|insurance|cof
+  Future<String> uploadDriverDocument(String filePath, String type) async {
+    try {
+      final formData = FormData.fromMap({
+        'file': await MultipartFile.fromFile(filePath),
+        'type': type,
+      });
+      final response = await _dio.post(
+        '/vero/drivers/docs',
+        queryParameters: {'type': type},
+        data: formData,
+        options: Options(
+          sendTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(seconds: 60),
+        ),
+      );
+      final data = response.data;
+      final url = data is Map ? data['url']?.toString() : null;
+      if (url == null || url.isEmpty) {
+        throw 'Upload succeeded but no URL was returned';
+      }
+      return url;
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  /// Submit driver identity documents for operator review.
+  Future<Map<String, dynamic>> applyAsDriver(Map<String, dynamic> data) async {
+    try {
+      final response = await _dio.post(
+        '/vero/drivers/apply',
+        data: data,
+      );
+      final body = response.data;
+      if (body is Map && body['driver'] is Map) {
+        return Map<String, dynamic>.from(body['driver'] as Map);
+      }
+      if (body is Map) return Map<String, dynamic>.from(body);
+      return await getMyDriverProfile();
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  /// Update my profile (doc changes demote verified drivers for re-review).
+  Future<Map<String, dynamic>> updateMyDriver(
+    Map<String, dynamic> updateData,
+  ) async {
+    try {
+      final response = await _dio.put('/vero/drivers/me', data: updateData);
+      return response.data as Map<String, dynamic>;
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  /// Submit vehicle + compliance docs for operator review.
+  Future<Map<String, dynamic>> submitVehicleProposal(
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      final response = await _dio.post(
+        '/vero/drivers/me/vehicle-proposal',
+        data: data,
+      );
+      return response.data as Map<String, dynamic>;
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
   // ==================== TAXI MANAGEMENT ====================
   Future<List<Map<String, dynamic>>> getTaxisByDriver(int driverId) async {
     try {
@@ -280,8 +352,15 @@ class DriverService {
     final errorType = error.runtimeType.toString();
     if (errorType.contains('DioException') || errorType.contains('DioError')) {
       if (error.response != null) {
-        final message = error.response?.data['message'] ?? error.message;
-        return message ?? 'An error occurred';
+        final data = error.response?.data;
+        if (data is Map) {
+          final message = data['message'];
+          if (message is List && message.isNotEmpty) {
+            return message.first.toString();
+          }
+          if (message != null) return message.toString();
+        }
+        return error.message ?? 'An error occurred';
       }
       return error.message ?? 'Network error';
     }

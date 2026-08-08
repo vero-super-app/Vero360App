@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:vero360_app/GernalServices/driver_service.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/create_taxi_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/edit_driver_details_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/edit_taxi_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
@@ -24,7 +23,6 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _chipGrey = Color(0xFFF4F5F7);
 
-  final _driverService = DriverService();
   late final TabController _tabs;
 
   @override
@@ -200,9 +198,9 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
             SizedBox(
               height: 48,
               child: OutlinedButton.icon(
-                onPressed: () => _verifyDriver(driver),
+                onPressed: _openVerificationWizard,
                 icon: const Icon(Icons.verified_outlined),
-                label: const Text('Request verification'),
+                label: const Text('Complete verification'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.green.shade700,
                   side: BorderSide(color: Colors.green.shade400),
@@ -702,9 +700,9 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
           ),
           const SizedBox(height: 16),
           FilledButton.icon(
-            onPressed: _openAddVehicle,
+            onPressed: _openVerificationWizard,
             icon: const Icon(Icons.add),
-            label: const Text('Register my vehicle'),
+            label: const Text('Submit vehicle documents'),
             style: FilledButton.styleFrom(
               backgroundColor: _brandOrange,
               foregroundColor: Colors.white,
@@ -735,9 +733,19 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
             ),
             const SizedBox(height: 8),
             Text(
-              'Contact support to set up your driver account, then return here to manage your details.',
+              'Submit your license and vehicle documents for operator review to start driving on VeroRide.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey.shade700, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _openVerificationWizard,
+              icon: const Icon(Icons.verified_user_outlined),
+              label: const Text('Start verification'),
+              style: FilledButton.styleFrom(
+                backgroundColor: _brandOrange,
+                foregroundColor: Colors.white,
+              ),
             ),
           ],
         ),
@@ -792,23 +800,11 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     if (updated == true) _reload();
   }
 
-  Future<void> _openAddVehicle() async {
-    final driver = ref.read(myDriverProfileProvider).value;
-    if (driver != null && _taxisFromDriver(driver).isNotEmpty) {
-      if (!mounted) return;
-      ToastHelper.showCustomToast(
-        context,
-        'You already have a registered vehicle',
-        isSuccess: false,
-        errorMessage: 'Edit your existing vehicle instead of adding another.',
-      );
-      return;
-    }
-
-    final created = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(builder: (_) => const CreateTaxiScreen()),
+  Future<void> _openVerificationWizard() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const BecomeDriverPage()),
     );
-    if (created == true) _reload();
+    _reload();
   }
 
   Future<void> _openEditVehicle(Map<String, dynamic> taxi) async {
@@ -841,54 +837,6 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
       ToastHelper.showCustomToast(
         context,
         'Could not update availability',
-        isSuccess: false,
-        errorMessage: e.toString(),
-      );
-    }
-  }
-
-  Future<void> _verifyDriver(Map<String, dynamic> driver) async {
-    final id = int.tryParse('${driver['id']}');
-    if (id == null) return;
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Verify driver profile'),
-        content: const Text(
-          'This marks your profile as verified for testing. In production, verification requires document review.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: Colors.green),
-            child: const Text('Verify'),
-          ),
-        ],
-      ),
-    );
-
-    if (ok != true) return;
-
-    try {
-      await _driverService.verifyDriver(id);
-      _reload();
-      if (!mounted) return;
-      ToastHelper.showCustomToast(
-        context,
-        'Profile verified',
-        isSuccess: true,
-        errorMessage: '',
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ToastHelper.showCustomToast(
-        context,
-        'Verification failed',
         isSuccess: false,
         errorMessage: e.toString(),
       );

@@ -24,7 +24,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
-import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/PostlatestArrival.dart';
+import 'package:vero360_app/features/Marketplace/presentation/widgets/PostlatestArrival.dart';
+
 import 'package:vero360_app/features/Promotions/presentation/Postpromotion.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';

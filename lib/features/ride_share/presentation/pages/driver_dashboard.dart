@@ -21,7 +21,7 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/driver_dash
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_history_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'driver_request_screen.dart';
-import 'create_taxi_screen.dart';
+import 'become_driver_page.dart';
 import 'edit_taxi_screen.dart';
 import 'ride_history_screen.dart';
 import 'ride_history_detail_screen.dart';
@@ -430,15 +430,22 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
       final isVerified = _getBoolValue(driver['isVerified']);
       final taxiId = _primaryTaxiId(driver);
+      final taxi = _primaryTaxi(driver);
+      final taxiActive = (taxi?['status']?.toString() ?? '') == 'ACTIVE';
       if (!hasTaxi || taxiId == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text(
-              'Register a vehicle first. Ride offers need your taxi on the map.',
+              'Submit vehicle documents first. Open verification to continue.',
             ),
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
             backgroundColor: Colors.orange.shade800,
+            action: SnackBarAction(
+              label: 'Verify',
+              textColor: Colors.white,
+              onPressed: () => _openVerificationWizard(),
+            ),
           ),
         );
         return;
@@ -452,6 +459,29 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
             backgroundColor: Colors.orange.shade800,
+            action: SnackBarAction(
+              label: 'Verify',
+              textColor: Colors.white,
+              onPressed: () => _openVerificationWizard(),
+            ),
+          ),
+        );
+        return;
+      }
+      if (!taxiActive) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Your vehicle is still pending operator approval.',
+            ),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+            backgroundColor: Colors.orange.shade800,
+            action: SnackBarAction(
+              label: 'Status',
+              textColor: Colors.white,
+              onPressed: () => _openVerificationWizard(),
+            ),
           ),
         );
         return;
@@ -848,21 +878,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: const Text(
-                        'Driver profile creation coming soon! Please contact support to set up your driver account.',
-                      ),
-                      backgroundColor: primaryColor,
-                      behavior: SnackBarBehavior.floating,
-                      margin: const EdgeInsets.all(16),
-                      duration: const Duration(seconds: 5),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.add_circle_outline),
-                label: const Text('Contact Support'),
+                onPressed: _openVerificationWizard,
+                icon: const Icon(Icons.verified_user_outlined),
+                label: const Text('Start verification'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: primaryColor,
                   foregroundColor: Colors.white,
@@ -970,10 +988,10 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: DriverQuickActionButton(
-              label: 'Register Vehicle',
+              label: 'Submit Vehicle Docs',
               icon: Icons.add_circle_outline,
               color: RideShareColors.primary,
-              onPressed: () => _showCreateTaxiDialog(context),
+              onPressed: _openVerificationWizard,
             ),
           )
         else
@@ -995,10 +1013,10 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: DriverQuickActionButton(
-              label: 'Verify Profile',
+              label: 'Complete Verification',
               icon: Icons.verified_user,
               color: const Color(0xFF2E7D32),
-              onPressed: () => _showVerifyDriverDialog(context, driver['id']),
+              onPressed: _openVerificationWizard,
             ),
           ),
         Padding(
@@ -1036,29 +1054,11 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     );
   }
 
-  void _showCreateTaxiDialog(BuildContext context) {
-    final driver = ref.read(myDriverProfileProvider).value;
-    if (driver != null && _primaryTaxi(driver) != null) {
-      ToastHelper.showCustomToast(
-        context,
-        'You already have a registered vehicle',
-        isSuccess: false,
-        errorMessage: 'Edit your existing vehicle in Driver Center.',
-      );
-      return;
-    }
-
-    Navigator.of(context)
-        .push(
-      MaterialPageRoute(
-        builder: (_) => const CreateTaxiScreen(),
-      ),
-    )
-        .then((result) {
-      if (result == true && mounted) {
-        ref.refresh(myDriverProfileProvider);
-      }
-    });
+  Future<void> _openVerificationWizard() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const BecomeDriverPage()),
+    );
+    if (mounted) ref.invalidate(myDriverProfileProvider);
   }
 
   void _showTaxiDetailsDialog(BuildContext context, Map<String, dynamic> taxi) {
@@ -1070,65 +1070,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     )
         .then((result) {
       if (result == true && mounted) {
-        ref.refresh(myDriverProfileProvider);
+        ref.invalidate(myDriverProfileProvider);
       }
     });
-  }
-
-  void _showVerifyDriverDialog(BuildContext context, int driverId) {
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Verify Profile'),
-        content: const Text(
-          'This will mark your profile as verified for development/testing purposes. In production, verification requires document review.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              _verifyDriver(driverId);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-            ),
-            child: const Text('Verify'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _verifyDriver(int driverId) async {
-    try {
-      await _driverService.verifyDriver(driverId);
-      if (mounted) {
-        ref.refresh(myDriverProfileProvider);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Profile verified successfully'),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(UserFacingError.from(e, fallback: 'Error verifying profile')),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
-          ),
-        );
-      }
-    }
   }
 
   void _showQuickAvailabilityToggle(BuildContext context) {

@@ -1,7 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:vero360_app/utils/low_ram_android.dart';
 
 /// HTTP(S) images with disk cache ([CachedNetworkImage]). On failure, retries the
 /// other scheme (http ↔ https). Pass [memCacheWidth] **or** [memCacheHeight]
@@ -64,16 +63,14 @@ class _ResilientCachedNetworkImageState
     return url;
   }
 
-  static bool get _androidLowEnd =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-
   @override
   Widget build(BuildContext context) {
     final u = _currentUrl;
     final placeholderBg =
         widget.placeholderColor ?? Colors.grey.shade100;
+    final low = LowRamAndroid.isAndroid;
     final dpr = MediaQuery.devicePixelRatioOf(context)
-        .clamp(1.0, _androidLowEnd ? 1.5 : 3.0);
+        .clamp(1.0, low ? LowRamAndroid.maxDpr : 3.0);
 
     // Prefer caller values. Only auto-size from *finite* layout size, and only
     // set ONE mem dimension so aspect ratio stays correct (avoids "shrunk" tiles).
@@ -81,20 +78,21 @@ class _ResilientCachedNetworkImageState
     int? memW = widget.memCacheWidth;
     int? memH = widget.memCacheHeight;
     if (memW == null && memH == null) {
+      final maxPx = low ? LowRamAndroid.maxDecodePx : 1200;
       if (widget.width != null && widget.width!.isFinite && widget.width! > 0) {
-        final maxPx = _androidLowEnd ? 720 : 1200;
-        memW = (widget.width! * dpr).round().clamp(128, maxPx);
+        memW = (widget.width! * dpr).round().clamp(64, maxPx);
       } else if (widget.height != null &&
           widget.height!.isFinite &&
           widget.height! > 0) {
-        final maxPx = _androidLowEnd ? 720 : 1200;
-        memH = (widget.height! * dpr).round().clamp(128, maxPx);
-      } else if (_androidLowEnd) {
+        memH = (widget.height! * dpr).round().clamp(64, maxPx);
+      } else if (low) {
         final layoutW = MediaQuery.sizeOf(context).width;
-        memW = (layoutW * dpr).round().clamp(48, 720);
+        memW = (layoutW * dpr).round().clamp(48, maxPx);
       }
-      // Unconstrained (non-Android): leave null so quality stays sharp;
-      // global imageCache limits still protect low-RAM phones.
+    }
+    if (low) {
+      if (memW != null) memW = memW!.clamp(48, LowRamAndroid.maxDecodePx);
+      if (memH != null) memH = memH!.clamp(48, LowRamAndroid.maxDecodePx);
     }
 
     Widget placeholder() => Container(
@@ -118,8 +116,8 @@ class _ResilientCachedNetworkImageState
       height: widget.height,
       memCacheWidth: memW,
       memCacheHeight: memH,
-      maxWidthDiskCache: _androidLowEnd ? 720 : null,
-      maxHeightDiskCache: _androidLowEnd ? 720 : null,
+      maxWidthDiskCache: low ? LowRamAndroid.maxDecodePx : null,
+      maxHeightDiskCache: low ? LowRamAndroid.maxDecodePx : null,
       fadeInDuration: Duration.zero,
       fadeOutDuration: Duration.zero,
       placeholder: (context, _) => placeholder(),

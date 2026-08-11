@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:vero360_app/utils/low_ram_android.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -364,12 +367,19 @@ class _BottomnavbarState extends State<Bottomnavbar>
     // Drop unused decoded images when switching tabs (helps 2–3GB phones).
     if (leaving != index) {
       PaintingBinding.instance.imageCache.clearLiveImages();
+      if (LowRamAndroid.isAndroid) {
+        PaintingBinding.instance.imageCache.clear();
+      }
     }
     unawaited(_refreshAuthState());
   }
 
   Widget _buildBody() {
-    // Keep off-tab pages alive so auth/role refreshes don't remount Marketplace.
+    // IndexedStack keeps every tab mounted (home + market + chat + cart +
+    // profile). That OOMs Adreno 506 / 2GB. Dispose unused tabs on Android.
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return _pages[_selectedIndex];
+    }
     return IndexedStack(
       index: _selectedIndex,
       children: _pages,

@@ -64,6 +64,7 @@ Write-Host 'Waiting for device (unlock phone + allow USB debugging)...'
 Invoke-Adb -Args @('wait-for-device') | Out-Null
 
 Write-Host 'Uninstalling old build (ok if not installed)...'
+Invoke-Adb -Args @('uninstall', 'com.vero265.app') -AllowFail | Out-Null
 Invoke-Adb -Args @('uninstall', 'com.vero.vero360') -AllowFail | Out-Null
 
 Write-Host 'Building armeabi-v7a release APK (smallest)...'
@@ -79,5 +80,5 @@ $sizeMb = [math]::Round((Get-Item $apk).Length / 1MB, 1)
 Write-Host "Installing $apk ($sizeMb MB)..."
 Invoke-Adb -Args @('install', '-r', $apk) | Out-Null
 
-Invoke-Adb -Args @('shell', 'am', 'start', '-n', 'com.vero.vero360/.MainActivity') -AllowFail | Out-Null
+Invoke-Adb -Args @('shell', 'am', 'start', '-n', 'com.vero265.app/.MainActivity') -AllowFail | Out-Null
 Write-Host 'Done. Impeller is forced off in the Android manifest/Application.'

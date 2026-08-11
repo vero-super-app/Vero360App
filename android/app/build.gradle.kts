@@ -38,8 +38,9 @@ android {
         applicationId = "com.vero265.app"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = 1
-        versionName = "1.0.0"
+        // Driven by pubspec.yaml `version: x.y.z+build` (Flutter injects these).
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
         multiDexEnabled = true
 
         // Load Google Maps API key from .env

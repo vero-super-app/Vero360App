@@ -1,0 +1,4 @@
+# frozen_string_literal: true
+
+json_key_file(ENV['PLAY_STORE_JSON_KEY'] || 'play-store-service-account.json')
+package_name('com.vero265.app')

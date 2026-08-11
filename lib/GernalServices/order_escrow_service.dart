@@ -83,7 +83,7 @@ class OrderEscrowService {
       throw StateError('You must be signed in to place a hold.');
     }
 
-    const feeRate = FirebaseWalletService.serviceFeeRate;
+    const feeRate = FirebaseWalletService.marketplaceServiceFeeRate;
     final batch = _db.batch();
 
     for (final r in refs) {
@@ -106,6 +106,9 @@ class OrderEscrowService {
           'merchantName': r.item.merchantName,
           'merchantAmount': merchantAmount,
           'serviceFeeAmount': feeAmount,
+          'feeRate': feeRate,
+          'serviceType': 'marketplace',
+          'grossAmount': gross,
           'txRef': txRef,
           'orderNumber': r.orderNumber,
           'itemName': r.item.name,
@@ -902,13 +905,14 @@ class OrderEscrowService {
       merchantName: merchantName,
     );
 
+    final isAcc =
+        (data['serviceType'] ?? '').toString().trim().toLowerCase() ==
+            'accommodation';
+
     await FirebaseWalletService.creditWallet(
       merchantId: merchantUid,
       amount: merchantAmount,
       description: () {
-        final isAcc =
-            (data['serviceType'] ?? '').toString().trim().toLowerCase() ==
-                'accommodation';
         if (buyerConfirmed) {
           return isAcc
               ? 'Stay payment — guest confirmed arrival'
@@ -923,6 +927,17 @@ class OrderEscrowService {
     );
 
     if (serviceFee > 0) {
+      try {
+        await FirebaseWalletService.creditPlatformServiceFee(
+          amount: serviceFee,
+          description: isAcc
+              ? 'Stay service fee ($txRef)'
+              : 'Marketplace service fee 10% ($txRef)',
+          reference: txRef,
+        );
+      } catch (e) {
+        debugPrint('[OrderEscrow] Platform fee credit failed: $e');
+      }
       await _recordServiceFeeWithAdminApi(amount: serviceFee, txRef: txRef);
     }
 

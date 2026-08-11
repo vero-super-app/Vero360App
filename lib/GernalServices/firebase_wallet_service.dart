@@ -10,8 +10,31 @@ class FirebaseWalletService {
   static const String superAdminUserId = 'super_admin';
   static const String superAdminDisplayName = 'Vero 360 Platform';
 
-  /// Service fee rate: 2.5% of each successful transaction is credited to super admin.
+  /// Ride / stay default fee (kept for those products).
   static const double serviceFeeRate = 0.025;
+
+  /// Marketplace purchases: 10% of item gross is credited to the super-admin wallet.
+  static const double marketplaceServiceFeeRate = 0.10;
+
+  /// Ensures the platform wallet exists and credits a service fee into it.
+  static Future<void> creditPlatformServiceFee({
+    required double amount,
+    required String description,
+    required String reference,
+  }) async {
+    if (amount <= 0) return;
+    await getOrCreateWallet(
+      merchantId: superAdminUserId,
+      merchantName: superAdminDisplayName,
+    );
+    await creditWallet(
+      merchantId: superAdminUserId,
+      amount: amount,
+      description: description,
+      reference: reference,
+      type: 'service_fee',
+    );
+  }
 
   // Get or create wallet for merchant
   static Future<WalletModel> getOrCreateWallet({

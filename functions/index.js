@@ -1130,8 +1130,11 @@ async function notifyEscrowReleasedToMerchant({
   });
 }
 
+const PLATFORM_WALLET_USER_ID = 'super_admin';
+const PLATFORM_WALLET_NAME = 'Vero 360 Platform';
+
 /**
- * Credits merchant wallet (same shape as Flutter FirebaseWalletService.creditWallet).
+ * Credits a wallet (same shape as Flutter FirebaseWalletService.creditWallet).
  */
 async function creditMerchantWalletFromEscrow({
   merchantUid,
@@ -1139,6 +1142,7 @@ async function creditMerchantWalletFromEscrow({
   amount,
   description,
   reference,
+  type = 'sale_escrow',
 }) {
   const uid = String(merchantUid || '').trim();
   const amt = typeof amount === 'number' ? amount : Number(amount);
@@ -1174,7 +1178,7 @@ async function creditMerchantWalletFromEscrow({
   const txPayload = {
     transactionId,
     walletId: walletRef.id,
-    type: 'sale_escrow',
+    type: String(type || 'sale_escrow'),
     amount: amt,
     status: 'completed',
     description: String(description || 'Marketplace escrow release'),
@@ -1225,7 +1229,11 @@ async function releaseHeldEscrowDoc(docSnap, { source }) {
   const amountRaw = before.merchantAmount;
   const merchantAmount =
     typeof amountRaw === 'number' ? amountRaw : Number(amountRaw);
+  const feeRaw = before.serviceFeeAmount;
+  const serviceFee =
+    typeof feeRaw === 'number' ? feeRaw : Number(feeRaw || 0);
   const txRef = String(before.txRef || docSnap.id);
+  const serviceType = String(before.serviceType || 'marketplace').toLowerCase();
 
   if (!merchantUid || !Number.isFinite(merchantAmount) || merchantAmount <= 0) {
     console.warn(`Escrow ${docSnap.id}: invalid merchant/amount, skip`);
@@ -1259,9 +1267,25 @@ async function releaseHeldEscrowDoc(docSnap, { source }) {
       merchantUid,
       merchantName,
       amount: merchantAmount,
-      description: `Marketplace sale — auto-released after ${ESCROW_AUTO_RELEASE_LABEL}`,
+      description:
+        serviceType === 'accommodation'
+          ? `Stay payment — auto-released after ${ESCROW_AUTO_RELEASE_LABEL}`
+          : `Marketplace sale — auto-released after ${ESCROW_AUTO_RELEASE_LABEL}`,
       reference: txRef,
     });
+    if (Number.isFinite(serviceFee) && serviceFee > 0) {
+      await creditMerchantWalletFromEscrow({
+        merchantUid: PLATFORM_WALLET_USER_ID,
+        merchantName: PLATFORM_WALLET_NAME,
+        amount: serviceFee,
+        description:
+          serviceType === 'accommodation'
+            ? `Stay service fee (${txRef})`
+            : `Marketplace service fee 10% (${txRef})`,
+        reference: txRef,
+        type: 'service_fee',
+      });
+    }
   } catch (err) {
     console.error(`Escrow ${docSnap.id}: wallet credit failed, reverting hold`, err);
     await ref.set(

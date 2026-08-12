@@ -125,6 +125,104 @@ class OrderEscrowService {
     await batch.commit();
   }
 
+  /// Escrow hold for a paid food order (10% platform fee, same as marketplace).
+  /// Doc id = [orderId] from `food_orders`.
+  static Future<void> createHoldForFoodOrder({
+    required String orderId,
+    required String txRef,
+    required String merchantUid,
+    required String merchantName,
+    required String foodName,
+    required double grossAmountMwk,
+    String? orderNumber,
+  }) async {
+    final mid = merchantUid.trim();
+    final oid = orderId.trim();
+    if (mid.isEmpty || oid.isEmpty) return;
+
+    final buyerUid = FirebaseAuth.instance.currentUser?.uid;
+    if (buyerUid == null || buyerUid.isEmpty) {
+      debugPrint('[OrderEscrowService] Skip food hold: buyer not signed in');
+      return;
+    }
+
+    final gross = grossAmountMwk;
+    if (gross <= 0) return;
+
+    const feeRate = FirebaseWalletService.marketplaceServiceFeeRate;
+    final merchantAmount = gross * (1.0 - feeRate);
+    final feeAmount = gross * feeRate;
+
+    await _doc(oid).set(
+      {
+        'buyerUid': buyerUid,
+        'merchantUid': mid,
+        'merchantName':
+            merchantName.trim().isEmpty ? 'Kitchen' : merchantName.trim(),
+        'merchantAmount': merchantAmount,
+        'serviceFeeAmount': feeAmount,
+        'feeRate': feeRate,
+        'grossAmount': gross,
+        'txRef': txRef,
+        'orderNumber': (orderNumber ?? oid).trim(),
+        'itemName': foodName.trim().isEmpty ? 'Food order' : foodName.trim(),
+        'status': 'held',
+        'serviceType': 'food',
+        'deliveredAt': FieldValue.delete(),
+        'releaseDueAt': FieldValue.delete(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
+  /// Food kitchen marks delivered/completed → credit kitchen + 10% platform fee.
+  static Future<void> releaseFoodOrderByMerchant(String orderId) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      throw StateError('Sign in required.');
+    }
+
+    final oid = orderId.trim();
+    if (oid.isEmpty) return;
+
+    final ref = _doc(oid);
+    final snap = await ref.get();
+    if (!snap.exists) {
+      debugPrint('[OrderEscrow] No food escrow hold for $oid');
+      return;
+    }
+
+    final data = Map<String, dynamic>.from(snap.data()!);
+    final status = (data['status'] ?? '').toString();
+    if (status == 'released' || status == 'auto_released') return;
+    if (status != 'held') {
+      throw StateError('This food order is not on hold.');
+    }
+
+    final serviceType =
+        (data['serviceType'] ?? '').toString().trim().toLowerCase();
+    if (serviceType != 'food') {
+      throw StateError('Not a food escrow hold.');
+    }
+
+    final merchantUid = (data['merchantUid'] ?? '').toString().trim();
+    if (merchantUid.isEmpty || merchantUid != uid.trim()) {
+      throw StateError('Only the kitchen merchant can release this order.');
+    }
+
+    // Stamp delivery then release (merchant fulfillment = paid).
+    await markDelivered(oid);
+    await _creditAndCloseEscrow(
+      orderId: oid,
+      data: data,
+      buyerConfirmed: true,
+      releaseKind: 'merchant_delivered',
+      releaseSource: 'food_merchant',
+    );
+  }
+
   /// Escrow row for a paid accommodation booking (guest checkout via PayChangu).
   /// Document id is derived from [params.bookingRef] so retries don’t duplicate.
   static Future<void> createHoldForAccommodationBooking({
@@ -888,13 +986,34 @@ class OrderEscrowService {
       }
     }
 
+    await _creditAndCloseEscrow(
+      orderId: orderId,
+      data: data,
+      buyerConfirmed: buyerConfirmed,
+      releaseKind: buyerConfirmed ? 'buyer_confirm' : 'auto_7d',
+      releaseSource: 'app',
+    );
+  }
+
+  static Future<void> _creditAndCloseEscrow({
+    required String orderId,
+    required Map<String, dynamic> data,
+    required bool buyerConfirmed,
+    required String releaseKind,
+    required String releaseSource,
+  }) async {
+    final ref = _doc(orderId);
     final merchantUid = (data['merchantUid'] ?? '').toString().trim();
     final merchantName = (data['merchantName'] ?? 'Merchant').toString();
     final amount = (data['merchantAmount'] ?? 0.0);
-    final merchantAmount = amount is num ? amount.toDouble() : double.tryParse('$amount') ?? 0.0;
+    final merchantAmount =
+        amount is num ? amount.toDouble() : double.tryParse('$amount') ?? 0.0;
     final feeRaw = data['serviceFeeAmount'] ?? 0.0;
-    final serviceFee = feeRaw is num ? feeRaw.toDouble() : double.tryParse('$feeRaw') ?? 0.0;
+    final serviceFee =
+        feeRaw is num ? feeRaw.toDouble() : double.tryParse('$feeRaw') ?? 0.0;
     final txRef = (data['txRef'] ?? orderId).toString();
+    final serviceType =
+        (data['serviceType'] ?? '').toString().trim().toLowerCase();
 
     if (merchantUid.isEmpty || merchantAmount <= 0) {
       throw StateError('Invalid escrow data.');
@@ -905,14 +1024,18 @@ class OrderEscrowService {
       merchantName: merchantName,
     );
 
-    final isAcc =
-        (data['serviceType'] ?? '').toString().trim().toLowerCase() ==
-            'accommodation';
+    final isAcc = serviceType == 'accommodation';
+    final isFood = serviceType == 'food';
 
     await FirebaseWalletService.creditWallet(
       merchantId: merchantUid,
       amount: merchantAmount,
       description: () {
+        if (isFood) {
+          return buyerConfirmed
+              ? 'Food order — kitchen marked delivered'
+              : 'Food order — auto-released after $escrowAutoReleaseLabel';
+        }
         if (buyerConfirmed) {
           return isAcc
               ? 'Stay payment — guest confirmed arrival'
@@ -930,22 +1053,36 @@ class OrderEscrowService {
       try {
         await FirebaseWalletService.creditPlatformServiceFee(
           amount: serviceFee,
-          description: isAcc
-              ? 'Stay service fee ($txRef)'
-              : 'Marketplace service fee 10% ($txRef)',
+          description: isFood
+              ? 'Food service fee 10% ($txRef)'
+              : isAcc
+                  ? 'Stay service fee ($txRef)'
+                  : 'Marketplace service fee 10% ($txRef)',
           reference: txRef,
         );
+        await ref.set({
+          'platformFeeCredited': true,
+          'platformFeeCreditedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
       } catch (e) {
         debugPrint('[OrderEscrow] Platform fee credit failed: $e');
+        await ref.set({
+          'platformFeeCredited': false,
+          'platformFeeError': e.toString(),
+        }, SetOptions(merge: true));
       }
       await _recordServiceFeeWithAdminApi(amount: serviceFee, txRef: txRef);
+    } else {
+      await ref.set({
+        'platformFeeCredited': true,
+      }, SetOptions(merge: true));
     }
 
     await ref.update({
       'status': buyerConfirmed ? 'released' : 'auto_released',
       'releasedAt': FieldValue.serverTimestamp(),
-      'releaseKind': buyerConfirmed ? 'buyer_confirm' : 'auto_7d',
-      'releaseSource': 'app',
+      'releaseKind': releaseKind,
+      'releaseSource': releaseSource,
       'merchantNotifiedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });

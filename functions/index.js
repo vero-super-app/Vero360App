@@ -1151,33 +1151,53 @@ async function creditMerchantWalletFromEscrow({
   }
 
   const db = admin.firestore();
-  const walletQuery = await db
-    .collection('wallets')
-    .where('userId', '==', uid)
-    .limit(1)
-    .get();
-
+  const EMBEDDED_TX_CAP = 25;
   let walletRef;
-  if (walletQuery.empty) {
-    walletRef = db.collection('wallets').doc();
-    await walletRef.set({
-      walletId: walletRef.id,
-      userId: uid,
-      merchantName: String(merchantName || 'Merchant'),
-      balance: 0,
-      pendingBalance: 0,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      transactions: [],
-    });
+
+  if (uid === PLATFORM_WALLET_USER_ID) {
+    walletRef = db.collection('wallets').doc(PLATFORM_WALLET_USER_ID);
+    const snap = await walletRef.get();
+    if (!snap.exists) {
+      await walletRef.set({
+        walletId: PLATFORM_WALLET_USER_ID,
+        userId: PLATFORM_WALLET_USER_ID,
+        merchantName: String(merchantName || PLATFORM_WALLET_NAME),
+        balance: 0,
+        pendingBalance: 0,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        transactions: [],
+      });
+    }
   } else {
-    walletRef = walletQuery.docs[0].ref;
+    const walletQuery = await db
+      .collection('wallets')
+      .where('userId', '==', uid)
+      .limit(1)
+      .get();
+
+    if (walletQuery.empty) {
+      walletRef = db.collection('wallets').doc();
+      await walletRef.set({
+        walletId: walletRef.id,
+        userId: uid,
+        merchantName: String(merchantName || 'Merchant'),
+        balance: 0,
+        pendingBalance: 0,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        transactions: [],
+      });
+    } else {
+      walletRef = walletQuery.docs[0].ref;
+    }
   }
 
   const transactionId = `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
   const txPayload = {
     transactionId,
     walletId: walletRef.id,
+    userId: uid,
     type: String(type || 'sale_escrow'),
     amount: amt,
     status: 'completed',
@@ -1195,10 +1215,14 @@ async function creditMerchantWalletFromEscrow({
       ? [...data.transactions]
       : [];
     transactions.push(txPayload);
+    const capped =
+      transactions.length > EMBEDDED_TX_CAP
+        ? transactions.slice(-EMBEDDED_TX_CAP)
+        : transactions;
     tx.update(walletRef, {
       balance: newBalance,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      transactions,
+      transactions: capped,
     });
   });
 
@@ -1285,6 +1309,15 @@ async function releaseHeldEscrowDoc(docSnap, { source }) {
         reference: txRef,
         type: 'service_fee',
       });
+      await ref.set(
+        {
+          platformFeeCredited: true,
+          platformFeeCreditedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } else {
+      await ref.set({ platformFeeCredited: true }, { merge: true });
     }
   } catch (err) {
     console.error(`Escrow ${docSnap.id}: wallet credit failed, reverting hold`, err);

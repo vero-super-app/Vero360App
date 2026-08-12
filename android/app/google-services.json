@@ -67,6 +67,22 @@
       },
       "oauth_client": [
         {
+          "client_id": "1010595167807-ih0ttlikutosmjfokk5bkm985r2eb62h.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.vero265.app",
+            "certificate_hash": "919dd3ae18da3744b8eba3f345e0c868c87ad883"
+          }
+        },
+        {
+          "client_id": "1010595167807-me9gja5ilr2v33mpe5rbnk1a660qlc8s.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.vero265.app",
+            "certificate_hash": "7c2303532df3b96083486ba1104f7e76e36cb3de"
+          }
+        },
+        {
           "client_id": "1010595167807-vl7asia9e4eep8u68g9c8mp5aa3eotgi.apps.googleusercontent.com",
           "client_type": 3
         }

@@ -1589,6 +1589,17 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // 10% platform fee held until kitchen marks delivered.
+      await OrderEscrowService.createHoldForFoodOrder(
+        orderId: ref.id,
+        txRef: widget.txRef,
+        merchantUid: fc.merchantId,
+        merchantName: 'Food merchant',
+        foodName: fc.foodName,
+        grossAmountMwk: fc.totalMwk,
+        orderNumber: ref.id,
+      );
     } catch (e) {
       debugPrint('[InAppPaymentPage] food_orders write failed: $e');
       if (widget.rootContext.mounted) {
